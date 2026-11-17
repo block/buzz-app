@@ -439,7 +439,6 @@ export function SoloInventory({
             ),
           };
         })}
-        visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
         onConverted={(channelId) => {

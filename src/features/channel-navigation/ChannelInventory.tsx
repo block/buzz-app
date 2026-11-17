@@ -72,6 +72,7 @@ import type { UnreadDmPreview } from "../../bundled/channels/SidebarUnread";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
+  DraggableConversation,
   DroppableSidebarSection,
 } from "./ChannelSidebarDnd";
 import { channelIcon } from "../channels/channel-icon";
@@ -87,7 +88,7 @@ import {
   sidebarSections,
   contributedSidebarSectionKey,
   isChannelSectionKey,
-  isChannelDropSectionKey,
+  sidebarDropRowKinds,
   orderContributedSidebarSections,
 } from "../../bundled/channels/sidebar-sections";
 import { activityTranscript } from "../../bundled/channels/working-agents";
@@ -213,6 +214,10 @@ export function ChannelInventory({
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
   }, [list.activityStatus]);
   const handoff = useChannelNavigation();
+  // Stable refs: the whole handoff changes with every navigation state, and
+  // row callbacks that depend on it would rerender every sidebar row.
+  const activityThread = handoff?.activityThread;
+  const activityAgent = handoff?.activityAgent;
   const mute = handoff?.session === queries ? handoff.mute : undefined;
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
@@ -465,7 +470,7 @@ export function ChannelInventory({
       const { attempt } = navigator.snapshot();
       const target = attempt.entry.target;
       if (
-        handoff &&
+        activityThread &&
         messageId &&
         target.kind === "conversation" &&
         target.channelId === channelId &&
@@ -478,14 +483,14 @@ export function ChannelInventory({
           entryId: attempt.entry.id,
           signal: attempt.signal,
         };
-        handoff.activityThread.current = intent;
+        activityThread.current = intent;
         void result.then(() => {
-          if (handoff.activityThread.current === intent)
-            handoff.activityThread.current = undefined;
+          if (activityThread.current === intent)
+            activityThread.current = undefined;
         });
       }
     },
-    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+    [viewer, relay, queries, activityThread, sidebar.list, navigator, scope],
   );
   const openActivityThread = useCallback(
     (channelId: string, rootId: string) =>
@@ -524,7 +529,7 @@ export function ChannelInventory({
           ) ?? null,
         ...(transcript && { transcript }),
       };
-      if (handoff) handoff.activityAgent.current = intent;
+      if (activityAgent) activityAgent.current = intent;
       void navigator
         .open({
           version: 1,
@@ -536,14 +541,11 @@ export function ChannelInventory({
           },
         })
         .then((result) => {
-          if (
-            result.status !== "opened" &&
-            handoff?.activityAgent.current === intent
-          )
-            handoff.activityAgent.current = undefined;
+          if (result.status !== "opened" && activityAgent?.current === intent)
+            activityAgent.current = undefined;
         });
     },
-    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+    [viewer, relay, queries, activityAgent, sidebar.list, navigator, scope],
   );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
@@ -1403,8 +1405,9 @@ export function ChannelInventory({
               }
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
               disabled={
-                !placementWritable || !isChannelDropSectionKey(section.key)
+                !placementWritable || !sidebarDropRowKinds(section.key).length
               }
+              accepts={sidebarDropRowKinds(section.key)}
               reorderable={orderWritable && section.key.startsWith("group:")}
               move={
                 orderWritable && section.key.startsWith("group:")
@@ -1585,10 +1588,11 @@ export function ChannelInventory({
                       menuEnabled
                       sectionKey={section.key}
                       selectFrame={
-                        channel.channelType !== "dm" &&
-                        isChannelDropSectionKey(section.key)
-                          ? DraggableChannel
-                          : undefined
+                        !sidebarDropRowKinds(section.key).length
+                          ? undefined
+                          : channel.channelType === "dm"
+                            ? DraggableConversation
+                            : DraggableChannel
                       }
                       onOpenMenu={openRowMenu}
                       menuOpen={menuOpen}

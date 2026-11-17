@@ -61,6 +61,14 @@ conversation target as the page's fallback, and closes the card without opening
 Activity; reading follows the ordinary channel visit. **Open Activity** opens the page.
 The shell hides the card while Activity is selected and on devices without hover.
 
+### Sidebar count
+
+The Activity row shows the number of unread conversations in the shared
+`CountBadge`, through the page contract's `badge` (`InboxBadge.tsx`): the total
+the card's header leads with. It subscribes to `session.unread.inbox()`, which
+the sidebar's channel list already loads, and starts no read of its own.
+Reactions never count.
+
 ## Drafts (removed)
 
 Activity had a Drafts tab (PR5) that listed every saved composer draft in the

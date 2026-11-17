@@ -251,6 +251,13 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community picker and paste an invite link or type an address such as
   `relay.example.com`; an invite link fills in its invite code. Paste the whole
   link there; a code on its own is refused.
+- In the community switcher, other communities show a number for mentions, DMs
+  and followed-thread replies waiting for you, or a dot for other unread. A dot on
+  the closed switcher means another community has unread. Muted channels count
+  only as their sidebar rows do: a mention there, or a muted DM. A blank row
+  means nothing is unread, or its unread isn't known yet, for example because that
+  community isn't connected or was closed to make room for one you opened. Only
+  the first 24 communities get badges at startup; others show one once opened.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.
@@ -401,7 +408,8 @@ and are asked to sign in again in Buzz.
   **Quote** (or press Q) to add it to the end of that conversation's draft as a
   quote, ready for your reply below it. A selection in a thread quotes into the
   thread's reply box. Quoting keeps formatting and links but does not notify
-  anyone mentioned in the quoted text.
+  anyone mentioned in the quoted text. The floating Quote button hides while
+  a menu, picker, or dialog is open.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -449,7 +457,11 @@ and are asked to sign in again in Buzz.
   reported chat before **Move to**, and never create it again.
   This option is not available through external/standalone or Nexus requests.
   Solo chats can also be shared with other people; do not describe every Solo
-  chat as visible only to its creator.
+  chat as visible only to its creator. In a Solo chat, including its first
+  message, **@** can name anyone in the community. A tagged agent of yours joins
+  the chat; anyone else outside the chat is only named: not added and not
+  notified, and the picker row says so. People already in the chat are notified
+  as usual. The toolbar's agent menu lists agents only.
   New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
   which archives the chat after a set time without activity. To start every new
   chat temporary, open the community's **Settings → Local settings** and choose
@@ -462,7 +474,8 @@ and are asked to sign in again in Buzz.
   channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
-- **Team** contains community channels and their threads. Use the **@** picker
+- **Team** contains community channels and their threads. Choose **Reply** on a
+  message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be
@@ -478,9 +491,19 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Drag a workspace header onto another workspace to reorder it, or use **Move up**
+  and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
+  the workspaces. A failed save restores the previous order and offers **Retry move**.
+  If a failed refresh disables **Retry move**, use **Retry workspaces** first.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.
+  To rename one, open **Workspace settings** from its heading’s **…** or right-click
+  menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
+  starting settings stay in place.
+  Retrying an instructions-only draft keeps the current workspace name. If a
+  workspace name edit conflicts, copy your draft before using
+  **Review saved settings** to discard it and reload.
   Plugins can show ordinary chats in a plain list without workspace headings.
   Their saved workspace assignments stay in place.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
@@ -520,11 +543,12 @@ and are asked to sign in again in Buzz.
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
-  activity clears the loading error.
+  activity clears the loading error. The sidebar's Activity row shows how many conversations are unread,
+  the number Unread lists under All from Anyone, and it drops as you open or mark them read.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
-  Reactions have no unread state or badge count. Clicking one opens your exact message in its conversation or thread.
+  Reactions have no unread state and do not add to the Activity count. Clicking one opens your exact message in its conversation or thread.
   New reactions from updated clients appear; older unaddressed reactions are not backfilled.
   While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
@@ -617,7 +641,8 @@ and are asked to sign in again in Buzz.
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
-  their avatar previews. Muted activity does not light the macOS Dock unread dot.
+  their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
+  lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
   Muting does not mark messages or threads as read.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
@@ -640,6 +665,9 @@ and are asked to sign in again in Buzz.
   Changing this choice does not change existing members' roles. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
   exceptions. Use a person's actions menu to change their role when permitted.
+  An owner can choose **Transfer ownership** there to make another person
+  the owner; the previous owner becomes an admin. Ownership can't be
+  transferred to an agent, or to someone who hasn't set up a profile.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
@@ -657,11 +685,13 @@ and are asked to sign in again in Buzz.
   unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
-  start of the text to edit the last one. With a filter, search shows only
-  messages. Each message result's conversation name starts with the icon its
-  channel header shows: a hash for a public channel, a lock for a private
-  channel, or a chat bubble for a direct message or chat. Screen readers
-  announce the type before the name.
+  start of the text to edit the last one. People suggestions match both
+  verified usernames and full names, including name words, whichever name
+  this device displays. The selected chip keeps the displayed name. With a
+  filter, search shows only messages. Each message result's conversation
+  name starts with the icon its channel header shows: a hash for a public
+  channel, a lock for a private channel, or a chat bubble for a direct message
+  or chat. Screen readers announce the type before the name.
 - **Find on screen**: press ⌘⇧F (Ctrl+Shift+F on Windows and Linux) to find
   text already shown in the window, like a browser's find bar. Matches are
   highlighted, with the current one in orange, and the bar shows "n of total".
@@ -827,12 +857,13 @@ and are asked to sign in again in Buzz.
   The access dialog offers **View only** for community reading
   or **Private** for people added to the chat. Public is not offered in
   this UI; a Public policy set through another client appears as
-  **Public (existing)**. This is not protocol enforcement. View-only visitors
+  **Public**. Before changing it, the confirmation warns that you cannot switch
+  back to Public here. This is not protocol enforcement. View-only visitors
   cannot post; existing members keep their roles. Returning to Private warns
   about retained viewers unless verified roles show no Guests, including while
-  roles load or fail to load; remove them in People to end their access. Public
-  (existing) → Private also warns that joined members retain their access.
-  Manually changing Public (existing) to View only confirms that existing
+  roles load or fail to load; remove them in People to end their access.
+  Public → Private also warns that joined members retain their access.
+  Manually changing Public to View only confirms that existing
   members keep their access. Agents the owner adds through
   access search or a composer mention receive Bot access so they can reply,
   including with a Guest admission default. Conversion to a channel offers
@@ -946,6 +977,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Dragging channels and DMs between sections**: drag a channel or DM row onto
+  **Starred** or a saved group to move it there, or back to its home section:
+  channels to **Channels** and DMs to **Direct messages**. **Channels** does not
+  accept DMs, and **Direct messages** does not accept channels. Forums do not
+  drag. **Move channel** or **Move conversation** in the row's menu does the same
+  move from the keyboard.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a
@@ -955,6 +992,11 @@ and are asked to sign in again in Buzz.
   sections. When a plugin is explicitly disabled, its existing chats appear as
   ordinary Solo chats; enabling it again returns them to the plugin's rows when
   available. Opening the channel from Team follows the usual Team navigation.
+- **Open thread marker**: while a thread is displayed in the side pane, its
+  original message keeps the hover highlight in the conversation, including on
+  touch-only devices. Switching threads moves the marker; hiding the pane or
+  closing the thread clears it. The original is also identified as current for
+  assistive technology.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,
@@ -1024,11 +1066,17 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
-- In communities where your build restricts workflows, workflow messages do
-  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
-  have one act on a workflow result, send it a direct request explaining what
-  to do with that result. Other communities still let a workflow you or your
-  agents created mention your agents.
+- On a Mac, agents and the commands plugins run get your login shell's PATH.
+  To pass on more of what your `~/.zprofile` or `~/.zshrc` exports, export
+  `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` there as a comma-separated list of
+  names, where `*` matches anything and a leading `!` excludes, such as
+  `export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS="AWS_PROFILE,TOOL_*,!*_SECRET"`.
+  Only commas separate names, so `"AWS_PROFILE TOOL_*"` is a single pattern.
+  An `!` pattern excludes a name wherever it appears in the list. Variables
+  starting with `BUZZ_` or `NOSTR_` are never passed on. Quit and reopen Buzz
+  after changing it. The list applies when Buzz is opened from the Dock or
+  Finder: started from a terminal, Buzz passes on that terminal's whole
+  environment instead. macOS 12.0 to 12.2 pass on only PATH.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -1096,6 +1144,11 @@ available rather than silently discarding it.
   that Builderlab server's site, where the account's usage and billing are.
   The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
   also links to **See usage and billing** on that site.
+- Remote agents use the Builderlab server of the community you're viewing when
+  your build signs in to more than one, such as a staging server; elsewhere they
+  use the build's own Builderlab. **Settings → Plugins → Builderlab** names
+  that server beside **Remote agents** when it isn't the build's own. Manage
+  such an agent from one of its server's communities.
 - Builderlab sign-in is needed to create or delete a hosted agent and to edit its
   model or instructions. Sign in to the same Builderlab account that created the
   agent; another account cannot manage it. Chat, Memory, and Activity use the
@@ -1400,13 +1453,23 @@ available rather than silently discarding it.
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.
+- Your agents can search messages (`search`) by words, person, channel or DM,
+  and date, and link each message they cite. They search with their own access:
+  channels they're in and open channels. They don't find messages in your
+  private channels or DMs unless they're members.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.
   A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
-  conversation's transcript. Working indicators describe current work,
+  conversation's transcript. **View activity** in an agent message's menu
+  opens that conversation's transcript at the reply, expanded, or at the
+  prompt it answered when the transcript does not record the reply. In the
+  menu of your own message, **View *agent*'s activity** opens at the prompt
+  that message began, for an agent it names or the agent in a one-to-one DM.
+  When it names several agents, **View activity** lists them. Either opens
+  once that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
   These wakes have no message link of their own.
@@ -1575,6 +1638,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   in. Scroll position isn’t kept, and reloading the window or turning the
   GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
+- Plugin sharing search groups people who have not been added under **Not yet
+  added**, or a heading chosen by the plugin. Its **Copy link** action appears
+  when the plugin supplies a link to the record.
+- In plugins that use Buzz's sharing controls, switching a record to **Private**
+  keeps existing members' access. The confirmation warns about people who joined
+  while it was open; remove them from the record to end their access.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person
@@ -1762,6 +1831,35 @@ When creating a workflow, direct-message choices use participant names when avai
 matches the displayed participant name. When no participant name is available, Buzz shows a short
 public-key prefix. A direct message with yourself is labeled **Notes to self**.
 These labels only help identify the conversation you select.
+
+## When your agent ignores a mention
+
+Your agents act only on messages from you, from your other agents, and from
+workflows that you or your agents own and that direct them. When your own
+workflow posts a message that mentions one of your agents on this computer but
+doesn’t direct it, a short note under the message says so. On a relay that uses
+owner-only agent mentions it reads: **“‹Agent› didn’t respond to this workflow
+message. This community limits which workflows can use agents, so other people
+can’t use yours. The workflow’s Runs tab shows why it didn’t respond this
+time.”** Elsewhere it reads: **“‹Agent› didn’t respond because this workflow
+message wasn’t set up to direct agents.”** Only you see it, on this device;
+nothing is posted.
+Other ignored mentions show no note.
+
+On a relay that uses owner-only agent mentions, the desktop workflow editor
+warns when a message step mentions an agent in the channel:
+
+Each warning ends with “This community limits which workflows can use agents,
+so other people can’t use yours.”
+
+- **“Agents you mention respond only when you start this workflow, not when
+  someone else does.”** The workflow starts on a message, reaction or diff.
+- **“Agents won’t respond to workflows started by a webhook.”** It starts on a
+  webhook, whatever its steps.
+- **“Agents won’t respond to this workflow because it has steps other than Send
+  Message and Delay.”** It has a step other than a message or a delay.
+
+A schedule with only message and delay steps shows no warning.
 
 ## Deleting an agent’s workflow
 

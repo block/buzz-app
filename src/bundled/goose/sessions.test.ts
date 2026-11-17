@@ -465,6 +465,79 @@ describe("AgentSessions", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it("keeps the running turn's thread for its results when another thread steers it", async () => {
+    const { fake, sessions } = setup({}, true);
+    const first = sessions.deliver("c", "first", 1, { activityScope: "A" });
+    await flush(30);
+    const other = sessions.deliver("c", "plain", 2, {
+      steer: "steer",
+      activityScope: "B",
+    });
+    await flush(30);
+    const same = sessions.deliver("c", "plain", 3, {
+      steer: "again",
+      activityScope: "A",
+    });
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["first"]);
+    expect(goose?.turns[0]?.steered).toEqual([
+      'steer\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.',
+      "again",
+    ]);
+    goose?.turns[0]?.finish();
+    await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
+    // The next turn on the same session names its own thread.
+    const next = sessions.deliver("c", "next", 4, { activityScope: "B" });
+    await vi.waitFor(() => expect(goose?.turns).toHaveLength(2));
+    const late = sessions.deliver("c", "plain", 5, {
+      steer: "late",
+      activityScope: "C",
+    });
+    await vi.waitFor(() =>
+      expect(goose?.turns[1]?.steered).toEqual([
+        'late\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+      ]),
+    );
+    goose?.turns[1]?.finish();
+    await expect(Promise.all([next, late])).resolves.toHaveLength(2);
+  });
+
+  it("runs another thread's steer unchanged when it becomes the next turn", async () => {
+    const held = gated("_goose/unstable/session/steer");
+    const { fake, sessions } = setup({}, true, { wrap: held.wrap });
+    const first = sessions.deliver("c", "first", 1, { activityScope: "A" });
+    await flush(30);
+    const other = sessions.deliver("c", "plain", 2, {
+      steer: "steer",
+      activityScope: "B",
+    });
+    await flush(30);
+    expect(held.waiting()).toEqual(["session-1"]);
+    // A's run ends before goose reads the steer, so goose refuses it.
+    const [goose] = fake.geese;
+    goose?.turns[0]?.finish();
+    await flush(30);
+    held.release();
+    await flush(30);
+    expect(goose?.turns[0]?.steered).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["first", "steer"]);
+    // Now a turn of its own, the steer is the work a later steer names.
+    const later = sessions.deliver("c", "plain", 3, {
+      steer: "later",
+      activityScope: "C",
+    });
+    await vi.waitFor(() => expect(held.waiting()).toEqual(["session-1"]));
+    held.release();
+    await vi.waitFor(() =>
+      expect(goose?.turns[1]?.steered).toEqual([
+        'later\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+      ]),
+    );
+    goose?.turns[1]?.finish();
+    await expect(Promise.all([first, other, later])).resolves.toHaveLength(3);
+  });
+
   it("runs a turn on the model its message asked for, and the next on the agent's", async () => {
     const { fake, sessions, choose } = setup();
     choose({ provider: "openai", model: "" });

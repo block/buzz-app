@@ -353,17 +353,22 @@ it("filters supported voices by locale without changing the saved voice", async 
   expect(locale).toHaveTextContent("British English");
   expect(screen.getByRole("radio", { name: "Vale" })).toBeChecked();
   expect(screen.queryByRole("radio", { name: "Cove" })).toBeNull();
-  await user.click(locale);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  locale.focus();
+  await user.keyboard("{ArrowDown}");
   expect(screen.queryByRole("option", { name: "French" })).toBeNull();
-  await user.click(screen.getByRole("option", { name: "Hindi" }));
+  await user.click(await screen.findByRole("option", { name: "Hindi" }));
   expect(screen.getByRole("radio", { name: "Neer" })).toBeEnabled();
   expect(screen.queryByRole("radio", { name: "Vale" })).toBeNull();
   expect(onChange).not.toHaveBeenCalled();
-  locale.focus();
+  await waitFor(() => expect(locale).toHaveFocus());
   await user.keyboard("{ArrowDown}");
   await user.click(await screen.findByRole("option", { name: "Other voices" }));
   expect(screen.getByRole("radio", { name: "New" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
   await user.click(trigger);
   expect(locale).not.toBeInTheDocument();
   expect(

@@ -1,5 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
+import { inEditable } from "../features/shortcuts/bindings";
+import type { ComposerInputElement } from "../features/messages/composer-dom";
 import type {
   BindingOverrides,
   ShortcutsService,
@@ -368,6 +370,22 @@ export function registerNavigationShortcuts(
   shortcuts: ShortcutsService,
   navigation: import("../features/navigation/controller").Navigation,
 ) {
+  const apple = isApplePlatform(navigator.platform);
+  const canNavigate = (event?: KeyboardEvent) => {
+    if (
+      !event ||
+      !apple ||
+      !event.metaKey ||
+      !["ArrowLeft", "ArrowRight"].includes(event.key) ||
+      !inEditable(event)
+    )
+      return true;
+    // Command arrows keep their editing meaning except in an empty composer.
+    return event.composedPath().some((target) => {
+      const input = target as ComposerInputElement;
+      return input.matches?.("[data-composer-input]") && input.value === "";
+    });
+  };
   const remove = [
     shortcuts.registerHost({
       id: "home",
@@ -395,21 +413,31 @@ export function registerNavigationShortcuts(
       id: "navigation-back",
       title: "Go back",
       order: HOST_SHORTCUT_ORDER.navigationBack,
-      binding: { key: "[", mod: true },
+      binding: apple
+        ? [
+            { key: "[", mod: true },
+            { key: "ArrowLeft", mod: true },
+          ]
+        : { key: "[", mod: true },
       allowInEditable: true,
       // Back closes a dialog that is its own visit.
       allowInVisit: true,
-      when: () => navigation.snapshot().canGoBack,
+      when: (event) => navigation.snapshot().canGoBack && canNavigate(event),
       run: navigation.back,
     }),
     shortcuts.registerHost({
       id: "navigation-forward",
       title: "Go forward",
       order: HOST_SHORTCUT_ORDER.navigationForward,
-      binding: { key: "]", mod: true },
+      binding: apple
+        ? [
+            { key: "]", mod: true },
+            { key: "ArrowRight", mod: true },
+          ]
+        : { key: "]", mod: true },
       allowInEditable: true,
       allowInVisit: true,
-      when: () => navigation.snapshot().canGoForward,
+      when: (event) => navigation.snapshot().canGoForward && canNavigate(event),
       run: navigation.forward,
     }),
   ];

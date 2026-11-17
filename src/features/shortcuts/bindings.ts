@@ -13,8 +13,8 @@ export type Shortcut = Readonly<{
   title: string;
   binding: KeyBinding | readonly KeyBinding[];
   run: () => void | Promise<void>;
-  /** Read current state; false makes this registration ineligible. */
-  when?: () => boolean;
+  /** Read current state; non-keyboard host requests omit the event. */
+  when?: (event?: KeyboardEvent) => boolean;
   allowInEditable?: boolean;
   allowInModal?: boolean;
   /** Also run when the topmost modal is its own navigation visit (Settings, Members). */

@@ -62,6 +62,9 @@ if that desktop app is up and running.
   more of the same.
 - **Search**: the top bar (⌘K or ⌘T; Ctrl elsewhere). ⌘F searches the current
   conversation. ⌘/ lists shortcuts.
+- **History shortcuts.** On macOS, ⌘← and ⌘→ go back and forward when the
+  message composer is empty. With text, they move to the start or end of the
+  line. ⌘[ and ⌘] work either way.
 - **Settings** (⌘,, or **Buzz → Settings…** in the Mac app; Ctrl+, elsewhere)
   groups:
   - **Community**: **Profile**, **Local settings** (community address,

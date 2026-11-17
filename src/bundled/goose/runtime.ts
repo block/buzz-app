@@ -554,7 +554,11 @@ export class GooseRuntime {
         text: resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
       };
     };
-    const { key, text: prepared, place, shown, dm } = await prompt(false);
+    const prepared =
+      this.settings(raw).scope === "community"
+        ? undefined
+        : await prompt(false);
+    const key = prepared?.key ?? COMMUNITY_SESSION;
     await rememberCommunitySource(this.agentStore, agent.key, key, channel);
     signal.throwIfAborted();
     let noteRoot: string | undefined;
@@ -589,6 +593,8 @@ export class GooseRuntime {
         }
         entry.handle = agent;
         entry.team = team ?? "";
+        const turn = prepared ?? (await prompt(false, key, valid));
+        const { place, shown, dm } = turn;
         // Plugins' notes wait until the turn is handed over, so one that
         // fails or is cancelled before then leaves them for the next.
         noteRoot =
@@ -598,7 +604,7 @@ export class GooseRuntime {
         notes = agent.notes?.(channel, noteRoot) ?? [];
         const text = this.review(
           entry,
-          wait ? (await prompt(false, key, valid)).text : prepared,
+          wait && prepared ? (await prompt(false, key, valid)).text : turn.text,
           notes,
           channel,
           noteRoot,

@@ -2909,7 +2909,7 @@ it("retains the Solo Canvas when a stopped admitted source finishes preparation"
     let reads = 0;
     const started = vi.fn();
     f.session.canvas.read.mockImplementation((...args) => {
-      if (++reads === 2)
+      if (++reads === 1)
         return new Promise((resolve) => {
           started();
           release = () => resolve(null);
@@ -2995,6 +2995,27 @@ it("keeps addressed community admission ahead of a later wake during compaction"
     vi.useRealTimers();
     f.runtime.dispose();
     await wake;
+  }
+});
+
+it("prepares an idle community wake only for handoff and native refresh", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  const wakeText = vi.fn(async () => "CURRENT_INTEREST");
+  try {
+    const workingUntil = vi.fn<Delivery["workingUntil"]>();
+    await f.deliver(message("1", "first"), { workingUntil });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    f.goose()?.turns[0]?.finish();
+    await workingUntil.mock.calls.at(-1)?.[0];
+    await f.run({ ...pluginWake(), topLevel: true }, {
+      wakeText,
+    } as unknown as Partial<Delivery>);
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(2));
+    expect(f.goose()?.turns[1]?.text).toContain("CURRENT_INTEREST");
+    expect(wakeText).toHaveBeenCalledTimes(2);
+    f.goose()?.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
   }
 });
 

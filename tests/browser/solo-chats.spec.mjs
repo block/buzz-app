@@ -224,7 +224,7 @@ test.describe("Berd-style Solo project organization", () => {
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
 
-    await sidebar.getByText("Alpha", { exact: true }).click();
+    await row.click();
     await expect(
       page.getByRole("button", { name: "Workspace: Work", exact: true }),
     ).toBeVisible();
@@ -271,7 +271,7 @@ test.describe("Berd-style Solo project organization", () => {
     await page.keyboard.insertText("Keep this follow-up draft");
     await beta.click();
     await expect(composer).not.toContainText("Keep this follow-up draft");
-    await sidebar.getByText("Alpha", { exact: true }).click();
+    await row.click();
     await expect(composer).toContainText("Keep this follow-up draft");
     await expect(tag).toBeVisible();
     await page.reload();

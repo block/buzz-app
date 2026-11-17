@@ -4088,6 +4088,7 @@ export class AgentsService extends Service implements Agents {
     const confirmed = editor && "synced" in editor ? editor.synced : undefined;
     const side = this.configBinding(identity).instructions;
     const synced = !!side && isSynced(this.configStore, side);
+    const head = synced ? this.configStore.state(side.subject).head : undefined;
     let execution: AgentModelSettingsContext["execution"] = "local";
     if (kind?.execution) {
       try {
@@ -4115,7 +4116,6 @@ export class AgentsService extends Service implements Agents {
     // empty ones.
     if (synced && editor?.problem)
       return { ...base, unavailable: editor.problem };
-    const head = synced ? this.configStore.state(side.subject).head : undefined;
     return {
       ...base,
       instructions: kind?.adopt

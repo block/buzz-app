@@ -49,7 +49,7 @@ export function createChannelWrites(
   agents?: {
     selectable: () => readonly string[];
     archived: (pubkey: string) => boolean;
-    profiles?: Pick<ProfileQueries, "ensure" | "event">;
+    profiles?: Pick<ProfileQueries, "event">;
     viewer?: string;
   },
   relayAuthor?: string,
@@ -488,7 +488,6 @@ export function createChannelWrites(
       unique.some((key) => !original.members?.includes(key) && !known.has(key))
     )
       throw new Error("Choose an agent from your agent library.");
-    let profilesReady: Promise<void> | undefined;
     // Additions are published and acknowledged in turn; the roster is then
     // confirmed with one exact read rather than a gate after every command.
     const added: string[] = [];
@@ -531,9 +530,7 @@ export function createChannelWrites(
         !previous &&
         original.viewerRole === "owner"
       ) {
-        profilesReady ??= agents?.profiles?.ensure(unique);
-        await profilesReady;
-        owned = await soloAgentOwnership(agents?.profiles, agents?.viewer, key);
+        owned = await freshOwnership(key);
       }
       const roleTags =
         original.channelType === "solo"
@@ -564,6 +561,26 @@ export function createChannelWrites(
     if (original?.channelType === "solo")
       await refresh(id, { members: unique });
   }
+  /** Cached discovery is not evidence for a new automatic Admin grant. */
+  async function freshOwnership(key: string) {
+    const events = await discovery.read(
+      [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
+      { signal, fresh: true, priority: "foreground" },
+    );
+    const owned = await soloAgentOwnership(
+      agents?.profiles,
+      agents?.viewer,
+      key,
+    );
+    return () =>
+      owned() &&
+      events.some(
+        (event) =>
+          event.kind === 0 &&
+          event.pubkey === key &&
+          event.id === agents?.profiles?.event?.(key)?.id,
+      );
+  }
   /** Solo chats this device is starting, until they can take events. */
   const starts = new Map<string, Promise<void>>();
   const adminSetups = new Map<string, Promise<void>>();
@@ -589,7 +606,6 @@ export function createChannelWrites(
           "Chat admin setup was abandoned. Send a new message to continue.",
         );
       const recovery = saved.recovery;
-      let profilesReady: Promise<void> | undefined;
       await promoteSoloAdmins(
         saved,
         {
@@ -603,11 +619,7 @@ export function createChannelWrites(
         discovery,
         relayAuthor,
         signal,
-        async (key, targets) => {
-          profilesReady ??= agents?.profiles?.ensure(targets);
-          await profilesReady;
-          return soloAgentOwnership(agents?.profiles, agents?.viewer, key);
-        },
+        freshOwnership,
       );
       signal.throwIfAborted();
       await finishRecovery(saved.event.id, recovery);

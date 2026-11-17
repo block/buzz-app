@@ -25,6 +25,7 @@ function setup(
   let denied = false;
   let foreignRoster = false;
   let libraryFailure = false;
+  let profileResponse: "missing" | "unavailable" | undefined;
   let afterPublish = () => {};
   let omitMembership = false;
   const archived: string[] = [];
@@ -111,6 +112,11 @@ function setup(
       },
       query: async (filters) => {
         if (
+          profileResponse === "unavailable" &&
+          filters.some((filter) => filter.kinds?.includes(0))
+        )
+          throw new Error("Profile read unavailable");
+        if (
           holdRoster &&
           filters.some(
             (filter) =>
@@ -130,8 +136,9 @@ function setup(
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),
           ];
         const events = [
-          eventDto(await agentProfile),
-          eventDto(await secondProfile),
+          ...(profileResponse === "missing"
+            ? []
+            : [eventDto(await agentProfile), eventDto(await secondProfile)]),
           signed(relay, {
             kind: 13535,
             created_at: clock,
@@ -160,7 +167,7 @@ function setup(
     child,
     agent: agent.pubkey,
     secondAgent,
-    async transferAgent() {
+    async transferAgent(receive = true) {
       const profile = await ownedProfile(agent, other);
       agentProfile = Promise.resolve(
         signed(agent, {
@@ -170,6 +177,7 @@ function setup(
           created_at: clock + 10,
         }),
       );
+      if (!receive) return;
       await owner.session.read(
         [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
         { fresh: true },
@@ -189,6 +197,9 @@ function setup(
     },
     failLibraryRefresh: () => {
       libraryFailure = true;
+    },
+    profileResponse: (response: "missing" | "unavailable") => {
+      profileResponse = response;
     },
     afterPublish: (callback: () => void) => {
       afterPublish = callback;
@@ -252,6 +263,55 @@ it.each(["other", "missing"] as const)(
         "role",
         "bot",
       ]);
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+
+it("refreshes cached ownership before choosing a new Solo agent's role", async () => {
+  const test = setup("private", "owner");
+  try {
+    await test.ready();
+    await test.owner.session.profiles.ensure([test.agent]);
+    const cached = test.owner.session.profiles.event?.(test.agent);
+    expect(cached).toBeDefined();
+    await test.transferAgent(false);
+    expect(test.owner.session.profiles.event?.(test.agent)).toBe(cached);
+    await test.owner.session.channelWrites.addAgents(test.child, [test.agent]);
+    expect(test.publish).toHaveBeenCalledOnce();
+    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+      "role",
+      "bot",
+    ]);
+    expect(test.owner.session.profiles.event?.(test.agent)).not.toBe(cached);
+  } finally {
+    test.owner.dispose();
+  }
+});
+
+it.each(["missing", "unavailable"] as const)(
+  "does not use cached ownership for a later addition when the profile read is %s",
+  async (response) => {
+    const test = setup("private", "owner");
+    try {
+      await test.ready();
+      await test.owner.session.profiles.ensure([test.agent]);
+      test.profileResponse(response);
+      const adding = test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      if (response === "unavailable") {
+        await expect(adding).rejects.toThrow("Profile read unavailable");
+        expect(test.publish).not.toHaveBeenCalled();
+      } else {
+        await adding;
+        expect(test.publish).toHaveBeenCalledOnce();
+        expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+          "role",
+          "bot",
+        ]);
+      }
     } finally {
       test.owner.dispose();
     }
@@ -409,7 +469,10 @@ it.each([
       ).not.toContain(test.agent);
       const first = test.publish.mock.calls[0]?.[0];
       expect(first?.tags).toContainEqual(["role", addedRole]);
-      if ("transferred" in options) await test.transferAgent();
+      if ("transferred" in options) {
+        await test.transferAgent();
+        test.profileResponse("unavailable");
+      }
       test.setViewerRole(retryRole);
       test.setDenied(false);
       await test.owner.session.channelWrites.addAgents(test.child, [

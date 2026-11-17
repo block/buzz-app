@@ -27,6 +27,8 @@ function setup() {
   );
   let beforeLock = async () => {};
   const profileOverrides = new Map<string, RelayEvent>();
+  let omitProfiles = false;
+  let failProfiles = false;
   let journal: readonly OutgoingEvent[] = [];
   const events = new Map<string, RelayEvent>();
   const roles = new Map<string, string>();
@@ -54,6 +56,8 @@ function setup() {
     channelIdentity: true as const,
     media: () => undefined,
     query: async (filters: readonly ReadFilter[]) => {
+      if (failProfiles && filters.some((filter) => filter.kinds?.includes(0)))
+        throw new Error("Profile read unavailable");
       const roster = signed(relay, {
         kind: 39002,
         content: "",
@@ -63,7 +67,7 @@ function setup() {
         ],
       });
       return [
-        ...(await profiles).map((profile) =>
+        ...(omitProfiles ? [] : await profiles).map((profile) =>
           eventDto(profileOverrides.get(profile.pubkey) ?? profile),
         ),
         ...events.values(),
@@ -140,6 +144,7 @@ function setup() {
     async transferAgent(
       owner: Awaited<ReturnType<typeof open>>,
       index: number,
+      receive = true,
     ) {
       const agent = agentKeys[index];
       assert.exists(agent);
@@ -153,11 +158,18 @@ function setup() {
         created_at: previous.created_at + 1,
       });
       profileOverrides.set(agent.pubkey, changed);
+      if (!receive) return;
       await owner.session.read(
         [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
         { fresh: true },
       );
       expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(changed.id);
+    },
+    omitProfiles: () => {
+      omitProfiles = true;
+    },
+    failProfiles: () => {
+      failProfiles = true;
     },
     beforeLock: (run: () => Promise<void>) => {
       beforeLock = run;
@@ -367,6 +379,37 @@ it("abandons expired setup while signing is held without granting or releasing i
     clock.mockRestore();
   }
 });
+
+it.each(["transferred", "missing", "unavailable"] as const)(
+  "refreshes cached ownership before opening grants when the relay profile is %s",
+  async (change) => {
+    const h = setup();
+    const owner = await h.open();
+    await owner.session.profiles.ensure(h.agents);
+    const cached = owner.session.profiles.event?.(h.agents[0]);
+    assert.exists(cached);
+    if (change === "transferred") await h.transferAgent(owner, 0, false);
+    else if (change === "missing") h.omitProfiles();
+    else h.failProfiles();
+    expect(owner.session.profiles.event?.(h.agents[0])).toBe(cached);
+    const { creation, message } = h.start(owner);
+    await creation.ready;
+    await expect(
+      owner.session.channelWrites.prepareOpening(h.channel),
+    ).rejects.toThrow(
+      change === "unavailable"
+        ? "Profile read unavailable"
+        : "not verified as owned",
+    );
+    expect(h.adminPublish).not.toHaveBeenCalled();
+    expect(h.events.has(message)).toBe(false);
+    expect(
+      owner.session.outbox
+        ?.snapshot()
+        .some((item) => item.recovery?.key === soloAdminKey(h.channel)),
+    ).toBe(true);
+  },
+);
 
 it("checks the current profile inside the shared publication lock after signing", async () => {
   const h = setup();

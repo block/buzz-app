@@ -402,8 +402,8 @@ export class GooseRuntime {
     const control = `${agent.key}/${key}`;
     const entry = this.entry(agent.key, this.settings(agent.config));
     if (action === "interrupt") {
+      if (!this.controls.compacting(control)) entry.policies.get(key)?.cancel();
       this.controls.interrupt(control);
-      entry.policies.get(key)?.cancel();
       await entry.sessions.interrupt(key);
       return;
     }
@@ -711,11 +711,9 @@ export class GooseRuntime {
     if (!wait && !handoff.deferred && !admittedDeferred) await handed;
     workingUntil(done);
     interruptible?.(() => {
-      if (key === COMMUNITY_SESSION) interrupted = true;
-      else policy.cancel();
-      return key !== COMMUNITY_SESSION || submitted
-        ? entry.sessions.interrupt(key)
-        : Promise.resolve();
+      interrupted = true;
+      if (submitted && key !== COMMUNITY_SESSION) policy.cancel();
+      return submitted ? entry.sessions.interrupt(key) : Promise.resolve();
     });
     this.notify();
     void done

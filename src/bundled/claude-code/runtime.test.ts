@@ -5120,3 +5120,103 @@ it("reaps an unresponsive Claude community wake after its deadline", async () =>
     f.runtime.dispose();
   }
 });
+
+it.each(["thread", "channel"] as const)(
+  "keeps queued Claude work separate from compaction cancellation (%s)",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver({ type: "mention", event: root }, { config });
+      await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+      const worker = f.claudes()[0];
+      if (!worker) throw new Error("Expected harness process");
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+      const reply = message("2", "queued after cancelled compaction", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: reply },
+        { config, workingUntil: (done) => held.push(done) },
+      );
+      await f.runtime.session(agent, place, "interrupt");
+      worker.finish();
+      await compacted;
+      await vi.waitFor(() =>
+        expect(worker.prompts[2]).toContain(
+          "queued after cancelled compaction",
+        ),
+      );
+      worker.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["thread", "channel"] as const)(
+  "stops only queued Claude work while compaction owns the harness (%s)",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    try {
+      await f.deliver({ type: "mention", event: root }, { config });
+      await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+      const worker = f.claudes()[0];
+      if (!worker) throw new Error("Expected harness process");
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+      const reply = message("2", "stopped queued input", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: reply },
+        { config, interruptible, workingUntil: (done) => held.push(done) },
+      );
+      await vi.waitFor(() => expect(interruptible).toHaveBeenCalledOnce());
+      await interruptible.mock.calls[0]?.[0]();
+      expect(
+        worker.received.filter(
+          (item) =>
+            item.type === "control_request" &&
+            (item.request as { subtype?: string }).subtype === "interrupt",
+        ),
+      ).toHaveLength(0);
+      worker.finish();
+      expect(await compacted).toBeUndefined();
+      await Promise.all(held);
+      expect(worker.prompts).toHaveLength(2);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

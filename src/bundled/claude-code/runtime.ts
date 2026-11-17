@@ -942,8 +942,8 @@ export class ClaudeRuntime {
       this.target ? this.resolveConfig(agent.config) : config(agent.config),
     );
     if (action === "interrupt") {
+      if (!this.controls.compacting(control)) entry.policies.get(key)?.cancel();
       this.controls.interrupt(control);
-      entry.policies.get(key)?.cancel();
       await entry.sessions.interrupt(key);
       return;
     }
@@ -1339,9 +1339,7 @@ export class ClaudeRuntime {
     workingUntil(done);
     interruptible?.(() => {
       interrupted = true;
-      return key !== COMMUNITY_SESSION || submitted
-        ? entry.sessions.interrupt(key)
-        : Promise.resolve();
+      return submitted ? entry.sessions.interrupt(key) : Promise.resolve();
     });
     this.notify();
     this.watch(done, async (error) => {

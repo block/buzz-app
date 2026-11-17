@@ -3402,3 +3402,98 @@ it("reaps an unresponsive Goose community wake after its deadline", async () => 
     f.runtime.dispose();
   }
 });
+
+it.each(["thread", "channel"] as const)(
+  "keeps queued Goose work separate from compaction cancellation (%s)",
+  async (scope) => {
+    const f = setup({ hold: true, scope, reply: "Compaction complete" });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver(root, { config });
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const worker = f.goose();
+      if (!worker) throw new Error("Expected harness process");
+      worker.turns[0]?.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.turns[1]?.text).toBe("/compact"));
+      const reply = message("2", "queued after cancelled compaction", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(reply, {
+        config,
+        workingUntil: (done) => held.push(done),
+      });
+      await f.runtime.session(agent, place, "interrupt");
+      worker.turns[1]?.finish();
+      await compacted;
+      await vi.waitFor(() =>
+        expect(worker.turns[2]?.text).toContain(
+          "queued after cancelled compaction",
+        ),
+      );
+      worker.turns[2]?.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["thread", "channel"] as const)(
+  "stops only queued Goose work while compaction owns the harness (%s)",
+  async (scope) => {
+    const f = setup({ hold: true, scope, reply: "Compaction complete" });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    try {
+      await f.deliver(root, { config });
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const worker = f.goose();
+      if (!worker) throw new Error("Expected harness process");
+      worker.turns[0]?.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.turns[1]?.text).toBe("/compact"));
+      const reply = message("2", "stopped queued input", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(reply, {
+        config,
+        interruptible,
+        workingUntil: (done) => held.push(done),
+      });
+      await vi.waitFor(() => expect(interruptible).toHaveBeenCalledOnce());
+      await interruptible.mock.calls[0]?.[0]();
+      expect(worker.cancelled).toHaveLength(0);
+      worker.turns[1]?.finish();
+      expect(await compacted).toBeUndefined();
+      await Promise.all(held);
+      expect(worker.turns).toHaveLength(2);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

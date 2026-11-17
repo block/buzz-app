@@ -7,6 +7,7 @@ const title = "Release planning and follow-up for the next workspace review";
 const titleSelector = "[data-solo-chat-title] > [aria-hidden]";
 
 test.use({
+  reducedMotion: "no-preference",
   pluginFixtures: true,
   productionBroker: true,
   channelIds: [chat, other],
@@ -41,10 +42,15 @@ test("Solo rename animates both titles without interrupting typing or overflowin
     Element.prototype.animate = function (...args) {
       const animation = animate.apply(this, args);
       if (this.closest("[data-solo-chat-title]")) {
-        animation.pause();
-        const animations = window.titleAnimations.get(this) ?? [];
-        animations.push(animation);
-        window.titleAnimations.set(this, animations);
+        // Motion sets startTime after animate() returns, which resumes a
+        // synchronous pause. Hold the track after Motion has initialized it.
+        queueMicrotask(() => {
+          animation.pause();
+          animation.currentTime = 0;
+          const animations = window.titleAnimations.get(this) ?? [];
+          animations.push(animation);
+          window.titleAnimations.set(this, animations);
+        });
       }
       return animation;
     };
@@ -72,16 +78,23 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       titles.evaluateAll((nodes) =>
         nodes.map((node) => {
           const tracks = window.titleAnimations.get(node) ?? [];
-          return Object.assign(
-            {},
-            ...tracks.map(({ effect }) => effect.getKeyframes().at(-1)),
-          );
+          return {
+            ...Object.assign(
+              {},
+              ...tracks.map(({ effect }) => effect.getKeyframes().at(-1)),
+            ),
+            held: tracks.every(
+              (track) =>
+                track.playState === "paused" && track.currentTime === 0,
+            ),
+          };
         }),
       ),
     )
     .toEqual(
       Array(2).fill(
         expect.objectContaining({
+          held: true,
           opacity: "0",
           filter: "blur(3px)",
           transform: expect.stringMatching(/^translateX\(-/),
@@ -105,9 +118,11 @@ test("Solo rename animates both titles without interrupting typing or overflowin
           const delays = [...node.children].map(
             (character) =>
               (window.titleAnimations.get(character) ?? [])
-                .find(({ effect }) => {
-                  const frames = effect.getKeyframes();
+                .find((track) => {
+                  const frames = track.effect.getKeyframes();
                   return (
+                    track.playState === "paused" &&
+                    track.currentTime === 0 &&
                     frames[0]?.filter === "blur(3px)" &&
                     frames.at(-1)?.filter === "blur(0px)"
                   );

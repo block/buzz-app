@@ -4080,7 +4080,7 @@ export class AgentsService extends Service implements Agents {
       return { unavailable: "No such agent on this device" };
     return (await this.agentReadout(identity)).modelSettings;
   }
-  private async agentReadout(identity: AgentIdentity): Promise<AgentReadout> {
+  private async agentReadout(identity: Member): Promise<AgentReadout> {
     const kind = this.types().find((type) => type.key === identity.type);
     const saved = this.settingsOf(identity);
     const editor = this.editorConfig(identity, saved.config as object);

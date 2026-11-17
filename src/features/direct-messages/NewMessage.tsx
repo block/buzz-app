@@ -338,10 +338,11 @@ export function NewMessage({
   // it, so returning to a visit (Back, reload, closing Settings) keeps the
   // recipients chosen since, and choosing someone again addresses it anew. A
   // message held for delivery, even a failed one, keeps its recipients, so a
-  // retry never reaches someone new.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Each choice addresses the draft once, after its restore.
+  // retry never reaches someone new. A choice made while a send is under way
+  // waits for it, so the send keeps its recipients and the choice is not lost.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Each choice addresses the draft once, after its restore and any send under way.
   useEffect(() => {
-    if (!ready || !intent) return;
+    if (!ready || !intent || busy) return;
     const taken = readView<unknown>(scope, "direct-message:addressed-at", 0);
     if (typeof taken === "number" && intent.at <= taken) return;
     writeView(scope, "direct-message:addressed-at", intent.at);
@@ -356,7 +357,7 @@ export function NewMessage({
         ...(profile?.isAgent ? { isAgent: true } : {}),
       },
     ]);
-  }, [ready, intent?.to, intent?.at]);
+  }, [ready, busy, intent?.to, intent?.at]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (

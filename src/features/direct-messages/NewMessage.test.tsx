@@ -243,31 +243,38 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
-  const mount = (visit?: PageNavigation, to?: string, at = Date.now()) =>
-    render(
-      <NewMessage
-        intent={to ? { to, at } : undefined}
-        channels={channels.channels}
-        host={
-          {
-            panels: {
-              snapshot: () => emptyPanels,
-              subscribe: () => () => {},
-              resolve: () => undefined,
-            },
-            relay: {
-              snapshot: () => ({ status: "ready", session: session, scope }),
-            },
-            navigation: { open: vi.fn() },
-          } as unknown as ConversationHostServices
-        }
-        session={session}
-        scope={scope}
-        visit={visit}
-        onOpenThread={onOpenThread}
-        onStarted={onStarted}
-      />,
-    );
+  const page = (visit?: PageNavigation, to?: string, at = Date.now()) => (
+    <NewMessage
+      intent={to ? { to, at } : undefined}
+      channels={channels.channels}
+      host={
+        {
+          panels: {
+            snapshot: () => emptyPanels,
+            subscribe: () => () => {},
+            resolve: () => undefined,
+          },
+          relay: {
+            snapshot: () => ({ status: "ready", session: session, scope }),
+          },
+          navigation: { open: vi.fn() },
+        } as unknown as ConversationHostServices
+      }
+      session={session}
+      scope={scope}
+      visit={visit}
+      onOpenThread={onOpenThread}
+      onStarted={onStarted}
+    />
+  );
+  const mount = (visit?: PageNavigation, to?: string, at?: number) => {
+    const view = render(page(visit, to, at));
+    return {
+      ...view,
+      readdress: (next: string, nextAt: number) =>
+        view.rerender(page(visit, next, nextAt)),
+    };
+  };
   return {
     session,
     profiles,
@@ -1106,6 +1113,39 @@ it("keeps a failed message's recipients when opened from another person", async 
   ).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Remove Person 3" }),
+  ).not.toBeInTheDocument();
+});
+
+it("holds a choice made during a send until the send settles, keeping the send's recipients", async () => {
+  const t = setup();
+  let fail: (reason: Error) => void = () => {};
+  t.directMessages.open.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+  );
+  const view = t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Mid-send");
+  await t.user.click(send());
+  const third = people[2];
+  if (!third) throw new Error("No people");
+  t.profiles.set(third.pubkey, { name: third.name });
+  view.readdress(third.pubkey, Date.now() + 1);
+  expect(
+    screen.getByRole("button", { name: "Remove Person 1" }),
+  ).toBeInTheDocument();
+  expect(t.directMessages.open).toHaveBeenCalledExactlyOnceWith(
+    [people[0]?.pubkey],
+    expect.any(AbortSignal),
+  );
+  await act(async () => fail(new Error("Could not open")));
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 3" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 1" }),
   ).not.toBeInTheDocument();
 });
 

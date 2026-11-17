@@ -422,8 +422,10 @@ and are asked to sign in again in Buzz.
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Every agent addressed in the opening message
   becomes a chat admin before that message is delivered; you remain owner.
-  Agents included only through workspace defaults, or added later, keep ordinary
-  participation. If admin setup is interrupted, Retry on the opening message
+  Agents you add later to a Solo chat you own also join as admins, whether from
+  the composer or Chat access. Agents included only through workspace defaults
+  keep ordinary participation, and existing members keep their saved roles.
+  If admin setup is interrupted, Retry on the opening message
   continues it without restoring later demotions or removals. If setup expires,
   start a new chat. Solo conversations continue at the chat's top
   level rather than requiring a new thread for each reply. Where available, use

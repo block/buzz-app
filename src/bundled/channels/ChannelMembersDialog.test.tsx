@@ -199,6 +199,20 @@ async function setup(
     profile(viewer, { name: "Carl" }),
     personProfile,
   ];
+  const currentRoster = () =>
+    type === "solo"
+      ? signed(relay, {
+          kind: 39002,
+          created_at: clock,
+          content: "",
+          tags: [
+            ["d", id],
+            ...members.map((key) =>
+              key === viewer.pubkey ? ["p", key, "", "owner"] : ["p", key],
+            ),
+          ],
+        })
+      : roster(relay, id, members, clock);
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
     if (filters.some((filter) => filter.search)) {
       if (searchFailure) throw new Error("Search offline");
@@ -225,8 +239,8 @@ async function setup(
       await options.pendingMemberNames;
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
-    return [roster(relay, id, members, clock), ...stableEvents].filter(
-      (event) => filters.some((filter) => matchesEvent(event, filter)),
+    return [currentRoster(), ...stableEvents].filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
     );
   });
   const readAgentLibrary = vi.fn(
@@ -320,7 +334,8 @@ async function setup(
     viewer,
     replaceRoster: (keys: string[]) => {
       members.splice(0, members.length, ...keys);
-      live?.receive([roster(relay, id, members, ++clock)]);
+      clock++;
+      live?.receive([currentRoster()]);
     },
     delayRoster: () => {
       applyAddition = false;
@@ -3024,7 +3039,7 @@ it("lets the Solo owner add an agent without sending a message", async () => {
   ).toEqual([
     ["h", "11111111-1111-4111-8111-111111111111"],
     ["p", t.agent.pubkey],
-    ["role", "bot"],
+    ["role", "admin"],
   ]);
   await t.user.click(screen.getByRole("button", { name: "Close" }));
   await t.user.click(t.trigger);
@@ -3256,7 +3271,7 @@ it.each([false, true])(
 );
 
 it.each(["private", "public"] as const)(
-  "adds the Solo owner's agent as Bot in a %s chat with a Guest default",
+  "adds the Solo owner's agent as Admin in a %s chat with a Guest default",
   async (visibility) => {
     const t = await setup("solo", false, true, undefined, undefined, {
       visibility,
@@ -3268,7 +3283,7 @@ it.each(["private", "public"] as const)(
     );
     await screen.findByText("Fixture agent added.");
     expect(t.publish).toHaveBeenCalledOnce();
-    expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "bot"]);
+    expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "admin"]);
   },
 );
 

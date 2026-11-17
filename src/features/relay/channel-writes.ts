@@ -462,8 +462,12 @@ export function createChannelWrites(
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);
-    // Solo agents must be able to reply even with a saved Guest admission default.
-    const roleTags = original.channelType === "solo" ? [["role", "bot"]] : [];
+    // Owners' new Solo agents get Admin; other Solo additions can still reply
+    // even with a saved Guest admission default. Existing members are untouched.
+    const roleTags =
+      original.channelType === "solo"
+        ? [["role", original.viewerRole === "owner" ? "admin" : "bot"]]
+        : [];
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const unique = [...new Set(keys)].filter(
@@ -511,7 +515,10 @@ export function createChannelWrites(
             ([name, value]) => name === "p" && value === key,
           ) &&
           roles.length === roleTags.length &&
-          roles.every((tag) => tag.length === 2 && tag[1] === "bot")
+          // Recovery finishes the saved grant even if the viewer's role changed.
+          roles.every(
+            (tag) => tag.length === 2 && ["bot", "admin"].includes(tag[1]),
+          )
         );
       });
       if (previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60)

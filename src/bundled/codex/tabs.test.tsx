@@ -870,6 +870,13 @@ it("reads current defaults and mixed overrides through the provider resolver wit
       resolved: { value: "low", source: "provider" },
     },
   });
+  expect(
+    read({ ...defaults, model: "model-a", effort: "high" }).effort,
+  ).toEqual({
+    source: "configured",
+    value: "high",
+    resolved: { value: "high", source: "configured" },
+  });
   const calls = f.spawn.mock.calls.length;
   expect(
     f.provider.readModelSettings(defaults, { execution: "remote" }).model,
@@ -892,6 +899,7 @@ it("reads a changed provider catalog default and reports a failed source honestl
     spawn(id, {
       ...options,
       onStdout: (data) => {
+        if (id === "codex") return options?.onStdout?.(data);
         const wire = JSON.parse(data);
         if (Array.isArray(wire.result?.data))
           for (const row of wire.result.data)

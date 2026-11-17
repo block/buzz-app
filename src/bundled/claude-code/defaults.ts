@@ -88,19 +88,22 @@ export class ClaudeDefaults {
             ? "not-loaded"
             : undefined;
     const settings = this.resolve(raw);
-    const resolve = (field: "model" | "effort"): AgentModelResolution =>
-      unavailable
+    const resolve = (field: "model" | "effort"): AgentModelResolution => {
+      const value = field === "model" ? settings.model.trim() : settings.effort;
+      const explicit = field === "model" ? saved.model.trim() : saved.effort;
+      return unavailable
         ? { unavailable }
-        : settings[field]
+        : value
           ? {
-              value: settings[field],
-              source: saved[field]
+              value,
+              source: explicit
                 ? "configured"
                 : candidate
                   ? "recommended"
                   : "device",
             }
           : { unavailable: "unknown" };
+    };
     return readModelSettings(saved, {
       recommended,
       resolved: { model: resolve("model"), effort: resolve("effort") },

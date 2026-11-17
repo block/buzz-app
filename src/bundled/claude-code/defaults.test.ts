@@ -51,6 +51,11 @@ it("reads changed device defaults, mixed overrides and unknown native settings w
     effort: { source: "default", resolved: { unavailable: "unknown" } },
   });
   expect(saved).toEqual({ model: "", effort: "", workspace: "/project" });
+  expect(defaults.readModelSettings({ model: "  opus  " }).model).toEqual({
+    source: "configured",
+    value: "  opus  ",
+    resolved: { value: "opus", source: "configured" },
+  });
   expect(
     defaults.readModelSettings(saved, { execution: "remote" }).model,
   ).toEqual({ source: "default", resolved: { unavailable: "remote" } });

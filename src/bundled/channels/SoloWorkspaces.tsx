@@ -46,6 +46,7 @@ import {
   type RefObject,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { useLiveChannelSummary } from "../../features/relay/react";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
@@ -1336,9 +1337,10 @@ function ContributedSoloRow({
     [session, target],
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const live = useLiveChannelSummary(session.channels, channel);
   const row = useMemo(
-    () => sidebarRow(channel, sectionKey, unread),
-    [channel, sectionKey, unread],
+    () => sidebarRow(live, sectionKey, unread),
+    [live, sectionKey, unread],
   );
   return (
     <SidebarRowRenderer

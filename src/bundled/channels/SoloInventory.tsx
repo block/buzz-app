@@ -40,7 +40,7 @@ import {
   useSharedWithPeople,
   useSoloOwner,
 } from "./ChatSharedMark";
-import { useChannelList } from "../../features/relay/react";
+import { useChannelRoster } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
@@ -87,6 +87,11 @@ const chatIcon = (
   </span>
 );
 
+// Only Solo chats are ordered by activity; other channels' messages leave
+// this list alone.
+const soloActivity = (channel: ChannelSummary) =>
+  channel.channelType === "solo";
+
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
   session,
@@ -116,7 +121,7 @@ export function SoloInventory({
   ) => ReactNode;
   workspaceComposition?: WorkspaceSidebarComposition | undefined;
 }) {
-  const list = useChannelList(session.channels);
+  const list = useChannelRoster(session.channels, { activity: soloActivity });
   const regions = useSoloNavigation(session);
   const standaloneClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,

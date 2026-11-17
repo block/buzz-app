@@ -5,6 +5,7 @@ import type {
   ChannelList,
   ChannelMessage,
   ChannelQueries,
+  ChannelSummary,
   Profile,
 } from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
@@ -134,4 +135,45 @@ it("keeps the roster through preview and activity changes only while ready", () 
   const retried = { ...failed };
   act(() => publish(retried));
   expect(result.current).toBe(retried);
+});
+
+it("keeps activity changes only for channels the predicate selects", () => {
+  let list: ChannelList = {
+    status: "ready",
+    channels: [
+      { id: "s", name: "solo", channelType: "solo", lastActivityAt: 1 },
+      { id: "c", name: "general", channelType: "stream", lastActivityAt: 1 },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  const queries = {
+    list: () => list,
+    subscribeList(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    ensureList: () => {},
+  } as unknown as ChannelQueries;
+  const publish = (id: string, change: Partial<ChannelSummary>) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === id ? { ...channel, ...change } : channel,
+        ),
+      };
+      for (const listener of listeners) listener();
+    });
+  const solo = (channel: ChannelSummary) => channel.channelType === "solo";
+  const { result } = renderHook(() =>
+    useChannelRoster(queries, { activity: solo }),
+  );
+  const first = result.current;
+  publish("c", { lastActivityAt: 2, preview: "elsewhere" });
+  expect(result.current).toBe(first);
+  publish("s", { preview: "only a preview" });
+  expect(result.current).toBe(first);
+  publish("s", { lastActivityAt: 3 });
+  expect(result.current).not.toBe(first);
+  expect(result.current.channels[0]?.lastActivityAt).toBe(3);
 });

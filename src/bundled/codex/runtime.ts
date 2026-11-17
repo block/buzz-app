@@ -2340,7 +2340,8 @@ export class CodexRuntime {
         } as EventData,
         ...(delivery.synced ? { synced: delivery.synced } : {}),
         answered(stopped) {
-          if (stopped) outcome = { ok: false, error: "Codex was stopped" };
+          if (stopped && request.finalDelivery !== true)
+            outcome = { ok: false, error: "Codex was stopped" };
         },
         failActivity(error) {
           if (error !== "Codex ended without a final reply")

@@ -9038,7 +9038,7 @@ it.each(["channel", "community"] as const)(
   },
 );
 
-it.each(["wake", "typed-wake", "wake-typed"])(
+it.each(["wake", "typed-wake", "wake-typed", "published"])(
   "interrupts community work and queued wakes before voice admission (%s)",
   async (order) => {
     vi.stubGlobal("RTCPeerConnection", class {});
@@ -9059,6 +9059,15 @@ it.each(["wake", "typed-wake", "wake-typed"])(
     });
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     if (order === "wake-typed") await f.runtime.run({ ...d, config });
+    if (order === "published") {
+      const sent = await f.tool("send", {
+        channel: "channel",
+        audience: "everyone",
+        text: "finished",
+        final: true,
+      });
+      expect(sent?.result).toMatchObject({ success: true });
+    }
     f.huddleChannels.add("room");
     const opening = f.runtime.voice(
       {
@@ -9076,7 +9085,7 @@ it.each(["wake", "typed-wake", "wake-typed"])(
       await vi.waitFor(() =>
         expect(f.sent.some((w) => w.method === "turn/interrupt")).toBe(true),
       );
-      await expect(once).resolves.toMatchObject({ ok: false });
+      await expect(once).resolves.toMatchObject({ ok: order === "published" });
       await opening;
       expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
     } finally {

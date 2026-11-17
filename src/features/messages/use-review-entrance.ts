@@ -245,8 +245,9 @@ export function useReviewEntrance(
         origin.preview.style.opacity = "0";
       picture = media.animate(frames, SNAPPY);
       animations.push(picture);
+      // A gallery preview stands in for the picture, not the controls.
       for (const element of panel.querySelectorAll<HTMLElement>(
-        "[data-review-chrome]",
+        "[data-review-chrome]:not([data-gallery-preview])",
       )) {
         animations.push(
           element.animate(

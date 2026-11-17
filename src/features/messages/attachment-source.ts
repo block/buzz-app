@@ -1,3 +1,5 @@
+import type { Attachment } from "../relay/contracts";
+
 /** Only the URLs emitted by convertFileSrc(relayMediaUrl, "buzz-media"). */
 export function isNativeMediaSource(source: string): boolean {
   try {
@@ -61,4 +63,21 @@ export function safeOpenUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The signed or relay thumbnail of a gallery image, when the relay or native
+ * proxy serves it and it is not just the original again. A third-party URL is
+ * never fetched as a preview. */
+export function attachmentPreview(
+  attachment: Attachment,
+  media: (url: string, size?: "small") => string | undefined,
+): string | undefined {
+  const preview = attachment.previewUrl
+    ? media(attachment.previewUrl)
+    : media(attachment.url, "small");
+  return preview &&
+    (isProxySource(preview) || isNativeMediaSource(preview)) &&
+    preview !== media(attachment.url)
+    ? preview
+    : undefined;
 }

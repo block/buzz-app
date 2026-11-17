@@ -1293,6 +1293,7 @@ export class PiRuntime {
       : Promise.resolve(undefined);
     const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
+    let unseen: readonly EventData[] = [];
     // A chat its owner is still creating has nothing earlier to read.
     if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
@@ -1316,9 +1317,14 @@ export class PiRuntime {
               item.created_at <= event.created_at,
           )
           .sort((a, b) => a.created_at - b.created_at);
-        earlier = await currentMessages(
+        // A conversation already has its own replies; a new one is shown them
+        // too. Only those it was not shown need their edits and deletions read.
+        unseen = await currentMessages(
           channelId,
-          found,
+          found.filter(
+            (item) =>
+              item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
+          ),
           (filters) =>
             reads.read(
               filters,
@@ -1327,14 +1333,10 @@ export class PiRuntime {
           reads,
           signingAuthority,
         );
+        earlier = found;
       } catch (error) {
         console.warn("Pi could not read the conversation", error);
       }
-    // A conversation already has its own replies; a new one is shown them too.
-    const unseen = earlier.filter(
-      (item) =>
-        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
-    );
     const [names, project] = await Promise.all([
       readAuthorNames(
         reads,

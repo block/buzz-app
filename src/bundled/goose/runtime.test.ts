@@ -2672,13 +2672,25 @@ it("shows a new turn's history as the thread shows it now", async () => {
       ),
     ),
   );
-  await f.deliver(mention);
-  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  await f.deliver(mention, { workingUntil });
+  await vi.waitFor(() => expect(workingUntil).toHaveBeenCalledOnce());
+  await workingUntil.mock.calls[0]?.[0];
   const text = f.goose()?.turns[0]?.text ?? "";
   expect(text).toContain('"content":"Plan"');
   expect(text).toContain("Use the blue palette");
   expect(text).not.toContain("Use the red palette");
   expect(text).not.toContain("Drop the staging tables");
+  // A later turn with nothing new to show reads no edits or deletions.
+  const changes = () =>
+    (f.read.mock.calls as unknown as [readonly ReadFilter[]][]).filter(
+      ([filters]) => filters.some((filter) => filter.kinds?.includes(40003)),
+    ).length;
+  const [reads, changed] = [f.read.mock.calls.length, changes()];
+  await f.deliver({ ...mention, id: "8".repeat(64), created_at: 120 });
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(2));
+  expect(f.read.mock.calls.length).toBeGreaterThan(reads);
+  expect(changes()).toBe(changed);
 });
 
 it("runs an agent on Recommended on the current candidate", () => {

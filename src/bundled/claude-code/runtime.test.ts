@@ -3633,6 +3633,20 @@ it("shows a new turn's history as the thread shows it now", async () => {
     expect(text).not.toContain("Use the red palette");
     expect(text).not.toContain("Drop the staging tables");
     expect(text).not.toContain("Hijacked plan");
+    // A later turn with nothing new to show reads no edits or deletions.
+    const changes = () =>
+      f.read.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(40003)),
+      ).length;
+    const [reads, changed] = [f.read.mock.calls.length, changes()];
+    await f.deliver({
+      type: "mention",
+      event: { ...mention, id: "8".repeat(64), created_at: 120 },
+    });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(2));
+    await f.workingUntil.mock.calls[1]?.[0];
+    expect(f.read.mock.calls.length).toBeGreaterThan(reads);
+    expect(changes()).toBe(changed);
   } finally {
     f.runtime.dispose();
   }

@@ -1446,6 +1446,7 @@ export class ClaudeRuntime {
       : Promise.resolve(undefined);
     const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
+    let unseen: readonly EventData[] = [];
     // A chat its owner is still creating has nothing earlier to read.
     if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
@@ -1469,9 +1470,14 @@ export class ClaudeRuntime {
               item.created_at <= event.created_at,
           )
           .sort((a, b) => a.created_at - b.created_at);
-        earlier = await currentMessages(
+        // A session already has its own replies; a new one is shown them too.
+        // Only those it was not shown need their edits and deletions read.
+        unseen = await currentMessages(
           channelId,
-          found,
+          found.filter(
+            (item) =>
+              item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
+          ),
           (filters) =>
             reads.read(
               filters,
@@ -1480,14 +1486,10 @@ export class ClaudeRuntime {
           reads,
           signingAuthority,
         );
+        earlier = found;
       } catch (error) {
         console.warn("Claude could not read the conversation", error);
       }
-    // A session already has its own replies; a new one is shown them too.
-    const unseen = earlier.filter(
-      (item) =>
-        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
-    );
     const [names, project, folders] = await Promise.all([
       readAuthorNames(
         reads,

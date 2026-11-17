@@ -778,6 +778,7 @@ export class GooseRuntime {
     const reads = ownerReads(this.relay(agent.key), agent.pubkey);
     const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
+    let unseen: readonly EventData[] = [];
     if (session && (thread || dm || topLevel || resumed))
       try {
         const events = await session.read(
@@ -800,9 +801,14 @@ export class GooseRuntime {
               (resumed || item.created_at <= event.created_at),
           )
           .sort((a, b) => a.created_at - b.created_at);
-        earlier = await currentMessages(
+        // A session already has its own replies; a new one is shown them too.
+        // Only those it was not shown need their edits and deletions read.
+        unseen = await currentMessages(
           channelId,
-          found,
+          found.filter(
+            (item) =>
+              item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
+          ),
           (filters) =>
             session.read(filters, {
               signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
@@ -810,14 +816,10 @@ export class GooseRuntime {
           reads,
           signingAuthority,
         );
+        earlier = found;
       } catch (error) {
         console.warn("goose could not read the conversation", error);
       }
-    // A session already has its own replies; a new one is shown them too.
-    const unseen = earlier.filter(
-      (item) =>
-        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
-    );
     const [names, project] = await Promise.all([
       readAuthorNames(
         reads,

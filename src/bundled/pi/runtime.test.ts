@@ -2599,3 +2599,14 @@ it("shows a new turn's history as the thread shows it now", async () => {
   expect(text).not.toContain("Use the red palette");
   expect(text).not.toContain("Drop the staging tables");
 });
+
+it("reads no edits or deletions for a turn with nothing new to show", async () => {
+  const { host, deliver, session } = setup({ place: () => ({ seen: 107 }) });
+  session.read.mockResolvedValue([
+    root,
+    reply("2", "Use the red palette", 105),
+  ]);
+  await deliver({ type: "mention", event: reply("6", "@Pi go") }).run;
+  expect(host.requests("deliver")).toHaveLength(1);
+  expect(session.read).toHaveBeenCalledOnce();
+});

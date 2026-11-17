@@ -559,6 +559,8 @@ async fn forwards_inference_with_only_the_bundle_as_provenance() {
     let forward = ready(gateway.origin);
     let mut generation = associated(&forward, 1);
     let response = messages(&generation.url)
+        .header("Authorization", "Bearer owner-sentinel")
+        .header("aUtHoRiZaTiOn", "Bearer second-sentinel")
         .header("x-gw-ctx-channel-id", "forged")
         .header("X-GW-Launcher-Client", "forged")
         .header("x-gw-request-id", "keep")
@@ -584,6 +586,7 @@ async fn forwards_inference_with_only_the_bundle_as_provenance() {
         assert_eq!(header(&name), Some(value.as_str()), "{name}");
     }
     assert_eq!(header("x-gw-request-id"), Some("keep"));
+    assert!(seen.headers.get(header::AUTHORIZATION).is_none());
     assert_eq!(header("x-api-key"), Some("placeholder"));
     assert_eq!(header("agent-session-id"), Some(SESSION));
     assert_eq!(
@@ -602,6 +605,8 @@ async fn forwards_inference_with_only_the_bundle_as_provenance() {
     // Discovery carries the discovery bundle, with or without the session.
     let hello = reqwest::Client::new()
         .get(format!("{}/api/2.0/serving-endpoints", generation.url))
+        .header("Authorization", "Bearer discovery-sentinel")
+        .header("agent-session-id", SESSION)
         .send()
         .await
         .unwrap();
@@ -614,6 +619,11 @@ async fn forwards_inference_with_only_the_bundle_as_provenance() {
         serde_json::json!({ "type": "finished", "request": 2, "status": 200, "aborted": false })
     );
     assert_eq!(seen.headers["x-gw-ctx-agent-pubkey"], AGENT);
+    assert!(seen.headers.get(header::AUTHORIZATION).is_none());
+    assert_eq!(seen.headers["agent-session-id"], SESSION);
+    for (name, value) in discovery() {
+        assert_eq!(seen.headers[&name], value, "{name}");
+    }
     for turn in [
         "x-gw-ctx-channel-id",
         "x-gw-ctx-message-id",

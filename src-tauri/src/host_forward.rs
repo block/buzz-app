@@ -1,8 +1,9 @@
 //! Loopback forwarding from local goose to the
 //! build's agent gateway, with Buzz's context headers composed in natively.
 //! The harness is pointed at a generation's base URL and keeps its own
-//! credentials, bodies, streaming, retries and cancellation; this adds only
-//! the reserved headers the page fixed when it opened the generation.
+//! bodies, streaming, retries and cancellation. Native removes goose's
+//! Authorization before forwarding and adds the reserved attribution headers
+//! the page fixed when it opened the generation.
 //!
 //! - It binds only `127.0.0.1`, on a port the OS picks, shared by every
 //!   generation. A generation's base URL carries its random 256-bit handle,
@@ -60,8 +61,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// The whole reserved header block, counted as `name: value\r\n` lines.
 const HEADER_BUDGET: usize = 2048;
 /// Never forwarded: the connection's own, the address and anything a browser
-/// adds, plus whatever `Connection` names. Credentials and every other header
-/// pass through unchanged.
+/// adds, plus whatever `Connection` names.
 const HOP: [&str; 10] = [
     "connection",
     "keep-alive",
@@ -784,9 +784,11 @@ async fn forward(state: &HostForward, request: Request<Incoming>) -> Reply {
         return finished.answer(StatusCode::BAD_GATEWAY, "upstream_unavailable");
     };
     let (parts, body) = request.into_parts();
+    let mut headers = compose(gateway, &parts.headers, &bundle);
+    headers.remove(header::AUTHORIZATION);
     let upstream = client
         .request(parts.method, target)
-        .headers(compose(gateway, &parts.headers, &bundle))
+        .headers(headers)
         .body(reqwest::Body::wrap(Limited::new(body, BODY_LIMIT)))
         .send();
     let response = tokio::select! {

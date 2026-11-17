@@ -147,6 +147,10 @@ open: no harness gets an upstream, so turns run unchanged, with no notice.
 Leave it unset or blank (the release default) to keep every membership on its
 existing behavior.
 
+Native goose forwarding removes `Authorization` before sending discovery or
+inference requests to the gateway. The gateway must authenticate callers
+separately; Buzz context headers supply attribution, not authentication.
+
 With it set, a local agent membership in a listed community routes through the
 gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
 exactly the listed ID, the descriptor gives the agent type's declared harness

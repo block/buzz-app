@@ -12,14 +12,12 @@ export async function openVoice(
   instructions: string,
   thinking?: (active: boolean) => void,
   voice?: string,
-  standalone = false,
-  unlockedContext?: AudioContext,
 ) {
   signal.throwIfAborted();
   const peer = new RTCPeerConnection();
   let context: AudioContext;
   try {
-    context = unlockedContext ?? new AudioContext({ sampleRate: 48000 });
+    context = new AudioContext({ sampleRate: 48000 });
   } catch (error) {
     peer.close();
     throw error;
@@ -160,8 +158,7 @@ export async function openVoice(
       transport: { type: "webrtc", sdp },
       version: "v3",
       outputModality: "audio",
-      clientManagedHandoffs: standalone,
-      ...(standalone ? { includeStartupContext: false } : {}),
+      clientManagedHandoffs: false,
       realtimeStartInstructions: instructions,
       ...(voice ? { voice } : {}),
     });

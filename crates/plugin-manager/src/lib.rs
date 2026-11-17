@@ -966,7 +966,22 @@ impl Manager {
     }
     /// Whether [`Self::apply_automatic`] has anything to try for `managed`.
     pub fn automatic_due(&self, managed: &managed::Managed, catalog: &Catalog) -> bool {
-        automatic::due(&self.automatic, managed, catalog)
+        !self.external_plugins_paused() && automatic::due(&self.automatic, managed, catalog)
+    }
+    /// Files that decide what Buzz installs without review, which protected workers
+    /// must not write: the policy file and the packaged policy's stored copy.
+    pub fn managed_policy_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> =
+            managed::path(&self.home, std::env::var_os(managed::PATH_ENV))
+                .into_iter()
+                .collect();
+        if !managed::PACKAGED_URL.is_empty() {
+            paths.push(
+                self.home
+                    .join(managed::packaged_file_name(managed::PACKAGED_URL)),
+            );
+        }
+        paths
     }
     /// Repository access rules for Git imports, from the file beside the profile folders.
     pub fn repository_access(&self) -> access::AccessRules {
@@ -1289,6 +1304,9 @@ impl Manager {
             }
             self.save(&registry)?;
             if action == "remove" {
+                if let Err(reason) = automatic::remember(self, id) {
+                    eprintln!("Could not record the removal of {id}: {reason}");
+                }
                 // Commit removal first. A cleanup failure cannot re-enable the plugin.
                 let path = self.root.join("artifacts").join(id);
                 if path.exists() {

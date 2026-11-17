@@ -180,15 +180,21 @@ one is due, off the main thread and one run at a time, and `buzzodz plugin manag
 --apply` applies them once from the command line. Each run downloads or reads the pinned
 artifact or commit through the same import Buzz uses for a review, then:
 
-- **Install.** A Missing entry with `install: "automatic"` is installed and enabled.
-  Buzz records its ID in `managed-automatic.json` in the profile folder. A plugin the
-  person later removes is never installed automatically again, in that profile; it
-  returns to the Recommended group as a version 1 entry would, unless it is `"manual"`.
+- **Install.** A Missing entry with `install: "automatic"` is installed and enabled,
+  with whatever host access it declares. Buzz records its ID in `managed-automatic.json`
+  in the profile folder, and records the ID of every plugin the person removes. A
+  recorded plugin is never installed automatically again in that profile, including
+  after a plugin settings reset; it returns to the Recommended group as a version 1
+  entry would, unless it is `"manual"`. An unreadable record stops automatic installs,
+  not updates.
 - **Update.** An Outdated entry with `update: "automatic"` is installed at the pin,
   keeping its enabled state; an enabled plugin reloads at the new version. Buzz updates
   only when the new version declares exactly the host access the installed one has, the
   publisher is unchanged, and an unsigned plugin does not become signed. Anything else,
   including a change that removes access, is left for the person's **Review update**.
+  The pin wins over the person's own choice of version: a plugin they updated past
+  the pin or rolled back is returned to it on the next run. If the plugin changes
+  while Buzz downloads the pin, Buzz leaves it alone for the run.
   For a URL entry, a plugin installed from a Git source counts as eligible too, so a
   plugin can move from Git to the published artifact. A plugin installed from a folder,
   or included with Buzz, is never replaced.
@@ -198,15 +204,17 @@ artifact or commit through the same import Buzz uses for a review, then:
   its version 1 offer. A new pin, or a restart, tries again.
 
 Settings shows **Managed by *source* · updates automatically** for an installed plugin
-whose entry updates automatically, and a notice names what was installed or updated
-during the run until the person dismisses it.
+whose entry updates automatically. A notice names each plugin installed or updated
+during the run, once.
 
 **Trust.** Automatic entries remove the person's review for the plugins they name. The
 pins still protect against a changed artifact or commit, but whoever can write the
 policy, or the packaged policy URL, decides what is installed. A packaged policy is
-fetched over HTTPS but is not signed. Use version 2 only from a source you trust as
-much as the build itself, and keep `update: "review"` for plugins whose access should
-be seen by the person first.
+fetched over HTTPS but is not signed. Protected agent workers cannot write the policy
+file or the packaged policy's stored copy, but any other process running as the user
+can. Use version 2 only from a source you trust as much as the build itself, and keep
+`install: "recommend"` and `update: "review"` for plugins whose access the person
+should see first.
 
 ### What makes a file or entry invalid
 

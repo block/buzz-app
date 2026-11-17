@@ -1,7 +1,8 @@
 //! Applies version 2 managed entries that ask for `install` or `update` to be
 //! automatic. Only content-pinned versions install: a URL entry's SHA-256 or a Git
 //! entry's full commit. An update that changes host access or publisher is left for the
-//! person's review, and a plugin removed after Buzz installed it is never reinstalled.
+//! person's review, and a plugin Buzz installed or the person removed is never
+//! installed automatically again.
 use crate::{
     atomic_write, effective_grants, err,
     imports::{self, PreparedImport, RequiredCommit},
@@ -137,7 +138,6 @@ pub(crate) fn apply(
     let Managed::Ready { plugins, .. } = manager.managed(&catalog) else {
         return Ok(vec![]);
     };
-    let mut receipt = read_receipt(manager)?;
     let mut changes = vec![];
     for entry in plugins {
         let plugin = entry.plugin;
@@ -148,10 +148,7 @@ pub(crate) fn apply(
         if !session.attempted.lock().map_err(err)?.insert(pin(&plugin)) {
             continue;
         }
-        if plan == Plan::Install && receipt.contains(&plugin.id) {
-            continue;
-        }
-        match apply_one(manager, &plugin, installed, &plan, fetch, &mut receipt) {
+        match apply_one(manager, &plugin, installed, &plan, fetch) {
             Ok(Some(change)) => changes.push(change),
             Ok(None) => {}
             Err(reason) => eprintln!("Could not apply managed plugin {}: {reason}", plugin.id),
@@ -170,8 +167,10 @@ fn apply_one(
     installed: Option<&PluginInfo>,
     plan: &Plan,
     fetch: &dyn Fn(&Manager, &ManagedPlugin) -> Result<PreparedImport>,
-    receipt: &mut BTreeSet<String>,
 ) -> Result<Option<Change>> {
+    if *plan == Plan::Install && read_receipt(manager)?.contains(&plugin.id) {
+        return Ok(None);
+    }
     let prepared = fetch(manager, plugin)?;
     let path = match &plugin.source {
         ManagedSource::Url { .. } => ".",
@@ -186,13 +185,17 @@ fn apply_one(
     if let (Plan::Update, Some(installed)) = (plan, installed) {
         let unchanged = effective_grants(candidate.manifest.host.clone().unwrap_or_default())
             == effective_grants(installed.manifest.host.clone().unwrap_or_default());
-        // Signing an unsigned plugin blocks rolling back, so it is reviewed too.
-        if !unchanged
-            || candidate.publisher != installed.publisher
-            || (candidate.publisher.is_some() && !installed.has_signature)
-        {
+        if !unchanged || candidate.publisher != installed.publisher {
             return Ok(None);
         }
+    }
+    // A fetch can take a minute; leave the plugin alone if the person changed it meanwhile.
+    let now = manager.catalog()?;
+    let current = now.plugins.iter().find(|p| p.manifest.id == plugin.id);
+    if current.map(|p| &p.revision) != installed.map(|p| &p.revision)
+        || (*plan == Plan::Install && read_receipt(manager)?.contains(&plugin.id))
+    {
+        return Ok(None);
     }
     let change = Change {
         id: plugin.id.clone(),
@@ -205,9 +208,16 @@ fn apply_one(
     };
     prepared.install(manager, &prepared.preview.token, path)?;
     if *plan == Plan::Install {
-        receipt.insert(plugin.id.clone());
-        write_receipt(manager, receipt)?;
-        manager.change("enable", &plugin.id)?;
+        {
+            let _lock = manager.lock()?;
+            remember(manager, &plugin.id)?;
+        }
+        if let Err(reason) = manager.change("enable", &plugin.id) {
+            eprintln!(
+                "Installed managed plugin {}, but could not enable it: {reason}",
+                plugin.id
+            );
+        }
     }
     Ok(Some(change))
 }
@@ -220,10 +230,16 @@ fn read_receipt(manager: &Manager) -> Result<BTreeSet<String>> {
     }
 }
 
-fn write_receipt(manager: &Manager, ids: &BTreeSet<String>) -> Result<()> {
+/// Records that `id` must not be installed automatically again in this profile: Buzz
+/// installed it, or the person removed it. The caller holds the registry lock.
+pub(crate) fn remember(manager: &Manager, id: &str) -> Result<()> {
+    let mut ids = read_receipt(manager)?;
+    if !ids.insert(id.to_owned()) {
+        return Ok(());
+    }
     atomic_write(
         &manager.root.join(RECEIPT),
-        &serde_json::to_vec(ids).map_err(err)?,
+        &serde_json::to_vec(&ids).map_err(err)?,
     )
 }
 
@@ -338,6 +354,67 @@ mod tests {
         assert!(info(&later, "example.one").is_none());
         assert!(!due(&later.automatic, &later.managed(&catalog), &catalog));
         assert_eq!(fixture.fetched.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_plugin_the_person_installed_then_removed_is_not_installed_automatically() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        fixture.policy(&[("example.one", &one, AUTO)]);
+        let manager = fixture.manager();
+        let bytes = fixture.artifacts.borrow()[&one.0].clone();
+        let prepared = imports::prepare_url(&one.0, &one.1, bytes).unwrap();
+        prepared
+            .install(&manager, &prepared.preview.token, ".")
+            .unwrap();
+        manager.change("remove", "example.one").unwrap();
+        assert!(fixture.apply(&fixture.manager()).is_empty());
+        assert!(info(&manager, "example.one").is_none());
+    }
+
+    #[test]
+    fn an_unreadable_record_stops_installs_but_not_updates() {
+        let fixture = Fixture::new();
+        let v1 = fixture.artifact("example.two", "export function apply() {} // 1", "");
+        fixture.policy(&[("example.two", &v1, AUTO)]);
+        fixture.apply(&fixture.manager());
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        let v2 = fixture.artifact("example.two", "export function apply() {} // 2", "");
+        fixture.policy(&[("example.one", &one, AUTO), ("example.two", &v2, AUTO)]);
+        fs::write(
+            fixture.home.path().join("profiles/default").join(RECEIPT),
+            "{",
+        )
+        .unwrap();
+        let manager = fixture.manager();
+        let changes = fixture.apply(&manager);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].action, Action::Updated);
+        assert!(info(&manager, "example.one").is_none());
+        let catalog = manager.catalog().unwrap();
+        assert!(!due(
+            &manager.automatic,
+            &manager.managed(&catalog),
+            &catalog
+        ));
+    }
+
+    #[test]
+    fn a_plugin_the_person_changes_during_the_fetch_is_left_alone() {
+        let fixture = Fixture::new();
+        let v1 = fixture.artifact("example.one", "export function apply() {} // 1", "");
+        fixture.policy(&[("example.one", &v1, AUTO)]);
+        fixture.apply(&fixture.manager());
+        let v2 = fixture.artifact("example.one", "export function apply() {} // 2", "");
+        fixture.policy(&[("example.one", &v2, AUTO)]);
+        let manager = fixture.manager();
+        let bytes = fixture.artifacts.borrow()[&v2.0].clone();
+        let fetch = |manager: &Manager, _: &ManagedPlugin| {
+            manager.change("remove", "example.one")?;
+            imports::prepare_url(&v2.0, &v2.1, bytes.clone())
+        };
+        assert!(apply(&manager, &fetch).unwrap().is_empty());
+        assert!(info(&manager, "example.one").is_none());
     }
 
     #[test]

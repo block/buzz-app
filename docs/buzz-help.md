@@ -1654,8 +1654,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   Plugins**, and can also install or update listed plugins for you. A notice
   says when it did. A plugin it keeps current shows **Managed by [source] ·
   updates automatically**. An update that asks for different access, or comes
-  from a different publisher, waits for your review instead. If you remove a
-  plugin it installed, it is not installed again; it stays under
+  from a different publisher, waits for your review instead. A plugin you
+  remove is not installed again automatically; it stays under
   **Recommended** if you want it back.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off

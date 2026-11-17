@@ -1701,6 +1701,19 @@ it("notes once what the policy installed or updated automatically", async () => 
     ]),
   );
   expect(await screen.findByText("Example Org updated Notes")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss automatic plugin changes" }),
+  );
+  act(() =>
+    managed([
+      { id: "example.a", name: "A", revision: "r1", action: "installed" },
+      { id: "example.b", name: "B", revision: "r1", action: "updated" },
+    ]),
+  );
+  expect(
+    await screen.findByText("Example Org installed or updated 2 plugins"),
+  ).toBeVisible();
+  expect(screen.getByText("A, B")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   expect(f.navigation.open).toHaveBeenCalledWith({
     version: 1,

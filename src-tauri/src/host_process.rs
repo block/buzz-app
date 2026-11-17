@@ -420,15 +420,16 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         .transpose()?;
     let page = processes.page();
     let plugin = id.clone();
-    let (declared, registry) = with_manager(manager, move |manager| {
+    let (declared, registry, policies) = with_manager(manager, move |manager| {
         let registry = manager.storage_root().to_path_buf();
+        let policies = manager.managed_policy_paths();
         manager
             .host_grants(&id, &revision)?
             .processes
             .into_iter()
             .find(|process| process.id == process_id)
             .ok_or_else(|| "Process is not declared".into())
-            .map(|declared| (declared, registry))
+            .map(|declared| (declared, registry, policies))
     })
     .await?;
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
@@ -487,7 +488,14 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     };
     let claude_hooks = runs_protected_claude(&plugin, &declared.id, protected);
     let mut command = if let Some(protection) = protection {
-        let protection = protection.at_home()?;
+        let mut protection = protection.at_home()?;
+        // A managed policy can install plugins without review. A missing file is
+        // protected by name; one in a missing folder is left to the env that named it.
+        protection.read_only_paths.extend(
+            policies
+                .into_iter()
+                .filter(|path| path.parent().is_some_and(std::path::Path::is_dir)),
+        );
         let controls = controls.ok_or("Agent controls are unavailable")?;
         std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;
         let executable =

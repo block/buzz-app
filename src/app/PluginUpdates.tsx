@@ -463,9 +463,9 @@ function automaticTitle(source: string, changes: readonly ManagedChange[]) {
   const [change] = changes;
   if (changes.length === 1 && change)
     return `${source} ${change.action} ${change.name}`;
-  return changes.every((item) => item.action === "installed")
-    ? `${source} installed ${changes.length} plugins`
-    : `${source} updated ${changes.length} plugins`;
+  const actions = new Set(changes.map((item) => item.action));
+  const verb = actions.size > 1 ? "installed or updated" : change?.action;
+  return `${source} ${verb} ${changes.length} plugins`;
 }
 
 export function PluginUpdatesMenu({

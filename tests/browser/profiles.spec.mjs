@@ -948,12 +948,23 @@ for (const local of [false, true]) {
         [],
       );
     } else {
+      // Without a DM, Message drafts one: Pinky sees nothing until a send.
       await message.click();
+      const pinky = await page.evaluate(
+        () => window.profilesFixture.keys.pinky,
+      );
       await expect
-        .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
-        .toEqual([
-          [await page.evaluate(() => window.profilesFixture.keys.pinky)],
-        ]);
+        .poll(() =>
+          page.evaluate(
+            () =>
+              window.profilesFixture.navigation.snapshot().entry.target.route
+                ?.params,
+          ),
+        )
+        .toEqual({ kind: "new-message", to: pinky });
+      expect(await page.evaluate(() => window.profilesFixture.dmOpens)).toEqual(
+        [],
+      );
     }
     expect(errors.unexplained()).toEqual([]);
   });
@@ -1316,7 +1327,7 @@ test("member Send message navigates a human DM without sending or returning focu
   page,
 }) => {
   const errors = watchPageErrors(page);
-  await page.goto("/tests/fixtures/profiles.html?member-message");
+  await page.goto("/tests/fixtures/profiles.html?member-message&existing-dm");
   await page
     .getByRole("button", { name: "Manage members of One", exact: true })
     .click();

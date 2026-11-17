@@ -64,7 +64,10 @@ const localAgentProbe = new URLSearchParams(location.search).has("local-agent");
 const memberMessageProbe = new URLSearchParams(location.search).has(
   "member-message",
 );
-let dmOpened = false;
+// With existing-dm, the viewer already has the DM with Mic, so Message opens
+// it; without, Message drafts one and the DM appears only once opened.
+const existingDmProbe = new URLSearchParams(location.search).has("existing-dm");
+let dmOpened = existingDmProbe;
 const dmOpens: string[][] = [];
 const dmEvents = () => [
   signed(authority, {
@@ -240,6 +243,9 @@ function session() {
                 pinky.pubkey,
               ]),
               roster(authority, "two", [viewer.pubkey]),
+              ...(existingDmProbe
+                ? dmEvents().filter((event) => event.kind === 39002)
+                : []),
             ];
           if (filter.kinds?.includes(39000))
             return [
@@ -262,6 +268,9 @@ function session() {
                   ["t", "stream"],
                 ],
               }),
+              ...(existingDmProbe
+                ? dmEvents().filter((event) => event.kind === 39000)
+                : []),
             ];
           if (
             filter.kinds?.includes(30315) &&

@@ -20,6 +20,8 @@ test.use({
   sessionMembers: {
     [channelId]: members.map((name) => getPublicKey(keyFor(name))),
   },
+  // Send message opens only an existing DM; without one it drafts and cannot fail.
+  dmMembers: { "dm-sam-02": [getPublicKey(keyFor("Sam 02"))] },
 });
 
 // Browser-only: whether the dialog body keeps hidden scroll overflow, and

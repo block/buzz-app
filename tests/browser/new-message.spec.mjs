@@ -793,7 +793,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   expect(app.errors.unexplained()).toEqual([]);
 });
 
-test("profile Message opens a fresh DM and restores a hidden one", async ({
+test("profile Message drafts a new DM and restores a hidden one", async ({
   page,
   app,
 }) => {
@@ -824,7 +824,20 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
     await profile.getByRole("button", { name: "Message", exact: true }).click();
   };
   await expect(sidebarDm).toHaveCount(0);
+  // Without a DM, Message drafts one: Avery sees nothing until a send.
   await openProfileMessage();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeVisible();
+  await expect(sidebarDm).toHaveCount(0);
+  expect(app.commands).toHaveLength(0);
+  await page
+    .getByRole("textbox", { name: "Message Avery Chen", exact: true })
+    .fill("Hi Avery");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(sidebarDm).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Avery Chen" }),

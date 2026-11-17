@@ -41,14 +41,19 @@ declare module "@deepseek-ai/cordis" {
 const MODAL = 'dialog[open], [aria-modal="true"]';
 /** No modal, an addressable dialog that is its own navigation visit, or any other modal. */
 type Modal = false | "visit" | true;
-function eligibleIn(shortcut: Shortcut, editable: boolean, modal: Modal) {
+function eligibleIn(
+  shortcut: Shortcut,
+  editable: boolean,
+  modal: Modal,
+  event?: KeyboardEvent,
+) {
   try {
     return (
       (!editable || shortcut.allowInEditable) &&
       (!modal ||
         shortcut.allowInModal ||
         (modal === "visit" && shortcut.allowInVisit)) &&
-      (!shortcut.when || shortcut.when())
+      (!shortcut.when || shortcut.when(event))
     );
   } catch (error) {
     console.error(`Shortcut predicate failed: ${shortcut.id}`, error);
@@ -102,7 +107,7 @@ export class ShortcutsService extends Service implements Shortcuts {
           .composedPath()
           .some((target) => (target as Element).matches?.(MODAL));
       const eligible = (shortcut: Shortcut) =>
-        eligibleIn(shortcut, editable, modal);
+        eligibleIn(shortcut, editable, modal, event);
       // Host chords are reserved even while unavailable (e.g. Settings behind a modal).
       const reserved = [...this.hostBindings.values()].find(
         (shortcut) =>

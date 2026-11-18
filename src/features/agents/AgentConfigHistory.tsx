@@ -389,7 +389,6 @@ export function AgentConfigVersionRow({
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr)",
         }}
-        title={incompatible ? "Incompatible with this client" : undefined}
         aria-haspopup="dialog"
         onClick={onSelect}
       >
@@ -408,12 +407,11 @@ export function AgentConfigVersionRow({
               )}
               {invalid ? " · Not valid" : ""}
               {latestCompatible ? " · Latest compatible" : ""}
-              {incompatible && <span className="sr-only"> · Incompatible</span>}
+              {incompatible && (
+                <span className="text-danger"> · Incompatible</span>
+              )}
             </span>
-            {incompatible && (
-              <span className={styles.incompatible} aria-hidden="true" />
-            )}
-            {!incompatible && event.id === head?.id && (
+            {event.id === head?.id && (
               <span
                 className={styles.current}
                 title="Current version"

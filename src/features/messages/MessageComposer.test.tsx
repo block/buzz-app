@@ -15038,6 +15038,69 @@ it("with a tag further in, the pill's last agent can go and the send reaches the
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
 });
 
+it("with Ada in the pill and the draft opening with Bea, a team of a later-tagged Cam reaches Cam alone", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea please ask @Cam",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 16, end: 20 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const { h, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.only([cam]));
+  // Bea's tag goes; Cam's stays further in, and Ada stays out.
+  expect(h.input()).toHaveValue("please ask @Cam");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([third]);
+});
+
+it("a tag further in can't take a full pill past 32 recipients", () => {
+  const many = Array.from({ length: 33 }, (_, index) => ({
+    pubkey: index.toString(16).padStart(64, "c"),
+    name: `Agent ${index}`,
+  }));
+  writeView("scope", "draft:channel", {
+    text: "Ask @Agent 32",
+    recipients: [{ ...many[32], start: 4, end: 13 }],
+  });
+  writeView("scope", "draft:channel:agents", many.slice(0, 32));
+  const { h } = mountSoloAgents({
+    members: many.map((agent) => agent.pubkey),
+    unpicked: true,
+  });
+  h.setLibrary(many);
+  h.setProfiles(
+    new Map(
+      many.map((agent) => [agent.pubkey, { name: agent.name, isAgent: true }]),
+    ),
+  );
+  expect(h.commands().audience?.recipients).toHaveLength(33);
+  h.submit();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose at most 32 recipients",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("a pill-only agent that is compacting holds the send", () => {
   const agents = sessionAgents("channel");
   const { h } = mountSoloAgents({ agents });

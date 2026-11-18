@@ -1550,13 +1550,28 @@ function Composer({
           // pick edits them. Otherwise it replaces the toolbar's agents, and
           // tags further in the text still join them.
           if (!tagsDecide) choose(team);
-          else if (
-            !replaceRecipients([
-              ...team,
-              ...recipients.filter((person) => referenced(person.pubkey)),
-            ])
-          )
-            return;
+          else {
+            if (
+              !replaceRecipients([
+                ...team,
+                ...recipients.filter((person) => referenced(person.pubkey)),
+              ])
+            )
+              return;
+            // Once the team's tags no longer open the text, they would join
+            // the toolbar's agents; the team becomes those agents, so the
+            // pick still reaches the team alone.
+            const now = valueRef.current;
+            if (
+              !soloAudience<MentionRecipient>(
+                now.text,
+                now.recipients.filter((person) => !referenced(person.pubkey)),
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              choose(team);
+          }
           // Typing resumes in the draft, at its caret.
           input.current?.focus();
         },
@@ -3176,6 +3191,15 @@ function Composer({
     const recipientsNow = sendRecipients();
     if (needsRecipient && !recipientsNow.length) {
       setError(recipientHint);
+      return;
+    }
+    // Tags further in the text join the toolbar's agents; together they
+    // still notify at most 32, checked before anyone joins or it queues.
+    if (
+      routing &&
+      recipientsNow.filter((person) => !referenced(person.pubkey)).length > 32
+    ) {
+      setError("Choose at most 32 recipients");
       return;
     }
     // Named conversations require text unless their owner explicitly permits files alone.

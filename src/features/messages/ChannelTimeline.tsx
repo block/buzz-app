@@ -946,11 +946,12 @@ function Timeline({
     paging: false,
   });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
-    id: undefined,
-    top: 0,
-    y: 0,
-  });
+  const reader = useRef<{
+    id: string | undefined;
+    top: number;
+    y: number;
+    inset: number | undefined;
+  }>({ id: undefined, top: 0, y: 0, inset: undefined });
   const heldReader = useRef<
     { id: string; y: number; intent: number; ended: boolean } | undefined
   >(undefined);
@@ -1320,10 +1321,23 @@ function Timeline({
   const held = previous.indexOf(
     edges.current.containedOwners.get(heldId ?? "") ?? heldId ?? "",
   );
+  const previousRow = heldId
+    ? scroller.current?.querySelector<HTMLElement>(
+        `[data-message-id="${CSS.escape(heldId)}"]`,
+      )
+    : undefined;
+  const previousPayload =
+    previousRow?.querySelector("[data-message-payload] p") ??
+    previousRow?.querySelector("[data-message-payload]");
   reader.current = {
     id: held < 0 ? undefined : heldId,
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
+    inset:
+      previousPayload && previousRow
+        ? previousPayload.getBoundingClientRect().top -
+          previousRow.getBoundingClientRect().top
+        : undefined,
   };
   const prepend =
     !!previous.length &&
@@ -1375,14 +1389,27 @@ function Timeline({
     const row = element.querySelector<HTMLElement>(
       `[data-message-id="${CSS.escape(id)}"]`,
     );
-    // A divider changes the anchor's inset inside its virtual item before
-    // Virtua commits the new item height. Hold the same message through both.
+    // An earlier predecessor can remove this row's day/byline. Keep the
+    // payload, not the disappearing header, at the reader's position without
+    // changing the row-relative anchors saved for restoration.
+    const payload =
+      row?.querySelector("[data-message-payload] p") ??
+      row?.querySelector("[data-message-payload]");
+    const insetShift =
+      row && payload && reader.current.inset !== undefined
+        ? payload.getBoundingClientRect().top -
+          row.getBoundingClientRect().top -
+          reader.current.inset
+        : 0;
+    reader.current.y -= insetShift;
+    // A divider's margin also changes the row's inset in its virtual item.
+    // Use mounted geometry for that change before Virtua commits its height.
     const delta =
-      boundaryChanged && row
+      (boundaryChanged || insetShift) && row
         ? row.getBoundingClientRect().top -
           element.getBoundingClientRect().top -
           reader.current.y
-        : moved;
+        : moved + insetShift;
     // WebKit truncates fractional scrollTop writes; use the nearest pixel
     // when a caption's fractional line height changes the message inset.
     correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);

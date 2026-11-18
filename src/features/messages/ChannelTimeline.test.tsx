@@ -152,6 +152,7 @@ function setup({
     memo: 0,
     effect: 0,
   });
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
   const data = new Map<string, string>();
   if (initial !== undefined)
     data.set(
@@ -228,7 +229,12 @@ function setup({
     }),
     focus: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
-    querySelector: () => list,
+    querySelector: (selector: string) =>
+      selector === "ol"
+        ? list
+        : element
+            .querySelectorAll()
+            .find((row) => selector.includes(`"${row.dataset.messageId}"`)),
     querySelectorAll: () =>
       mounted.map(({ id, y }) => ({
         dataset: { messageId: id },

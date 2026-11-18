@@ -41,6 +41,8 @@ export const test = base.extend({
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
   actionProfile: [false, { option: true }],
+  // Pin signing identities when a journey depends on same-second event ID order.
+  identitySeed: [undefined, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
   // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
@@ -140,6 +142,7 @@ export const test = base.extend({
       builderlab,
       liveSetupTimeoutMs,
       actionProfile,
+      identitySeed,
       agentMessageDeletion,
       profilePicture,
       profileTimeZone,
@@ -205,8 +208,10 @@ export const test = base.extend({
   ) => {
     const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
-      actionProfile
-        ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
+      actionProfile || identitySeed !== undefined
+        ? Uint8Array.from({ length: 32 }, (_, i) =>
+            i === 31 ? seed + (identitySeed ?? 0) : 0,
+          )
         : generateSecretKey();
     const relayKey = key(1);
     const typingKeys = [key(2), key(3)];

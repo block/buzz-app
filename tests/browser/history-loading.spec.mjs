@@ -210,7 +210,9 @@ test.describe("quota retry without threshold-driven continuation", () => {
 test.describe("pages inside one second", () => {
   // More rows share a second than a page holds. Relay pages break ties by id,
   // rows by send time, so the next page lands among the loaded rows of that second.
-  test.use({ historyRowsPerSecond: 30 });
+  // This ID order makes the 1400px reader's first row gain an earlier
+  // predecessor, collapsing its day/byline while measurements are held.
+  test.use({ historyRowsPerSecond: 30, identitySeed: 1 });
   // Hold the next older page while reading `depth` px above the newest rows.
   async function reading(page, app, depth) {
     await open(page, app);
@@ -229,23 +231,41 @@ test.describe("pages inside one second", () => {
   const latest = (page) =>
     page.getByRole("button", { name: /^(Jump to latest|\d+ new messages?)$/ });
   for (const depth of [250, 1400])
-    test(`an older page among the loaded rows keeps a reader ${depth}px up`, async ({
+    test(`an older page among the loaded rows keeps a reader ${depth === 1400 ? "whose first row loses its header" : `${depth}px up`}`, async ({
       page,
       app,
     }) => {
       const pending = await reading(page, app, depth);
+      const deferred = depth === 1400;
+      if (deferred) {
+        // Native font metrics differ across engines. Put the first loaded
+        // paragraph in view so both readers observe the same header transition.
+        const delta = await history(page).evaluate(
+          (element) =>
+            element.querySelector("[data-message-id] p").getBoundingClientRect()
+              .top -
+            element.getBoundingClientRect().top -
+            50,
+        );
+        if (Math.abs(delta) > 1) await wheel(page, delta);
+      }
       const before = await anchor(page);
       const height = await history(page).evaluate((e) => e.scrollHeight);
       // A live append can arrive before the older page's deferred row
       // measurements. Hold that boundary explicitly instead of racing frames.
-      const deferred = depth === 1400;
-      if (deferred) await holdFrames(page);
+      const reader = history(page).locator(`[data-message-id="${before.id}"]`);
+      if (deferred) {
+        await expect(reader.locator("[data-stack-previous]")).toHaveCount(0);
+        await holdFrames(page);
+      }
       try {
         pending.release();
         await expect
           .poll(() => history(page).evaluate((e) => e.scrollHeight))
           .toBeGreaterThan(height);
-        if (!deferred) await settle(page);
+        if (deferred)
+          await expect(reader.locator("[data-stack-previous]")).toHaveCount(1);
+        else await settle(page);
         await expectAnchor(page, before);
         // History is not new; a live message still is.
         await expect(latest(page)).toHaveText("Jump to latest");

@@ -27,7 +27,7 @@ import {
   offerBuilderlabDecisions,
   type BuilderlabDecide,
 } from "./decisions";
-import type { CommunitySessions, Credential } from "./session";
+import { PENDING, type CommunitySessions, type Credential } from "./session";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { KnownCommunities } from "../../features/communities/service";
 import type { BuilderlabSession } from "./session";
@@ -312,6 +312,108 @@ it("waits for a restoring sign-in instead of sending a chosen Builderlab's decis
   expect(typesafe).not.toHaveBeenCalled();
   restoring = false;
   for (const listener of [...listeners]) listener();
+  await expect(reply).resolves.toMatchObject({
+    outcome: "answered",
+    backend: BUILDERLAB,
+  });
+  expect(native).toHaveBeenCalledOnce();
+  expect(typesafe).not.toHaveBeenCalled();
+  await Promise.all([builderlab.dispose(), fallback.dispose()]);
+});
+
+it("waits for a community's sign-in server to be restored before choosing who answers", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const decisions = new DecisionsService(root, undefined);
+  const answered = {
+    outcome: "answered" as const,
+    model: "test",
+    answers: { a: { type: "yes_no" as const, probability: 0.7 } },
+  };
+  const typesafe = vi.fn(async () => answered);
+  const fallback = root
+    .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProvider({
+        id: "typesafe",
+        label: "TypeSafe",
+        description: "Your key.",
+        status: () => "ready",
+        subscribe: () => () => {},
+        decide: typesafe,
+      }),
+    );
+  const block = createTestSession(async () => ({
+    ...credential("block"),
+    account: {
+      ...credential("block").account,
+      canUseBuilderlabDecisions: true,
+    },
+  }));
+  // The app's first snapshot at launch: restoring, its server not known.
+  let snapshot: Record<string, unknown> = {
+    status: "restoring",
+    authority: null,
+  };
+  let answering: BuilderlabSession = block;
+  const listeners = new Set<() => void>();
+  const identity = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as FederatedIdentity;
+  const changed = () => {
+    for (const listener of [...listeners]) listener();
+  };
+  const sessions: CommunitySessions = {
+    server: () => undefined,
+    forCommunity: () => answering,
+    dispose: () => {},
+  };
+  const known = {
+    snapshot: () => ({ memberships: [{ id: COMMUNITY, name: "Example" }] }),
+    subscribe: () => () => {},
+  } as unknown as KnownCommunities;
+  const native = vi.fn<BuilderlabDecide>(async () => answered);
+  const builderlab = root
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) =>
+      offerBuilderlabDecisions(
+        ctx,
+        block,
+        native,
+        undefined,
+        communityDecisionSessions(sessions, identity, known),
+      ),
+    );
+  await Promise.all([fallback.await(), builderlab.await()]);
+  await flush();
+  const BUILDERLAB = "block.builderlab/builderlab";
+  decisions.setBackend(BUILDERLAB, COMMUNITY);
+  expect(decisions.backend(COMMUNITY)).toBe(BUILDERLAB);
+  expect(decisions.status(COMMUNITY)).toBe("checking");
+  const reply = decisions.decide({ ...request, community: COMMUNITY });
+  await flush();
+  // Its server is known, but which session answers is not yet.
+  snapshot = {
+    status: "restoring",
+    authority: { id: "relay.example", communityHosts: ["relay.example"] },
+  };
+  answering = PENDING;
+  changed();
+  await flush();
+  expect(decisions.status(COMMUNITY)).toBe("checking");
+  expect(typesafe).not.toHaveBeenCalled();
+  expect(native).not.toHaveBeenCalled();
+  await block.signIn();
+  answering = block;
+  snapshot = { ...snapshot, status: "signed-in" };
+  changed();
   await expect(reply).resolves.toMatchObject({
     outcome: "answered",
     backend: BUILDERLAB,

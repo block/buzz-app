@@ -14,11 +14,12 @@ import type {
   DecisionReply,
 } from "../../features/decisions/service";
 import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
-import type {
-  BuilderlabSession,
-  CommunitySessions,
-  Credential,
-  LoginSnapshot,
+import {
+  PENDING,
+  type BuilderlabSession,
+  type CommunitySessions,
+  type Credential,
+  type LoginSnapshot,
 } from "./session";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { coversCommunity } from "../../features/federated-identity/community-hosts";
@@ -44,7 +45,8 @@ export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
 export type CommunityDecisionSessions = Readonly<{
   /** The joined communities, as relay URLs. */
   communities(): readonly string[];
-  /** The session of the community's sign-in server, or undefined where no
+  /** The session of the community's sign-in server, a pending one while
+   * that server is being restored and not known yet, or undefined where no
    * Builderlab serves that community. */
   forCommunity(relay: string): BuilderlabSession | undefined;
   /** The sign-in server that serves the community, or undefined where none
@@ -69,18 +71,25 @@ export function communityDecisionSessions(
         return [];
       }
     });
-  /** The authority of the server that covers `relay`, if one does. */
-  const covering = (relay: string) => {
+  /** The server that covers `relay`, if one does. */
+  const server = (relay: string) =>
     // Without a server per community, the build's answers every one.
-    const authority = (sessions.server(relay) ?? identity).snapshot().authority;
+    (sessions.server(relay) ?? identity).snapshot();
+  const covering = (relay: string) => {
+    const { authority } = server(relay);
     return authority && coversCommunity(authority.communityHosts, relay)
       ? authority
       : undefined;
   };
   return {
     communities,
-    forCommunity: (relay) =>
-      covering(relay) ? sessions.forCommunity(relay) : undefined,
+    forCommunity: (relay) => {
+      if (covering(relay)) return sessions.forCommunity(relay);
+      // At launch, before the restored server is known, it may cover this
+      // community: wait for it, rather than answer with another provider.
+      const { authority, status } = server(relay);
+      return !authority && status === "restoring" ? PENDING : undefined;
+    },
     account: (relay) => covering(relay)?.id,
     subscribe(listener) {
       // Each community's server and session; either can change which

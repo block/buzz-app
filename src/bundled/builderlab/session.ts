@@ -430,9 +430,13 @@ const unresolved = (): never => {
     "Builderlab is still finding this community's sign-in server. Try again.",
   );
 };
-const PENDING_STATE: LoginSnapshot = Object.freeze({ status: "pending" });
+// Finding the server needs no browser step.
+const PENDING_STATE: LoginSnapshot = Object.freeze({
+  status: "pending",
+  checking: true,
+});
 /** The selected community's session while its sign-in server is unknown. */
-const PENDING: BuilderlabSession = Object.freeze({
+export const PENDING: BuilderlabSession = Object.freeze({
   snapshot: () => PENDING_STATE,
   subscribe: () => () => {},
   credential: unresolved,

@@ -439,18 +439,27 @@ export class GooseHistory {
   /** The last transcript read's messages, by session. */
   private exported = new Map<string, Message[]>();
 
-  /** Every session in `workspace` used since `since`, newest first, and the
-   * messages of those `wanted` picks, all from one `goose-acp`: every agent
-   * in a workspace reads its sessions from one listing. */
+  /** Every session in the `workspaces` used since `since`, newest first, and
+   * the messages of those `wanted` picks, all from one `goose-acp`: every
+   * agent in a workspace reads its sessions from one listing. */
   workspace(
-    workspace: string,
+    workspaces: readonly string[],
     since: number,
     wanted: (row: GooseSessionRow) => boolean,
     signal: AbortSignal,
   ) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
-      const cwd = await absolute(resolveDirectory, workspace);
-      const rows = (await all(goose, cwd)).filter((row) => row.at >= since);
+      // By id: two of them may name one folder.
+      const sessions = new Map<string, GooseSessionRow>();
+      for (const workspace of workspaces)
+        for (const row of await all(
+          goose,
+          await absolute(resolveDirectory, workspace),
+        ))
+          sessions.set(row.sessionId, row);
+      const rows = [...sessions.values()]
+        .filter((row) => row.at >= since)
+        .sort((a, b) => b.at - a.at);
       const messages = new Map<string, Message[]>();
       for (const row of rows) {
         if (!wanted(row)) continue;

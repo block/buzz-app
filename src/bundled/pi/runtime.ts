@@ -54,6 +54,10 @@ import {
 } from "../../features/agents/owner-attestation";
 import { compactAt } from "../../features/agents/compact-at";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
+import {
+  conversationFolder,
+  existingFolder,
+} from "../../features/agents/conversation-folders";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -203,6 +207,9 @@ type Entry = {
       cancel(): void;
     }
   >;
+  /** The folder each conversation's latest run here started in, when a
+   * plugin gave it one: its file reads use it while Buzz reconnects. */
+  folders: Map<string, string>;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
   /** Requests waited for here without a receipt: standalone turns handed to
@@ -252,7 +259,10 @@ export class PiRuntime {
   readonly setup: PiSetup;
 
   constructor(
-    private readonly host: Pick<Host, "spawn" | "readFile">,
+    private readonly host: Pick<
+      Host,
+      "spawn" | "readFile" | "resolveDirectory"
+    >,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (key: AgentKey) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
@@ -390,6 +400,17 @@ export class PiRuntime {
     };
   }
 
+  /** The folder a plugin gave the conversation, if any; a one-off turn has
+   * none. */
+  private folder(agent: AgentKey, key: string | undefined) {
+    if (!key) return undefined;
+    const reads = this.reads(agent);
+    if (!reads) throw new Error("Buzz is not connected");
+    return reads.scope
+      ? conversationFolder(this.storage, reads.scope, agent, key)
+      : undefined;
+  }
+
   /** The agent's Buzz conversations, most recently active first. */
   async places(agent: AgentKey): Promise<Place[]> {
     const { places } = await this.pi.request<{
@@ -480,6 +501,19 @@ export class PiRuntime {
           }),
         };
       });
+  }
+  /** Resolves once `sessions` lists the agent's conversations as Pi's
+   * storage has them; rejects when they cannot be read. */
+  async listed(agent: AgentKey) {
+    // Reading opens its storage, which only an agent running here may hold.
+    if (!this.running.has(agent)) throw new Error("The agent is not running");
+    // A turn on its way to Pi makes its conversation when Pi takes it.
+    await Promise.allSettled(
+      [...(this.agents.get(agent)?.policies.values() ?? [])].map(
+        (policy) => policy.handed,
+      ),
+    );
+    await this.places(agent);
   }
   /** The usage of the agent's Buzz conversations and standalone turns'
    * conversations since `since`. */
@@ -1152,16 +1186,26 @@ export class PiRuntime {
           }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
         signingAuthority: relayKeyOf(this.reads(call.agent)),
-        read: (path) =>
-          entry.handle?.protection
+        read: (path) => {
+          // Relative to where the conversation's runs work: only a thread's
+          // own conversation has a root.
+          const { channel, root } = call.context;
+          const key = root ? `${channel}/${root}` : channel;
+          // While Buzz reconnects, the folder its latest run here started in.
+          const cwd =
+            (this.reads(call.agent)
+              ? this.folder(call.agent, key)
+              : key && entry.folders.get(key)) || entry.config.workspace;
+          return entry.handle?.protection
             ? readFile(
                 this.spawn,
-                entry.config.workspace,
+                cwd,
                 path,
                 signal,
                 entry.handle.protection.processProtection,
               )
-            : this.readFile(path, { cwd: entry.config.workspace }),
+            : this.readFile(path, { cwd });
+        },
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
         ...(signal ? { signal } : {}),
@@ -1564,6 +1608,12 @@ export class PiRuntime {
   ) {
     const { workspace, instructions, scope } = entry.config;
     const memory = await this.core(agent);
+    // A conversation given its own folder runs there, and the folder must
+    // still exist; the agent's workspace stays its home.
+    const assigned = this.folder(agent, conversation);
+    const resolve = this.host.resolveDirectory?.bind(this.host);
+    const cwd = assigned ? await existingFolder(resolve, assigned) : workspace;
+    if (conversation && assigned) entry.folders.set(conversation, assigned);
     return {
       provider: entry.config.provider,
       model: entry.config.model,
@@ -1573,10 +1623,11 @@ export class PiRuntime {
       }),
       // Apart, so a request that steers a working run changes only these.
       pick: { model, thinking: effort },
-      cwd: workspace,
+      cwd,
       instructions: systemPrompt({
         scope,
-        cwd: workspace,
+        cwd,
+        ...(assigned && resolve ? { workspace: await resolve(workspace) } : {}),
         repositories: this.repositories(this.reads(agent)?.scope),
         ...(entry.name
           ? { agent: { name: entry.name, pubkey: pubkeyOf(agent) } }
@@ -1676,7 +1727,7 @@ export class PiRuntime {
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
           worksElsewhere(
-            undefined,
+            reads ? this.folder(agent.key, key) : undefined,
             this.agents.get(agent.key)?.handle?.promptSections?.(channelId),
           ),
         )
@@ -1758,6 +1809,7 @@ export class PiRuntime {
       team: "",
       name: agent.name,
       policies: new Map(),
+      folders: new Map(),
       receipts: new Map(),
       standalone: new Set(),
       active: new Map(),

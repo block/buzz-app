@@ -1920,6 +1920,35 @@ describe("a conversation folder", () => {
     expect(list).toHaveBeenCalledWith(f.agent.key);
   });
 
+  it("waits for a harness that reads its sessions in the background, and is refused when it cannot read them", async () => {
+    let listed: readonly AgentSession[] = [];
+    const loaded = vi.fn(async () => {
+      listed = [thread];
+    });
+    const f = await ready({
+      conversationFolders: true,
+      sessions: {
+        list: () => listed,
+        ready: loaded,
+        subscribe: () => () => {},
+      },
+    });
+    const { agents } = f.plugin;
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow(
+      "This conversation already started in the agent's workspace",
+    );
+    expect(loaded).toHaveBeenCalledWith(f.agent.key);
+    // Sessions it cannot read may hold the conversation.
+    loaded.mockRejectedValue(new Error("The agent is not running"));
+    const other = { channelId: channel, root: "f".repeat(64) };
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "~/work"),
+    ).rejects.toThrow("The agent is not running");
+    expect(agents.conversationFolder(f.agent.key, other)).toBeUndefined();
+  });
+
   it.each(["solo", "dm"] as const)(
     "is given to a %s conversation whole, refusing a root",
     async (channelType) => {
@@ -1965,7 +1994,7 @@ describe("a conversation folder", () => {
       ).rejects.toThrow("Conversation folders are unavailable in a huddle");
   });
 
-  it("is refused by a harness without folders, such as goose or Pi", async () => {
+  it("is refused by a harness without folders", async () => {
     const f = await ready();
     await expect(
       f.plugin.agents.assignConversationFolder(f.agent.key, thread, "~/work"),

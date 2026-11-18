@@ -141,11 +141,11 @@ type Workspace = {
 /** Per history, so a plugin that reloads starts over. */
 const cache = new WeakMap<GooseHistory, Map<string, Workspace>>();
 
-/** Brings `state` up to date with goose's listing of `workspace`: only the
+/** Brings `state` up to date with goose's listing of `workspaces`: only the
  * sessions new or updated since the last read are exported again. */
 async function refresh(
   history: GooseHistory,
-  workspace: string,
+  workspaces: readonly string[],
   state: Workspace,
   since: number,
   signal: AbortSignal,
@@ -156,7 +156,7 @@ async function refresh(
     return read?.settled && read.at === row.at ? read : undefined;
   };
   const { rows, messages } = await history.workspace(
-    workspace,
+    workspaces,
     since,
     (row) => !kept(row),
     signal,
@@ -180,21 +180,27 @@ async function refresh(
   state.reads = reads;
 }
 
-/** The agent's goose sessions in `workspace` used since `since`. */
+/** The agent's goose sessions used since `since`, in `workspace` and in the
+ * `folders` its conversations were given. */
 export async function readUsage(
   history: GooseHistory,
   agent: string,
   workspace: string,
   since: number,
   signal: AbortSignal,
+  folders: readonly string[] = [],
 ): Promise<SessionUsage[]> {
   signal.throwIfAborted();
   const workspaces = cache.get(history) ?? new Map<string, Workspace>();
   cache.set(history, workspaces);
-  let state = workspaces.get(workspace);
+  // An agent with folders of its own shares its listing with no other.
+  const listing = folders.length
+    ? JSON.stringify([workspace, agent])
+    : workspace;
+  let state = workspaces.get(listing);
   if (!state) {
     state = { reads: new Map() };
-    workspaces.set(workspace, state);
+    workspaces.set(listing, state);
   }
   const current = state;
   let reading = current.reading;
@@ -205,11 +211,15 @@ export async function readUsage(
     const started: NonNullable<Workspace["reading"]> = {
       readers: 0,
       stop,
-      done: refresh(history, workspace, current, since, stop.signal).finally(
-        () => {
-          if (current.reading === started) current.reading = undefined;
-        },
-      ),
+      done: refresh(
+        history,
+        [workspace, ...folders],
+        current,
+        since,
+        stop.signal,
+      ).finally(() => {
+        if (current.reading === started) current.reading = undefined;
+      }),
     };
     current.reading = reading = started;
   }

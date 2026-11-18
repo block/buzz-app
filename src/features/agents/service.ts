@@ -507,6 +507,10 @@ export type AgentSession = Readonly<{
 /** Read-only: reading never starts, stops or changes a session. */
 export type AgentSessions = Readonly<{
   list(agent: AgentKey): readonly AgentSession[];
+  /** For a harness whose `list` can be behind its sessions, because it reads
+   * them in the background or one is starting: resolves once `list` names
+   * them all, and rejects when they cannot be read. */
+  ready?(agent: AgentKey): Promise<void>;
   subscribe(listener: () => void): () => void;
 }>;
 /** Token counts as the harness reported them. An absent count is unknown, not
@@ -5873,19 +5877,21 @@ export class AgentsService extends Service implements Agents {
     const folder = await host.resolveDirectory(path, { create: false });
     // Its session's history stays where it began, so a folder given later
     // would start it over.
-    if (
-      !storedFolder(this.storage, scope, key, conversation) &&
-      type.sessions
-        ?.list(key)
-        .some(
-          (session) =>
-            !session.community &&
-            conversationKey(session.channelId, session.root) === conversation,
-        )
-    )
-      throw new Error(
-        "This conversation already started in the agent's workspace",
-      );
+    if (!storedFolder(this.storage, scope, key, conversation)) {
+      await type.sessions?.ready?.(key);
+      if (
+        type.sessions
+          ?.list(key)
+          .some(
+            (session) =>
+              !session.community &&
+              conversationKey(session.channelId, session.root) === conversation,
+          )
+      )
+        throw new Error(
+          "This conversation already started in the agent's workspace",
+        );
+    }
     return assignFolder(this.storage, scope, key, conversation, folder);
   }
   conversationFolder(key: AgentKey, place: SessionPlace) {

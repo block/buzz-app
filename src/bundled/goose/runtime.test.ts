@@ -1,3 +1,5 @@
+import { assignConversationFolder } from "../../features/agents/conversation-folders";
+import type { AgentStore } from "../../features/agents/store";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
@@ -103,6 +105,7 @@ function setup(
     /** The channel's Canvas. */
     canvas?: string;
     repositories?: (scope: string | undefined) => string;
+    resolveDirectory?: Host["resolveDirectory"];
     protection?: AgentProtection;
     /** The owner session's native memory read. */
     memoryRead?: (
@@ -156,7 +159,7 @@ function setup(
   });
   const host = {
     spawn,
-    resolveDirectory: fake.resolveDirectory,
+    resolveDirectory: options.resolveDirectory ?? fake.resolveDirectory,
     readFile,
     serveMcp: fake.serve,
     request: vi.fn(),
@@ -229,6 +232,8 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
+  /** Agent storage. */
+  const agentStore = memoryStorage();
   const runtime = new GooseRuntime(
     host,
     () => relay,
@@ -236,7 +241,7 @@ function setup(
     storage,
     () => options.added ?? [],
     options.repositories,
-    memoryStorage(),
+    agentStore,
     options.recommended,
     options.forwarding,
     options.defaultProvider,
@@ -303,9 +308,16 @@ function setup(
     runtime,
     spawn,
     session,
+    agentStore,
     memoryOpen: session.agentMemories.open,
     reconnect: () => {
       connected = { ...session };
+    },
+    /** The connection drops, until it is back. A reconnecting relay keeps
+     * its session; only its status changes. */
+    offline: () => {
+      state.status = "connecting";
+      state.retained = true;
     },
   };
 }
@@ -1376,6 +1388,140 @@ describe("GooseRuntime", () => {
     const turn = goose()?.turns[0]?.text;
     expect(turn).toContain("They are for reading.");
     expect(turn).not.toContain("create a new worktree");
+  });
+
+  describe("a conversation given its own folder", () => {
+    const scope = `https://goose.example:${alice}`;
+    const root = message("1", "@Gander hi");
+    const folders = (missing = new Set<string>()) =>
+      vi.fn(async (path: string, options?: { create?: boolean }) => {
+        if (options?.create === false && missing.has(path))
+          throw new Error(`Could not find ${path}`);
+        return path.replace(/^~/, "/home/test");
+      });
+    const assign = (
+      store: AgentStore,
+      conversation = `${channel}/${root.id}`,
+    ) =>
+      assignConversationFolder(
+        store,
+        scope,
+        self,
+        conversation,
+        "/repos/worktree",
+      );
+
+    it("starts its session there and names the agent's workspace, and leaves other conversations in the workspace", async () => {
+      const resolveDirectory = folders();
+      const { agentStore, deliver, goose, published } = setup({
+        resolveDirectory,
+      });
+      await assign(agentStore);
+      await deliver(root);
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+      await deliver(message("2", "@Gander hi"));
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(2));
+      const promptOf = (turn: number) =>
+        goose()?.prompts.get(goose()?.turns[turn]?.sessionId ?? "");
+      expect(goose()?.opened[0]).toMatchObject({ cwd: "/repos/worktree" });
+      expect(resolveDirectory).toHaveBeenCalledWith("/repos/worktree", {
+        create: false,
+      });
+      expect(promptOf(0)).toContain(
+        "<workspace>\nCurrent working directory: /repos/worktree\n</workspace>",
+      );
+      expect(promptOf(0)).toContain(
+        "Your persistent workspace is at `/home/test/.buzz`, not in your working directory",
+      );
+      expect(promptOf(0)).toContain("This conversation has its own folder");
+      expect(goose()?.opened[1]).toMatchObject({ cwd: "/home/test/.buzz" });
+      expect(promptOf(1)).not.toContain("This conversation has its own folder");
+      expect(published).toEqual([]);
+    });
+
+    it("refuses its turn, naming the folder, once the folder is gone", async () => {
+      const missing = new Set<string>();
+      const { agentStore, deliver, fake, published } = setup({
+        resolveDirectory: folders(missing),
+      });
+      await assign(agentStore);
+      missing.add("/repos/worktree");
+      await deliver(root);
+      await vi.waitFor(() =>
+        expect(published.at(-1)?.content).toContain(
+          "This conversation's folder /repos/worktree no longer exists",
+        ),
+      );
+      // It never falls back to the workspace.
+      expect(fake.geese.flatMap((process) => process.opened)).toEqual([]);
+    });
+
+    it("reads a file a tool names from the folder, also while Buzz reconnects", async () => {
+      const { agentStore, deliver, goose, readFile, offline } = setup({
+        hold: true,
+      });
+      readFile.mockResolvedValue(new TextEncoder().encode("From a file"));
+      await assign(agentStore);
+      await deliver(root);
+      await flush(100);
+      const process = goose();
+      const send = () =>
+        process?.mcp(process.turns[0]?.sessionId ?? "", "tools/call", {
+          name: "send",
+          arguments: { audience: "everyone", path: "notes.md" },
+        });
+      await send();
+      offline();
+      await send();
+      expect(readFile.mock.calls).toEqual([
+        ["notes.md", { cwd: "/repos/worktree" }],
+        ["notes.md", { cwd: "/repos/worktree" }],
+      ]);
+    });
+
+    it("lists a conversation whose session is opening before it says its sessions are listed", async () => {
+      const held = gated("session/new");
+      const { deliver, runtime } = setup({ hold: true, wrap: held.wrap });
+      try {
+        void deliver(root);
+        await vi.waitFor(() => expect(held.waiting()).toHaveLength(1));
+        let listed = false;
+        const ready = runtime.listed(self).then(() => {
+          listed = true;
+        });
+        await flush();
+        // Nothing lists it yet, so a folder given now would come too late.
+        expect(listed).toBe(false);
+        expect(runtime.sessions(self)).toEqual([]);
+        held.release();
+        await ready;
+        expect(runtime.sessions(self)).toMatchObject([
+          { key: `${channel}/${root.id}`, at: expect.any(Number) },
+        ]);
+      } finally {
+        held.release();
+        runtime.dispose();
+      }
+    });
+
+    it("tells a Solo chat that works there to read its Canvas's folders", async () => {
+      const { agentStore, deliver, goose } = setup({
+        solo: new Set([channel]),
+        canvas: workspaceCanvas({
+          folders: ["~/Development/app"],
+          worktree: { location: "~/Development/trees", baseBranch: "main" },
+          canvas: "Use the design system.",
+        }),
+      });
+      // A Solo chat is one conversation, with no thread root.
+      await assign(agentStore, channel);
+      await deliver(root);
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+      expect(goose()?.opened[0]).toMatchObject({ cwd: "/repos/worktree" });
+      const turn = goose()?.turns[0]?.text;
+      expect(turn).toContain("They are for reading.");
+      expect(turn).not.toContain("create a new worktree");
+    });
   });
 
   it("starts a session from the host's core memory, reading none from the relay", async () => {

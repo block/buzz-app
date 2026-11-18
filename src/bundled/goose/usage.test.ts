@@ -127,6 +127,38 @@ it("titles a session by its first prompt without Buzz's turn mark", () => {
   });
 });
 
+it("reads the agent's sessions in the folders its conversations were given too, each once, from one goose", async () => {
+  const saved = (sessionId: string, cwd: string): FakeSession => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd,
+    updatedAt: "2027-01-15T08:00:00Z",
+    conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+  });
+  const fake = fakeSpawn({
+    home: "/home/test",
+    history: [
+      saved("home", "/home/test/.buzz"),
+      saved("there", "/repos/worktree"),
+      saved("elsewhere", "/repos/other"),
+    ],
+  });
+  const sessions = await readUsage(
+    new GooseHistory(fake),
+    agent,
+    "~/.buzz",
+    Date.parse("2026-06-01T00:00:00Z"),
+    new AbortController().signal,
+    // One of them is the workspace itself.
+    ["/repos/worktree", "/home/test/.buzz"],
+  );
+  expect(sessions.map((session) => session.id).sort()).toEqual([
+    "home",
+    "there",
+  ]);
+  expect(fake.processes).toHaveLength(1);
+});
+
 it("reads the agent's sessions in its workspace through goose, every page", async () => {
   const saved = (
     sessionId: string,

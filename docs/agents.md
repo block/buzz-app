@@ -772,9 +772,7 @@ the plugin holds none there. When the plugin replaces `working-location` in a
 Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
 folder. The set is kept on this device, survives a restart, and is dropped
 when the agent is deleted. Claude, Codex, Goose and Pi (`conversationSections`
-on the type) support it; other harnesses reject. Goose and Pi have no
-conversation folders, so a `working-location` text there changes the rule the
-agent reads, not the folder its session starts in. Plugins feature-detect the methods.
+on the type) support it; other harnesses reject. Plugins feature-detect the methods.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -804,16 +802,20 @@ directory; the call resolves with it as a real path. The folder is kept only on
 this device and is set once: the same folder again resolves, another rejects,
 because a session's history is found by the folder it ran in. For the same
 reason, a conversation that already has a session in the workspace rejects:
-the harness's `sessions` list names the conversations that do. If the folder
-later disappears, the conversation's next turn fails with an error naming it
+the harness's `sessions` list names the conversations that do. A harness
+whose list can be behind (`sessions.ready`) is waited for first: Pi reads its
+sessions in the background, and Goose and Pi finish starting a first turn.
+The call rejects when the sessions cannot be read, as for a Pi agent that is
+not running.
+If the folder later disappears, the conversation's next turn fails with an error naming it
 and never falls back to the workspace. The folder applies on the device that
 runs the agent, so messages from any of the owner's clients, such as mobile,
 start there. Another program that does not share this device's agent state,
 such as a development build with its own storage, an older build or another
 computer, does not see the folder and starts the conversation in the
 workspace. `ctx.agents.conversationFolder(pubkey,
-place)` returns the folder. Claude and Codex (`conversationFolders` on the
-type) support folders; other harnesses and agents on an execution target
+place)` returns the folder. Claude, Codex, Goose and Pi (`conversationFolders`
+on the type) support folders; other harnesses and agents on an execution target
 reject. Plugins feature-detect the method.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
@@ -2103,8 +2105,8 @@ the subagent threads each one spawned. Codex records no cost. A standalone turn
 runs on an ephemeral thread, which Codex keeps no rollout for, so Usage does not
 count it.
 
-Goose lists the agent's sessions in its workspace through `goose-acp`, as its
-Activity tab does, and reads the usage goose saves on each reply, with goose's
+Goose lists the agent's sessions in its workspace, and in the folders its
+conversations were given, through `goose-acp`, as its Activity tab does, and reads the usage goose saves on each reply, with goose's
 own cost estimate where it has one. Both count a request's cached tokens in its
 input, which the readers subtract. Goose and Pi also count a standalone turn's
 session, which has no `channelId`; Pi finds it by the same kept record and

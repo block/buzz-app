@@ -530,6 +530,11 @@ export class AgentSessions {
     return started.settled ?? this.late;
   }
 
+  /** Resolves once each session opening now has taken its message or
+   * failed, so that `snapshot` lists every conversation that has one. */
+  async opened() {
+    await Promise.allSettled([...this.opening.values()]);
+  }
   /** Stops the turn running in conversation `key`, if any, once a session
    * opening for it has taken its message. */
   async interrupt(key: string) {

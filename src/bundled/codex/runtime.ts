@@ -54,7 +54,10 @@ import {
   referencedSkills,
 } from "../../features/agent-harness/referenced-folders";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
-import { MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  abortable as readUntilAborted,
+  MemoryReads,
+} from "../../features/agent-harness/core-memory";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
   SessionPlace,
@@ -80,7 +83,10 @@ import {
   validWorkspace,
   type Config,
 } from "./config";
-import { unsupportedSynced } from "../../features/agents/agent-config";
+import {
+  unsupportedSynced,
+  unverifiedSynced,
+} from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
 import { buzzHome } from "./setup";
 import {
@@ -94,6 +100,7 @@ import {
 import {
   AppServer,
   listModels,
+  listVoices,
   Refused,
   type Spawn,
   type ToolCall,
@@ -1564,6 +1571,26 @@ export class CodexRuntime {
       .then(async () => {
         signal.throwIfAborted();
         const rpc = await server.opening;
+        const voice = settings.voice;
+        if (voice) {
+          signal.throwIfAborted();
+          const voices = await readUntilAborted(
+            listVoices(rpc).catch(() => undefined),
+            signal,
+          );
+          if (!voices)
+            throw new Error(
+              seat.synced?.voice
+                ? unverifiedSynced("voice", voice, "this Codex")
+                : `Couldn't check the selected Codex voice "${voice}". Try again, or change it in Settings.`,
+            );
+          if (!voices.includes(voice))
+            throw new Error(
+              seat.synced?.voice
+                ? unsupportedSynced("voice", voice, "this Codex")
+                : `The selected Codex voice "${voice}" is unavailable. Choose an available voice in Settings.`,
+            );
+        }
         const memory = await this.core(agent.key, signal);
         const instructions =
           Object.values(
@@ -1658,6 +1685,7 @@ export class CodexRuntime {
             realtimeThinking = active;
             thinking();
           },
+          settings.voice,
         );
         signal.throwIfAborted();
         this.save(request, entry, key, {

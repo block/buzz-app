@@ -66,6 +66,7 @@ import {
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
+  composerCodeBlockExit,
   composerCodeFence,
   composerFenceDelimiters,
   composerPrefixDelimiters,
@@ -176,6 +177,15 @@ const CARET_KEYS = new Map<string | number, string>([
   [39, "ArrowRight"],
   [40, "ArrowDown"],
 ]);
+/** The visual direction each arrow key moves the caret. */
+const arrowDirections: Partial<
+  Record<string, "left" | "right" | "up" | "down">
+> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 /** The key a keydown names, restoring a caret key the host reported as a control
  * character (Right Arrow arrives as U+001D) from its code. */
 function keyboardKey(
@@ -2176,6 +2186,24 @@ export function EditableInput({
               adjacent(named === "ArrowLeft", true, event.shiftKey)
             )
               return true;
+          }
+          // A code block that no textblock follows or precedes has nowhere for
+          // the native caret to go past its edge: open a paragraph there.
+          const direction = arrowDirections[named];
+          const exit =
+            direction &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            editable() &&
+            composerCodeBlockExit(
+              editor.state,
+              direction === "right" || direction === "down",
+            );
+          if (exit && editor.endOfTextblock(direction)) {
+            editor.dispatch(closeHistory(exit).scrollIntoView());
+            return true;
           }
           // A caret key reported as a control character would be typed as that
           // character by the native path. Move the caret here instead.

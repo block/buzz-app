@@ -242,7 +242,8 @@ export function MessageLink({
     target: "_blank",
     rel: "noopener noreferrer",
     onClick: (event: MouseEvent<HTMLAnchorElement>) => {
-      if (!active) {
+      // A withheld link has nowhere to go until its recheck admits it.
+      if (!active || withheld) {
         event.preventDefault();
         return;
       }
@@ -274,7 +275,7 @@ export function MessageLink({
     },
     onAuxClick: internal
       ? (event: MouseEvent<HTMLAnchorElement>) => {
-          if (!active) {
+          if (!active || withheld) {
             event.preventDefault();
             return;
           }
@@ -327,6 +328,7 @@ export function MessageLink({
             ? "Chat unavailable. You don’t have access, or it no longer exists."
             : description
         }
+        aria-disabled={withheld || undefined}
         data-link-label={label ?? ""}
         data-panel-target={panelTarget ? url : undefined}
         data-solo-link={chatChip ? "" : undefined}

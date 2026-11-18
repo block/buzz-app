@@ -19,6 +19,14 @@
   background: var(--link-hover);
 }
 
+/* A withheld channel keeps its href for copying, but reads as text. */
+.link[aria-disabled="true"] {
+  color: inherit;
+  --link-hover: var(--link-fill, transparent);
+  text-decoration: none;
+  cursor: default;
+}
+
 html[data-keyboard-navigation] .link:focus-visible {
   outline: 2px solid var(--link-focus);
   outline-offset: 2px;

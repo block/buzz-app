@@ -609,6 +609,37 @@ it("previews recent conversations and opens a row directly", async () => {
   expect(h.open).toHaveBeenLastCalledWith(inboxTarget);
 });
 
+it("dates activity from another year with its year, on the card and the page", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "❤️",
+      // Local noon keeps the calendar day "Nov 14" in every time zone.
+      created_at: new Date(2023, 10, 14, 12).getTime() / 1000,
+      tags: [
+        ["e", h.root.id],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  const reaction = { name: /Alice reacted with heart/ };
+  const card = render(previewAt(h));
+  expect(
+    within(await screen.findByRole("button", reaction)).getByText(
+      "Nov 14, 2023",
+    ),
+  ).toBeInTheDocument();
+  card.unmount();
+  render(h.view);
+  expect(
+    within(await screen.findByRole("button", reaction)).getByText(
+      "on Nov 14, 2023",
+    ),
+  ).toBeInTheDocument();
+});
+
 it("counts unread conversations on the sidebar Activity row until they are read", async () => {
   const h = fixture({ withDm: true });
   const pages = { register: vi.fn() };

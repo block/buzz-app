@@ -125,6 +125,10 @@ import {
   verifiedLabel,
 } from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  directMessageWith,
+  messagePerson,
+} from "../../features/direct-messages/message-person";
 
 function conversationName(
   channel: ChannelSummary,
@@ -218,6 +222,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  openNewMessage,
   openAgentSession,
   usageScope,
   sidebarScope,
@@ -241,6 +246,8 @@ export function SearchResults({
     messageId?: string,
     threadRootId?: string,
   ) => void;
+  /** Open a New message draft to someone the viewer has no DM with. */
+  openNewMessage: (pubkey: string) => void;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -1405,7 +1412,7 @@ export function SearchResults({
         }
       : destination;
   };
-  // Choosing a person opens your DM with them, starting it when needed.
+  // Choosing a person opens your DM with them, or a draft until the first send.
   const [personOpen, setPersonOpen] = useState<{
     name: string;
     error?: string;
@@ -1428,15 +1435,10 @@ export function SearchResults({
   }, [open]);
   const openPerson = async (pubkey: string, name: string, agent: boolean) => {
     if (personAttempt.current) return;
-    const existing = session.channels
-      .list()
-      .channels.find(
-        (channel) =>
-          channel.channelType === "dm" &&
-          !channel.archived &&
-          channel.participants?.length === 1 &&
-          channel.participants[0] === pubkey,
-      );
+    const existing = directMessageWith(
+      session.channels.list().channels,
+      pubkey,
+    );
     // Opening a DM hidden on this device goes through the confirmed open,
     // which restores its sidebar row. So does any DM opened while the relay's
     // hidden set is not ready, since it may be hidden: before the first load,
@@ -1470,13 +1472,15 @@ export function SearchResults({
     personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
-      const channelId = await session.directMessages.open(
-        [pubkey],
+      const destination = await messagePerson(
+        session,
+        pubkey,
         controller.signal,
       );
       if (controller.signal.aborted) return;
       setPersonOpen(undefined);
-      openConversation(channelId);
+      if ("channelId" in destination) openConversation(destination.channelId);
+      else openNewMessage(destination.draftTo);
     } catch (reason) {
       if (!controller.signal.aborted)
         setPersonOpen({
@@ -1500,13 +1504,7 @@ export function SearchResults({
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
-    const dm = list.channels.some(
-      (channel) =>
-        channel.channelType === "dm" &&
-        !channel.archived &&
-        channel.participants?.length === 1 &&
-        channel.participants[0] === person.pubkey,
-    );
+    const dm = !!directMessageWith(list.channels, person.pubkey);
     return {
       key,
       label: person.label,

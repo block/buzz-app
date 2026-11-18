@@ -445,6 +445,11 @@ and are asked to sign in again in Buzz.
   thread's reply box. Quoting keeps formatting and links but does not notify
   anyone mentioned in the quoted text. The floating Quote button hides while
   a menu, picker, or dialog is open.
+- Copying or quoting a selection that takes in a message from its start, such
+  as one dragged from beside the message or across several messages, puts
+  that message's author and time on one line above its text. The time is left
+  out where message timestamps are hidden. A selection inside a message's text
+  copies that text alone.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -715,6 +720,15 @@ and are asked to sign in again in Buzz.
   their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
   lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
   Muting does not mark messages or threads as read.
+  In a channel's or DM's main message box, typing `/mute` by itself toggles
+  Mute for it, and a toast confirms it once saved. The command is not posted as
+  a message. If the change cannot be saved, a notice offers **Retry** instead. Thread
+  replies send `/mute` as text.
+- **Messaging someone**: **Message** on a profile, a profile preview or an
+  agent, **Send message** in a channel's members, and choosing a person in
+  search open your DM with them. With no DM yet, they open **New message**
+  addressed to them; the DM is created only when you send, so choosing someone
+  by mistake never shows them an empty conversation.
 - **Adding to a DM**: open the DM's access dialog and search for someone to
   add. An agent joins right away and can read the DM's earlier messages. For a
   person, choose **Include history** to add them to this DM with its earlier
@@ -817,8 +831,9 @@ and are asked to sign in again in Buzz.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
-- In a channel, typing `/leave` by itself opens the same **Leave channel**
-  confirmation. The command is not posted as a message.
+- In a channel's main message box, typing `/leave` by itself opens the same
+  **Leave channel** confirmation. The command is not posted as a message.
+  Thread replies send `/leave` as text.
 - Deleting the open Solo chat opens a neighboring Solo chat or a new draft while
   deletion finishes. The chat stays listed until deletion is confirmed. If it
   fails, a notice names the chat; you can reopen it from the sidebar.
@@ -827,10 +842,11 @@ and are asked to sign in again in Buzz.
   available when the pause ends; it checks your permission again before deleting.
   For an open Solo chat, the confirmation reappears over the new destination.
   **Cancel** keeps the chat; you can reopen it from the sidebar.
-- **Archived channels** show **Archived · view only** above their messages.
-  You can still read them, but they're hidden from the sidebar; find them in
-  search. If you own or administer the channel, choose **Unarchive** there to
-  restore it for everyone.
+- **Archived channels** show a notice below their messages explaining that
+  they're read-only. Archived channels are hidden from the sidebar and can be
+  found in search. If you own or administer the channel, choose **Unarchive**
+  in the main channel's notice to restore it for everyone. The thread footer
+  shows the archive status.
 - **No longer a member**: if you're removed from the channel you're reading,
   or it's deleted, or you leave it on another device, it says **You’re no
   longer a member of** that channel. Choose **Back to channels** to move on. A
@@ -1069,6 +1085,7 @@ and are asked to sign in again in Buzz.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the Messages sidebar to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
+  hover an unread one and click the envelope where its dot was to mark it read;
   **Open Activity** opens the page. The card's **Unread only** switch is
   separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
   devices or while the Activity page is open.
@@ -1344,8 +1361,13 @@ available rather than silently discarding it.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
   note. Opened from a conversation, it shows that conversation's turns;
-  **Show all conversations** lists the agent's other turns too. It shows only
-  turns captured while Buzz has been open.
+  **Show all conversations** lists the agent's other turns too. That live feed
+  shows only turns captured while Buzz has been open. Signed in to Builderlab,
+  the tab also lists the agent's stored conversations above it: the one it was
+  opened from, then recent ones. **View transcript** opens a conversation's
+  latest 50 turns, with a link to its thread, and refreshes when the live
+  feed shows its turn start or finish. **Refresh transcript** reads it again
+  at any time.
 - Plugin requests show local work status even when they have no message.
   A failed request offers Retry. View opens its thread or conversation.
 - **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar
@@ -1407,7 +1429,11 @@ available rather than silently discarding it.
   the confirmation offers another attempt. A Bestie on another device has no
   Bestie tab on this one. A hosted Bestie whose provider holds its instructions
   (Builderlab does) has the tab and can use **Remembers you**; hosted agents
-  cannot use Bestie's Attention check-ins.
+  cannot use Bestie's Attention check-ins. While the Usage plugin is on, the
+  tab's **Cost** row shows an estimate of what a local Bestie's sessions on
+  this computer cost over the last 7 days, with **Open Usage**. It is not a
+  bill, and it says when the agent's type reports no usage or the agent runs
+  elsewhere. With Usage off there is no Cost row.
 - An agent running on this device can also show, change or remove your Bestie
   when you ask it to. It saves to this device and your account, as the menu
   does, and accepts only your agents you can tag in this community. It also
@@ -1661,6 +1687,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 
 ## Optional features and limits
 
+- Desktop packages include a `buzz` command line client. On macOS, use
+  `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
+  old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
+  running the command. Update scripts or PATH links to use the bundled CLI.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

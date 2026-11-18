@@ -290,6 +290,21 @@ export type IdentityMarkProps = Readonly<{
   pubkey: string;
   profiles: RelaySession["profiles"];
 }>;
+/** The thread a thread tab shows, as its tab menu passes it to an action. */
+export type ThreadTabTarget = Readonly<{
+  channelId: string;
+  rootId: string;
+  /** The tab's title as the viewer sees it, including a rename. */
+  label: string;
+}>;
+/** An item a plugin adds at the top of every thread tab's menu. The host owns
+ * the menu, its placement and focus; `run` is called once the menu closes. */
+export type ThreadTabAction = Readonly<{
+  id: string;
+  /** Read each time the menu opens, so it can follow the plugin's own state. */
+  label(thread: ThreadTabTarget): string;
+  run(thread: ThreadTabTarget): void;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;

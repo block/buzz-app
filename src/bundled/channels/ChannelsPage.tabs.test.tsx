@@ -37,6 +37,10 @@ import {
 } from "../../features/relay/testing";
 import { writeView } from "../../shared/view-state";
 import type { Navigation } from "../../features/navigation/controller";
+import type {
+  ConversationExtensions,
+  ThreadTabTarget,
+} from "../../features/conversation/contracts";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { SOLO_LABEL } from "../../features/solo/labels";
@@ -100,6 +104,7 @@ async function page(
   routed = false,
   appComponent?: RegisteredPanel["component"],
   soloPreferences?: RelaySession["soloPreferences"],
+  extensions?: ConversationExtensions,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -249,6 +254,7 @@ async function page(
       <ChannelsPage
         relay={relay}
         panels={panels}
+        extensions={extensions}
         navigator={
           navigator ??
           createNavigationController(createMemoryHistory()).navigation
@@ -1273,6 +1279,64 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
   });
   expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
   expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
+});
+
+it("leads a thread tab's menu with plugin items, read each time it opens", async () => {
+  const pinned = new Set<string>();
+  const run = vi.fn((thread: ThreadTabTarget) => {
+    pinned.add(thread.rootId);
+  });
+  const actions = [
+    {
+      id: "pin",
+      key: "fixture:pin",
+      pluginId: "fixture",
+      revision: "1",
+      label: (thread: ThreadTabTarget) =>
+        pinned.has(thread.rootId) ? "Unpin thread" : "Pin thread",
+      run,
+    },
+  ];
+  const none = { snapshot: () => [], subscribe: () => () => {} };
+  const h = await page("stream", undefined, false, undefined, undefined, {
+    tools: none,
+    inline: none,
+    threadTabActions: { snapshot: () => actions, subscribe: () => () => {} },
+  });
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side");
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+  });
+  const menu = async (name: string) => {
+    await h.user.pointer({
+      target: await screen.findByRole("tab", { name }),
+      keys: "[MouseRight]",
+    });
+    return within(await screen.findByRole("menu"));
+  };
+  const [first] = (await menu("Thread · Alpha")).getAllByRole("menuitem");
+  expect(first).toHaveTextContent("Pin thread");
+  await h.user.click(first as HTMLElement);
+  await vi.waitFor(() =>
+    expect(run).toHaveBeenCalledWith({
+      channelId: "alpha",
+      rootId: root,
+      label: "Thread · Alpha",
+    }),
+  );
+  expect(
+    (await menu("Thread · Alpha")).getAllByRole("menuitem")[0],
+  ).toHaveTextContent("Unpin thread");
+  await h.user.keyboard("{Escape}");
+  // Conversation tabs keep only the host's own items.
+  expect(
+    (await menu("Beta")).queryByRole("menuitem", { name: /Pin thread/ }),
+  ).not.toBeInTheDocument();
 });
 
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {

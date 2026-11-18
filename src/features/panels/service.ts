@@ -70,6 +70,9 @@ export type Panel = Readonly<{
   launcher?: Readonly<{ icon: string; target: string }>;
   /** Optional live controls beside shell search; lifetime remains plugin-owned. */
   toolbar?: ComponentType;
+  /** Optional full-width row below the title bar, above every page. The row
+   * collapses while no contribution renders anything into it. */
+  titleBarRow?: ComponentType;
   // Optional channel-header launcher. The page supplies context and owns placement.
   channelLauncher?: ComponentType<ChannelLauncherProps>;
   /** Optional Channels menu placement; eligibility is presentation-only, not access. */
@@ -194,6 +197,11 @@ export class PanelsService extends Service implements Panels {
     }
     if (panel.toolbar !== undefined && typeof panel.toolbar !== "function")
       throw new Error("A panel toolbar needs a component");
+    if (
+      panel.titleBarRow !== undefined &&
+      typeof panel.titleBarRow !== "function"
+    )
+      throw new Error("A panel title bar row needs a component");
     if (
       panel.channelLauncher !== undefined &&
       typeof panel.channelLauncher !== "function"

@@ -966,7 +966,7 @@ in this version; use `sidebarSections` for new rows.
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
-`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, titleBarRow?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. An optional `titleBarRow` is a component the shell renders full width below the title bar, above every page, with the same isolation; the row takes no space while no contribution renders anything. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), a row in the
@@ -2805,6 +2805,14 @@ with the action title and icon. Activation mounts the same component as a menu
 action. Removal closes the component. `placement: "menu"` mounts the component
 inside the menu instead.
 Coordination rows keep toolbar contributions in their context menu.
+
+`registerThreadTabAction({ id, label, run })` adds an item at the top of every
+thread tab's right-click menu, above the host's own items. Both functions receive
+`{ channelId, rootId, label }`, where `label` is the tab's title as shown,
+including a rename. The host reads `label(thread)` each time the menu opens, so
+one item can follow the plugin's own state, such as Pin becoming Unpin; a
+throwing `label` shows the action's id. `run` is called once the menu has closed.
+Conversation and panel tabs get none. The host owns the menu, placement and focus.
 
 Markdown links can use a registered panel target. The host checks `canOpenLink`
 when it renders the link and again on activation. Removing the panel makes the

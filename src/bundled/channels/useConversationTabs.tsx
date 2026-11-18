@@ -12,7 +12,11 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  ThreadTabAction,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import {
   panelOpening,
   type PanelOpening,
@@ -57,6 +61,10 @@ export const historyPanel = (entry: PanelOpening) =>
   (entry.panel.addressable === true ||
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
+
+const noThreadTabActions: readonly Contribution<ThreadTabAction>[] = [];
+const readNoThreadTabActions = () => noThreadTabActions;
+const subscribeNone = () => () => {};
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -161,6 +169,11 @@ export function useConversationTabs({
     panels.subscribe,
     panels.snapshot,
     panels.snapshot,
+  );
+  const threadTabActions = useSyncExternalStore(
+    extensions?.threadTabActions?.subscribe ?? subscribeNone,
+    extensions?.threadTabActions?.snapshot ?? readNoThreadTabActions,
+    extensions?.threadTabActions?.snapshot ?? readNoThreadTabActions,
   );
   // Rows read this while rendering; it changes only with the available panels.
   // biome-ignore lint/correctness/useExhaustiveDependencies: panels.resolve reads the availability `available` subscribes to.
@@ -830,12 +843,35 @@ export function useConversationTabs({
     const target = tabChannel(tab);
     const usable = !!target;
     const openChannel = openInChannel(tab, target);
+    const label =
+      tab.kind === "thread"
+        ? threadLabel(tab, target?.name)
+        : (target?.name ?? "Unavailable conversation");
+    const thread = tab.kind === "thread" && {
+      channelId: tab.channelId,
+      rootId: rootOfTab(tab),
+      label,
+    };
+    const actions = [
+      // Plugin items lead; each label is read as the menu renders, so it
+      // follows the plugin's own state, such as Pin becoming Unpin.
+      ...(thread
+        ? threadTabActions.map((action) => ({
+            get label() {
+              try {
+                return action.label(thread);
+              } catch {
+                return action.id;
+              }
+            },
+            run: () => action.run(thread),
+          }))
+        : []),
+      ...(openChannel ? [{ label: "Open in channel", run: openChannel }] : []),
+    ];
     return {
       id: tab.id,
-      label:
-        tab.kind === "thread"
-          ? threadLabel(tab, target?.name)
-          : (target?.name ?? "Unavailable conversation"),
+      label,
       icon:
         tab.kind === "thread" ? (
           <ThreadIcon size="1rem" />
@@ -852,9 +888,7 @@ export function useConversationTabs({
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      ...(openChannel && {
-        actions: [{ label: "Open in channel", run: openChannel }],
-      }),
+      ...(actions.length > 0 && { actions }),
       content:
         !usable || !target ? (
           <p role="status" className={styles.empty}>

@@ -34,6 +34,7 @@ import type {
   MessageRenderer,
   IdentityMark,
   MessageAction,
+  ThreadTabAction,
   ContributionReader,
   PageTabsProps,
   ConversationWorkspaceProps,
@@ -96,6 +97,8 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  threadTabActions: ContributionReader<ThreadTabAction>;
+  registerThreadTabAction(action: ThreadTabAction): void;
   identityMarks: ContributionReader<IdentityMark>;
   registerIdentityMark(mark: IdentityMark): void;
   ui: {
@@ -200,6 +203,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly actionEntries;
   readonly identityMarks;
   private readonly identityMarkEntries;
+  readonly threadTabActions;
+  private readonly threadTabActionEntries;
   private readonly tabEntries;
   private readonly workspaceEntries;
   readonly chatMenus;
@@ -263,6 +268,12 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const threadTabActions = createContributions<ThreadTabAction>(ctx);
+    this.threadTabActionEntries = threadTabActions;
+    this.threadTabActions = {
+      snapshot: threadTabActions.snapshot,
+      subscribe: threadTabActions.subscribe,
+    };
     const identityMarks = createContributions<IdentityMark>(ctx);
     this.identityMarkEntries = identityMarks;
     this.identityMarks = {
@@ -353,6 +364,16 @@ export class ConversationService extends Service implements Conversation {
     )
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
+  }
+  registerThreadTabAction(value: ThreadTabAction) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.label !== "function" ||
+      typeof value.run !== "function"
+    )
+      throw new Error("A thread tab action needs an id, label and run");
+    this.threadTabActionEntries.register(this.ctx, value);
   }
   registerIdentityMark(value: IdentityMark) {
     validate(value);

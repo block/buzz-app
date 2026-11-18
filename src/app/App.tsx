@@ -63,7 +63,7 @@ import {
 } from "./shell/LaunchWindowControls";
 import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
-import { PanelLaunchers } from "./shell/PanelLaunchers";
+import { PanelLaunchers, PanelTitleBarRows } from "./shell/PanelLaunchers";
 import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
 import { targetKey } from "../features/navigation/targets";
@@ -809,6 +809,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               />
             </>
           }
+          titleBarRows={<PanelTitleBarRows panels={launcher.available} />}
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}

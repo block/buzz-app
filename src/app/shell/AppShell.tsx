@@ -94,6 +94,7 @@ function AppShellContent({
   onCommunitySelect,
   onOpenTarget,
   launchers,
+  titleBarRows,
   backdrop,
   companion,
   creationAction,
@@ -134,6 +135,8 @@ function AppShellContent({
   /** Community menu destinations, opened through the host's navigation. */
   onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
+  /** Full-width plugin rows below the title bar; hidden while they render nothing. */
+  titleBarRows?: ReactNode;
   /** Plugin-painted layers behind the shell; absent by default. */
   backdrop?: ReactNode;
   companion?: ReactNode;
@@ -363,6 +366,7 @@ function AppShellContent({
           </div>
         </div>
       </header>
+      <div className="shell-title-bar-rows">{titleBarRows}</div>
 
       <div className="shell-workspace">
         <nav className="shell-side-dock" aria-label="Apps dock">

@@ -41,6 +41,23 @@ export function PanelLaunchers({
       ),
     );
 }
+export function PanelTitleBarRows({
+  panels,
+}: {
+  panels: readonly RegisteredPanel[];
+}) {
+  return panels.map(
+    (panel) =>
+      panel.titleBarRow && (
+        <ToolbarBoundary
+          key={`${panel.key}:${panel.revision}`}
+          title={panel.title}
+        >
+          <panel.titleBarRow />
+        </ToolbarBoundary>
+      ),
+  );
+}
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (

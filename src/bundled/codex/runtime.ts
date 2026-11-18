@@ -317,6 +317,9 @@ function textOf(event: EventData, name: string) {
   return text;
 }
 
+/** A turn's run returns once Codex has it, so this bounds only the hand-over. */
+export const HANDOVER_MS = 2 * 60_000;
+
 /** Local agents share one app-server. Each remote session owns its server.
  * Each conversation carries its agent's workspace, instructions and tools.
  * Tool calls find their agent by thread and turn. */
@@ -403,6 +406,7 @@ export class CodexRuntime {
     private readonly readyReads?: (
       agent: AgentHandle,
       signal: AbortSignal,
+      channelId: string | undefined,
     ) => Promise<AgentReads | undefined>,
   ) {}
   /** The folder a plugin gave the conversation, if any. Only the local
@@ -1746,7 +1750,7 @@ export class CodexRuntime {
         ? this.readyReads
         : undefined;
     const reads = ready
-      ? await ready(agent, delivery.signal)
+      ? await ready(agent, delivery.signal, delivery.channelId)
       : this.reads(agent.key);
     if (ready) {
       delivery.signal.throwIfAborted();
@@ -1814,6 +1818,7 @@ export class CodexRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${conversationKey}`,
         async (deferred) => {
+          const handover = deferred && AbortSignal.timeout(HANDOVER_MS);
           const admitted = await admission(deferred);
           const runtime = await this.connection(
             agent.key,
@@ -1821,9 +1826,14 @@ export class CodexRuntime {
             conversationKey,
             deferred ? undefined : delivery.signal,
           );
-          const accepted = deferred ? runtime.target?.signal : delivery.signal;
-          if (!accepted)
+          const lifetime = deferred ? runtime.target?.signal : delivery.signal;
+          if (!lifetime)
             throw new Error("The remote Codex lifetime is unavailable");
+          // Held work's deadline passed while it waited, so its hand-over
+          // gets its own from now; the turn itself outlives it.
+          const accepted = handover
+            ? AbortSignal.any([lifetime, handover])
+            : lifetime;
           await runtime.run({
             ...delivery,
             ...(admitted

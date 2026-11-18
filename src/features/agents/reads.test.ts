@@ -233,6 +233,98 @@ describe("readyOwnerReads", () => {
     );
     expect(c.relay.subscribe).not.toHaveBeenCalled();
   });
+
+  describe("with a destination", () => {
+    /** A ready session listing `channels`, which the test relists. */
+    function listing(
+      channels: { id: string; channelType?: string }[],
+      get?: (id: string) => { id: string; channelType?: string } | undefined,
+    ) {
+      const listeners = new Set<() => void>();
+      return {
+        listeners,
+        channels: {
+          list: () => ({ status: "ready", channels }),
+          get,
+          subscribeList: (listener: () => void) => {
+            listeners.add(listener);
+            return () => void listeners.delete(listener);
+          },
+        },
+        relist(next: typeof channels) {
+          channels = next;
+          for (const listener of [...listeners]) listener();
+        },
+      };
+    }
+
+    it("waits until a listed destination is present and typed", async () => {
+      const restored = listing([]);
+      const c = community(ready(restored));
+      const settled = vi.fn();
+      const reads = readyOwnerReads(
+        c.relay,
+        agent,
+        new AbortController().signal,
+        "dm",
+      );
+      void reads.then(settled);
+      await Promise.resolve();
+      restored.relist([{ id: "dm" }]);
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      restored.relist([{ id: "dm", channelType: "dm" }]);
+      expect((await reads).connection).toBe(restored);
+      expect(restored.listeners.size).toBe(0);
+      expect(c.listeners.size).toBe(0);
+    });
+
+    it("takes a typed destination the community knows but does not list", async () => {
+      const first = listing([], (id) =>
+        id === "dm" ? { id, channelType: "dm" } : undefined,
+      );
+      const reads = await readyOwnerReads(
+        community(ready(first)).relay,
+        agent,
+        new AbortController().signal,
+        "dm",
+      );
+      expect(reads.connection).toBe(first);
+    });
+
+    it("stops listening on abort while the destination is untyped", async () => {
+      const first = listing([{ id: "dm" }]);
+      const c = community(ready(first));
+      const deadline = new AbortController();
+      const reads = readyOwnerReads(c.relay, agent, deadline.signal, "dm");
+      expect(first.listeners.size).toBe(1);
+      deadline.abort();
+      await expect(reads).rejects.toThrow("did not reconnect");
+      expect(first.listeners.size).toBe(0);
+      expect(c.listeners.size).toBe(0);
+    });
+
+    it("moves to the replacing session while the destination is missing", async () => {
+      const first = listing([]);
+      const c = community(ready(first));
+      const reads = readyOwnerReads(
+        c.relay,
+        agent,
+        new AbortController().signal,
+        "dm",
+      );
+      const replacement = listing([{ id: "dm" }]);
+      c.publish(ready(replacement, { generation: 2 }));
+      expect(first.listeners.size).toBe(0);
+      expect(replacement.listeners.size).toBe(1);
+      // The old session typing it answers nothing.
+      first.relist([{ id: "dm", channelType: "dm" }]);
+      replacement.relist([{ id: "dm", channelType: "dm" }]);
+      expect((await reads).connection).toBe(replacement);
+      expect(replacement.listeners.size).toBe(0);
+      expect(c.listeners.size).toBe(0);
+    });
+  });
 });
 
 describe("workflowMarked", () => {

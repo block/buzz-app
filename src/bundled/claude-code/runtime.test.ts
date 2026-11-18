@@ -2312,6 +2312,7 @@ it("checks a workflow mention with the reads it waited for", async () => {
     expect(readyReads.mock.calls[0]).toEqual([
       expect.objectContaining({ owner: alice }),
       expect.any(AbortSignal),
+      "chan-1",
     ]);
     expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
     expect(f.claudes()).toHaveLength(0);

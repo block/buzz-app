@@ -441,7 +441,12 @@ export class GooseRuntime {
       // A workflow's mention waits out a reconnect; the check below decides.
       const ready = workflowMarked(trigger.event, agent.owner);
       const reads = ready
-        ? await readyOwnerReads(this.relay(agent.key), agent, signal)
+        ? await readyOwnerReads(
+            this.relay(agent.key),
+            agent,
+            signal,
+            channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+          )
         : ownerReads(this.relay(agent.key), agent.pubkey);
       if (ready) {
         signal.throwIfAborted();

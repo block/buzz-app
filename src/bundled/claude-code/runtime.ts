@@ -197,6 +197,9 @@ const listing = (added: readonly AddedTool[]): Listing => ({
 /** How long a session start waits for the agent's recent notes. */
 const NOTES_WAIT_MS = 2_000;
 
+/** A turn's run returns once Claude has it, so this bounds only the hand-over. */
+export const HANDOVER_MS = 2 * 60_000;
+
 export class ClaudeRuntime {
   private disposed = false;
   private readonly confirmedRemote = new Set<AgentKey>();
@@ -273,6 +276,7 @@ export class ClaudeRuntime {
     private readonly readyReads?: (
       agent: AgentHandle,
       signal: AbortSignal,
+      channelId: string | undefined,
     ) => Promise<AgentReads | undefined>,
   ) {}
 
@@ -996,7 +1000,13 @@ export class ClaudeRuntime {
       const ready = workflowMarked(trigger.event, agent.owner)
         ? this.readyReads
         : undefined;
-      const reads = ready ? await ready(agent, signal) : this.reads(agent.key);
+      const reads = ready
+        ? await ready(
+            agent,
+            signal,
+            channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+          )
+        : this.reads(agent.key);
       if (ready) {
         signal.throwIfAborted();
         if (current && !current()) return ignored?.();
@@ -1067,6 +1077,7 @@ export class ClaudeRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (deferred) => {
+          const handover = deferred && AbortSignal.timeout(HANDOVER_MS);
           if (this.agents.get(agent.key) !== entry) return;
           const admitted = await admission(deferred);
           session = admitted?.session ?? session;
@@ -1077,9 +1088,14 @@ export class ClaudeRuntime {
             key,
             deferred ? undefined : signal,
           );
-          const accepted = deferred ? runtime.target?.signal : signal;
-          if (!accepted)
+          const lifetime = deferred ? runtime.target?.signal : signal;
+          if (!lifetime)
             throw new Error("The remote Claude lifetime is unavailable");
+          // Held work's deadline passed while it waited, so its hand-over
+          // gets its own from now; the turn itself outlives it.
+          const accepted = handover
+            ? AbortSignal.any([lifetime, handover])
+            : lifetime;
           await runtime.run({
             ...delivery,
             ...(session ? { session } : {}),

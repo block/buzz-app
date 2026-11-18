@@ -141,7 +141,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (key) => !!agents.executionBinding(key),
     undefined,
     undefined,
-    (agent, signal) => readyOwnerReads(agents.relay(agent.key), agent, signal),
+    (agent, signal, channelId) =>
+      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

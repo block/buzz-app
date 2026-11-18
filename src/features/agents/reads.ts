@@ -161,10 +161,10 @@ export function workflowMarked(event: RelayEvent, owner: string) {
 }
 
 /** `ownerReads` of the agent's own community and owner, once the community is
- * ready and has listed its channels, which a turn needs to tell where to
- * answer: now when it has, or after the reconnect under way, through a new
- * session in the same community and owner if that replaces the old one.
- * Rejects when the community ends up another one or another owner's, is
+ * ready, has listed its channels and knows the kind of `channelId`, which a
+ * turn needs to tell where to answer: now when it has, or after the reconnect
+ * under way, through a new session in the same community and owner if that
+ * replaces the old one. Rejects when the community ends up another one or another owner's, is
  * disconnected or fails in a way the service does not recover from by itself,
  * or when `signal` aborts first. It waits for the service's own notifications
  * and never reconnects. */
@@ -172,6 +172,7 @@ export function readyOwnerReads(
   relay: RelayData | undefined,
   agent: Readonly<{ relay: string; owner: string; pubkey: string }>,
   signal: AbortSignal,
+  channelId?: string,
 ): Promise<AgentReads> {
   const unavailable = () =>
     new Error(
@@ -197,8 +198,19 @@ export function readyOwnerReads(
         snapshot.scope !== scope
       )
         return undefined;
-      const { status } = snapshot.session.channels.list();
+      const { channels } = snapshot.session;
+      const { status, channels: listed } = channels.list();
       if (status === "idle" || status === "loading") return pending;
+      // A list restored from disk or still paging can lack the destination's
+      // kind, and an unknown one would answer a DM in a thread.
+      if (
+        channelId &&
+        !(
+          listed.find((item) => item.id === channelId) ??
+          channels.get?.(channelId)
+        )?.channelType
+      )
+        return pending;
       return ownerReads(relay, agent.pubkey);
     }
     if (

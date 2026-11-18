@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import type { AgentExecution } from "../../features/agents/execution";
 import { ClaudeProcess } from "./claude";
 import { executionSpawn } from "./execution";
-import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
+import { ClaudeRuntime, DEFAULT_CONFIG, HANDOVER_MS } from "./runtime";
 import { localStore } from "../../features/agents/store";
 import { fileStore } from "../../features/agents/state";
 import type {
@@ -438,6 +438,205 @@ it("waits for a workflow mention's community on the execution target too", async
     expect(f.sessions).toHaveLength(1);
     expect(f.local).not.toHaveBeenCalled();
   } finally {
+    await f.cleanup();
+  }
+});
+
+/** A workflow's mention for `f`'s agent in "room", and a run that delivers it
+ * with `signal`, the original delivery deadline. */
+function workflowDelivery(
+  f: Awaited<ReturnType<typeof remoteFixture>>,
+  relay: ReturnType<typeof keypair>,
+  content: string,
+) {
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content,
+      tags: [
+        ["h", "room"],
+        ["p", f.agent.pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", f.agent.owner],
+        ["buzz:workflow-mention", f.agent.pubkey],
+      ],
+    }),
+  );
+  return (signal: AbortSignal) =>
+    f.runtime.run({
+      agent: f.handle,
+      config: DEFAULT_CONFIG,
+      channelId: "room",
+      trigger: { type: "mention", event },
+      signal,
+      workingUntil: (work: Promise<unknown>) => void f.waits.push(work),
+    } as unknown as Delivery);
+}
+
+/** The hand-over budgets started, which the test expires; other timeouts run
+ * on the real clock. */
+function handoverBudgets() {
+  const budgets: AbortController[] = [];
+  const spy = vi.spyOn(AbortSignal, "timeout");
+  spy.mockImplementation((ms) => {
+    if (ms !== HANDOVER_MS) {
+      const timer = new AbortController();
+      setTimeout(
+        () => timer.abort(new DOMException("timed out", "TimeoutError")),
+        ms,
+      );
+      return timer.signal;
+    }
+    const budget = new AbortController();
+    budgets.push(budget);
+    return budget.signal;
+  });
+  return Object.assign(budgets, { restore: () => spy.mockRestore() });
+}
+
+it("gives a workflow mention held behind remote compaction a fresh hand-over deadline", async () => {
+  const relay = keypair();
+  const readyReads = vi.fn<NonNullable<ClaudeReady>>();
+  const f = await remoteFixture(readyReads);
+  const reads = {
+    ...f.reads,
+    workflowAuthority: () => relay.pubkey,
+    profiles: async () => {},
+    profile: () => undefined,
+  };
+  // Here the community is ready; on the target it keeps retrying.
+  readyReads.mockImplementationOnce(async () => reads);
+  readyReads.mockImplementationOnce(
+    (_agent, signal) =>
+      new Promise((_resolve, reject) =>
+        signal.addEventListener(
+          "abort",
+          () =>
+            reject(
+              new Error(
+                "Workflow request could not start: its community did not reconnect before the delivery deadline.",
+              ),
+            ),
+          { once: true },
+        ),
+      ),
+  );
+  const budgets = handoverBudgets();
+  const turns = async () =>
+    (await f.wires()).filter(
+      (wire) =>
+        wire.type === "user" &&
+        String((wire.message as { content?: unknown })?.content).includes(
+          "late workflow",
+        ),
+    ).length;
+  try {
+    await f.deliver();
+    await writeFile(join(f.directory, "hold-compact"), "");
+    const compact = f.runtime.session(
+      f.agent,
+      { channelId: "room" },
+      "compact",
+    );
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "compacting",
+      ),
+    );
+    const expired = new AbortController();
+    await workflowDelivery(f, relay, "@Claude late workflow")(expired.signal);
+    const handoff = Promise.all(f.waits.splice(0));
+    handoff.catch(() => {});
+    // The original deadline passes while the hand-over waits for Compact.
+    expired.abort(new Error("delivery deadline"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(budgets).toHaveLength(0);
+    f.finish();
+    await compact;
+    await vi.waitFor(() => expect(readyReads).toHaveBeenCalledTimes(2));
+    const child = readyReads.mock.calls[1]?.[1];
+    expect(budgets).toHaveLength(1);
+    expect(child?.aborted).toBe(false);
+    budgets[0]?.abort(new DOMException("timed out", "TimeoutError"));
+    await expect(handoff).rejects.toThrow("did not reconnect");
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "idle",
+      ),
+    );
+    // Compact works again, and the expired mention never starts a turn.
+    const again = f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "compacting",
+      ),
+    );
+    f.finish();
+    await again;
+    expect(await turns()).toBe(0);
+  } finally {
+    budgets.restore();
+    f.finish();
+    await f.cleanup();
+  }
+});
+
+it("keeps a held workflow turn that outlives its hand-over deadline", async () => {
+  const relay = keypair();
+  const readyReads = vi.fn<NonNullable<ClaudeReady>>();
+  const f = await remoteFixture(readyReads);
+  readyReads.mockImplementation(async () => ({
+    ...f.reads,
+    workflowAuthority: () => relay.pubkey,
+    profiles: async () => {},
+    profile: () => undefined,
+  }));
+  const budgets = handoverBudgets();
+  try {
+    await f.deliver();
+    await writeFile(join(f.directory, "hold-compact"), "");
+    const compact = f.runtime.session(
+      f.agent,
+      { channelId: "room" },
+      "compact",
+    );
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "compacting",
+      ),
+    );
+    await workflowDelivery(
+      f,
+      relay,
+      "@Claude hold-request",
+    )(new AbortController().signal);
+    const handoff = Promise.all(f.waits.splice(0));
+    f.finish();
+    await compact;
+    await vi.waitFor(() => expect(readyReads).toHaveBeenCalledTimes(2));
+    await vi.waitFor(async () =>
+      expect(
+        (await f.wires()).some(
+          (wire) =>
+            wire.type === "user" &&
+            String((wire.message as { content?: unknown })?.content).includes(
+              "hold-request",
+            ),
+        ),
+      ).toBe(true),
+    );
+    // The model turn runs past the hand-over budget and still finishes.
+    for (const budget of budgets) budget.abort();
+    f.finish();
+    await handoff;
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "idle",
+      ),
+    );
+  } finally {
+    budgets.restore();
+    f.finish();
     await f.cleanup();
   }
 });

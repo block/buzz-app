@@ -45,31 +45,50 @@ afterEach(() => {
 });
 
 const owner = "a".repeat(64);
+const pubkey = "b".repeat(64);
+/** An agent of another community, so its membership key is not its pubkey. */
 const agent = {
-  key: "b".repeat(64),
-  pubkey: "b".repeat(64),
+  key: `${pubkey}@relay.example`,
+  pubkey,
   owner,
   relay: "wss://relay.example",
 };
 const session = {
   workflowAuthority: "c".repeat(64),
   channels: {
-    list: () => ({ status: "ready", channels: [] }),
+    list: () => ({
+      status: "ready",
+      channels: [{ id: "dm", channelType: "dm" }],
+    }),
     subscribeList: () => () => {},
   },
 };
-/** The agent's community, ready with its channels listed. */
-const relay = {
-  snapshot: () => ({
-    status: "ready",
-    generation: 1,
-    origin: "https://relay.example",
-    viewer: owner,
-    scope: `https://relay.example:${owner}`,
-    session,
-  }),
-  subscribe: () => () => {},
-} as unknown as RelayData;
+/** The agent's community, connecting until the test makes it ready. */
+function community() {
+  let snapshot: object = { status: "connecting", generation: 1 };
+  const listeners = new Set<() => void>();
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  } as unknown as RelayData;
+  return {
+    relay,
+    ready() {
+      snapshot = {
+        status: "ready",
+        generation: 2,
+        origin: "https://relay.example",
+        viewer: owner,
+        scope: `https://relay.example:${owner}`,
+        session,
+      };
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
 
 it.each([
   ["Claude", claude],
@@ -78,8 +97,9 @@ it.each([
 ])(
   "gives %s's runtime the agent's community reads once ready",
   async (_name, apply) => {
+    const c = community();
     const communities = vi.fn((key: string) =>
-      key === agent.key ? relay : undefined,
+      key === agent.key ? c.relay : undefined,
     );
     vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     apply({
@@ -103,10 +123,17 @@ it.each([
       readyReads?: (
         agent: unknown,
         signal: AbortSignal,
+        channelId: string | undefined,
       ) => Promise<{ connection: unknown } | undefined>;
     };
-    const reads = await readyReads?.(agent, new AbortController().signal);
+    const settled = vi.fn();
+    const reads = readyReads?.(agent, new AbortController().signal, "dm");
+    void reads?.then(settled, settled);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A community still connecting holds the reads back.
+    expect(settled).not.toHaveBeenCalled();
+    c.ready();
+    expect((await reads)?.connection).toBe(session);
     expect(communities).toHaveBeenCalledWith(agent.key);
-    expect(reads?.connection).toBe(session);
   },
 );

@@ -248,6 +248,7 @@ export class PiRuntime {
     private readonly readyReads?: (
       agent: AgentHandle,
       signal: AbortSignal,
+      channelId: string | undefined,
     ) => Promise<AgentReads | undefined>,
   ) {
     this.pi = new Pi(
@@ -591,7 +592,13 @@ export class PiRuntime {
       const ready = workflowMarked(trigger.event, agent.owner)
         ? this.readyReads
         : undefined;
-      const reads = ready ? await ready(agent, signal) : this.reads(agent.key);
+      const reads = ready
+        ? await ready(
+            agent,
+            signal,
+            channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+          )
+        : this.reads(agent.key);
       if (ready) {
         signal.throwIfAborted();
         if (current && !current()) return ignored?.();

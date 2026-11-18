@@ -16,7 +16,11 @@ import {
   conversationKey,
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
-import { type AgentReads, ownerReads } from "../../features/agents/reads";
+import {
+  type AgentReads,
+  ownerReads,
+  readyOwnerReads,
+} from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
@@ -44,7 +48,7 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { CodexRuntime, codexStep, programs } from "./runtime";
+import { CodexRuntime, codexStep, HANDOVER_MS, programs } from "./runtime";
 import { codexRun } from "./run";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
@@ -3094,10 +3098,129 @@ it("checks a workflow mention, and answers it, with the reads it waited for", as
   Object.assign(f.runtime, { readyReads });
   const ignored = vi.fn();
   await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
-  expect(readyReads).toHaveBeenCalledExactlyOnceWith(ask.agent, ask.signal);
+  expect(readyReads).toHaveBeenCalledExactlyOnceWith(
+    ask.agent,
+    ask.signal,
+    "channel",
+  );
   expect(channel).toHaveBeenCalledWith("channel");
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(ignored).not.toHaveBeenCalled();
+  await f.complete();
+});
+
+it("waits after a reconnect until a workflow mention's DM is typed, then answers in the DM's session", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const origin = "https://relay.example";
+  // The community the turn later reads through is the one the wait ended on.
+  f.snapshot.scope = `${origin}:${owner}`;
+  // The replacement session lists the DM, restored or paged, before its kind.
+  let listed: { id: string; name: string; channelType?: string }[] = [];
+  const listeners = new Set<() => void>();
+  const live = {
+    ...f.snapshot.session,
+    workflowAuthority: relay.pubkey,
+    channels: {
+      list: () => ({ status: "ready", channels: listed }),
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+    },
+  };
+  const relisted = (next: typeof listed) => {
+    listed = next;
+    for (const listener of [...listeners]) listener();
+  };
+  let snapshot: object = { status: "connecting", generation: 1 };
+  const services = new Set<() => void>();
+  const community = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      services.add(listener);
+      return () => void services.delete(listener);
+    },
+  } as unknown as RelayData;
+  Object.assign(f.runtime, {
+    readyReads: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+      channelId: string | undefined,
+    ) =>
+      readyOwnerReads(
+        community,
+        { ...agent, relay: "wss://relay.example" },
+        signal,
+        channelId,
+      ),
+  });
+  const prepare: NonNullable<Delivery["prepareSession"]> = vi.fn(
+    async () => undefined,
+  );
+  const workflow = (threadRoot: string) => {
+    const ask = f.delivery("@Codex workflow", threadRoot);
+    return f.runtime.run({
+      ...ask,
+      config: { ...(ask.config as object), scope: "thread" },
+      prepareSession: prepare,
+      trigger: {
+        type: "mention",
+        event: eventDto(
+          signed(relay, {
+            kind: 9,
+            content: "@Codex workflow",
+            tags: [
+              ["h", "channel"],
+              ["e", threadRoot, "", "reply"],
+              ["p", pubkey],
+              ["buzz:workflow", "true"],
+              ["buzz:workflow-owner", owner],
+              ["buzz:workflow-mention", pubkey],
+            ],
+          }),
+        ),
+      },
+    });
+  };
+  const first = workflow(root);
+  snapshot = {
+    status: "ready",
+    generation: 2,
+    origin,
+    viewer: owner,
+    scope: `${origin}:${owner}`,
+    session: live,
+  };
+  for (const listener of [...services]) listener();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  relisted([{ id: "channel", name: "DM" }]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Neither a missing nor an untyped DM admits or starts the turn.
+  expect(prepare).not.toHaveBeenCalled();
+  expect(f.spawn).not.toHaveBeenCalled();
+  relisted([{ id: "channel", name: "DM", channelType: "dm" }]);
+  await first;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(prepare).toHaveBeenCalledWith(
+    {
+      source: { channelId: "channel" },
+      conversation: { channelId: "channel" },
+    },
+    false,
+  );
+  expect(listeners.size).toBe(0);
+  expect(services.size).toBe(0);
+  // A mention in another thread of the DM continues the same session.
+  await workflow("e".repeat(64));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
   await f.complete();
 });
 
@@ -7430,6 +7553,176 @@ it("waits for a workflow mention's community on the execution target too", async
   expect(ignored).not.toHaveBeenCalled();
   await guest.complete();
   await f.runtime.retire(pubkey);
+});
+
+/** The hand-over budgets started, which the test expires; other timeouts run
+ * on the real clock. */
+function handoverBudgets() {
+  const budgets: AbortController[] = [];
+  const spy = vi.spyOn(AbortSignal, "timeout");
+  spy.mockImplementation((ms) => {
+    const budget = new AbortController();
+    if (ms === HANDOVER_MS) budgets.push(budget);
+    else
+      setTimeout(
+        () => budget.abort(new DOMException("timed out", "TimeoutError")),
+        ms,
+      );
+    return budget.signal;
+  });
+  return Object.assign(budgets, { restore: () => spy.mockRestore() });
+}
+
+/** A remote conversation whose New the test holds, and a workflow's mention
+ * in it with `readyReads` on both sides. */
+async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
+  const guests: ReturnType<typeof fixture>[] = [];
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => {
+      const guest = fixture();
+      guests.push(guest);
+      return guestTarget(guest);
+    },
+  );
+  const relay = keypair();
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const reads = ownerReads(replacement, pubkey);
+  Object.assign(f.runtime, { readyReads });
+  const first = f.delivery("first");
+  await f.runtime.run(first);
+  await vi.waitFor(() => expect(guests[0]?.starts()).toHaveLength(1));
+  await guests[0]?.complete();
+  const agent = { ...first.agent, config: first.config } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  const started = deferred<void>();
+  const released = deferred<void>();
+  const reset = f.runtime.session(agent, place, "new", async (change) => {
+    started.resolve();
+    await released.promise;
+    await change();
+  });
+  await started.promise;
+  const handoffs: Promise<unknown>[] = [];
+  const workflow = (signal: AbortSignal) =>
+    f.runtime.run({
+      ...f.delivery("@Codex workflow"),
+      trigger: {
+        type: "mention",
+        event: eventDto(
+          signed(relay, {
+            kind: 9,
+            content: "@Codex workflow",
+            tags: [
+              ["h", "channel"],
+              ["e", root, "", "reply"],
+              ["p", pubkey],
+              ["buzz:workflow", "true"],
+              ["buzz:workflow-owner", owner],
+              ["buzz:workflow-mention", pubkey],
+            ],
+          }),
+        ),
+      },
+      signal,
+      workingUntil: (work: Promise<unknown>) => void handoffs.push(work),
+    });
+  return {
+    f,
+    guests,
+    reads,
+    agent,
+    place,
+    released,
+    reset,
+    handoffs,
+    workflow,
+  };
+}
+
+it("gives a workflow mention held behind a remote New a fresh hand-over deadline", async () => {
+  const readyReads = vi.fn();
+  const held = await heldRemoteNew(readyReads);
+  // Here the community is ready; on the target it keeps retrying.
+  readyReads.mockImplementationOnce(async () => held.reads);
+  readyReads.mockImplementationOnce(
+    (_agent: unknown, signal: AbortSignal) =>
+      new Promise((_resolve, reject) =>
+        signal.addEventListener(
+          "abort",
+          () =>
+            reject(
+              new Error(
+                "Workflow request could not start: its community did not reconnect before the delivery deadline.",
+              ),
+            ),
+          { once: true },
+        ),
+      ),
+  );
+  const budgets = handoverBudgets();
+  try {
+    const expired = new AbortController();
+    await held.workflow(expired.signal);
+    expect(held.handoffs).toHaveLength(1);
+    const handoff = held.handoffs[0] as Promise<unknown>;
+    handoff.catch(() => {});
+    // The original deadline passes while the hand-over waits for New.
+    expired.abort(new Error("delivery deadline"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(budgets).toHaveLength(0);
+    held.released.resolve();
+    await held.reset;
+    await vi.waitFor(() => expect(readyReads).toHaveBeenCalledTimes(2));
+    expect(budgets).toHaveLength(1);
+    expect(readyReads.mock.calls[1]?.[1]?.aborted).toBe(false);
+    budgets[0]?.abort(new DOMException("timed out", "TimeoutError"));
+    await expect(handoff).rejects.toThrow("did not reconnect");
+    await vi.waitFor(() =>
+      expect(held.f.runtime.sessionState(held.agent, held.place)).toBe("idle"),
+    );
+    // New works again, and the expired mention never starts a turn.
+    await held.f.runtime.session(held.agent, held.place, "new");
+    expect(held.guests.flatMap((guest) => guest.starts())).toHaveLength(1);
+  } finally {
+    budgets.restore();
+    await held.f.runtime.retire(pubkey);
+  }
+});
+
+it("keeps a workflow turn held behind a remote New past its hand-over deadline", async () => {
+  const readyReads = vi.fn();
+  const held = await heldRemoteNew(readyReads);
+  readyReads.mockImplementation(async () => held.reads);
+  const budgets = handoverBudgets();
+  try {
+    await held.workflow(new AbortController().signal);
+    const handoff = held.handoffs[0];
+    held.released.resolve();
+    await held.reset;
+    await vi.waitFor(() => expect(held.guests[1]?.starts()).toHaveLength(1));
+    // The model turn runs past the hand-over budget and still finishes.
+    for (const budget of budgets) budget.abort();
+    await held.guests[1]?.complete();
+    await handoff;
+    await vi.waitFor(() => expect(held.f.publish).toHaveBeenCalledTimes(2));
+  } finally {
+    budgets.restore();
+    await held.f.runtime.retire(pubkey);
+  }
 });
 
 it("gives each conversation a durable target key and rotates only its New session", async () => {

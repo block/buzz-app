@@ -745,6 +745,10 @@ it("hands over promptly and runs conversations independently on one server", asy
   );
   expect(started.developerInstructions).toContain("## Posting Conventions");
   expect(started.developerInstructions).toContain("## Product help");
+  // The agent's session scope picks its Session Model.
+  expect(started.developerInstructions).toContain(
+    "## Session Model\n\nYou are one session of your agent identity",
+  );
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
@@ -6038,6 +6042,13 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn", 
   });
   await f.runtime.run(channelScope(f.delivery("@Codex first")));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.sent.find((wire) => wire.method === "thread/start")?.params,
+  ).toMatchObject({
+    developerInstructions: expect.stringContaining(
+      "## Session Model\n\nYou are one per-channel session",
+    ),
+  });
   soloChannels.delete("channel");
   await f.runtime.run(channelScope(f.delivery("@Codex after share")));
   // The converted chat's request waits for the Solo turn instead of steering in.

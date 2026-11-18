@@ -121,7 +121,7 @@ describe("the tool list", () => {
         } as unknown as BuzzClient),
       ).toEqual(names);
     // How to use them is in their descriptions, loaded with the tools.
-    expect(composeBase().text).not.toContain("## Attention");
+    expect(composeBase({ scope: "thread" }).text).not.toContain("## Attention");
     expect(
       ATTENTION_TOOLS.find((tool) => tool.name === "watch_add")?.description,
     ).toContain("Jev tests relevance");

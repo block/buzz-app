@@ -1150,7 +1150,7 @@ it("gives each turn of a kept session the plugins' instructions as they are now"
   expect(second).toContain("Run dibs_watch first.");
   expect(second).not.toContain("Run dibs_check first.");
   expect(third).not.toContain("<plugin-instructions");
-  expect(composeBase().text).toContain(
+  expect(composeBase({ scope: "thread" }).text).toContain(
     "a turn without any means no plugin instructions apply now",
   );
 });

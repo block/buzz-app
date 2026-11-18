@@ -3416,7 +3416,7 @@ export class CodexRuntime {
     const params = {
       model,
       cwd: workspace,
-      developerInstructions: developerInstructions(agent, home),
+      developerInstructions: developerInstructions(agent, settings.scope, home),
       approvalPolicy: "never",
       // Matches Claude's bypassPermissions; only the owner's mentions and the
       // agent's own watches and timers start work.

@@ -6,11 +6,11 @@ import { FRAME, saved } from "./fixtures/saved";
 import { type Facts, SECTIONS } from "./index";
 
 const VARIANTS: readonly (readonly [string, Facts])[] = [
-  ["default", {}],
-  ["own-folder", { ownFolder: FRAME.workspace }],
+  ["default", { scope: "thread" }],
+  ["own-folder", { scope: "thread", ownFolder: FRAME.workspace }],
 ];
 
-describe("the prompt, byte for byte what it was before sections", () => {
+describe("the prompt, byte for byte what it was before sections, with the Session Model that Codex has since", () => {
   // Claude Code, Goose and Pi build theirs with `systemPrompt`.
   for (const scope of ["thread", "channel"] as const) {
     it(`for a ${scope} session`, () => {
@@ -33,8 +33,10 @@ describe("the prompt, byte for byte what it was before sections", () => {
 
   it("for Codex", () => {
     const { agent } = FRAME.system;
-    expect(`${developerInstructions(agent)}\n`).toBe(saved("codex.default"));
-    expect(`${developerInstructions(agent, FRAME.workspace)}\n`).toBe(
+    expect(`${developerInstructions(agent, "thread")}\n`).toBe(
+      saved("codex.default"),
+    );
+    expect(`${developerInstructions(agent, "thread", FRAME.workspace)}\n`).toBe(
       saved("codex.own-folder"),
     );
   });
@@ -63,17 +65,19 @@ describe("composeBase", () => {
     for (const id of ids) expect(id).toMatch(/^[a-z]+(-[a-z]+)*$/);
   });
 
-  it("gives the Session Model of the session's scope, or none", () => {
-    const model = (scope?: "thread" | "channel") =>
-      composeBase(scope ? { scope } : {}).text.split("## Session Model")[1];
+  it("gives the Session Model of the session's scope", () => {
+    const model = (scope: "thread" | "channel") =>
+      composeBase({ scope }).text.split("## Session Model")[1];
     expect(model("thread")).toContain("each thread gets its own independent");
     expect(model("channel")).toContain("You are one per-channel session");
-    expect(model()).toBeUndefined();
   });
 
   it("names the workspace exactly as given", () => {
     // `$&` and `$1` mean something to a string replacement.
-    const { text } = composeBase({ ownFolder: "/home/$&/$1/ws" });
+    const { text } = composeBase({
+      scope: "thread",
+      ownFolder: "/home/$&/$1/ws",
+    });
     expect(text).toContain("Your persistent workspace is at `/home/$&/$1/ws`,");
     expect(text).not.toContain("{workspace}");
   });

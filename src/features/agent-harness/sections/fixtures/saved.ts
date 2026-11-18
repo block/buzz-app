@@ -1,6 +1,7 @@
 // The prompts as they were before the base prompt had sections, and the
 // inputs that gave them: one agent, its workspace, and a conversation folder
-// of its own.
+// of its own. The Codex ones also have the Session Model, which Codex got
+// after.
 import { readFileSync } from "node:fs";
 
 /** What the prompt code gave for the fixture `name`. */

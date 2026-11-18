@@ -24,8 +24,8 @@ import workspaceLayoutOwnFolder from "./workspace-layout.own-folder.md?raw";
  * a host variant section. */
 export type Facts = Readonly<{
   /** Whether each thread is a session of its own, or the whole channel or
-   * community is one. Absent for a harness whose prompt has no Session Model. */
-  scope?: "thread" | "channel" | "community";
+   * community is one. */
+  scope: "thread" | "channel" | "community";
   /** The agent's workspace, absolute, when the conversation works in a folder
    * of its own instead. */
   ownFolder?: string | undefined;
@@ -34,8 +34,8 @@ export type Facts = Readonly<{
 export type Section = Readonly<{
   id: string;
   /** The section's text. A function is a host variant section: the facts
-   * pick a complete text, or none to leave the section out. A string is
-   * locked: nothing replaces or removes it. */
+   * pick a complete text. A string is locked: nothing replaces or removes
+   * it. */
   text: string | ((facts: Facts) => string);
 }>;
 
@@ -65,10 +65,8 @@ export const SECTIONS: readonly Section[] = [
     text: ({ scope }) =>
       scope === "thread"
         ? sessionModelThread
-        : scope === "channel"
-          ? sessionModelChannel
-          : scope === "community"
-            ? sessionModelCommunity
-            : "",
+        : scope === "community"
+          ? sessionModelCommunity
+          : sessionModelChannel,
   },
 ];

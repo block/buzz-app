@@ -455,6 +455,44 @@ it("names a single sender by key, and no sender the server did not read", () => 
   expect(unread).not.toHaveProperty("author");
 });
 
+it("shows a sender's label as the server sent it, already unescaped", () => {
+  const label = (sender_label: string) =>
+    sessionTurns(session, {
+      turns: [{ turn_id: "t", created_at: at(0) }],
+      messages: [{ id: "p", role: 1, created: at(1), content: [text(prompt)] }],
+      prompts: [{ message_id: "p", events: [{ sender_label }] }],
+    })[0]?.items[0];
+  expect(label("R&D <ops>")).toMatchObject({ author: "R&D <ops>" });
+  expect(label("A &amp; B")).toMatchObject({ author: "A &amp; B" });
+});
+
+it("names an exact event record's sender when the server read none", () => {
+  const ada = "a".repeat(64);
+  const record = (pubkey: string) =>
+    [
+      "<buzz-event>",
+      JSON.stringify({ id: mention, pubkey, content: "fix it" }),
+      `Request: ${JSON.stringify("fix it")}`,
+      "</buzz-event>",
+    ].join("\n");
+  const read = (raw: string, name?: (pubkey: string) => string | undefined) =>
+    sessionTurns(
+      session,
+      {
+        turns: [{ turn_id: "t", created_at: at(0) }],
+        messages: [{ id: "p", role: 1, created: at(1), content: [text(raw)] }],
+      },
+      name,
+    )[0]?.items[0];
+  expect(read(record(ada), () => "Ada")).toMatchObject({
+    text: "fix it",
+    author: "Ada",
+    authorPubkey: ada,
+  });
+  expect(read(record(ada))).toMatchObject({ author: npubEncode(ada) });
+  expect(read(record("npub1forged"))).not.toHaveProperty("author");
+});
+
 describe("paging stored sessions", () => {
   const rows = (count: number, from = 0) =>
     Array.from({ length: count }, (_, index) => ({

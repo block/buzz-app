@@ -2,7 +2,9 @@
 // Builderlab keeps the messages; nothing here writes or keeps them.
 import { npubEncode } from "nostr-tools/nip19";
 import { isMessageTool } from "../../../buzz-mcp/message-tools";
+import { readEventBody } from "../../../features/agent-harness/turn-records";
 import {
+  type PromptSection,
   promptMessage,
   promptSections,
   STEER,
@@ -55,6 +57,17 @@ const decodeEntities = (text: string) =>
   text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 /** A prompt's Buzz event, as the server read it from the prompt it composed. */
 type PromptEvent = Readonly<{ pubkey?: string; label?: string }>;
+const PUBKEY = /^[0-9a-f]{64}$/;
+/** For a server that does not read senders, only the keys of the prompt's
+ * exact event records; its other text could name anyone. */
+const recordedSenders = (sections: readonly PromptSection[]) =>
+  sections.flatMap(({ tag, body }): PromptEvent[] => {
+    const record =
+      tag === "buzz-event" || tag === STEER ? readEventBody(body) : undefined;
+    return record && PUBKEY.test(record.pubkey)
+      ? [{ pubkey: record.pubkey }]
+      : [];
+  });
 /** Tool results are text, or other content shown as JSON. */
 const resultText = (results: unknown) =>
   list(results)
@@ -92,8 +105,10 @@ function prompt(
 ) {
   const sections = promptSections(raw);
   const { text } = promptMessage(sections, name);
-  // Only the server reads senders, from the prompts it composed.
-  const { author, authorPubkey } = senders(events ?? [], name);
+  const { author, authorPubkey } = senders(
+    events ?? recordedSenders(sections),
+    name,
+  );
   const item: TranscriptItem = {
     id,
     at,
@@ -163,7 +178,7 @@ export function sessionTurns(
       str(row.message_id),
       list(row.events).map(
         (event): PromptEvent => ({
-          ...(/^[0-9a-f]{64}$/.test(str(event.sender_pubkey))
+          ...(PUBKEY.test(str(event.sender_pubkey))
             ? { pubkey: str(event.sender_pubkey) }
             : {}),
           ...(str(event.sender_label)

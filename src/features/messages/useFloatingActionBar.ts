@@ -321,6 +321,8 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
+    // Overlay state changes only through the attributes and nodes observed below.
+    let blocked: boolean | undefined;
     // Returns whether the row shows as revealed. Positioning defers that row
     // write until the bar is placed, so an offscreen frame writes nothing.
     const updateVisibility = (reveal = true) => {
@@ -334,7 +336,7 @@ export function useFloatingActionBar(
         trigger?.getAttribute("aria-haspopup") === "menu"
           ? document.getElementById(trigger.getAttribute("aria-controls") ?? "")
           : null;
-      const blocked = behindActiveOverlay(row, menu);
+      blocked ??= behindActiveOverlay(row, menu);
       // The toolbar yields, but its popup must still identify the target message.
       const revealed = !blocked || ownsPopup;
       if (reveal) row.toggleAttribute("data-actions-revealed", revealed);
@@ -359,18 +361,26 @@ export function useFloatingActionBar(
     const covered = (anchor: DOMRect) => {
       if (!workspace) return false;
       const workspaces = document.querySelectorAll(workspaceSelector);
-      if (workspaces.length < 2) return false;
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
+      // Hit testing every scroll frame is costly. Side-by-side workspaces
+      // don't overlap, so test only where another one spans the point.
+      const overlapped = [...workspaces].some((other) => {
+        if (other === workspace) return false;
+        const rect = other.getBoundingClientRect();
+        return (
+          x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+        );
+      });
+      if (!overlapped) return false;
       const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
+        .elementsFromPoint(x, y)
         .find(
           (element) =>
             !bar.contains(element) && element.closest(workspaceSelector),
@@ -610,6 +620,7 @@ export function useFloatingActionBar(
     // Focus restoration can run before the next animation frame. Release the
     // hidden trigger as soon as its popup closes; coalesce only geometry work.
     const unobserveOverlays = observeOverlays(() => {
+      blocked = undefined;
       updateVisibility();
       schedule();
     });

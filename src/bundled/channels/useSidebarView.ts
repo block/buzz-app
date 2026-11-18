@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
 import { contributedSidebarSectionKey } from "./sidebar-sections";
 
@@ -279,14 +279,25 @@ export function useSidebarView(
     },
     [update],
   );
-  return {
-    list,
-    collapsed: view.collapsed,
-    contributionOrder: view.contributionOrder,
-    setContributionOrder,
-    toggle,
-    retryReveal,
-    revealAgain,
-    beforeReveal,
-  };
+  return useMemo(
+    () => ({
+      list,
+      collapsed: view.collapsed,
+      contributionOrder: view.contributionOrder,
+      setContributionOrder,
+      toggle,
+      retryReveal,
+      revealAgain,
+      beforeReveal,
+    }),
+    [
+      view.collapsed,
+      view.contributionOrder,
+      setContributionOrder,
+      toggle,
+      retryReveal,
+      revealAgain,
+      beforeReveal,
+    ],
+  );
 }

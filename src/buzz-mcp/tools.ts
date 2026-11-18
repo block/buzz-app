@@ -567,11 +567,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!event && !soloChannelMetadata(metadata as RelayEvent))
       throw new Error("thread is required outside a Solo chat.");
     const root = event && rootOf(event);
-    if (
-      channel === context.channel &&
-      (!context.root || context.wholeChannel || root === context.root)
-    )
-      throw new Error("That is this conversation.");
+    // A conversation with no thread is the whole channel, unless the host
+    // says this channel's threads have sessions of their own.
+    const same = channel === context.channel;
+    const rootless = same && !context.root && !context.wholeChannel;
+    const apart = rootless ? client.threadsApart?.(channel) : undefined;
+    const whole = context.wholeChannel || (!context.root && apart !== true);
+    if (same && (whole || root === context.root))
+      throw new Error(
+        rootless && client.threadsApart && apart === undefined
+          ? "That is this conversation for now: this channel has not loaded here yet, so its threads cannot be told apart from it. Try again shortly."
+          : "That is this conversation.",
+      );
     const { channel: from, root: fromRoot } = context;
     client.handoff({
       channel,

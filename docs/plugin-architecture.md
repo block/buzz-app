@@ -1619,11 +1619,11 @@ are also deferred; opt in when the contribution's static title is sufficient unt
 selection.
 
 A plugin panel, which cannot import host modules, names its tab with
-`ctx.panels.useTabTitle(label)`, a React hook called in the panel component (for
+`ctx.panels.useTabTitle(label, icon?)`, a React hook called in the panel component (for
 example `ctx.panels.useTabTitle("#12554892")` for a build opened from a link). The
 label replaces the static `title` while the component is mounted and the static
-`title` returns when it unmounts; outside a panel tab the call does nothing. It
-takes a label only, no icon. Hosts that predate it lack the hook, so plugins that
+`title` returns when it unmounts; outside a panel tab the call does nothing. The
+optional `icon` is a React node. Hosts that predate it lack the hook, so plugins that
 support them test `typeof ctx.panels.useTabTitle === "function"` first.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
@@ -3247,8 +3247,9 @@ The existing native and browser upload adapters prepare `voice-note-*.wav` files
 as the old Buzz H.264/AAC MP4 envelope. Voice Notes adds no uploader, signer or
 outbox. Files upload on Send, retain the shared progress/recovery behavior, and
 carry bounded duration and waveform metadata through ordinary `imeta` tags.
-Recordings stop at five minutes. Pending files have the same tab-local lifetime
-and limits as other attachment drafts; they do not survive app restart.
+Recordings stop at five minutes. Pending files have the same lifetime and limits
+as other attachment drafts: uploaded files survive app restart with the draft;
+files still uploading do not.
 
 The player loads audio on Play, supports seeking and playback speed, and pauses
 when its conversation is hidden. Existing voice notes are recognized from signed
@@ -3363,6 +3364,31 @@ desktop app are not exercised there.
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
+## GitHub pull request states
+
+While the bundled GitHub plugin is on, it provides `ctx.githubPulls`: the pull
+request states the app already holds, read-only. Links in messages, the panel
+and agents' watches read pull requests; `ctx.githubPulls` never reads GitHub, so
+using it costs nothing against GitHub's limits.
+
+`prState(url, { details })` gives what the agent tool `github_pr_state` gives,
+built by the same code: `state` (`"open"`, `"draft"`, `"merged"` or
+`"closed"`), with a `gh` read also `checks`, `failed`, `settled`, `conflicts`
+and `head`, then `read_at`, `age_seconds`, `source` and, when reading it again
+failed, `last_read_failed`. With `details: true` it adds the panel's `details`
+once something read them. Where the tool would read GitHub, `prState` gives
+undefined instead: the app holds no state for it (not read, could not be read,
+or forgotten after nobody showed it for a while), or `url` is not a pull
+request's. `subscribe(listener)` calls back after a read records a changed
+state, or when `last_read_failed` changes: reading again starts failing, fails
+for another reason, or works again. A read that finds the same state only moves
+`read_at` and `age_seconds` and is not announced, so show freshness from your
+own clock; a state the app forgets is not announced either. The report is a
+copy: changing it changes nothing the app holds.
+The service goes away when the GitHub plugin is turned off, so take it with
+`ctx.inject(["githubPulls"], (child) => …)` rather than a top-level `inject`, which
+would keep the plugin from starting without it.
 
 ## Decisions
 

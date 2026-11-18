@@ -1,5 +1,7 @@
 import { matchRank } from "../../features/search/match";
 import {
+  createContext,
+  useContext,
   useLayoutEffect,
   useRef,
   useEffect,
@@ -17,7 +19,11 @@ import { Badge } from "../../shared/design-system/ui/Badge";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { isApplePlatform } from "../../features/shortcuts/format";
+import { matches, type KeyBinding } from "../../features/shortcuts/bindings";
+import {
+  formatBinding,
+  isApplePlatform,
+} from "../../features/shortcuts/format";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import { channelIconClass } from "../../shared/inline-reference";
@@ -138,6 +144,15 @@ export type SearchPeek = {
   unsearched?: Readonly<Record<string, ReactNode>> | undefined;
 };
 
+/** The person's keys for the previous and next result, which the field
+ * matches and the key hints show. */
+export type SearchSteps = { previous: KeyBinding; next: KeyBinding };
+export const DEFAULT_SEARCH_STEPS: SearchSteps = {
+  previous: { key: "ArrowUp" },
+  next: { key: "ArrowDown" },
+};
+export const SearchStepsContext = createContext(DEFAULT_SEARCH_STEPS);
+
 /** Top results shows this many rows of its first group, and of the rest. */
 const LEAD_ROWS = 5;
 const GROUP_ROWS = 3;
@@ -165,8 +180,8 @@ export type SearchInputProps = {
   input: RefObject<HTMLElement | null>;
   label?: string;
   scope?: { label: string; onRemove: () => void } | undefined;
-  /** A control that refines the scoped results, beside the scope chip. */
-  scopeAction?: ReactNode;
+  /** A control that refines the results, inside the field after Clear. */
+  fieldAction?: ReactNode;
   chips?: readonly SearchChip[] | undefined;
   onRemoveChip?: ((chip: SearchChip) => void) | undefined;
   /** Backspace before the text edits the last chip. */
@@ -214,7 +229,7 @@ export function SearchChoices({
   input,
   label = "Search Buzz",
   scope,
-  scopeAction,
+  fieldAction,
   children,
   footer,
   inlineSettings,
@@ -414,6 +429,7 @@ export function SearchChoices({
   });
   const selected = highlight.active;
   const moved = previewing && highlight.moved;
+  const steps = useContext(SearchStepsContext);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
   useLayoutEffect(() => {
     if (!moved || frozen.current) return;
@@ -757,19 +773,16 @@ export function SearchChoices({
       data-search-peek={peek ? "" : undefined}
       {...highlight.listProps}
     >
-      {(scope || scopeAction) && (
+      {scope && (
         <div className="search-palette-scope-row">
-          {scope && (
-            <button
-              type="button"
-              className="search-palette-scope"
-              aria-label={`Remove ${scope.label} search scope`}
-              onClick={scope.onRemove}
-            >
-              {scope.label} <span aria-hidden="true">×</span>
-            </button>
-          )}
-          {scopeAction}
+          <button
+            type="button"
+            className="search-palette-scope"
+            aria-label={`Remove ${scope.label} search scope`}
+            onClick={scope.onRemove}
+          >
+            {scope.label} <span aria-hidden="true">×</span>
+          </button>
         </div>
       )}
       <div className="search-palette-controls">
@@ -796,6 +809,7 @@ export function SearchChoices({
               </span>
             ) : undefined
           }
+          trailing={fieldAction}
           inputRef={input}
           role="combobox"
           aria-controls={highlight.listId}
@@ -813,6 +827,29 @@ export function SearchChoices({
           autoComplete="off"
           maxLength={256}
           onKeyDown={(event) => {
+            const native = event.nativeEvent;
+            // The person's result keys come first, so no other key in the
+            // field takes a chord Settings accepted for them. Bare Up and
+            // Down always move too, as a combobox's arrows do. As in the
+            // dispatcher, composition and AltGr never match.
+            if (!native.isComposing && native.keyCode !== 229) {
+              const step = (
+                [
+                  [steps.next, true],
+                  [steps.previous, false],
+                  [DEFAULT_SEARCH_STEPS.next, true],
+                  [DEFAULT_SEARCH_STEPS.previous, false],
+                ] as const
+              ).find(([binding]) => matches([binding], native, apple));
+              if (step && !native.getModifierState("AltGraph")) {
+                event.preventDefault();
+                restore.current = 0;
+                highlight.move(step[1]);
+                return;
+              }
+              // Other arrow chords, such as Shift+Down, edit the text.
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
+            }
             const shortcutNumber = /^Digit([1-9])$/.exec(event.code)?.[1];
             if (
               !event.nativeEvent.isComposing &&
@@ -840,8 +877,6 @@ export function SearchChoices({
               onEditLastChip?.();
               return;
             }
-            if (event.key === "ArrowDown" || event.key === "ArrowUp")
-              restore.current = 0;
             // Tab moves between groups, and stays in the field while results
             // are still landing. Past the first or last group it moves on as
             // Tab does, so retry and other controls stay in reach.
@@ -1153,8 +1188,8 @@ export function SearchChoices({
           aria-hidden="true"
         >
           <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> Move
+            <kbd>{formatBinding(steps.previous, apple).text}</kbd>
+            <kbd>{formatBinding(steps.next, apple).text}</kbd> Move
           </span>
           {ranked.length > 0 && (
             <span>

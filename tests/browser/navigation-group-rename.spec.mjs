@@ -105,6 +105,28 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await expect(search).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(unicodeTrigger).toBeFocused();
+  await select("exclamation", "❗");
+  await expectIconCentered(dialog);
+  await unicodeTrigger.press("Enter");
+  await expect(search).toBeFocused();
+  await expectIconCentered(dialog);
+  await search.press("Escape");
+  await expect(unicodeTrigger).toBeFocused();
+  await expectIconCentered(dialog);
+
+  // A multi-codepoint emoji can have a wider advance than the fixed slot.
+  await unicodeTrigger.click();
+  await search.fill("woman technologist");
+  await page.getByRole("button", { name: "👩‍💻", exact: true }).click();
+  const tones = page.locator("em-emoji-picker #root > .menu");
+  await expect(tones).toBeVisible();
+  await tones.locator(".option").nth(3).click();
+  await expect(search).toHaveCount(0);
+  await expect(unicodeTrigger).toBeFocused();
+  await expect(unicodeTrigger).toHaveAccessibleName(
+    "Change section emoji, currently 👩🏽‍💻",
+  );
+  await expectIconCentered(dialog);
   await select("bus", "🚌");
   await expect(unicodeTrigger).toHaveAccessibleName(
     "Change section emoji, currently 🚌",
@@ -258,8 +280,21 @@ async function expectIconCentered(dialog) {
       if (!artwork || !input) throw new Error("Section emoji geometry missing");
       const control = button.getBoundingClientRect();
       const icon = artwork.getBoundingClientRect();
+      // The fixed slot can be centered while its implicit grid track overflows.
+      // Range measures text advance, not the painted emoji's optical bounds.
+      const range = document.createRange();
+      range.selectNodeContents(artwork);
+      const content =
+        artwork.firstChild?.nodeType === Node.TEXT_NODE
+          ? range.getBoundingClientRect()
+          : (
+              artwork.querySelector("img, svg") ?? artwork
+            ).getBoundingClientRect();
       const name = input.getBoundingClientRect();
       return {
+        contentX: Math.abs(
+          control.x + control.width / 2 - (content.x + content.width / 2),
+        ),
         x: Math.abs(control.x + control.width / 2 - (icon.x + icon.width / 2)),
         y: Math.abs(
           control.y + control.height / 2 - (icon.y + icon.height / 2),
@@ -269,6 +304,7 @@ async function expectIconCentered(dialog) {
         ),
       };
     });
+  expect(metrics.contentX).toBeLessThanOrEqual(1);
   expect(metrics.x).toBeLessThanOrEqual(1);
   expect(metrics.y).toBeLessThanOrEqual(1);
   expect(metrics.nameY).toBeLessThanOrEqual(1);

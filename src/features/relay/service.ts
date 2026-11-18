@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
   transportOrigin,
@@ -33,6 +34,10 @@ export type RelaySnapshot = Readonly<{
   origin?: string;
   session: RelaySession;
   viewer?: string;
+  /** The community UUID this session's transport read from the relay's NIP-11
+   * document when it was created, if it advertised one. A socket reconnect
+   * keeps it; a new session reads it again. */
+  communityId?: string;
   error?: string;
   /** A usable device snapshot while the real transport is connecting/unavailable. */
   cached?: true;
@@ -56,6 +61,9 @@ export type RelayData = {
   tryAgain(): void;
   disconnect(): void;
   clearCache(): Promise<void>;
+  /** The selected community's origin, known before it connects; undefined
+   * with none selected. */
+  selected?(): string | undefined;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -137,7 +145,8 @@ export function provideRelay(
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
-      const saved = (await persistence.readStartup?.())?.discovery;
+      const startup = await persistence.readStartup?.();
+      const saved = startup?.discovery;
       if (
         !saved ||
         !/^[0-9a-f]{64}$/.test(saved.relayAuthor) ||
@@ -151,6 +160,9 @@ export function provideRelay(
           viewer: resume.viewer,
           scope: resume.scope,
           relayAuthor: saved.relayAuthor,
+          verifiedProfiles: savedVerifiedProfileAuthority(
+            startup?.verifiedProfiles,
+          ),
           query: () =>
             Promise.reject(
               new ReadError(
@@ -390,6 +402,9 @@ export function provideRelay(
             origin: transportOrigin(transport),
             scope: transportPartition(transport),
             session: store.session,
+            ...(transport.readState?.communityId
+              ? { communityId: transport.readState.communityId }
+              : {}),
           });
           ready = true;
           store.session.channels.ensureList();

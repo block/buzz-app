@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
 import { callSessionTool, sessionTools } from "./session-tools";
 import { PLUGIN_TOOLS } from "./plugins";
+import { BESTIE_TOOLS } from "./bestie";
 import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
@@ -157,8 +158,8 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change here.
-        if (property === "settings") return undefined;
+        // The tool list checks whether settings and the Bestie can change here.
+        if (property === "settings" || property === "bestie") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -727,6 +728,49 @@ it("tags the community emoji a message or edit uses, as the composer does", asyn
   ]);
 });
 
+it("tags a community emoji reaction and refuses a shortcode outside the palette", async () => {
+  const approve = "https://relay/media/approve.png";
+  const { client, published } = fake([
+    ...community,
+    event({ id: root, pubkey: alice }),
+    event({
+      id: "e".repeat(64),
+      pubkey: bob,
+      created_at: 20,
+      kind: 30030,
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "approve", approve],
+      ],
+    }),
+  ]);
+  await callTool(client, {}, "react", { id: root, emoji: ":Approve:" });
+  await callTool(client, {}, "react", { id: root, emoji: "👍" });
+  expect(published).toEqual([
+    {
+      kind: 7,
+      content: ":Approve:",
+      tags: [
+        ["e", root],
+        ["p", alice],
+        ["emoji", "approve", approve],
+      ],
+    },
+    {
+      kind: 7,
+      content: "👍",
+      tags: [
+        ["e", root],
+        ["p", alice],
+      ],
+    },
+  ]);
+  await expect(
+    callTool(client, {}, "react", { id: root, emoji: ":foo:" }),
+  ).rejects.toThrow("unknown custom emoji :foo:");
+  expect(published).toHaveLength(2);
+});
+
 it("reads no emoji sets for a message without a shortcode", async () => {
   const { client } = fake(community);
   await callTool(client, { channel: "chan" }, "send", {
@@ -1080,6 +1124,280 @@ it("refuses read arguments it cannot apply, saying how to fix them", async () =>
   expect(client.query).not.toHaveBeenCalled();
 });
 
+const DAY = 86_400;
+const SEARCH_KINDS = [9, 40002, 45001, 45003];
+const SCOPE =
+  "Searched with your own access: channels you're in and open channels, not other people's private channels or DMs.";
+const search = (client: BuzzClient, args: Record<string, unknown>) =>
+  callTool(
+    client,
+    { channel: "chan", root },
+    "search",
+    args,
+  ) as Promise<string>;
+const metadata = (id: string, name: string, tags: string[][] = []) =>
+  event({
+    id: createHash("sha256").update(id).digest("hex"),
+    kind: 39000,
+    tags: [["d", id], ["name", name], ...tags],
+  });
+/** Answers a message search with `ranked`, as a relay ranks it; the fake
+ * only filters. */
+const ranking = (client: BuzzClient, ranked: () => BuzzEvent[]) => {
+  const query = client.query;
+  client.query = vi.fn(async (filters: readonly Filter[]) =>
+    filters[0]?.search && (filters[0].kinds as number[]).includes(9)
+      ? ranked()
+      : query(filters),
+  );
+};
+
+it("searches by name, channel and date, best match first, citing each hit", async () => {
+  const best = event({
+    id: "3".repeat(64),
+    created_at: 2 * DAY,
+    content: "relay  deploy done;\ndeploy verified",
+    tags: [
+      ["h", "other"],
+      ["auth", bob, "kind=9", "8".repeat(128)],
+    ],
+  });
+  const reply = event({
+    id: "4".repeat(64),
+    created_at: 2 * DAY + 60,
+    content: "the deploy",
+    tags: [
+      ["h", "other"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client } = fake([
+    profile(alice, "Alice Smith"),
+    profile(bob, "Bob"),
+    metadata("other", "ops"),
+    best,
+    reply,
+    event({
+      kind: 40003,
+      created_at: 3 * DAY,
+      content: "the deploy, edited",
+      tags: [["e", reply.id]],
+    }),
+  ]);
+  ranking(client, () => [best, reply]);
+  const answer = await search(client, {
+    q: "deploy",
+    from: "@alice smith",
+    in: "#OPS",
+    after: "1970-01-02",
+    before: "1970-01-04",
+  });
+  expect(client.query).toHaveBeenCalledWith([
+    {
+      kinds: SEARCH_KINDS,
+      limit: 30,
+      search: "deploy",
+      authors: [alice],
+      "#h": ["other"],
+      since: DAY,
+      // `before` excludes its day.
+      until: 3 * DAY - 1,
+    },
+  ]);
+  expect(answer.split("\n")).toEqual([
+    `2 results for "deploy" from ${alice} "Alice Smith" in #ops after 1970-01-02 before 1970-01-04, best match first.`,
+    SCOPE,
+    `[1] buzz://message?channel=other&id=${best.id} · #ops · from ${alice} "Alice Smith" · claimed owner ${bob} "Bob" · 1970-01-03T00:00Z`,
+    "    relay deploy done; deploy verified",
+    `[2] buzz://message?channel=other&id=${reply.id}&thread=${root} · #ops · from ${alice} "Alice Smith" · 1970-01-03T00:01Z · in a thread`,
+    "    the deploy, edited",
+    "No more matches.",
+  ]);
+  // Each link opens its message.
+  await expect(
+    read(client, {
+      message_url: `buzz://message?channel=other&id=${best.id}`,
+    }),
+  ).resolves.toContain("relay  deploy done");
+});
+
+it("reads newest history without q, in a DM named by its person, a page at a time", async () => {
+  const dm = event({
+    id: "d".repeat(64),
+    kind: 39000,
+    tags: [
+      ["d", "dm1"],
+      ["t", "dm"],
+      ["p", me],
+      ["p", bob],
+    ],
+  });
+  const { client } = fake([
+    profile(me, "Helper"),
+    profile(bob, "Bob"),
+    dm,
+    event({
+      id: "3".repeat(64),
+      pubkey: me,
+      created_at: 200,
+      content: "hi bob",
+      tags: [["h", "dm1"]],
+    }),
+    event({
+      id: "4".repeat(64),
+      pubkey: me,
+      created_at: 100,
+      content: "earlier",
+      tags: [["h", "dm1"]],
+    }),
+  ]);
+  const first = await search(client, { in: "@Bob", from: "me", limit: 1 });
+  expect(client.query).toHaveBeenCalledWith([
+    {
+      kinds: [9, 40002, 40008, 45001, 45003],
+      limit: 1,
+      authors: [me],
+      "#h": ["dm1"],
+    },
+  ]);
+  expect(first.split("\n")).toEqual([
+    `1 result for from ${me} "Helper" in DM with Bob, newest first.`,
+    SCOPE,
+    `[1] buzz://message?channel=dm1&id=${"3".repeat(64)} · DM with Bob · from ${me} "Helper" · 1970-01-01T00:03Z`,
+    "    hi bob",
+    `More may match; continue with {"from":"${me}","in":"dm1","limit":1,"page":2}`,
+  ]);
+  // The fake ignores page; the relay's bridge offsets by it.
+  const second = await search(client, next(first) as Record<string, unknown>);
+  expect(client.query).toHaveBeenCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({ page: 2, "#h": ["dm1"], authors: [me] }),
+    ]),
+  );
+  expect(second).toContain("\n[2] buzz://message?channel=dm1&id=");
+});
+
+it("asks for newest first, and says when the community ranked anyway", async () => {
+  const older = event({ id: "3".repeat(64), created_at: 100, content: "x" });
+  const newer = event({ id: "4".repeat(64), created_at: 200, content: "x" });
+  const { client } = fake([older, newer]);
+  let ranked = [older, newer];
+  ranking(client, () => ranked);
+  const header = async () =>
+    (await search(client, { q: "x", sort: "newest" })).split("\n")[0];
+  expect(await header()).toBe(
+    `2 results for "x", best match first (this community can't sort a search by newest).`,
+  );
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: SEARCH_KINDS, limit: 30, search: "x", search_sort: "newest" },
+  ]);
+  ranked = [newer, older];
+  expect(await header()).toBe(`2 results for "x", newest first.`);
+});
+
+it("keeps a span back from now fixed across pages", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(30 * DAY * 1000);
+    const { client } = fake([event({ created_at: 25 * DAY, content: "x" })]);
+    const first = await search(client, { q: "x", after: "7d", limit: 1 });
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ search: "x", since: 23 * DAY }),
+    ]);
+    expect(next(first)).toEqual({
+      q: "x",
+      after: "1970-01-24T00:00:00Z",
+      limit: 1,
+      page: 2,
+    });
+    // An hour later, page 2 still starts where page 1 did.
+    vi.setSystemTime(30 * DAY * 1000 + 3_600_000);
+    await search(client, next(first) as Record<string, unknown>);
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ page: 2, since: 23 * DAY }),
+    ]);
+    // A UTC time is read to the second; before excludes it.
+    await search(client, { q: "x", before: "1970-01-24T00:00:05Z" });
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ until: 23 * DAY + 4 }),
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("gives every author's key, whatever name they chose, and cuts long messages around the match", async () => {
+  const long = `${"a ".repeat(300)}needle${" b".repeat(300)}`;
+  const { client } = fake([
+    profile(alice, "Sam"),
+    profile(bob, "Sam"),
+    metadata("chan", "general"),
+    event({ id: "3".repeat(64), content: long }),
+    event({ id: "4".repeat(64), pubkey: bob, created_at: 120, content: "x" }),
+  ]);
+  const lines = (await search(client, { q: "needle" })).split("\n");
+  expect(lines[2]).toContain(` · #general · from ${bob} "Sam" · `);
+  expect(lines[4]).toContain(` · #general · from ${alice} "Sam" · `);
+  const cut = lines[5] as string;
+  expect(cut).toMatch(/^ {4}…a a .*needle b b .*…$/);
+  expect(cut.length).toBeLessThanOrEqual(4 + 402);
+});
+
+it("refuses search arguments it cannot apply, saying how to fix them", async () => {
+  const { client } = fake([
+    profile(alice, "Sam"),
+    profile(bob, "Sam"),
+    profile(me, "Lau"),
+    profile("e".repeat(64), "Kim"),
+    metadata("c1", "ops"),
+    metadata("c2", "ops"),
+    metadata("c3", "general"),
+  ]);
+  for (const [args, error] of [
+    [{}, "Give q, or from, in, after or before."],
+    [{ q: " ", limit: 0, page: 0 }, "Give q, or from, in, after or before."],
+    [{ q: "x", sort: "oldest" }, "sort must be relevance or newest."],
+    [{ q: "x", page: -1 }, "page must be a whole number, 1 or more."],
+    [{ q: "x", page: 1.5 }, "page must be a whole number, 1 or more."],
+    [{ q: "x", after: "friday" }, "after must be a date (YYYY-MM-DD)"],
+    [{ q: "x", before: "2026-02-30" }, "before must be a date (YYYY-MM-DD)"],
+    [
+      { q: "x", after: "2026-01-02T25:00:00Z" },
+      "after must be a date (YYYY-MM-DD)",
+    ],
+    [
+      { q: "x", after: "2026-01-02T10:00:00+01:00" },
+      "after must be a date (YYYY-MM-DD)",
+    ],
+    [
+      { q: "x", after: "2026-01-02", before: "2026-01-02" },
+      "after must be earlier than before.",
+    ],
+    [{ from: "Sam" }, "2 people are named Sam; give their npub."],
+    [{ from: "Nobody" }, "No one is named Nobody."],
+    [{ in: "@Sam" }, "2 people are named Sam; give their npub."],
+    [{ in: "@Kim" }, "You have no DM with Kim."],
+    [{ in: "#ops" }, "2 channels are named ops; give its ID."],
+    [
+      { in: "gen" },
+      "No channel you can see is named gen.\nSimilar:\nc3 #general",
+    ],
+  ] as const)
+    await expect(search(client, args), JSON.stringify(args)).rejects.toThrow(
+      error,
+    );
+  // Nothing was searched.
+  expect(
+    vi
+      .mocked(client.query)
+      .mock.calls.flat(2)
+      .some((filter) => (filter.kinds as number[]).includes(9)),
+  ).toBe(false);
+  await expect(search(client, { q: "zebra", in: "c3" })).resolves.toBe(
+    `No messages for "zebra" in #general.\n${SCOPE}`,
+  );
+});
+
 it("takes back its own reaction", async () => {
   const reaction = event({
     id: "9".repeat(64),
@@ -1408,13 +1726,14 @@ it("lists its tools before it can call them", async () => {
     },
   )) as { result: { tools: unknown[] } };
   // Every app session lists the same tools: the Buzz, attention, Solo worker,
-  // plugin and settings tools.
+  // plugin, settings and Bestie tools.
   expect(list.result.tools).toHaveLength(
     TOOLS.length +
       ATTENTION_TOOLS.length +
       SOLO_WORKER_TOOLS.length +
       PLUGIN_TOOLS.length +
-      SETTINGS_TOOLS.length,
+      SETTINGS_TOOLS.length +
+      BESTIE_TOOLS.length,
   );
   await expect(
     respond(
@@ -4302,10 +4621,32 @@ it("hands off to the agent in another of its conversations it can see", async ()
   );
   await wake({ channel: "chan", root }, { channel: "solo" });
   await wake({}, { channel: "chan", thread: root });
+  // Where the host says the channel's threads have sessions of their own, a
+  // conversation with no thread there is apart from them and can wake one; a
+  // session marked whole still cannot, nor can one where the host says no.
+  client.threadsApart = vi.fn((channel: string) => channel === "chan");
+  await wake({ channel: "chan" }, { channel: "chan", thread: nested });
+  expect(client.threadsApart).toHaveBeenCalledWith("chan");
+  await expect(
+    wake(
+      { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+      { channel: "chan", thread: nested },
+    ),
+  ).rejects.toThrow("That is this conversation.");
+  vi.mocked(client.threadsApart).mockReturnValue(false);
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow(/^That is this conversation\.$/);
+  // Where the host cannot tell yet, the refusal says why.
+  vi.mocked(client.threadsApart).mockReturnValue(undefined);
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("this channel has not loaded here yet");
   expect(vi.mocked(client.handoff).mock.calls).toEqual([
     [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
     [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],
     [{ channel: "chan", root, text: "carry on", from: {} }],
+    [{ channel: "chan", root, text: "carry on", from: { channel: "chan" } }],
   ]);
 });
 it("reads agents and teams and drafts team changes without members", async () => {
@@ -4464,6 +4805,35 @@ it("nests a reply under a message inside a thread, naming the root and the paren
   ]);
   expect(published[0]?.tags[4]?.[0]).toBe("imeta");
 });
+
+it.each(["send", "reply_in_subthread"])(
+  "%s refuses a self-mention instead of reporting a post as a wake",
+  async (name) => {
+    const { client, published } = fake([...community, profile(me, "Echo")]);
+    for (const mention of [
+      { text: "@Echo carry on" },
+      { text: `nostr:${npubEncode(me)} carry on` },
+      { text: "carry on", mentions: [me] },
+    ]) {
+      await expect(
+        callTool(client, { channel: "elsewhere" }, name, {
+          channel: "chan",
+          parent: root,
+          audience: "agents",
+          ...mention,
+        }),
+      ).rejects.toThrow("self_handoff");
+    }
+    expect(published).toEqual([]);
+    await callTool(client, { channel: "elsewhere" }, name, {
+      channel: "chan",
+      parent: root,
+      audience: "everyone",
+      text: "An ordinary update",
+    });
+    expect(published).toHaveLength(1);
+  },
+);
 
 it.each(["everyone", "agents"])(
   "replies under a thread's root as send does, for audience %s",
@@ -4734,4 +5104,214 @@ it("addresses a new reaction to the actual message author and fails before publi
     callTool(client, {}, "react", { id: nested, emoji: "❤️" }),
   ).rejects.toThrow("No message");
   expect(published).toHaveLength(1);
+});
+
+it.each(["send", "reply_in_subthread"])(
+  "%s carries exact snapshot-matching attachment hints only out of band",
+  async (name) => {
+    const { client, published } = fake(community);
+    const hash = createHash("sha256").update(PNG).digest("hex");
+    vi.mocked(client.upload).mockResolvedValue({
+      url: "https://relay/media/x.png",
+      sha256: hash,
+      size: PNG.length,
+      type: "image/png",
+    });
+    await callTool(client, { channel: "chan", root }, name, {
+      text: "attachment",
+      audience: "everyone",
+      ...(name === "send" ? { reply: nested } : { parent: nested }),
+      files: ["shot.png", "shot.png"],
+    });
+    expect(client.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 9 }),
+      {
+        managedAttachments: [
+          {
+            path: "shot.png",
+            sha256: hash,
+            size: PNG.length,
+            url: "https://relay/media/x.png",
+          },
+        ],
+      },
+    );
+    expect(published[0]?.tags).toContainEqual(
+      expect.arrayContaining(["imeta", `x ${hash}`, `size ${PNG.length}`]),
+    );
+  },
+);
+
+it.each(["send", "reply_in_subthread"])(
+  "%s refuses an attachment-bearing self-mention without publishing release hints",
+  async (name) => {
+    const { client } = fake(community);
+    vi.mocked(client.upload).mockResolvedValue({
+      url: "https://relay/media/x.png",
+      sha256: createHash("sha256").update(PNG).digest("hex"),
+      size: PNG.length,
+      type: "image/png",
+    });
+    await expect(
+      callTool(client, { channel: "chan", root }, name, {
+        text: "attachment",
+        audience: "agents",
+        ...(name === "send" ? { reply: nested } : { parent: nested }),
+        mentions: [me],
+        files: ["shot.png"],
+      }),
+    ).rejects.toThrow("self_handoff");
+    expect(client.upload).toHaveBeenCalledOnce();
+    expect(client.publish).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["read", "upload", "body", "mentions", "emoji"])(
+  "never publishes release hints after %s fails, including a later attachment failure",
+  async (boundary) => {
+    const { client } = fake(community);
+    const hash = createHash("sha256").update(PNG).digest("hex");
+    vi.mocked(client.upload).mockResolvedValue({
+      url: "https://relay/media/x.png",
+      sha256: hash,
+      size: PNG.length,
+      type: "image/png",
+    });
+    if (boundary === "read")
+      vi.mocked(client.read)
+        .mockResolvedValueOnce(PNG)
+        .mockRejectedValueOnce(new Error("read failed"));
+    if (boundary === "upload")
+      vi.mocked(client.upload)
+        .mockResolvedValueOnce({
+          url: "https://relay/media/x.png",
+          sha256: hash,
+          size: PNG.length,
+          type: "image/png",
+        })
+        .mockRejectedValueOnce(new Error("upload failed"));
+    if (boundary === "body")
+      vi.mocked(client.read).mockImplementation(async (path) => {
+        if (path === "body.txt") throw new Error("body failed");
+        return PNG;
+      });
+    if (boundary === "mentions" || boundary === "emoji")
+      vi.mocked(client.query).mockImplementation(async () => {
+        throw new Error(`${boundary} failed`);
+      });
+    await expect(
+      callTool(client, { channel: "chan" }, "send", {
+        audience: "everyone",
+        files: ["one.png", "two.png"],
+        ...(boundary === "body"
+          ? { path: "body.txt" }
+          : { text: boundary === "emoji" ? ":sample:" : "attachment" }),
+        ...(boundary === "mentions" && { mentions: [bob] }),
+      }),
+    ).rejects.toThrow("failed");
+    expect(client.publish).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["mismatch", "conflict", "overflow", "text-path"])(
+  "omits managed hints for %s without changing ordinary attachment publication",
+  async (kind) => {
+    const { client } = fake(community);
+    const hash = createHash("sha256").update(PNG).digest("hex");
+    vi.mocked(client.upload).mockResolvedValue({
+      url: "https://relay/media/x.png",
+      sha256: hash,
+      size: PNG.length,
+      type: "image/png",
+    });
+    if (kind === "mismatch")
+      vi.mocked(client.upload).mockResolvedValue({
+        url: "https://relay/media/x.png",
+        sha256: "forged",
+        size: PNG.length,
+        type: "image/png",
+      });
+    if (kind === "conflict") {
+      vi.mocked(client.read)
+        .mockResolvedValueOnce(PNG)
+        .mockResolvedValueOnce(new Uint8Array([1, 2, 3]));
+      vi.mocked(client.upload).mockImplementation(async (data, type) => ({
+        url: "https://relay/media/x.png",
+        sha256: createHash("sha256").update(data).digest("hex"),
+        size: data.length,
+        type,
+      }));
+    }
+    await callTool(client, { channel: "chan" }, "send", {
+      audience: "everyone",
+      ...(kind === "text-path"
+        ? { path: "notes.md" }
+        : {
+            text: "attachment",
+            files:
+              kind === "overflow"
+                ? Array.from({ length: 17 }, (_, i) => `${i}.png`)
+                : ["shot.png", "shot.png"],
+          }),
+    });
+    expect(client.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: 9 }),
+    );
+  },
+);
+
+it("holds publication until the actual attachment upload settles", async () => {
+  const { client } = fake(community);
+  const read = gate<Uint8Array>();
+  const upload = gate<Awaited<ReturnType<BuzzClient["upload"]>>>();
+  const uploaded = gate<void>();
+  vi.mocked(client.read).mockReturnValue(read.promise);
+  vi.mocked(client.upload).mockImplementation(() => {
+    uploaded.resolve();
+    return upload.promise;
+  });
+  const pending = callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "attachment",
+    files: ["file.png"],
+  });
+  try {
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(client.publish).not.toHaveBeenCalled();
+    read.resolve(PNG);
+    await uploaded.promise;
+    expect(client.publish).not.toHaveBeenCalled();
+    upload.resolve({
+      url: "https://relay/media/x.png",
+      sha256: createHash("sha256").update(PNG).digest("hex"),
+      size: PNG.length,
+      type: "image/png",
+    });
+    expect(await pending).toContain("sent ");
+    expect(client.publish).toHaveBeenCalledOnce();
+  } finally {
+    read.resolve(PNG);
+    upload.resolve({ url: "x", sha256: "", size: 0, type: "" });
+    await pending.catch(() => undefined);
+  }
+});
+
+it("preserves ordinary attachment sends when snapshot hashing is unavailable", async () => {
+  const { client } = fake(community);
+  const hash = vi
+    .spyOn(crypto.subtle, "digest")
+    .mockRejectedValueOnce(new Error("hash unavailable"));
+  try {
+    await callTool(client, { channel: "chan" }, "send", {
+      audience: "everyone",
+      text: "attachment",
+      files: ["shot.png"],
+    });
+    expect(client.upload).toHaveBeenCalledOnce();
+    expect(client.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: 9 }),
+    );
+  } finally {
+    hash.mockRestore();
+  }
 });

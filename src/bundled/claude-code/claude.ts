@@ -28,7 +28,8 @@ export type ActivityReceipt = Readonly<{
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
+  accepted?: () => void;
   superseded?: () => void;
 }>;
 
@@ -589,6 +590,7 @@ export class ClaudeProcess {
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
+    activity.accepted?.();
     this.write({
       type: "user",
       uuid,
@@ -841,12 +843,13 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        const steering = this.activeReceipts.size > 0;
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";
           this.activeReceipts.get(scope)?.superseded?.();
           this.activeReceipts.set(scope, receipt);
-          receipt.acknowledged?.();
+          receipt.acknowledged?.(steering ? { steering: true } : undefined);
         }
       }
       return;

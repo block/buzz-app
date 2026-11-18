@@ -24,6 +24,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   localStorage.clear();
 });
 function fixture(
@@ -34,9 +35,19 @@ function fixture(
   ) => Promise<void> = async () => {},
 ) {
   let ids = ["existing"];
+  // A stable snapshot per roster, as the session's list is.
+  let listed = { ids, list: { channels: ids.map((id) => ({ id })) } };
+  const list = () => {
+    if (listed.ids !== ids)
+      listed = { ids, list: { channels: ids.map((id) => ({ id })) } };
+    return listed.list;
+  };
   const session = () =>
     ({
-      channels: { list: () => ({ channels: ids.map((id) => ({ id })) }) },
+      channels: {
+        list,
+        subscribeList: () => () => {},
+      },
       sidebarPreferences: { setMute: async () => [] },
       channelLifecycle: { run },
     }) as unknown as RelaySession;
@@ -181,6 +192,25 @@ it("hands both entrances to one confirmation and preserves its origin until clos
   });
 });
 
+it("does not depart through a retired session's submission callback", () => {
+  const h = fixture();
+  const view = mount(h.relay);
+  const depart = vi.fn();
+  act(() =>
+    view.result.current.openLifecycle(
+      { id: "plans", name: "Plans", channelType: "solo" },
+      "delete",
+      undefined,
+      undefined,
+      { close: vi.fn(), depart },
+    ),
+  );
+  const retired = view.result.current;
+  act(() => h.replace());
+  act(() => retired.beginLifecycle());
+  expect(depart).not.toHaveBeenCalled();
+});
+
 it.each([true, false])(
   "says whether archiving starter channel (%s) resumes adding new members on Unarchive",
   async (autoJoin) => {
@@ -192,7 +222,7 @@ it.each([true, false])(
       ),
     );
     const archive =
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.";
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.";
     expect(
       await screen.findByRole("dialog", { name: "Archive channel: general" }),
     ).toHaveAccessibleDescription(
@@ -313,6 +343,10 @@ it("retires only the originating header confirmation and rejects its deferred re
 });
 
 it("runs a chat archive's Undo through the lifecycle gate, after any action holding it", async () => {
+  // The slow-Undo notice is due after the dialog's own 1 s timer; drive that
+  // clock so a busy runner cannot race it.
+  vi.useFakeTimers();
+  const settle = () => act(() => vi.advanceTimersByTimeAsync(0));
   const pending = new Map<string, () => void>();
   const run = vi.fn(
     (action: string, id: string) =>
@@ -322,14 +356,17 @@ it("runs a chat archive's Undo through the lifecycle gate, after any action hold
   const planning = { id: "a", name: "Planning", channelType: "solo" as const };
   const roadmap = { id: "b", name: "Roadmap", channelType: "solo" as const };
   act(() => view.result.current.openLifecycle(planning, "archive"));
-  await waitFor(() => expect(pending.has("archive:a")).toBe(true));
+  await settle();
+  expect(pending.has("archive:a")).toBe(true);
   await act(async () => pending.get("archive:a")?.());
-  await screen.findByRole("dialog", { name: "Chat archived: Planning" });
+  await settle();
+  screen.getByRole("dialog", { name: "Chat archived: Planning" });
   expect(view.result.current.lifecycleDialog).toBeUndefined();
 
   // Another archive holds the session's one lifecycle slot.
   act(() => view.result.current.openLifecycle(roadmap, "archive"));
-  await waitFor(() => expect(pending.has("archive:b")).toBe(true));
+  await settle();
+  expect(pending.has("archive:b")).toBe(true);
   const [undo] = screen.getAllByRole("button", { name: "Undo" });
   if (!undo) throw new Error("Missing Undo");
   fireEvent.click(undo);
@@ -337,13 +374,12 @@ it("runs a chat archive's Undo through the lifecycle gate, after any action hold
   expect(view.result.current.lifecycleDialog?.channel).toBe(roadmap);
 
   await act(async () => pending.get("archive:b")?.());
+  await settle();
   // Undo then holds the gate, so lifecycle menus stay disabled until it settles.
-  await waitFor(() =>
-    expect(run).toHaveBeenLastCalledWith(
-      "unarchive",
-      "a",
-      expect.any(AbortSignal),
-    ),
+  expect(run).toHaveBeenLastCalledWith(
+    "unarchive",
+    "a",
+    expect.any(AbortSignal),
   );
   expect(view.result.current.lifecycleDialog).toMatchObject({
     channel: planning,
@@ -351,17 +387,64 @@ it("runs a chat archive's Undo through the lifecycle gate, after any action hold
     confirmed: true,
   });
   // A slow Undo is announced instead of leaving the click unanswered.
+  await act(() => vi.advanceTimersByTimeAsync(999));
+  await settle();
   expect(
-    await screen.findByRole(
-      "dialog",
-      { name: "Unarchiving chat…" },
-      { timeout: 2000 },
-    ),
+    screen.queryByRole("dialog", { name: "Unarchiving chat…" }),
+  ).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  await settle();
+  expect(
+    screen.getByRole("dialog", { name: "Unarchiving chat…" }),
   ).toBeDefined();
   await act(async () => pending.get("unarchive:a")?.());
-  await screen.findByRole("dialog", { name: "Chat unarchived: Planning" });
+  await settle();
+  screen.getByRole("dialog", { name: "Chat unarchived: Planning" });
   expect(view.result.current.lifecycleDialog).toBeUndefined();
   expect(run).toHaveBeenCalledTimes(3);
+});
+
+it("holds a workspace's bulk Undo until a single-chat action releases the gate", async () => {
+  const pending = new Map<string, () => void>();
+  const run = vi.fn(
+    (action: string, id: string) =>
+      new Promise<void>((resolve) => pending.set(`${action}:${id}`, resolve)),
+  );
+  const view = mount(fixture(run).relay, true);
+  const roadmap = { id: "b", name: "Roadmap", channelType: "solo" as const };
+  act(() => view.result.current.openLifecycle(roadmap, "archive"));
+  await waitFor(() => expect(pending.has("archive:b")).toBe(true));
+  act(() =>
+    view.result.current.archiveInactive({
+      action: "unarchive",
+      workspaceId: "work",
+      ids: ["a", "c"],
+    }),
+  );
+  expect(run).not.toHaveBeenCalledWith(
+    "unarchive",
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+  );
+  expect(view.result.current.inactiveRuns).toHaveLength(1);
+
+  await act(async () => pending.get("archive:b")?.());
+  await waitFor(() => expect(pending.has("unarchive:a")).toBe(true));
+  expect(view.result.current.inactiveRun?.ids).toEqual(["a", "c"]);
+  // The bulk run now holds the gate; a single-chat Undo waits behind it.
+  act(() => view.result.current.undoArchive(roadmap));
+  expect(view.result.current.lifecycleDialog).toBeUndefined();
+  await act(async () => pending.get("unarchive:a")?.());
+  await waitFor(() => expect(pending.has("unarchive:c")).toBe(true));
+  await act(async () => pending.get("unarchive:c")?.());
+  await screen.findByText("Restored 2 chats");
+  await waitFor(() =>
+    expect(view.result.current.lifecycleDialog).toMatchObject({
+      channel: roadmap,
+      action: "unarchive",
+    }),
+  );
 });
 
 it("keeps a paused delete's confirmation open in place of the failure toast, then retries it", async () => {

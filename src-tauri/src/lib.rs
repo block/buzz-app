@@ -41,6 +41,7 @@ mod enterprise_auth_build;
 mod enterprise_relay_url;
 mod host_command;
 mod host_files;
+mod host_forward;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -58,6 +59,8 @@ use nsec_backup::{
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod claude_key;
+#[cfg(unix)]
+mod cli_link;
 mod clipboard;
 mod jev;
 mod keep_awake;
@@ -76,6 +79,8 @@ mod mouse_nav;
 mod reshow;
 #[cfg(windows)]
 mod tray;
+#[cfg(any(target_os = "macos", test))]
+mod webkit_reaper;
 
 mod notifications;
 mod os_idle;
@@ -128,6 +133,10 @@ use host_command::plugin_host_run_command;
 use host_files::{
     plugin_host_delete_managed_file, plugin_host_read_file, plugin_host_repository_folders,
     plugin_host_resolve_directory, plugin_host_save_bytes,
+};
+use host_forward::{
+    plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
+    plugin_host_forward_open, plugin_host_forward_seal, HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -587,8 +596,19 @@ async fn plugin_import_install(
 }
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
+    let managed = manager.managed(&catalog);
+    // Every catalog read can start it, so a new or changed policy applies without a
+    // restart; each pinned version is tried once per run, and one apply runs at a time.
+    if manager.automatic_due(&managed, &catalog) {
+        let manager = manager.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = manager.apply_automatic() {
+                eprintln!("Could not apply the managed plugin policy: {error}");
+            }
+        });
+    }
     InstallationResult::Ready {
-        managed: manager.managed(&catalog),
+        managed,
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -745,6 +765,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::federated_identity_ask_again,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
+        federated_identity::federated_identity_sign_in_link,
         federated_identity::federated_identity_sign_out,
         federated_identity::access::federated_identity_register,
         federated_identity::access::federated_identity_unregister,
@@ -835,6 +856,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_pairing,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_forward_admission,
+        plugin_host_forward_open,
+        plugin_host_forward_associate,
+        plugin_host_forward_seal,
+        plugin_host_forward_close,
         plugin_host_read_file,
         plugin_host_resolve_directory,
         plugin_host_repository_folders,
@@ -907,9 +933,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         sign_out::sign_out_wipe_refusal
     ]
 }
+
+#[cfg(target_os = "macos")]
+fn register_spellcheck_default() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+    let enabled = NSNumber::numberWithBool(true);
+    let enabled: &AnyObject = &enabled;
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("WebContinuousSpellCheckingEnabled")],
+        &[enabled],
+    );
+    // SAFETY: the dictionary maps an NSString key to an NSNumber value.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     credential_service::drop_inherited();
+    #[cfg(target_os = "macos")]
+    register_spellcheck_default();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(
@@ -1019,6 +1062,10 @@ pub fn run() {
                 if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
+                #[cfg(target_os = "macos")]
+                if let Err(error) = window_state::opaque_background(&window) {
+                    eprintln!("Could not set the Buzz window background: {error}");
+                }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
@@ -1033,12 +1080,33 @@ pub fn run() {
                 eprintln!("Could not add Buzz to the notification area: {error}");
             }
             #[cfg(target_os = "macos")]
+            webkit_reaper::install(app.handle());
+            #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
                 }
             }
-            tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            #[cfg(unix)]
+            if let (Some(home), Ok(cli)) = (
+                dirs::home_dir(),
+                app.path()
+                    .resource_dir()
+                    .map_err(std::io::Error::other)
+                    .and_then(|resources| resources.join("bin/buzz").canonicalize()),
+            ) {
+                if cli_link::owns(
+                    cli_link::development(tauri::is_dev()),
+                    &app.config().identifier,
+                    std::env::var_os("APPIMAGE").is_some(),
+                    &cli,
+                ) {
+                    if let Err(error) = cli_link::ensure(&home.join(".local/bin"), &cli) {
+                        eprintln!("Could not link the buzz command: {error}");
+                    }
+                }
+            }
+            tauri::async_runtime::spawn(host_command::load_login_shell_environment());
             if let Ok(manager) = &app.state::<PluginManager>().0 {
                 packaged_plugins::spawn(manager.clone());
             }
@@ -1217,7 +1285,9 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(HostCalls::default())
         .manage(HostProcesses::default())
+        .manage(host_files::ManagedFiles::default())
         .manage(HostMcpServers::default())
+        .manage(HostForward::default())
         .manage(OAuthCallbackHost::default())
         .manage(NsecBackupHost::default().with_federated_identity(federated_identity))
         .manage(Notifications::default())
@@ -1270,6 +1340,7 @@ pub fn run() {
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<HostForward>().stop_all();
                 webview.state::<app_agents::AppAgentHost>().page_load();
                 if let Some(credentials) = webview.try_state::<credential_service::CredentialService>() {
                     credentials.page_load();
@@ -1368,6 +1439,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
+    app.state::<HostForward>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");

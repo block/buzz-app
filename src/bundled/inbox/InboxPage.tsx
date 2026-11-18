@@ -49,16 +49,23 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { BellIcon, CheckIcon } from "../../shared/design-system/icons";
+import {
+  BellIcon,
+  CheckIcon,
+  EnvelopeIcon,
+  EnvelopeOpenIcon,
+} from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
+  MenuIcon,
   MenuItem,
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
+import listRowStyles from "../../features/messages/MessageListRow.module.css";
 import {
   readView,
   subscribeView,
@@ -367,8 +374,25 @@ function InboxList({
   // The tab a row opened, kept even after its row regroups.
   // Selection lasts as long as that tab.
   const [opened, setOpened] = useState(() => selections.get(session)?.opened);
-  const openRow = (item: InboxItem, channel?: { channelType?: string }) => {
-    const tab = tabTarget(item, channel);
+  const openRow = (
+    item: InboxItem,
+    channel?: { channelType?: string },
+    unread = false,
+  ) => {
+    const target = tabTarget(item, channel);
+    // An unread channel thread opens at its first unread reply, found from
+    // the thread's read time before the row's own read.
+    const tab =
+      unread && target.threadId && item.rootId && item.target.kind === "thread"
+        ? {
+            channelId: target.channelId,
+            threadId: target.threadId,
+            unreadSince: session.unread.threadReadThrough(
+              target.channelId,
+              target.threadId,
+            ),
+          }
+        : target;
     const shown = openTab(tab);
     setOpened(shown ? tab : undefined);
     return shown;
@@ -406,7 +430,13 @@ function InboxList({
   const [pending, setPending] = useState(false);
   const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
   const [error, setError] = useState<string>();
-  const [menu, setMenu] = useState<{ id: string; anchor?: HTMLElement }>();
+  /** `unread` is the row's read state when its menu opened, which fixes the
+   * menu's one read action for as long as it stays open. */
+  const [menu, setMenu] = useState<{
+    id: string;
+    unread: boolean;
+    anchor?: HTMLElement;
+  }>();
   const active = useRef(false);
   const busy = useRef(false);
   const failedMutation = useRef<
@@ -870,6 +900,7 @@ function InboxList({
     };
     // Prepare once per click, not once per Retry: later arrivals are a new intent.
     let readChannel: (() => Promise<unknown>) | undefined;
+    let readSteps: readonly (() => Promise<unknown>)[] | undefined;
     const work = async () => {
       if (unread) await session.unread.markUnreadLocal(item.target);
       else if (item.target.kind === "channel") {
@@ -880,7 +911,9 @@ function InboxList({
         await readChannel();
       } else if (item.timeline)
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
-      else
+      else {
+        // One cut for every step and Retry: a newer Mark as unread stops it.
+        readSteps ??= session.unread.prepareReadThrough(item.readThrough);
         while (remaining.length) {
           // Close/Escape retires undispatched steps, not the admitted save.
           // Its genuine storage/access rejection still propagates through run.
@@ -889,12 +922,13 @@ function InboxList({
             throw new Error(
               "This action expired. Close and reopen the conversation.",
             );
-          const step = remaining[0];
-          if (!step) break;
-          await session.unread.markThrough(step.target, step.messageId);
+          const save = readSteps[item.readThrough.length - remaining.length];
+          if (!save) break;
+          await save();
           remaining.shift();
           revision = session.unread.revision();
         }
+      }
     };
     // An interrupted read (Close, Escape, a newer intent) does not continue.
     void run(
@@ -1157,6 +1191,7 @@ function InboxList({
                 const { sender, context } = identity;
                 const unread = hasUnread(item);
                 const readable = unread && canRead;
+                const menuUnread = menu?.id === item.id ? menu.unread : unread;
                 return (
                   <li
                     key={item.id}
@@ -1169,11 +1204,15 @@ function InboxList({
                     <ContextMenuRoot
                       open={menu?.id === item.id}
                       onOpenChange={(open) =>
-                        setMenu(open ? { id: item.id } : undefined)
+                        setMenu(open ? { id: item.id, unread } : undefined)
                       }
                     >
                       <ContextMenuTrigger
-                        render={<div className={styles.rowSurface} />}
+                        render={
+                          <div
+                            className={`${styles.rowSurface} ${listRowStyles.unreadActionHost}`}
+                          />
+                        }
                         onKeyDown={(event) => {
                           if (
                             event.key === "ContextMenu" ||
@@ -1182,6 +1221,7 @@ function InboxList({
                             event.preventDefault();
                             setMenu({
                               id: item.id,
+                              unread,
                               anchor: event.target as HTMLElement,
                             });
                           }
@@ -1213,7 +1253,13 @@ function InboxList({
                             if (
                               reselect
                                 ? !openTab(reselect)
-                                : !openRow(item, channel)
+                                : !openRow(
+                                    item,
+                                    channel,
+                                    unread &&
+                                      activity !== "mentions" &&
+                                      selectedId !== item.id,
+                                  )
                             )
                               void navigator.open({
                                 version: 1,
@@ -1241,7 +1287,7 @@ function InboxList({
                           }}
                         />
                         {readable && (
-                          <span className={styles.rowAction}>
+                          <span className={listRowStyles.unreadAction}>
                             <IconButton
                               size="sm"
                               variant="ghost"
@@ -1249,7 +1295,12 @@ function InboxList({
                               aria-label={`Mark as read ${sender} in ${context}`}
                               title="Mark as read"
                               onClick={() => markRead(item)}
-                              icon={<CheckIcon size={16} aria-hidden="true" />}
+                              icon={
+                                <EnvelopeOpenIcon
+                                  size={16}
+                                  aria-hidden="true"
+                                />
+                              }
                             />
                           </span>
                         )}
@@ -1259,17 +1310,27 @@ function InboxList({
                         aria-label={`Actions for ${sender} in ${context}`}
                         anchor={menu?.id === item.id ? menu.anchor : undefined}
                       >
+                        {/* One action, for the row's read state when the menu
+                            opened. It stays, disabled, when it cannot run, so
+                            the menu is never empty. That includes the row's
+                            state changing under the open menu: the item keeps
+                            its label rather than reversing under the pointer. */}
                         <MenuItem
-                          disabled={pending || !unread || !canRead}
-                          onClick={() => markRead(item)}
+                          disabled={
+                            pending || !canRead || menuUnread !== unread
+                          }
+                          onClick={() =>
+                            menuUnread ? markRead(item) : mutate(item, true)
+                          }
                         >
-                          Mark as read
-                        </MenuItem>
-                        <MenuItem
-                          disabled={pending || unread || !canRead}
-                          onClick={() => mutate(item, true)}
-                        >
-                          Mark unread
+                          <MenuIcon>
+                            {menuUnread ? (
+                              <EnvelopeOpenIcon size={14} />
+                            ) : (
+                              <EnvelopeIcon size={14} />
+                            )}
+                          </MenuIcon>
+                          {menuUnread ? "Mark as read" : "Mark as unread"}
                         </MenuItem>
                       </MenuPopup>
                     </ContextMenuRoot>

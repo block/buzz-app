@@ -381,8 +381,10 @@ it("turns over once the agents are back, when they were not at midnight", async 
 });
 
 /** A host whose Claude type reports Pixel's one session: `at` moves as a
- * message comes in or a turn ends, and `status` says whether a turn runs. */
-function working(usage: RegisteredAgentType["usage"]) {
+ * message comes in or a turn ends, and `status` says whether a turn runs.
+ * With `late`, the type registers only on `register()`, as when its plugin
+ * activates after a composer already shows the total. */
+function working(usage: RegisteredAgentType["usage"], { late = false } = {}) {
   let report: { at?: number; status?: string } = {};
   const listeners = new Set<() => void>();
   const snapshot = {
@@ -397,9 +399,14 @@ function working(usage: RegisteredAgentType["usage"]) {
       return () => listeners.delete(listener);
     },
   };
-  const types = [
-    { key: "buzz.claude-code/claude", title: "Claude", usage, sessions },
-  ] as unknown as RegisteredAgentType[];
+  const type = {
+    key: "buzz.claude-code/claude",
+    title: "Claude",
+    usage,
+    sessions,
+  } as unknown as RegisteredAgentType;
+  const types: RegisteredAgentType[] = late ? [] : [type];
+  const agentListeners = new Set<() => void>();
   const tell = (next: typeof report) => {
     report = next;
     for (const listener of listeners) listener();
@@ -408,8 +415,16 @@ function working(usage: RegisteredAgentType["usage"]) {
     agents: {
       snapshot: () => snapshot,
       types: () => types,
-      subscribe: () => () => {},
+      subscribe(listener: () => void) {
+        agentListeners.add(listener);
+        return () => agentListeners.delete(listener);
+      },
     } as unknown as Agents,
+    /** The type's plugin activates. */
+    register() {
+      types.push(type);
+      for (const listener of agentListeners) listener();
+    },
     /** A message comes in and a turn starts. */
     start: () => tell({ at: Date.now(), status: "Working" }),
     /** The turn ends. */
@@ -517,4 +532,38 @@ it("stops hearing sessions, and reads nothing pending, when no composer shows it
   expect(host.listeners.size).toBe(0);
   await vi.advanceTimersByTimeAsync(TURN_GAP_MS);
   expect(reads).toHaveBeenCalledTimes(1);
+});
+
+it("hears the sessions of a type that registers while it watches", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(noon);
+  const reads = vi.fn(async () => [session("s", noon, 1)]);
+  const host = working(reads, { late: true });
+  const store = todayStore(host.agents);
+  const stop = store.subscribe(() => {});
+  host.register();
+  await vi.waitFor(() => expect(store.get()?.agents).toBe(1));
+  expect(reads).toHaveBeenCalledTimes(1);
+  host.start();
+  host.end();
+  await vi.advanceTimersByTimeAsync(SETTLE_MS);
+  expect(reads).toHaveBeenCalledTimes(2);
+  stop();
+  expect(host.listeners.size).toBe(0);
+});
+
+it("reads when a turn ends that was running as its type registered", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(noon);
+  const reads = vi.fn(async () => [session("s", noon, 1)]);
+  const host = working(reads, { late: true });
+  const store = todayStore(host.agents);
+  store.subscribe(() => {});
+  host.start();
+  host.register();
+  await vi.waitFor(() => expect(store.get()?.agents).toBe(1));
+  expect(reads).toHaveBeenCalledTimes(1);
+  host.end();
+  await vi.advanceTimersByTimeAsync(SETTLE_MS);
+  expect(reads).toHaveBeenCalledTimes(2);
 });

@@ -59,6 +59,8 @@ export function todayStore(agents: Agents, clock: () => number = Date.now) {
   let shownFor: string | undefined;
   let controller = new AbortController();
   let unwatch: (() => void) | undefined;
+  /** The session reports heard while watching, by the type's `sessions`. */
+  const heard = new Map<object, () => void>();
   let midnight: ReturnType<typeof setTimeout> | undefined;
   let turnRead: ReturnType<typeof setTimeout> | undefined;
   let turnReadAt = Number.NEGATIVE_INFINITY;
@@ -183,6 +185,7 @@ export function todayStore(agents: Agents, clock: () => number = Date.now) {
    * rather than at the next composer or window change. Listeners hear at once,
    * so a total for other agents stops showing while the read runs. */
   function agentsChanged() {
+    if (unwatch) hearSessions();
     const targets = targetsOf();
     for (const listener of listeners) listener();
     if (targets && outdated(targets)) void refresh(true);
@@ -233,17 +236,36 @@ export function todayStore(agents: Agents, clock: () => number = Date.now) {
     }, wait);
   }
 
+  /** Hears the session reports of each type that reads usage, including one
+   * whose plugin activates while watching, and stops hearing a type that
+   * leaves. */
+  function hearSessions(types = agents.types()) {
+    const current = new Set<object>();
+    let added = false;
+    for (const { usage, sessions } of types) {
+      if (!usage || !sessions) continue;
+      current.add(sessions);
+      if (heard.has(sessions)) continue;
+      heard.set(sessions, sessions.subscribe(sessionsChanged));
+      added = true;
+    }
+    for (const [sessions, stop] of heard)
+      if (!current.has(sessions)) {
+        stop();
+        heard.delete(sessions);
+      }
+    // A new type's sessions as they are now, so a turn already running when
+    // it registers is heard ending.
+    if (added)
+      for (const [key, report] of sessionsOf())
+        if (!reported.has(key)) reported.set(key, report);
+  }
+
   /** Watches what can make the total out of date while a composer shows it. */
   function watch() {
     const stopAgents = agents.subscribe(agentsChanged);
     reported = sessionsOf();
-    const stopSessions = agents
-      .types()
-      .flatMap((type) =>
-        type.usage && type.sessions
-          ? [type.sessions.subscribe(sessionsChanged)]
-          : [],
-      );
+    hearSessions();
     const hasWindow = typeof window !== "undefined";
     if (hasWindow) {
       document.addEventListener("visibilitychange", windowBack);
@@ -252,7 +274,7 @@ export function todayStore(agents: Agents, clock: () => number = Date.now) {
     armMidnight();
     return () => {
       stopAgents();
-      for (const stop of stopSessions) stop();
+      hearSessions([]);
       clearTimeout(turnRead);
       turnRead = undefined;
       if (hasWindow) {

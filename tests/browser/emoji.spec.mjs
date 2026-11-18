@@ -584,7 +584,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(
       page.getByRole("button", { name: "Refresh emoji" }),
     ).toHaveCount(0);
-    await expect(surface).toHaveCSS("width", "360px");
+    await expect(surface).toHaveCSS("width", "392px");
     const initialRegion = await region.boundingBox();
     const initialSurface = await surface.boundingBox();
     const searchGutters = await searchField.evaluate((input) => {
@@ -683,10 +683,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       exact: true,
     });
     await expect(insert).toBeVisible();
-    // Slack-sized cells: the small-control cell around an inline-emoji glyph.
-    await expect(insert).toHaveCSS("width", "32px");
-    await expect(insert).toHaveCSS("height", "32px");
-    await expect(insert).toHaveCSS("font-size", "22px");
+    // Control-sized cells around a picker-sized glyph; custom images keep
+    // their 2rem cap, which still fits inside the cell.
+    await expect(insert).toHaveCSS("width", "40px");
+    await expect(insert).toHaveCSS("height", "40px");
+    await expect(insert).toHaveCSS("font-size", "28px");
     await expect(insert.locator("img")).toHaveCSS("max-width", "32px");
     await expect(insert.locator("img")).toHaveCSS("max-height", "32px");
     const searchNode = await search.elementHandle();
@@ -762,12 +763,22 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         }),
       ).toBe(true);
     }
+    // At an intermediate width only 7 cells fit, but the popup still has room
+    // for the category bar it showed before the cells grew.
+    await page.locator("main").evaluate((el) => {
+      el.style.width = "386px";
+    });
+    await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
+      "width",
+      "350px",
+    );
+    await expect(page.locator("em-emoji-picker nav")).toBeVisible();
     await page.locator("main").evaluate((el) => {
       el.style.width = "800px";
     });
     await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
       "width",
-      "360px",
+      "392px",
     );
     await search.fill("");
     const frequent = page.locator(

@@ -91,6 +91,25 @@ fn packaged_managed_plugins_url(
     Ok(url.into())
 }
 
+const MANAGED_PLUGINS_SIGNER_KEY: &str = "BUZZ_BUILD_MANAGED_PLUGINS_SIGNER";
+
+/// The hex public key whose signature lets a managed plugin policy install and update
+/// plugins without review. Empty leaves every policy advisory.
+fn managed_plugins_signer(local: &Path, process: Option<String>) -> Result<String, &'static str> {
+    let values = build_env::load(local, &[MANAGED_PLUGINS_SIGNER_KEY], |_| process.clone())?;
+    let raw = values
+        .get(MANAGED_PLUGINS_SIGNER_KEY)
+        .map(|value| value.trim())
+        .unwrap_or("");
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    if raw.len() != 64 || !raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("BUZZ_BUILD_MANAGED_PLUGINS_SIGNER must be a 64-character hex public key");
+    }
+    Ok(raw.to_ascii_lowercase())
+}
+
 fn builderlab_target(
     local: &Path,
     process: Option<String>,
@@ -253,6 +272,10 @@ fn main() {
     let managed = packaged_managed_plugins_url(&local, process(MANAGED_PLUGINS_URL_KEY))
         .expect("Invalid packaged managed plugin policy URL");
     println!("cargo:rustc-env={MANAGED_PLUGINS_URL_KEY}={managed}");
+    println!("cargo:rerun-if-env-changed={MANAGED_PLUGINS_SIGNER_KEY}");
+    let signer = managed_plugins_signer(&local, process(MANAGED_PLUGINS_SIGNER_KEY))
+        .expect("Invalid managed plugin policy signer");
+    println!("cargo:rustc-env={MANAGED_PLUGINS_SIGNER_KEY}={signer}");
 }
 
 #[cfg(test)]
@@ -326,6 +349,24 @@ mod tests {
             packaged_managed_plugins_url(&local, None).unwrap(),
             "https://plugins.example/policy.json"
         );
+    }
+
+    #[test]
+    fn managed_plugins_signer_accepts_only_a_hex_public_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        assert_eq!(managed_plugins_signer(&local, None).unwrap(), "");
+        let key = "AB".repeat(32);
+        assert_eq!(
+            managed_plugins_signer(&local, Some(format!(" {key}\n"))).unwrap(),
+            "ab".repeat(32)
+        );
+        for raw in ["npub1xyz", "ab", &"g".repeat(64), &"a".repeat(65)] {
+            assert!(
+                managed_plugins_signer(&local, Some(raw.into())).is_err(),
+                "{raw}"
+            );
+        }
     }
 
     #[test]

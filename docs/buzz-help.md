@@ -1259,6 +1259,8 @@ available rather than silently discarding it.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.
+  An agent set to one session per thread can also hand off from a
+  channel-level watch or timer turn into one of that channel's threads.
   Message tools refuse self-mentions. A successful handoff receipt means the
   host queued the work. It does not confirm execution or completion.
 - A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
@@ -1783,6 +1785,13 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   **Update** review showing access changes and any change to the branch or tag
   later updates follow, and the plugin keeps its enabled or disabled state.
   Other links to an installed plugin offer **Open in Buzz**.
+- An organization's plugin policy can recommend plugins in **Settings →
+  Plugins**, and can also install or update listed plugins for you. A notice
+  says when it did. A plugin it keeps current shows **Managed by [source] ·
+  updates automatically**. An update that asks for different access, or comes
+  from a different publisher, waits for your review instead. A plugin you
+  remove is not installed again automatically; it stays under
+  **Recommended** if you want it back.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved
@@ -2071,6 +2080,10 @@ In **Workflows**, an archived channel’s group says **Archived**, as do its wor
 Desktop builds save a small local trace when a draft conflict or save failure
 occurs. It contains operation metadata, with no draft text or secrets. See
 [draft diagnostics](draft-diagnostics.md) for the file location and collection steps.
+
+On macOS, Buzz can stop a storage helper that WebKit replaces but leaves running.
+This recovery only covers helpers observed during the current launch. It does
+not clear saved drafts or bypass conflict checks.
 
 ## Plugin account actions
 

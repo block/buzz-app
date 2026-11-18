@@ -2313,6 +2313,55 @@ describe("a plugin's wake", () => {
     });
     expect(trigger).not.toHaveProperty("plugin");
   });
+  it.each([
+    ["one session per thread", "thread", true],
+    ["one session per channel", "channel", false],
+    ["no session controls", undefined, false],
+  ] as const)(
+    "tells its run whether a channel's threads have sessions apart: %s",
+    async (_kind, scope, apart) => {
+      const f = await setup(
+        scope
+          ? {
+              sessionControls: {
+                state: () => "idle",
+                run: async () => {},
+                scope: () => scope,
+              } as never,
+            }
+          : {},
+      );
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await held(f.native);
+      let handle: Delivery<Config>["agent"] | undefined;
+      f.run.mockImplementationOnce(async ({ agent }) => {
+        handle = agent;
+      });
+      f.plugin.agents.wake(bot, { channel, root, text: "first" });
+      await vi.waitFor(() => expect(handle).toBeDefined());
+      expect(handle?.threadsApart?.(channel)).toBe(apart);
+      // A channel not known yet cannot be told apart, under thread scope.
+      expect(handle?.threadsApart?.("unknown-channel")).toBe(
+        scope === "thread" ? undefined : false,
+      );
+      // A DM, Solo chat or huddle room is one conversation under either
+      // scope: harnesses run a huddle room's text turns in its one session.
+      const list = f.session.channels.list();
+      for (const patch of [
+        { channelType: "dm" },
+        { channelType: "solo" },
+        { description: huddleDescription(crypto.randomUUID()) },
+      ] as const) {
+        vi.spyOn(f.session.channels, "list").mockReturnValue({
+          ...list,
+          channels: list.channels.map((row) =>
+            row.id === channel ? { ...row, ...patch } : row,
+          ),
+        });
+        expect(handle?.threadsApart?.(channel)).toBe(false);
+      }
+    },
+  );
   it("is dropped like a mention when the agent stops running here", async () => {
     const { service, run, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });

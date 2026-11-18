@@ -567,6 +567,8 @@ export type RunnerHost = {
   plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
+  /** Whether the agent's threads in the channel have sessions of their own. */
+  threadsApart?(agent: Agent, channelId: string): boolean | undefined;
   /** The instructions plugins give the agent's turns now. */
   instructions?(
     agent: Agent,
@@ -3349,6 +3351,10 @@ export class AgentRunners {
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
+          },
+          threadsApart: (channelId: string) => {
+            lifetime.throwIfAborted();
+            return this.host.threadsApart?.(agent, channelId);
           },
           // The control outlives this call, so each of its calls checks the
           // run's lifetime, and set again once it has read the agents.

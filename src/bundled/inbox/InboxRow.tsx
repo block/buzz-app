@@ -93,7 +93,14 @@ export function rowIdentity(
   const sender = item.workflowOwnerId ? workflowLabel(resolved) : resolved;
   const context =
     channel?.channelType === "dm"
-      ? dmContext(channel, item.authorId, " · ", profiles, name)
+      ? dmContext(
+          channel,
+          // A workflow's row names its owner, not the key that signed it.
+          item.workflowOwnerId ? undefined : item.authorId,
+          " · ",
+          profiles,
+          name,
+        )
       : channel
         ? channelText(channel)
         : "Conversation";

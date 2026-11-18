@@ -98,6 +98,7 @@ const profiles = new Map<string, Profile>([
   [alice.pubkey, { name: "Alice" }],
   [bob.pubkey, { name: "Bob" }],
   [namesake.pubkey, { name: "Alice" }],
+  [relay.pubkey, { name: "Relay" }],
 ]);
 const name = (_key: string, fallback: string) => fallback;
 const emoji = { entries: [] };
@@ -140,6 +141,12 @@ it.each([
     channel: dm(alice),
     item: { authorId: relay.pubkey, workflowOwnerId: alice.pubkey },
     expected: { sender: workflowLabel("Alice"), context: "DM · Alice" },
+  },
+  {
+    row: "a workflow signed by a one-to-one DM's other member",
+    channel: dm(relay),
+    item: { authorId: relay.pubkey, workflowOwnerId: alice.pubkey },
+    expected: { sender: workflowLabel("Alice"), context: "DM · Relay" },
   },
 ])(
   "names a row from $row as $expected.context",

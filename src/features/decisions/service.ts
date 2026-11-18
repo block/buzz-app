@@ -115,7 +115,8 @@ export type DecisionReply =
  * - `ready`: it can answer.
  * - `unconfirmed`: it may be able to answer, but could not check, for
  *   example when the keychain is locked.
- * - `needs-setup`: it cannot answer until the user sets it up in Settings.
+ * - `needs-setup`: it cannot answer until the user sets it up in Settings,
+ *   or, for a community, cannot answer there.
  */
 export type DecisionProviderStatus =
   | "checking"
@@ -131,7 +132,10 @@ export type DecisionProvider = Readonly<{
   label: string;
   /** One line about what it uses, such as "Use your own API key." */
   description: string;
-  status(): DecisionProviderStatus;
+  /** Whether it can answer requests from `community` (a relay URL), or
+   * without one, anywhere. A provider whose setup does not depend on the
+   * community ignores it. */
+  status(community?: string): DecisionProviderStatus;
   subscribe(listener: () => void): () => void;
   /** Answers the request. The request is already checked against the
    * limits, and its `timeoutMs` is set. The host stops waiting at the
@@ -152,11 +156,11 @@ export type DecisionProvider = Readonly<{
 /** What plugins get as `ctx.decisions`. `decide` never rejects. */
 export interface Decisions {
   decide(request: DecisionRequest): Promise<DecisionResult>;
-  /** The key of the provider that answers this device's decisions, or
-   * undefined when none is registered. */
-  backend(): string | undefined;
-  /** That provider's status, or `unavailable` when there is none. */
-  status(): DecisionProviderStatus | "unavailable";
+  /** The key of the provider that answers this device's decisions from
+   * `community` (a relay URL), or undefined when none is registered. */
+  backend(community?: string): string | undefined;
+  /** That provider's status there, or `unavailable` when there is none. */
+  status(community?: string): DecisionProviderStatus | "unavailable";
   subscribe(listener: () => void): () => void;
   /** Offers a provider while the calling plugin runs, or until the returned
    * function removes it. `Decisions` exposes no way to choose the provider;
@@ -199,13 +203,16 @@ const orderOf = (provider: DecisionProvider) =>
   Number.isFinite(provider.order) ? (provider.order as number) : 0;
 const byOrder = (a: RegisteredProvider, b: RegisteredProvider) =>
   orderOf(a) - orderOf(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
-/** A provider's status; one that throws is unconfirmed. Host code reads
- * provider status only through this. */
+/** A provider's status, in `community` when given; one that throws is
+ * unconfirmed. Host code reads provider status only through this. */
 export const statusOf = (
   provider: DecisionProvider,
+  community?: string,
 ): DecisionProviderStatus => {
   try {
-    return provider.status();
+    return community === undefined
+      ? provider.status()
+      : provider.status(community);
   } catch {
     return "unconfirmed";
   }
@@ -222,10 +229,12 @@ export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
 ];
 
 /** Answers come from the provider the user chose, or the first registered
- * default until they choose. Decision text can include private messages, so
- * no other provider gets it without that choice: while a chosen provider
- * that is not a default is not registered, decisions are unavailable rather
- * than sent somewhere else. */
+ * default until they choose. Each request is routed in its community: a
+ * provider such as Builderlab answers only where the community offers it.
+ * Where a chosen default cannot, the user's own TypeSafe key answers.
+ * Decision text can include private messages, so no other provider gets it
+ * without that choice: while a chosen provider that is not a default is not
+ * registered, decisions are unavailable rather than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
   /** The user's choice in Settings; undefined until they make one. */
@@ -312,11 +321,14 @@ export class DecisionsService extends Service implements Decisions {
   }
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
-  /** The provider that answers now, and its status. Without a registered
+  /** The provider that answers in `community` now, and its status. A
+   * registered choice does, except that a chosen default that cannot answer
+   * in that community leaves it to TypeSafe, the user's own key; without a
+   * community, the choice is its own answer, as Settings shows. Without a registered
    * choice, the first default that can answer does; otherwise TypeSafe,
    * whose setup the user can do, `checking` while another default is still
    * finding out whether it can answer. */
-  private route():
+  private route(community?: string):
     | Readonly<{
         provider: RegisteredProvider;
         status: DecisionProviderStatus;
@@ -325,7 +337,19 @@ export class DecisionsService extends Service implements Decisions {
     const find = (key: string) =>
       this.sorted.find((provider) => provider.key === key);
     const chosen = this.chosen === undefined ? undefined : find(this.chosen);
-    if (chosen) return { provider: chosen, status: statusOf(chosen) };
+    if (chosen) {
+      const status = statusOf(chosen, community);
+      const own =
+        community !== undefined &&
+        status === "needs-setup" &&
+        chosen.key !== DEFAULT_DECISION_PROVIDER &&
+        DEFAULT_DECISION_PROVIDERS.includes(chosen.key)
+          ? find(DEFAULT_DECISION_PROVIDER)
+          : undefined;
+      return own
+        ? { provider: own, status: statusOf(own, community) }
+        : { provider: chosen, status };
+    }
     if (
       this.chosen !== undefined &&
       !DEFAULT_DECISION_PROVIDERS.includes(this.chosen)
@@ -333,7 +357,9 @@ export class DecisionsService extends Service implements Decisions {
       return undefined;
     const defaults = DEFAULT_DECISION_PROVIDERS.flatMap((key) => {
       const provider = find(key);
-      return provider ? [{ provider, status: statusOf(provider) }] : [];
+      return provider
+        ? [{ provider, status: statusOf(provider, community) }]
+        : [];
     });
     const answering = defaults.find(
       ({ status }) => status === "ready" || status === "unconfirmed",
@@ -348,14 +374,15 @@ export class DecisionsService extends Service implements Decisions {
       ? { provider: fallback.provider, status: "checking" }
       : fallback;
   }
-  private current(): RegisteredProvider | undefined {
-    return this.route()?.provider;
+  private current(community?: string): RegisteredProvider | undefined {
+    return this.route(community)?.provider;
   }
-  /** Resolves once the routed provider is not `checking`, or on `signal`. */
-  private known(signal: AbortSignal): Promise<void> {
+  /** Resolves once the provider routed in `community` is not `checking`, or
+   * on `signal`. */
+  private known(signal: AbortSignal, community?: string): Promise<void> {
     return new Promise((resolve) => {
       const settle = () => {
-        if (!signal.aborted && this.status() === "checking") return;
+        if (!signal.aborted && this.status(community) === "checking") return;
         stop();
         signal.removeEventListener("abort", settle);
         resolve();
@@ -366,9 +393,10 @@ export class DecisionsService extends Service implements Decisions {
     });
   }
   // Bound, so a caller can pass these on, as React's external stores do.
-  backend = (): string | undefined => this.current()?.key;
-  status = (): DecisionProviderStatus | "unavailable" =>
-    this.route()?.status ?? "unavailable";
+  backend = (community?: string): string | undefined =>
+    this.current(community)?.key;
+  status = (community?: string): DecisionProviderStatus | "unavailable" =>
+    this.route(community)?.status ?? "unavailable";
   /** Host-only: Settings chooses the provider. Not part of `Decisions`. */
   setBackend(key: string): void {
     if (!this.sorted.some((provider) => provider.key === key)) return;
@@ -389,7 +417,8 @@ export class DecisionsService extends Service implements Decisions {
     return () => void this.listeners.delete(listener);
   };
   async decide(request: DecisionRequest): Promise<DecisionResult> {
-    let provider = this.current();
+    const { community } = request;
+    let provider = this.current(community);
     let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>
       Object.freeze({ outcome: "failed", backend, reason });
@@ -415,12 +444,12 @@ export class DecisionsService extends Service implements Decisions {
       reply = await Promise.race([
         // A provider still checking its setup may stop answering, or a
         // default may start to: route once it knows, within the deadline.
-        this.known(abort.signal).then(
+        this.known(abort.signal, community).then(
           (): DecisionReply | Promise<DecisionReply> => {
             // Past the deadline: never send the request anywhere.
             if (abort.signal.aborted)
               return { outcome: "failed", reason: "timeout" };
-            provider = this.current();
+            provider = this.current(community);
             backend = provider?.key;
             if (!provider) return { outcome: "failed", reason: "unavailable" };
             return provider.decide(Object.freeze({ ...request, timeoutMs }), {

@@ -2976,8 +2976,8 @@ export class AgentRunners {
     // A provider still checking its setup, such as reading a saved key, is
     // waited for rather than let the event pass unchecked. One that cannot
     // confirm its setup is still asked: it may be able to answer.
-    await statusKnown(decisions);
-    const status = decisions.status();
+    await statusKnown(decisions, agent.relay);
+    const status = decisions.status(agent.relay);
     if (status === "needs-setup" || status === "unavailable") return notRun();
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
@@ -4919,12 +4919,13 @@ async function standalone<T>(
   }
 }
 
-/** Resolves once the selected provider's status is not `checking`. */
-function statusKnown(decisions: Decisions): Promise<void> {
-  if (decisions.status() !== "checking") return Promise.resolve();
+/** Resolves once the status of the provider that answers in `community` is
+ * not `checking`. */
+function statusKnown(decisions: Decisions, community: string): Promise<void> {
+  if (decisions.status(community) !== "checking") return Promise.resolve();
   return new Promise((resolve) => {
     const stop = decisions.subscribe(() => {
-      if (decisions.status() === "checking") return;
+      if (decisions.status(community) === "checking") return;
       stop();
       resolve();
     });

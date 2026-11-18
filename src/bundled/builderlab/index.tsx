@@ -14,6 +14,7 @@ import { Login } from "./login/Login";
 import { browserLoginAvailable, oauthTarget } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
 import {
+  communitySessions,
   createNativeSession,
   followCommunity,
   nativeBuilderlab,
@@ -24,7 +25,10 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
-import { offerBuilderlabDecisions } from "./decisions";
+import {
+  communityDecisionSessions,
+  offerBuilderlabDecisions,
+} from "./decisions";
 import { offerBuilderlabSpeech } from "./speech";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -72,9 +76,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.effect(() => () => session.dispose());
   // Remote agents and speech use the sign-in server of the community in view;
   // the rest of Builderlab stays with the build's.
-  const agentSession = dev
-    ? session
-    : followCommunity(session, ctx.federatedIdentity, ctx.relay);
+  const sessions = dev
+    ? undefined
+    : communitySessions(session, ctx.federatedIdentity);
+  if (sessions) ctx.effect(() => () => sessions.dispose());
+  const agentSession = sessions
+    ? followCommunity(session, ctx.federatedIdentity, ctx.relay, sessions)
+    : session;
   if (agentSession !== session) ctx.effect(() => () => agentSession.dispose());
   const loginAvailable = (!!dev || browserLoginAvailable()) && !unavailable;
   const openSettings = (section: string) =>
@@ -203,13 +211,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-    // Native validation stays in place; the dev transport uses a public revision.
+    // Native validation stays in place; the dev transport uses a public
+    // revision. Each community's decisions use its own sign-in server's
+    // session; Settings signs in to the selected community's.
     offerBuilderlabDecisions(
       ctx,
-      session,
+      agentSession,
       loginAvailable,
       dev?.decide,
       openIdentity,
+      sessions &&
+        communityDecisionSessions(
+          sessions,
+          ctx.federatedIdentity,
+          ctx.knownCommunities,
+        ),
     );
     // Speech bills the community in view, so like remote agents it signs in
     // at that community's server: a Builderlab customer's has its own.

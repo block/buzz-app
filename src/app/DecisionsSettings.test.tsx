@@ -67,6 +67,10 @@ function fake(
   return {
     providers: () => providers,
     backend,
+    status: () => {
+      const key = backend();
+      return key ? (statuses.get(key) ?? "needs-setup") : "unavailable";
+    },
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -464,7 +468,7 @@ it("explains lost Builderlab access only while it is selected and confirmed unav
   act(() => decisions.setStatus(builderlab, "needs-setup"));
   expect(screen.getByLabelText("Unavailable for this account")).toBeVisible();
   expect(unavailable()).toHaveTextContent(
-    "Decisions API isn’t available for this Builderlab account. Use your own TypeSafe key or contact your account administrator.",
+    "None of your communities offer Builderlab decisions to this account, so your TypeSafe key answers. For access, contact your account administrator.",
   );
   expect(screen.queryByText(`Settings for ${builderlab}`)).toBeNull();
   expect(decisions.chosen()).toBe(builderlab);
@@ -486,4 +490,74 @@ it("explains lost Builderlab access only while it is selected and confirmed unav
   await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
   expect(unavailable()).toBeNull();
   expect(decisions.chosen()).toBe(TYPESAFE);
+});
+
+it("lists which provider answers in each community while Builderlab is chosen", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const decisions = new DecisionsService(root, undefined);
+  const listeners = new Set<() => void>();
+  let typesafe: DecisionProviderStatus = "ready";
+  const register = (
+    id: string,
+    plugin: string,
+    status: (community?: string) => DecisionProviderStatus,
+  ) =>
+    root
+      .extend({ pluginOwner: { id: plugin, revision: "one" } })
+      .plugin((ctx) =>
+        ctx.decisions.registerProvider({
+          id,
+          label: id,
+          description: id,
+          status,
+          subscribe: (listener) => {
+            listeners.add(listener);
+            return () => void listeners.delete(listener);
+          },
+          decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+        }),
+      );
+  await register("typesafe", "buzz.typesafe", () => typesafe).await();
+  // Builderlab answers only in Block.
+  await register("builderlab", "block.builderlab", (community) =>
+    community === undefined || new URL(community).host === "block.example"
+      ? "ready"
+      : "needs-setup",
+  ).await();
+  decisions.setBackend("block.builderlab/builderlab");
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={[
+        { id: "wss://block.example", name: "Block" },
+        { id: "wss://friends.example", name: "Friends", localName: "Pals" },
+      ]}
+    />,
+  );
+  const row = (name: string) =>
+    screen
+      .getByText(name, { selector: ".buzz-preference-row-label" })
+      .closest(".buzz-preference-row");
+  expect(row("Block")).toHaveTextContent("Builderlab");
+  expect(row("Pals")).toHaveTextContent("TypeSafe");
+  expect(
+    screen.getByText(
+      "Communities that don’t offer Builderlab decisions use your TypeSafe key.",
+    ),
+  ).toBeVisible();
+  act(() => {
+    typesafe = "needs-setup";
+    for (const listener of listeners) listener();
+  });
+  expect(row("Pals")).toHaveTextContent(
+    "TypeSafe · Add your API key to use decisions here",
+  );
+  // With TypeSafe chosen, every community uses it: no list.
+  act(() => decisions.setBackend(TYPESAFE));
+  expect(screen.queryByText("Block")).toBeNull();
 });

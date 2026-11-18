@@ -316,6 +316,65 @@ it("routes to the first default that can answer, else TypeSafe", async () => {
   expect(service.status()).toBe("needs-setup");
 });
 
+it("routes each community's requests to the provider that can answer there", async () => {
+  const { service, plugin } = setup();
+  const offered = "wss://offered.example";
+  const other = "wss://other.example";
+  const asked: (string | undefined)[] = [];
+  const typesafe = settable("ready");
+  // Builderlab answers only where the community offers it.
+  const builderlab = {
+    status: (community?: string) =>
+      community === undefined || community === offered
+        ? ("ready" as const)
+        : ("needs-setup" as const),
+    decide: async (sent: DecisionRequest) => {
+      asked.push(sent.community);
+      return reply;
+    },
+  };
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    ...typesafe,
+    decide: async (sent) => {
+      asked.push(`typesafe:${sent.community}`);
+      return reply;
+    },
+  });
+  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
+  for (const chosen of [undefined, "block.builderlab/builderlab"]) {
+    if (chosen) service.setBackend(chosen);
+    expect(service.backend(offered)).toBe("block.builderlab/builderlab");
+    expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
+    expect(service.status(other)).toBe("ready");
+    // Without a community, the choice itself, as Settings shows it.
+    expect(service.backend()).toBe("block.builderlab/builderlab");
+    asked.length = 0;
+    const answered = [
+      await service.decide({ ...request, community: offered }),
+      await service.decide({ ...request, community: other }),
+    ];
+    expect(answered.map(({ backend }) => backend)).toEqual([
+      "block.builderlab/builderlab",
+      DEFAULT_DECISION_PROVIDER,
+    ]);
+    expect(asked).toEqual([offered, `typesafe:${other}`]);
+  }
+  // Without TypeSafe's key, the other community has no answer, and Builderlab
+  // is never asked there.
+  typesafe.set("needs-setup");
+  expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(other)).toBe("needs-setup");
+  // A chosen TypeSafe never moves to Builderlab, and a chosen provider that
+  // is not a default never falls back.
+  service.setBackend(DEFAULT_DECISION_PROVIDER);
+  expect(service.backend(offered)).toBe(DEFAULT_DECISION_PROVIDER);
+  await plugin("acme.other", { id: "other", status: () => "needs-setup" });
+  service.setBackend("acme.other/other");
+  expect(service.backend(other)).toBe("acme.other/other");
+  expect(service.status(other)).toBe("needs-setup");
+});
+
 it("routes a request once a checking default knows whether it can answer", async () => {
   const { service, plugin, timers } = setup();
   const builderlab = settable("checking");

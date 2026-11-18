@@ -698,6 +698,63 @@ async fn an_fi_call_needs_the_session_it_started_under() {
     assert!(seen.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn an_fi_call_uses_the_sign_in_server_of_its_community() {
+    let reply = json!({ "model": "jev-1.13.0", "answers": { "a": { "noul": { "value": 0.4 } } } });
+    let (url, seen) = server(vec![Some((200, "", reply.to_string()))]).await;
+    let origin = url.trim_end_matches("/decide").to_owned();
+    // The build's own server is not the community's and is never called.
+    let (fi, peer) = crate::federated_identity::testing::signed_in_with_peer(
+        "http://127.0.0.1:9".into(),
+        origin,
+        "buzz.example.org",
+    );
+    let revision =
+        |fi: &FederatedIdentity| fi.with_session(|_, current, _| current.to_owned()).unwrap();
+    let (_, keys) = keys(None);
+    let host = decisions("http://127.0.0.1:9/unused");
+    // The build's session is not the community's.
+    assert_eq!(
+        decide_federated(&host, &keys, &fi, &revision(&fi), yes_no_in_community()).await,
+        Decided::Failed {
+            backend: Backend::Builderlab,
+            reason: Failure::MissingCredentials,
+        }
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    let result = decide_federated(&host, &keys, &fi, &revision(&peer), yes_no_in_community()).await;
+    assert!(matches!(result, Decided::Answered { .. }), "{result:?}");
+    let (head, _) = seen.lock().unwrap()[0].clone();
+    assert!(
+        head.starts_with("post /api/v3/builderlab/decisions "),
+        "{head}"
+    );
+    assert!(
+        head.lines()
+            .any(|line| line == "x-buzz-community: buzz.example.org"),
+        "{head}"
+    );
+}
+
+#[tokio::test]
+async fn an_fi_call_without_a_community_sends_nothing() {
+    let (url, seen) = server(vec![]).await;
+    let (fi, revision) = federated_at(&url);
+    let (_, keys) = keys(None);
+    for community in [None, Some("not a relay".to_owned())] {
+        let mut request = yes_no_in_community();
+        request.community = community;
+        assert_eq!(
+            decide_federated(&decisions(&url), &keys, &fi, &revision, request).await,
+            Decided::Failed {
+                backend: Backend::Builderlab,
+                reason: Failure::InvalidRequest,
+            }
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+}
+
 /// Waits up to five seconds for `done`.
 async fn until(mut done: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(5), async {

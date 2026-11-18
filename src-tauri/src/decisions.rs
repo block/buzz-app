@@ -10,9 +10,12 @@
 //!   Builderlab sign-in the webview holds. Builds without one have no
 //!   `builderlab` endpoint. An FI build instead calls the API of its identity
 //!   origin with the native NIP-FI session, which the webview never sees, as
-//!   its other Builderlab calls do. It takes System One's request and answer shapes,
-//!   answers with Jev unless asked for another model, and bills the
-//!   request's community, so a call without one is not sent.
+//!   its other Builderlab calls do. The request's community picks the sign-in
+//!   server, as for the community's other calls, so each community's
+//!   Builderlab answers its decisions. It takes System One's request and
+//!   answer shapes, answers with Jev unless asked for another model, and
+//!   bills the request's community, so a call without one is not sent.
+use crate::federated_identity::config::canonical_relay;
 use crate::federated_identity::FederatedIdentity;
 use crate::jev::JevHost;
 use serde::{Deserialize, Serialize};
@@ -614,11 +617,12 @@ fn federated_sign_in(
     .flatten()
 }
 
-/// Builderlab with an FI build's native session. Only the session the caller
-/// started under may answer: a sign-out or account switch during the call
-/// drops its answer. A 401 refuses this call only: the adapter, asked once in
-/// the background, decides whether the session ended, as for other granted
-/// calls.
+/// Builderlab with the native session of the sign-in server for the
+/// request's community, chosen by its host as for the community's other
+/// calls. Only the session the caller started under may answer: a sign-out
+/// or account switch during the call drops its answer. A 401 refuses this
+/// call only: the adapter, asked once in the background, decides whether the
+/// session ended, as for other granted calls.
 async fn decide_federated(
     host: &DecisionsHost,
     keys: &JevHost,
@@ -631,6 +635,18 @@ async fn decide_federated(
         backend,
         reason: Failure::MissingCredentials,
     };
+    // Builderlab bills the community, so a call without one is not sent.
+    let Some(Ok(fi)) = request
+        .community
+        .as_deref()
+        .map(|community| fi.server_for(&canonical_relay(community)?))
+    else {
+        return Decided::Failed {
+            backend,
+            reason: Failure::InvalidRequest,
+        };
+    };
+    let fi = &fi;
     let Some((cancel, builderlab, session)) = federated_sign_in(fi, revision) else {
         return ended;
     };

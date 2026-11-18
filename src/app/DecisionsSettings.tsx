@@ -26,24 +26,34 @@ import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Select } from "../shared/design-system/ui/Select";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { Avatar } from "../shared/design-system/ui/Avatar";
+import type { Membership } from "../features/communities/service";
+import { communityDestination } from "../features/communities/destination";
+import { communityIcon } from "../features/communities/community-icon";
+import { communityName } from "../features/communities/names";
 
 /** Chooses the provider that answers decisions on this device and shows the
  * selected provider's own settings. Providers are plugins. One picked before
  * it is ready shows its settings, but the choice is saved only once it is
  * ready, so a working provider keeps answering until then. The choice is
  * hidden only when one provider is registered and already answering when
- * Settings opens. */
+ * Settings opens. With Builderlab chosen, it lists which provider answers in
+ * each joined community: Builderlab where that community offers it, the
+ * user's TypeSafe key elsewhere. */
 export function DecisionsSettings({
   decisions,
   active,
   onSection,
+  memberships = [],
 }: {
   decisions: Pick<
     DecisionsService,
-    "backend" | "subscribe" | "setBackend" | "providers"
+    "backend" | "status" | "subscribe" | "setBackend" | "providers"
   >;
   active(): boolean;
   onSection?: ((section: string) => void) | undefined;
+  memberships?: readonly Membership[] | undefined;
 }) {
   const backend = useSyncExternalStore(
     decisions.subscribe,
@@ -84,6 +94,10 @@ export function DecisionsSettings({
     () => undefined,
   );
   const shown = combined ? current : (selected ?? current);
+  const byCommunity = useCommunityAnswers(
+    decisions,
+    combined && shown?.key === builderlab.key ? memberships : [],
+  );
   const choose = (value: string) => {
     if (!active()) return;
     const next = providers.find((provider) => provider.key === value);
@@ -282,9 +296,9 @@ export function DecisionsSettings({
                       role="status"
                       className="m-0 py-4 text-body-sm text-secondary"
                     >
-                      Decisions API isn’t available for this Builderlab account.
-                      Use your own TypeSafe key or contact your account
-                      administrator.
+                      None of your communities offer Builderlab decisions to
+                      this account, so your TypeSafe key answers. For access,
+                      contact your account administrator.
                     </p>
                   )}
                 {shown?.key === ownKey.key && shown.Settings && (
@@ -310,6 +324,34 @@ export function DecisionsSettings({
                     </OwnedContribution>
                   </div>
                 )}
+              </SettingsGroup>
+            </div>
+          )}
+          {combined && byCommunity.length > 0 && (
+            <div className="w-full">
+              <InlineHeader
+                title="Communities"
+                subtitle="Communities that don’t offer Builderlab decisions use your TypeSafe key."
+              />
+              <SettingsGroup>
+                {byCommunity.map(({ membership, url, answer }) => (
+                  <PreferenceRow
+                    key={url}
+                    icon={
+                      <Avatar
+                        src={communityIcon(
+                          membership.publishedIcon ?? membership.icon,
+                        )}
+                        alt=""
+                        fallback={communityName(membership)}
+                        shape="squircle"
+                        size="small"
+                      />
+                    }
+                    title={communityName(membership)}
+                    subtitle={ANSWER_COPY[answer]}
+                  />
+                ))}
               </SettingsGroup>
             </div>
           )}
@@ -421,4 +463,48 @@ export function DecisionsSettings({
       )}
     </section>
   );
+}
+
+type CommunityAnswer = "builderlab" | "typesafe" | "typesafe-setup" | "none";
+const ANSWER_COPY: Readonly<Record<CommunityAnswer, string>> = {
+  builderlab: "Builderlab",
+  typesafe: "TypeSafe",
+  "typesafe-setup": "TypeSafe · Add your API key to use decisions here",
+  none: "Unavailable",
+};
+
+/** Which provider answers decisions in each joined community, as the
+ * service routes them; empty while there are no `memberships`. */
+function useCommunityAnswers(
+  decisions: Pick<DecisionsService, "backend" | "status" | "subscribe">,
+  memberships: readonly Membership[],
+) {
+  const rows = memberships.flatMap((membership) => {
+    try {
+      return [{ membership, url: communityDestination(membership.id).url }];
+    } catch {
+      return [];
+    }
+  });
+  // One string, so the external store compares answers, not new arrays.
+  const answers = useSyncExternalStore(
+    decisions.subscribe,
+    () =>
+      rows
+        .map(({ url }): CommunityAnswer => {
+          const backend = decisions.backend(url);
+          const status = decisions.status(url);
+          if (backend === DEFAULT_DECISION_PROVIDERS[0])
+            return status === "needs-setup" ? "none" : "builderlab";
+          if (backend === DEFAULT_DECISION_PROVIDER)
+            return status === "needs-setup" ? "typesafe-setup" : "typesafe";
+          return "none";
+        })
+        .join("\n"),
+    () => "",
+  ).split("\n");
+  return rows.map((row, index) => ({
+    ...row,
+    answer: (answers[index] ?? "none") as CommunityAnswer,
+  }));
 }

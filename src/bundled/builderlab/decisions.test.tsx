@@ -7,15 +7,21 @@ import { createTestSession } from "./test-helpers";
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
-import { DecisionsService } from "../../features/decisions/service";
+import {
+  DEFAULT_DECISION_PROVIDER,
+  DecisionsService,
+} from "../../features/decisions/service";
 import { flush } from "../../features/relay/testing";
 import {
   builderlabProvider,
+  communityDecisionSessions,
   nativeBuilderlabDecide,
   offerBuilderlabDecisions,
   type BuilderlabDecide,
 } from "./decisions";
-import type { Credential } from "./session";
+import type { CommunitySessions, Credential } from "./session";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
+import type { KnownCommunities } from "../../features/communities/service";
 import type { BuilderlabSession } from "./session";
 
 const credential = (revision: string): Credential => ({
@@ -217,6 +223,121 @@ it("offers Builderlab while signed in, ready only while the account may use deci
   await flush();
   expect(keys()).toEqual([]);
   expect(decide).not.toHaveBeenCalled();
+});
+
+it("answers each community with its own sign-in server's account, and leaves the rest to TypeSafe", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const decisions = new DecisionsService(root, undefined);
+  const typesafe = await root
+    .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProvider({
+        id: "typesafe",
+        label: "TypeSafe",
+        description: "Your key.",
+        status: () => "ready",
+        subscribe: () => () => {},
+        decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+      }),
+    );
+  await typesafe.await();
+  const allowed = (revision: string, may: boolean) => async () => ({
+    ...credential(revision),
+    account: {
+      ...credential(revision).account,
+      canUseBuilderlabDecisions: may,
+    },
+  });
+  // The build's server, which this account may not use decisions on, and
+  // Block's, which it may.
+  const build = createTestSession(allowed("build", false));
+  const block = createTestSession(allowed("block", true));
+  const server = (hosts: string[]) =>
+    ({
+      snapshot: () => ({ authority: { communityHosts: hosts } }),
+      subscribe: () => () => {},
+    }) as unknown as FederatedIdentity;
+  const buildServer = server(["public.example"]);
+  const blockServer = server(["block.example"]);
+  const BLOCK = "wss://block.example";
+  const PUBLIC = "wss://public.example";
+  const OTHER = "wss://other.example";
+  // Communities list as https origins; agents name them by relay URL.
+  const isBlock = (relay: string | undefined) =>
+    !!relay && new URL(relay).host === "block.example";
+  const sessions: CommunitySessions = {
+    server: (relay) => (isBlock(relay) ? blockServer : buildServer),
+    forCommunity: (relay) => (isBlock(relay) ? block : build),
+    dispose: () => {},
+  };
+  const known = {
+    snapshot: () => ({
+      memberships: [PUBLIC, BLOCK, OTHER].map((id) => ({ id, name: id })),
+    }),
+    subscribe: () => () => {},
+  } as unknown as KnownCommunities;
+  const communities = communityDecisionSessions(sessions, buildServer, known);
+  // A community no server covers has no Builderlab.
+  expect(communities.forCommunity(OTHER)).toBeUndefined();
+  const decide = vi.fn<BuilderlabDecide>(async () => ({
+    outcome: "answered",
+    backend: "builderlab",
+    model: "builderlab-1",
+    answers: { a: { type: "yes_no", probability: 0.7 } },
+  }));
+  const fiber = root
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) =>
+      offerBuilderlabDecisions(
+        ctx,
+        build,
+        true,
+        decide,
+        undefined,
+        communities,
+      ),
+    );
+  await fiber.await();
+  await flush();
+  const BUILDERLAB = "block.builderlab/builderlab";
+  const keys = () => decisions.providers().map((provider) => provider.key);
+  expect(keys()).toEqual([DEFAULT_DECISION_PROVIDER]);
+  // Signed in to Block alone, while the build's server is signed out.
+  await block.signIn();
+  expect(keys()).toEqual([BUILDERLAB, DEFAULT_DECISION_PROVIDER]);
+  await build.signIn();
+  for (const chosen of [undefined, BUILDERLAB]) {
+    if (chosen) decisions.setBackend(chosen);
+    expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
+    expect(decisions.backend(PUBLIC)).toBe(DEFAULT_DECISION_PROVIDER);
+    expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
+  }
+  // Anywhere, it is ready: one community offers it.
+  expect(decisions.providers()[0]?.status()).toBe("ready");
+  await expect(
+    decisions.decide({ ...request, community: BLOCK }),
+  ).resolves.toMatchObject({ outcome: "answered", backend: BUILDERLAB });
+  expect(decide).toHaveBeenCalledExactlyOnceWith(
+    { ...request, community: BLOCK },
+    block.credential(),
+  );
+  // Asked directly elsewhere, it sends nothing.
+  const [provider] = decisions.providers();
+  await expect(
+    provider?.decide({ ...request, community: PUBLIC }, { signal }),
+  ).resolves.toEqual({ outcome: "failed", reason: "unauthorized" });
+  await expect(
+    provider?.decide({ ...request, community: OTHER }, { signal }),
+  ).resolves.toEqual({ outcome: "failed", reason: "missing_credentials" });
+  expect(decide).toHaveBeenCalledOnce();
+  block.signOut();
+  build.signOut();
+  expect(keys()).toEqual([DEFAULT_DECISION_PROVIDER]);
+  await fiber.dispose();
 });
 
 it.each(["settings", "request", "settings-with-choice"] as const)(

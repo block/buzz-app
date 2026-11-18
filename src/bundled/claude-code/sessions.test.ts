@@ -41,6 +41,8 @@ function sessions(
     launched: Promise<void>;
     /** Holds each process's `initialize` write, as a stalled pipe would. */
     initialized: Promise<void>;
+    /** Every process stops answering, as a stuck Claude would. */
+    mute: boolean;
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
@@ -57,6 +59,7 @@ function sessions(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (options.mute && started) started.emit = () => {};
     const { initialized } = options;
     if (!initialized) return process;
     return process.then((host) => ({
@@ -984,6 +987,10 @@ it("shares a temporary metadata lookup, releases its process, and refreshes afte
   expect(first.model).toBe("claude-opus-5-5");
   expect(claudes()).toHaveLength(1);
   expect(live()).toHaveLength(0);
+  // A caller that already gave up leaves the shared lookup alone.
+  await expect(
+    pool.metadata(AbortSignal.abort(new Error("The turn ended"))),
+  ).rejects.toThrow("The turn ended");
   await pool.metadata();
   expect(claudes()).toHaveLength(1);
   setModel("haiku");
@@ -991,6 +998,91 @@ it("shares a temporary metadata lookup, releases its process, and refreshes afte
   expect((await pool.metadata()).model).toBe("claude-haiku-5-5");
   expect(live()).toHaveLength(0);
   pool.dispose();
+});
+
+it.each(["answering", "initializing"])(
+  "stops a metadata lookup its caller gave up on while it stalls %s, and starts the next one afresh",
+  async (stall) => {
+    let release!: () => void;
+    const initialized = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { pool, claudes, live } = sessions(
+      stall === "answering" ? { mute: true } : { initialized },
+    );
+    const deadline = new AbortController();
+    const result = pool.metadata(deadline.signal);
+    let next: Promise<unknown> | undefined;
+    try {
+      await flush();
+      expect(live()).toHaveLength(1);
+      const stopped = expect(result).rejects.toThrow("deadline");
+      deadline.abort(new Error("The turn ran past its deadline"));
+      await flush();
+      expect(live()).toHaveLength(0);
+      await stopped;
+      next = pool.metadata();
+      await flush();
+      expect(claudes()).toHaveLength(2);
+    } finally {
+      pool.dispose();
+      release();
+      await next?.catch(() => undefined);
+    }
+  },
+);
+
+it("stops waiting on a live conversation that doesn't answer, and keeps its process", async () => {
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "hi", 1);
+  const [conversation] = claudes();
+  if (!conversation) throw new Error("no conversation");
+  conversation.emit = () => {};
+  const deadline = new AbortController();
+  const settled = vi.fn();
+  void pool.metadata(deadline.signal).catch(settled);
+  await flush();
+  deadline.abort(new Error("The turn ran past its deadline"));
+  await flush();
+  expect(settled).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "The turn ran past its deadline" }),
+  );
+  expect(conversation.killed).toBe(false);
+  expect(claudes()).toHaveLength(1);
+  pool.dispose();
+});
+
+it("stops an older lookup a live conversation's caller waits on when it gives up, and keeps the conversation", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ initialized });
+  const picker = pool.metadata().catch(() => undefined);
+  try {
+    await flush();
+    const [lookup] = claudes();
+    if (!lookup) throw new Error("no lookup");
+    lookup.emit = () => {};
+    const delivered = pool.deliver("c/root", "hi", 1);
+    await flush();
+    release();
+    await delivered;
+    const conversation = claudes()[1];
+    const deadline = new AbortController();
+    const turn = pool.metadata(deadline.signal);
+    await flush();
+    const stopped = expect(turn).rejects.toThrow("deadline");
+    deadline.abort(new Error("The turn ran past its deadline"));
+    await flush();
+    await stopped;
+    expect(lookup.killed).toBe(true);
+    expect(conversation?.killed).toBe(false);
+  } finally {
+    pool.dispose();
+    release();
+    await picker;
+  }
 });
 
 it("does not start metadata discovery after its agent is disposed during launch", async () => {

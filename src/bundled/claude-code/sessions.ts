@@ -158,7 +158,8 @@ export class AgentSessions {
   }
 
   /** Read defaults without assigning the shared spare to this agent. */
-  async metadata() {
+  async metadata(signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const fingerprint = this.options.fingerprint();
     const read = async (process: ClaudeProcess) => {
       const [models, model, effort] = await Promise.all([
@@ -170,17 +171,18 @@ export class AgentSessions {
     };
     for (const live of this.live.values())
       if (live.fingerprint === fingerprint && live.process.running) {
-        const metadata = await read(live.process);
+        // A conversation's process is its own: giving up only stops waiting.
+        const metadata = await abortable(read(live.process), signal);
         const discovered =
           this.discovery?.fingerprint === fingerprint
-            ? await this.discovery.result
+            ? await this.discovered(this.discovery.result, signal)
             : undefined;
         return { ...metadata, model: metadata.model ?? discovered?.model };
       }
     if (this.disposed)
       return { models: [], model: undefined, effort: undefined };
     if (this.discovery?.fingerprint === fingerprint)
-      return this.discovery.result;
+      return this.discovered(this.discovery.result, signal);
     this.clearDiscovery();
     const discovery: NonNullable<AgentSessions["discovery"]> = {
       fingerprint,
@@ -188,7 +190,7 @@ export class AgentSessions {
         const launch = await this.options.launch();
         if (this.disposed || this.discovery !== discovery)
           throw new Error("Claude was stopped");
-        const process = await ClaudeProcess.start(this.spawn, {
+        const lookup = {
           cwd: launch.cwd,
           ...(launch.protection
             ? { protection: launch.protection, discovery: true }
@@ -196,11 +198,14 @@ export class AgentSessions {
           ...(launch.model ? { model: launch.model } : {}),
           ...(launch.effort ? { effort: launch.effort } : {}),
           systemPrompt: "",
-        });
+        };
+        // Kept as soon as it exists, so one still initializing can be stopped.
+        const process = await ClaudeProcess.spawn(this.spawn, lookup);
         discovery.process = process;
         try {
           if (this.disposed || this.discovery !== discovery)
             throw new Error("Claude was stopped");
+          await process.initialize(lookup);
           return await read(process);
         } finally {
           await process.kill();
@@ -212,7 +217,16 @@ export class AgentSessions {
     void discovery.result.catch(() => {
       if (this.discovery === discovery) this.discovery = undefined;
     });
-    return discovery.result;
+    return this.discovered(discovery.result, signal);
+  }
+  /** A lookup's `result`, unless its caller gives up first: then the lookup
+   * stops, as its process stopped answering, and the next starts afresh. */
+  private discovered<T>(result: Promise<T>, signal?: AbortSignal) {
+    return abortable(result, signal).catch((error: unknown) => {
+      if (signal?.aborted && this.discovery?.result === result)
+        this.clearDiscovery();
+      throw error;
+    });
   }
   private clearDiscovery() {
     void this.discovery?.process?.kill();

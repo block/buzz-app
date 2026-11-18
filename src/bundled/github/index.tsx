@@ -21,6 +21,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
+import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import {
   gitHubCli,
@@ -45,6 +46,7 @@ import {
   type PullStates,
 } from "./pull-states";
 import { addPullStateTool } from "./pull-state-tool";
+import { gitHubPulls } from "./service";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { stateIcons } from "./pull-state-view";
 import { GitHubLink } from "./GitHubLink";
@@ -206,6 +208,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
   addPullStateTool(ctx.agents, states);
+  // Other plugins can see the states the app holds, without reading GitHub.
+  ctx.provide("githubPulls", gitHubPulls(states));
   // Agents can watch pull requests where the app runs them.
   ctx.inject(["agents", "host", "navigation"], (scope) =>
     watchPulls(scope, states, gh, presentPull(scope.navigation)),
@@ -419,6 +423,14 @@ function ObjectPanel({
   const load = isPull ? pull.load : other.load;
   const link = reference.url;
   const result = typeof loaded === "object" ? loaded.details : loaded;
+  // The number leads, so tabs of several pull requests stay apart when narrow.
+  usePanelTabTitle(
+    reference.kind === "repository"
+      ? reference.repository
+      : typeof result === "object" && result.title
+        ? `${reference.label} ${result.title}`
+        : reference.label,
+  );
   const Icon = icons[reference.kind];
   const state = typeof result === "object" ? result.state.toLowerCase() : "";
   const StateIcon =

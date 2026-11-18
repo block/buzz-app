@@ -1,5 +1,18 @@
 @reference "../../shared/styles/globals.css";
 
+/* Match native selection while a message menu owns keyboard focus. Gate the
+   rule to its visible lifetime, as Find on screen does for its highlights. */
+:root[data-message-highlight] ::highlight(buzz-message-highlight) {
+  background-color: var(--selection-fill, var(--surface-text-selection));
+  color: var(--selection-text, var(--text-on-selection));
+}
+@media (forced-colors: active) {
+  :root[data-message-highlight] ::highlight(buzz-message-highlight) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
   position: relative;
@@ -215,6 +228,12 @@
     60%,
     calc(100% - 2 * var(--message-side-space) + var(--space-1) - var(--space-8))
   );
+}
+.message[data-full-width] {
+  width: 100%;
+}
+.message:where([data-full-width]):has(> .messageGutter) > .messageBody {
+  max-width: none;
 }
 .message[data-viewer-message] > .messageBody {
   flex: 0 1 auto;
@@ -800,6 +819,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding-inline-start: var(--space-1);
 }
 .composerInput {
+  @apply text-message;
   box-sizing: border-box;
   position: relative;
   min-width: 0;
@@ -920,6 +940,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: none;
   width: var(--space-5);
   height: var(--space-5);
+  -webkit-user-select: none;
   user-select: none;
 }
 .dayCalendar > * {
@@ -1970,6 +1991,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
+  -webkit-user-select: none;
   user-select: none;
   @apply popover-surface;
   --floating-radius: var(--radius-control);
@@ -2899,6 +2921,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
+  /* Like the Markdown boxes inside it: no WebKit selection fill in the
+     bubble's padding or beside short lines, only behind selected text. */
+  translate: 0 0;
   --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
@@ -3009,6 +3034,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 /* Keep sent and received avatars close to their message in every layout. */
 .messageAvatar {
+  -webkit-user-select: none;
   user-select: none;
   position: absolute;
   bottom: 0;
@@ -3038,6 +3064,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   width: max-content;
   color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
+  -webkit-user-select: none;
   user-select: none;
 }
 .message[data-viewer-message] .messageAvatar {
@@ -3745,6 +3772,7 @@ html[data-keyboard-navigation] .message:focus-visible::after {
 /* Keyboard users can read a grouped message's time without opening a popup. */
 .keyboardMessageTime {
   display: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 html[data-keyboard-navigation]

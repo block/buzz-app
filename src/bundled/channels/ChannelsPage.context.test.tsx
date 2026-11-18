@@ -241,6 +241,7 @@ async function channelsPage({
   const none = panelContributions;
   const panelHandlers = new Set<Parameters<Panels["handleOpenRequests"]>[0]>();
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn() },
     snapshot: () => none,
     subscribe: () => () => {},
     resolve: (target) => none.find((panel) => panel.matches(target)),

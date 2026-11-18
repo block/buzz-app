@@ -9855,6 +9855,72 @@ it.each(["wake", "typed-wake", "wake-typed", "published"])(
   },
 );
 
+it("interrupts queued community text before attaching Huddle audio", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const first = f.delivery("active text");
+  const config = { ...(first.config as object), scope: "community" };
+  const agent = { ...first.agent, config } as unknown as Agent;
+  const seat = new AbortController();
+  const cleanup = deferred<void>();
+  f.huddleChannels.add("room");
+  f.held.set("thread/unsubscribe", cleanup.promise);
+
+  await f.runtime.run({ ...first, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...f.delivery("queued text"), config });
+  const inspect = vi.fn(async () => undefined);
+  Object.assign(f.runtime, { inspect });
+  const opened = vi.mocked(openVoice).mock.calls.length;
+  const opening = f.runtime.voice(
+    {
+      config,
+      agent,
+      conversation: { channelId: "room" },
+      signal: seat.signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    },
+    first.agent,
+  );
+  void opening.catch(() => {});
+
+  try {
+    await vi.waitFor(() => expect(inspect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(
+      () =>
+        expect(
+          f.sent.some((wire) => wire.method === "thread/unsubscribe"),
+        ).toBe(true),
+      { timeout: 2500 },
+    );
+    expect(openVoice).toHaveBeenCalledTimes(opened);
+    expect(f.starts()).toHaveLength(1);
+    cleanup.resolve();
+
+    await vi.waitFor(() =>
+      expect(
+        f.sent
+          .filter((wire) => wire.method === "turn/interrupt")
+          .map(({ params }) => params),
+      ).toEqual([
+        { threadId: "thread-1", turnId: "turn-1" },
+        { threadId: "thread-1", turnId: "turn-2" },
+      ]),
+    );
+    const connection = await opening;
+    expect(openVoice).toHaveBeenCalledTimes(opened + 1);
+    await connection.close();
+  } finally {
+    cleanup.resolve();
+    seat.abort();
+    if (f.starts().length === 2) await f.complete(1, "");
+    f.runtime.dispose();
+    await opening.catch(() => {});
+  }
+});
+
 it("cancels voice admission when interrupting a community wake fails", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();

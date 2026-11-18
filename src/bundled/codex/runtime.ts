@@ -1565,7 +1565,7 @@ export class CodexRuntime {
   private async openVoice(
     seat: AgentVoiceSeat,
     agent: AgentHandle,
-    reserved = false,
+    finishPreemption?: () => Promise<void>,
   ): Promise<AgentVoiceConnection> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     seat.signal.throwIfAborted();
@@ -1583,9 +1583,9 @@ export class CodexRuntime {
       throw new Error("Choose an absolute Codex workspace first");
     const { channelId } = seat.conversation;
     const key = scopedKey(settings.scope, channelId);
-    if (settings.scope === "community" && !reserved) {
+    if (settings.scope === "community" && !finishPreemption) {
       let connection: AgentVoiceConnection | undefined;
-      // Queued wakes can take the lane before ordered voice admission.
+      // Previously queued work can take the native lane before voice.
       const failed = new AbortController();
       let interrupted = Promise.resolve();
       let interrupting: Active | undefined;
@@ -1604,12 +1604,17 @@ export class CodexRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (_deferred, signal) => {
-          off();
           await interrupted;
           connection = await this.openVoice(
-            { ...seat, signal: AbortSignal.any([seat.signal, signal]) },
+            {
+              ...seat,
+              signal: AbortSignal.any([seat.signal, signal, failed.signal]),
+            },
             agent,
-            true,
+            () => {
+              off();
+              return interrupted;
+            },
           );
         },
         true,
@@ -1655,7 +1660,8 @@ export class CodexRuntime {
     lane.voiceOpening = true;
     try {
       const active = lane.active;
-      if (active) await this.interruptForVoice(entry, key, active);
+      if (active && !finishPreemption)
+        await this.interruptForVoice(entry, key, active);
     } catch (error) {
       delete lane.voiceOpening;
       if (
@@ -1747,6 +1753,7 @@ export class CodexRuntime {
     const opening = lane.tail
       .catch(() => {})
       .then(async () => {
+        if (finishPreemption) await finishPreemption();
         signal.throwIfAborted();
         await entry.after;
         signal.throwIfAborted();

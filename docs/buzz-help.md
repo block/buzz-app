@@ -1719,6 +1719,13 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.
+  Once goose agents run through the agent gateway, a goose turn woken in a
+  conversation by a plugin, watch or timer that ran without the gateway shows
+  "Ran without the agent gateway" beside its prompt only while the app keeps
+  running; goose compacting the conversation can remove the prompt and its
+  note. A wake run outside a conversation shows no note.
+  While goose uses the gateway, compaction requires gateway access. If access
+  is still being checked, try again once the check finishes.
   A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that

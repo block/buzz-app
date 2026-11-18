@@ -261,6 +261,61 @@ it("notifies once per replay, then once per live change", async () => {
   }
 });
 
+it.each(["empty", "checked", "pending", "revoked"] as const)(
+  "publishes only evidence revisions after a refused %s sync",
+  async (state) => {
+    const { createProfileDirectory } = await import("./profile-directory");
+    let sink: VerifiedProfileSink | undefined;
+    const directory = createProfileDirectory(
+      { read: async () => [] },
+      undefined,
+      undefined,
+      {
+        authority,
+        subscribe(_filter, next) {
+          sink = next;
+          return () => {};
+        },
+      },
+    );
+    try {
+      await directory.ensure([alice.pubkey]);
+      assert(sink);
+      if (state !== "empty")
+        sink.event(state === "revoked" ? retract(11) : projection(11));
+      if (state === "checked") {
+        sink.eose();
+        await tick();
+      }
+      const before = directory.queries.verifiedRevision?.() ?? 0;
+      const changed = vi.fn();
+      directory.queries.subscribe(changed);
+      sink.closed("error: relay refused verification");
+      await tick();
+      if (state === "pending" || state === "revoked") {
+        expect(directory.queries.verifiedRevision?.()).toBeGreaterThan(before);
+        expect(directory.queries.verifiedSince?.(alice.pubkey, before)).toBe(
+          true,
+        );
+      } else expect(directory.queries.verifiedRevision?.()).toBe(before);
+      if (state === "empty") expect(changed).not.toHaveBeenCalled();
+      else expect(changed).toHaveBeenCalledTimes(1);
+      if (state === "checked" || state === "pending")
+        expect(
+          directory.queries.snapshot().get(alice.pubkey)?.verified?.status,
+        ).toBe("cached");
+      if (state === "revoked") {
+        expect(directory.queries.verifiedHeld?.(alice.pubkey)).toBe(true);
+        expect(
+          directory.queries.snapshot().get(alice.pubkey)?.verified,
+        ).toBeUndefined();
+      }
+    } finally {
+      directory.dispose();
+    }
+  },
+);
+
 it("a newer malformed projection invalidates an older valid name", async () => {
   const h = harness();
   try {
@@ -1296,6 +1351,113 @@ it("replays in full a batch that had not reached EOSE or was rebuilt", async () 
     assert(rebuilt);
     expect(rebuilt.subjects).toEqual([alice.pubkey, bob.pubkey]);
     expect(rebuilt.since).toBeUndefined();
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("restores saved heads as cached until a sync answers, never over a sync's answer", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([bob.pubkey]);
+    await Promise.resolve();
+    const first = h.subscriptions[0];
+    assert(first);
+    first.sink.eose(); // Bob has no head.
+    const carol = keypair();
+    const {
+      id: _id,
+      sig: _sig,
+      pubkey: _pubkey,
+      ...template
+    } = projection(10, carol.pubkey);
+    const foreign = eventDto(signed(keypair(), template));
+    // Right id and bytes, but no proof: a record must be checked to restore.
+    const unchecked = JSON.parse(JSON.stringify(projection(10, carol.pubkey)));
+    h.changed.mockClear();
+    const saved = projection(10);
+    h.directory.restore([
+      saved,
+      projection(10, bob.pubkey, [], "Bob"),
+      foreign,
+      unchecked,
+    ]);
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect([...h.directory.snapshot()]).toEqual([
+      [alice.pubkey, expect.objectContaining({ status: "cached" })],
+    ]);
+    expect(h.directory.heads(10)).toEqual([saved]);
+    await Promise.resolve();
+    const second = h.subscriptions[1];
+    assert(second);
+    // Alice joins the open batch, so a sync rechecks her.
+    expect(second.subjects).toEqual([bob.pubkey, alice.pubkey]);
+    second.sink.eose(); // The relay no longer holds Alice's head.
+    expect(h.directory.snapshot().size).toBe(0);
+    h.directory.restore([saved]);
+    expect(h.directory.snapshot().size).toBe(0);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("keeps a sync's removal over a restored head after a disconnect", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.eose(); // The relay no longer holds Alice's head.
+    h.directory.connected(false);
+    // The disk copy is read after the disconnect cleared checked status.
+    h.directory.restore([projection(10)]);
+    expect(h.directory.snapshot().size).toBe(0);
+    expect(h.directory.heads(10)).toEqual([]);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("restores nothing while discovery has no authority", async () => {
+  const subscribe = vi.fn(() => () => {});
+  const changed = vi.fn();
+  const directory = createVerifiedProfileDirectory(
+    undefined,
+    subscribe,
+    changed,
+  );
+  try {
+    directory.restore([projection(10)]);
+    await Promise.resolve();
+    expect(directory.snapshot().size).toBe(0);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("restores only into room the limit leaves, never over a checked head", async () => {
+  const h = harness();
+  try {
+    h.directory.resize(3);
+    h.directory.ensure([alice.pubkey, bob.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.event(projection(10));
+    sink.event(projection(10, bob.pubkey, [], "Bob"));
+    sink.eose();
+    const [carol, dave] = [keypair(), keypair()];
+    h.directory.restore([
+      projection(10, carol.pubkey, [], "Carol"),
+      projection(10, dave.pubkey, [], "Dave"),
+    ]);
+    const shown = h.directory.snapshot();
+    expect(shown.get(alice.pubkey)?.status).toBe("checked");
+    expect(shown.get(bob.pubkey)?.status).toBe("checked");
+    expect(shown.size).toBe(3);
   } finally {
     h.directory.dispose();
   }

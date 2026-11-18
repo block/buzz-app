@@ -4,7 +4,11 @@ import { useEffect, useRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ComposerCompletions } from "./ComposerCompletions";
 import type { CompletionEditor } from "./useCompletionEditor";
-import type { CompletionResult, ComposerCompletion } from "./contracts";
+import type {
+  CompletionResult,
+  ComposerCompletion,
+  IdentityMark,
+} from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import type { RelaySession } from "../relay/session";
 import type { ComposerInputElement } from "../messages/composer-dom";
@@ -116,11 +120,13 @@ function mountPeople(
     bundled = false,
     replace = () => true,
     tokens,
+    identityMarks = [],
   }: {
     items?: readonly object[];
     bundled?: boolean;
     replace?: () => boolean;
     tokens?: readonly { start: number; end: number }[];
+    identityMarks?: Contribution<IdentityMark>[];
   } = {},
 ) {
   // The open popup measures itself and keeps its selection in view.
@@ -172,11 +178,15 @@ function mountPeople(
   return render(
     <ComposerCompletions
       registry={{ snapshot: () => registered, subscribe: () => () => {} }}
+      identityMarks={{
+        snapshot: () => identityMarks,
+        subscribe: () => () => {},
+      }}
       editor={editor}
       input={{ current: input }}
       replace={replace}
       resolved={{ text: "@h", recipients: [], ...(tokens ? { tokens } : {}) }}
-      session={{} as RelaySession}
+      session={{ profiles: { tag: "profiles" } } as unknown as RelaySession}
       scope="test"
       channelId="c"
     />,
@@ -204,6 +214,65 @@ it("marks and announces agents and shows their manager in mention completion", a
     }),
   ).not.toBeNull();
   expect(screen.getByRole("option", { name: /^Hannah$/ })).not.toBeNull();
+});
+it("draws identity marks after a mentioned person's name, containing a broken one", async () => {
+  const mark = (id: string, component: IdentityMark["component"]) => ({
+    id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "1",
+    title: id,
+    component,
+  });
+  const seen: unknown[] = [];
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  mountPeople("buzz.mentions", {
+    items: [
+      ...peopleItems,
+      {
+        id: "team:helpers",
+        label: "helpers",
+        edit: { mentions: [{ pubkey: "b".repeat(64), name: "Hannah" }] },
+      },
+    ],
+    identityMarks: [
+      mark("broken", () => {
+        throw new Error("broken mark");
+      }),
+      mark("check", ({ pubkey, profiles }) => {
+        seen.push(profiles);
+        return pubkey === "b".repeat(64) ? <span>verified</span> : null;
+      }),
+    ],
+  });
+  const hannah = await screen.findByRole("option", {
+    name: /^Hannah\s*verified$/,
+  });
+  const name = hannah.querySelector("[data-completion-label] span span");
+  expect(name?.textContent).toBe("Hannah");
+  expect(
+    screen.getByRole("option", { name: /^Honey\s*Agent\s*Managed by Wes$/ }),
+  ).not.toBeNull();
+  expect(seen).toContainEqual({ tag: "profiles" });
+  expect(screen.getByRole("option", { name: /^helpers$/ })).not.toBeNull();
+  error.mockRestore();
+});
+it("draws no identity marks for providers outside the bundled mentions", async () => {
+  mountPeople("acme.people", {
+    identityMarks: [
+      {
+        id: "check",
+        key: "test.plugin/check",
+        pluginId: "test.plugin",
+        revision: "1",
+        title: "check",
+        component: () => <span>verified</span>,
+      },
+    ],
+  });
+  expect(
+    await screen.findByRole("option", { name: /^Hannah$/ }),
+  ).not.toBeNull();
 });
 it("ignores the agent flag from providers outside the bundled people providers", async () => {
   mountPeople("acme.people");

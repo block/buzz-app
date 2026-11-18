@@ -405,18 +405,20 @@ export function restoreCommunities(
  * Welcome back offers a restore and an import still needs backup.
  * Reported as `undefined` where backup status is unavailable (most Builderlab
  * deployments today) or failed, never as a failed setup: the pages work without it, and
- * no copy implies the user lost a backup.
+ * no copy implies the user lost a backup. A failed lookup also reports
+ * `failed`: a backup may still exist, so Welcome back still offers the restore,
+ * whose own page says when none holds the key.
  */
 export function checkBackup(
   account: FirstRunAccount,
-  onListed: (pubkeys: readonly string[] | undefined) => void,
+  onListed: (pubkeys: readonly string[] | undefined, failed?: true) => void,
 ): SetupStep {
   return {
     label: "Checking for a backed-up key…",
     run: () =>
       account.backupStatus().then(
         (listed) => onListed(listed === "unavailable" ? undefined : listed),
-        () => onListed(undefined),
+        () => onListed(undefined, true),
       ),
   };
 }

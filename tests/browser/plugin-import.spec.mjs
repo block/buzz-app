@@ -1,3 +1,4 @@
+import { documentPlugin } from "./document-plugin.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import {
   activate,
@@ -34,14 +35,22 @@ async function nativeImports(
   previewOptions = {},
   links = [],
   hold = false,
+  persistInstalled = false,
 ) {
-  const input = { samples, previewOptions, links, hold };
-  await page.addInitScript(({ samples, previewOptions, links, hold }) => {
+  const input = { samples, previewOptions, links, hold, persistInstalled };
+  await page.addInitScript((input) => {
+    const { samples, previewOptions, links, hold, persistInstalled } = input;
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = hold;
-    const plugins = ["channels", "github", "bestie", "repos", "workflows"].map(
-      (name) => ({
+    const saved = persistInstalled
+      ? JSON.parse(
+          sessionStorage.getItem("fixture.installed-plugins") ?? "null",
+        )
+      : null;
+    const plugins =
+      saved ??
+      ["channels", "github", "bestie", "repos", "workflows"].map((name) => ({
         manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
         source: "bundled",
         enabled: true,
@@ -49,41 +58,47 @@ async function nativeImports(
         previous: null,
         reloadable: false,
         error: null,
-      }),
-    );
+      }));
     // A journey can start with external plugins already installed.
     plugins.push(...(window.installedPlugins ?? []));
-    const ready = () => ({
-      status: "ready",
-      externalPluginsPaused: false,
-      // Real IPC serializes a new snapshot; don't let later fixture writes mutate
-      // the manager's previously accepted catalog and bypass reconciliation.
-      catalog: {
-        profile: "fixture",
-        location: "isolated IPC",
-        plugins: structuredClone(plugins),
-      },
-      ...(window.managedPolicy && {
-        managed: {
-          ...window.managedPolicy,
-          plugins: window.managedPolicy.plugins.map((entry) => {
-            const plugin = plugins.find(
-              (plugin) => plugin.manifest.id === entry.id,
-            );
-            return {
-              ...entry,
-              state: !plugin
-                ? "missing"
-                : plugin.revision === entry.sha256
-                  ? "current"
-                  : plugin.updateSource?.url
-                    ? "outdated"
-                    : "other",
-            };
-          }),
+    const ready = () => {
+      if (persistInstalled)
+        sessionStorage.setItem(
+          "fixture.installed-plugins",
+          JSON.stringify(plugins),
+        );
+      return {
+        status: "ready",
+        externalPluginsPaused: false,
+        // Real IPC serializes a new snapshot; don't let later fixture writes mutate
+        // the manager's previously accepted catalog and bypass reconciliation.
+        catalog: {
+          profile: "fixture",
+          location: "isolated IPC",
+          plugins: structuredClone(plugins),
         },
-      }),
-    });
+        ...(window.managedPolicy && {
+          managed: {
+            ...window.managedPolicy,
+            plugins: window.managedPolicy.plugins.map((entry) => {
+              const plugin = plugins.find(
+                (plugin) => plugin.manifest.id === entry.id,
+              );
+              return {
+                ...entry,
+                state: !plugin
+                  ? "missing"
+                  : plugin.revision === entry.sha256
+                    ? "current"
+                    : plugin.updateSource?.url
+                      ? "outdated"
+                      : "other",
+              };
+            }),
+          },
+        }),
+      };
+    };
     let importSource = null;
     let pendingPreview = null;
     let importLocked = false;
@@ -584,6 +599,10 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
           dialog.getByRole("textbox", { name: "Branch or tag (optional)" }),
         ).toBeFocused();
         await page.keyboard.press("Tab");
+        await expect(
+          dialog.getByRole("textbox", { name: "Folder (optional)" }),
+        ).toBeFocused();
+        await page.keyboard.press("Tab");
         await expect(button(page, "Find plugins")).toBeFocused();
         await expect(button(page, "Find plugins")).toBeInViewport({ ratio: 1 });
       }
@@ -595,6 +614,110 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
     }
   }
+});
+
+test("manual Git release-ref guidance stays readable across scale and themes", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page);
+  await openPlugins(page, app.origin);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await selectSettingsSection(page, "Appearance");
+  await chooseColorMode(page, "Light");
+  await selectSettingsSection(page, "Manage plugins");
+  await button(page, "Add").click();
+
+  const dialog = page.getByRole("dialog", { name: "Add a plugin" });
+  const guidance = dialog.getByText(
+    /Leave blank to scan the repository’s default branch/,
+  );
+  const reference = dialog.getByRole("textbox", {
+    name: "Branch or tag (optional)",
+  });
+  await expect(guidance).toBeVisible();
+  await reference.scrollIntoViewIfNeeded();
+  await expect(reference).toBeInViewport({ ratio: 1 });
+  const bounds = await guidance.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+
+  await selectSettingsSection(page, "Appearance");
+  for (let i = 0; i < 10; i++)
+    await button(page, "Increase interface size").click();
+  await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
+    "200%",
+  );
+  await chooseColorMode(page, "Dark");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await selectSettingsSection(page, "Manage plugins");
+  await button(page, "Add").click();
+  const enlargedDialog = page.getByRole("dialog", { name: "Add a plugin" });
+  const enlargedGuidance = enlargedDialog.getByText(
+    /Leave blank to scan the repository’s default branch/,
+  );
+  const enlargedReference = enlargedDialog.getByRole("textbox", {
+    name: "Branch or tag (optional)",
+  });
+  await expect(enlargedGuidance).toBeVisible();
+  await enlargedReference.scrollIntoViewIfNeeded();
+  await expect(enlargedReference).toBeInViewport({ ratio: 1 });
+  await button(page, "Browse plugin folder").focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    enlargedDialog.getByRole("textbox", { name: "Git or GitHub repository" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(enlargedReference).toBeFocused();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await enlargedReference.scrollIntoViewIfNeeded();
+  await expect(enlargedGuidance).toBeVisible();
+  await expect(enlargedReference).toBeInViewport({ ratio: 1 });
+  const narrowBounds = await enlargedGuidance.boundingBox();
+  expect(narrowBounds).not.toBeNull();
+  expect(narrowBounds.x).toBeGreaterThanOrEqual(0);
+  expect(narrowBounds.x + narrowBounds.width).toBeLessThanOrEqual(320);
+
+  await page.evaluate(() => {
+    window.importAcquisitionError = "Git output exceeds the import size limit";
+  });
+  const enlargedRepository = enlargedDialog.getByRole("textbox", {
+    name: "Git or GitHub repository",
+  });
+  await enlargedRepository.fill("https://example.org/plugins");
+  await enlargedRepository.press("Enter");
+
+  const alert = enlargedDialog.getByRole("alert");
+  await expect(alert).toBeVisible();
+  const refusal = alert.getByText(
+    "Error: Git output exceeds the import size limit",
+    { exact: true },
+  );
+  const recovery = alert.getByText(
+    "Try another branch or tag. If the same output limit persists, ask the publisher for a ref or repository that Buzz can read.",
+    { exact: true },
+  );
+  await expect(refusal).toBeVisible();
+  await expect(recovery).toBeVisible();
+  await refusal.scrollIntoViewIfNeeded();
+  await expect(refusal).toBeInViewport({ ratio: 1 });
+  await recovery.scrollIntoViewIfNeeded();
+  await expect(recovery).toBeInViewport({ ratio: 1 });
+  await expect(button(page, "Back")).toBeFocused();
+  const alertBounds = await alert.boundingBox();
+  expect(alertBounds).not.toBeNull();
+  expect(alertBounds.x).toBeGreaterThanOrEqual(0);
+  expect(alertBounds.x + alertBounds.width).toBeLessThanOrEqual(320);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(enlargedRepository).toBeFocused();
+  await expect(alert).toHaveCount(0);
 });
 
 test("folder/Git preview selects the exact subfolder and preserves enabled state through updates", async ({
@@ -1003,6 +1126,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   await page.getByLabel("Git or GitHub repository").fill("example/plugins");
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
+  await page.getByLabel("Folder (optional)").fill("plugins/");
   await button(page, "Find plugins").click();
   await expect(page.getByRole("radio")).toHaveCount(2);
   expect(
@@ -1010,7 +1134,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       () =>
         window.importCalls.find((c) => c.command === "plugin_import_git").args,
     ),
-  ).toEqual({ repository: "example/plugins", reference: "feature/plugins" });
+  ).toEqual({
+    repository: "example/plugins",
+    reference: "feature/plugins",
+    path: "plugins",
+  });
   await button(page, "Back").click();
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue(
@@ -1019,6 +1147,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(page.getByLabel("Branch or tag (optional)")).toHaveValue(
     "feature/plugins",
   );
+  await expect(page.getByLabel("Folder (optional)")).toHaveValue("plugins/");
   await page.getByLabel("Git or GitHub repository").fill("bad");
   await page.evaluate(() => {
     window.importDelay = true;
@@ -1927,6 +2056,87 @@ test("an artifact link reviews and installs the pinned URL", async ({
   ]);
 });
 
+test("a Git-installed plugin reviews its URL self-update and survives requester replacement", async ({
+  page,
+  app,
+}) => {
+  const sample = {
+    ...artifactPlugin[0],
+    code: `export function apply(ctx) {
+      const installer = ctx.reflect.get("pluginInstaller");
+      window.requestMigration = () => {
+        window.migrationOutcome = "pending";
+        installer.requestInstall(${JSON.stringify({ id: "example.artifact", url: artifactUrl, sha256: artifactSha })})
+          .then(result => { window.migrationOutcome = result; });
+      };
+      ctx.effect(() => () => { window.migrationDisposals = (window.migrationDisposals ?? 0) + 1; });
+    }`,
+  };
+  await page.addInitScript((sample) => {
+    window.installedPlugins = [
+      {
+        ...sample,
+        source: "external",
+        enabled: true,
+        revision: "git-revision",
+        previous: null,
+        reloadable: false,
+        error: null,
+        updateSource: {
+          repository: "https://example.com/plugins",
+          reference: "v1",
+          path: ".",
+        },
+      },
+    ];
+  }, sample);
+  await nativeImports(page, [sample], { warnings: [] });
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  await expect
+    .poll(() => page.evaluate(() => typeof window.requestMigration))
+    .toBe("function");
+  await page.evaluate(() => window.requestMigration());
+  const review = page.getByRole("dialog", {
+    name: "Update Artifact",
+    exact: true,
+  });
+  await expect(review).toContainText(
+    "This update switches this plugin from Git to a packaged download.",
+  );
+  await expect(review).toContainText(artifactUrl);
+  await review.getByRole("button", { name: "Update", exact: true }).click();
+  await expect(review).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => window.migrationOutcome))
+    .toBe("updated");
+  await expect
+    .poll(() => page.evaluate(() => window.migrationDisposals))
+    .toBe(1);
+  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+    "Disable Artifact",
+  );
+  await button(page, "View Artifact details").click();
+  await expect(
+    page.getByRole("region", { name: "Plugin updates", exact: true }),
+  ).toContainText(artifactUrl);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(({ command }) => command === "plugin_change"),
+    ),
+  ).toEqual([]);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
 // Native IPC throws Git's own text, as plugin_import_git does when offline.
 test("a failed update check stays on its Settings row, and Check again clears it while it checks", async ({
   page,
@@ -2040,4 +2250,209 @@ test("a failed update check stays on its Settings row, and Check again clears it
   await expect(again).toHaveCount(0);
   await expect(notice).toHaveCount(0);
   await expect(page.getByText("Update Standup Notes")).toHaveCount(0);
+});
+
+test("a policy's automatic install is noted once and labelled in Settings", async ({
+  page,
+  app,
+}, info) => {
+  await page.addInitScript(
+    ({ policy, plugin }) => {
+      window.managedPolicy = policy;
+      window.installedPlugins = [plugin];
+    },
+    {
+      policy: {
+        status: "ready",
+        path: "/fixture/managed-plugins.json",
+        source: "Example Org",
+        problems: [],
+        plugins: [
+          {
+            id: "example.artifact",
+            url: artifactUrl,
+            sha256: artifactSha,
+            install: "automatic",
+            update: "automatic",
+          },
+        ],
+        automatic: [
+          {
+            id: "example.artifact",
+            name: "Artifact",
+            revision: artifactSha,
+            action: "installed",
+          },
+        ],
+      },
+      plugin: {
+        manifest: artifactPlugin[0].manifest,
+        source: "external",
+        enabled: true,
+        revision: artifactSha,
+        previous: null,
+        reloadable: true,
+        error: null,
+        updateSource: { url: artifactUrl },
+      },
+    },
+  );
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await page.setViewportSize({ width: 1100, height: 800 });
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await page.goto(app.origin);
+    const notice = page.getByText("Example Org installed Artifact", {
+      exact: true,
+    });
+    await expect(notice).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`automatic-notice-${mode}.png`),
+    });
+    await button(page, "Dismiss automatic plugin changes").click();
+    await expect(notice).toBeHidden();
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
+    const label = "Managed by Example Org · updates automatically";
+    const row = button(page, "View Artifact details");
+    await expect(row.getByText(label, { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`automatic-managed-row-${mode}.png`),
+    });
+    await row.click();
+    const details = page.getByRole("complementary", {
+      name: "Artifact details",
+    });
+    await expect(details.getByText(label, { exact: true })).toBeVisible();
+    await animationsSettled(details, { subtree: true });
+    await page.screenshot({
+      path: info.outputPath(`automatic-managed-details-${mode}.png`),
+    });
+    await closeSettings(page);
+  }
+});
+
+// Browser-only boundary: an external blob module uses the host React tree,
+// host styles, focus targets and durable split across a real document reload.
+test("installed documents reuse host Markdown, workspace tabs and persisted split", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(
+    page,
+    [
+      {
+        path: "documents",
+        revision: "documents",
+        manifest: { id: "example.documents", name: "Documents", apiVersion: 1 },
+        code: `export const inject = ["react", "pages", "conversation", "panels", "relay"]; export const apply = ${documentPlugin.toString()};`,
+      },
+    ],
+    {},
+    [],
+    false,
+    true,
+  );
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await closeSettings(page);
+  await openPage(page, "Documents");
+  const reader = page.getByRole("region", {
+    name: "Document reader",
+    exact: true,
+  });
+  const tab = (name) => reader.getByRole("tab", { name, exact: true });
+  const draft = (name) =>
+    reader.getByRole("textbox", { name: `${name} draft` });
+  await expect(tab("Guide")).toHaveAttribute("aria-selected", "true");
+  await expect(reader.getByRole("heading", { name: "Guide" })).toBeVisible();
+  await expect(
+    reader
+      .getByRole("tabpanel", { name: "Guide", exact: true })
+      .getByText("Tracking image", { exact: true }),
+  ).toBeVisible();
+  await expect(reader.locator("img")).toHaveCount(0);
+  await expect(reader.getByRole("link", { name: "Unsafe" })).toHaveCount(0);
+  await expect(
+    reader.getByRole("link", { name: "#Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("link", { name: "the alpha room" }).locator("strong"),
+  ).toHaveText("alpha");
+  await draft("Guide").fill("Retain this document");
+  await tab("Reference").click();
+  await expect(draft("Reference")).toBeFocused();
+  await tab("Guide").click();
+  await expect(draft("Guide")).toHaveValue("Retain this document");
+  await tab("Guide").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Reference")).toBeFocused();
+  await reader
+    .getByRole("button", { name: "Close Reference tab", exact: true })
+    .click();
+  await expect(tab("Reference")).toHaveCount(0);
+  await expect(draft("Guide")).toHaveValue("Retain this document");
+
+  const handle = reader.getByRole("separator");
+  await handle.focus();
+  await page.keyboard.press("Home");
+  await expect(handle).toHaveAttribute("aria-valuenow", "320");
+  await expect
+    .poll(async () => Math.round((await reader.boundingBox()).width))
+    .toBe(320);
+  await page.reload();
+  await openPage(page, "Documents");
+  await expect(handle).toHaveAttribute("aria-valuenow", "320");
+  await expect
+    .poll(async () => Math.round((await reader.boundingBox()).width))
+    .toBe(320);
+  await handle.dblclick();
+  await expect(handle).toHaveAttribute("aria-valuenow", "448");
+  // Native focus/scrolling through the installed module needs a browser;
+  // the shared Markdown journey owns the theme/width/text-scale matrix.
+  const code = reader
+    .getByRole("tabpanel", { name: "Guide", exact: true })
+    .locator("pre code");
+  const precedingLink = reader.getByRole("link", { name: "the alpha room" });
+  await precedingLink.focus();
+  // The host link opens its keyboard preview before the code's Tab stop.
+  await expect(precedingLink).toHaveAttribute("data-popup-open", "");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("link", { name: "Channel preview", exact: true }),
+  ).toHaveCount(0);
+  await expect(precedingLink).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(code).toBeFocused();
+  const initialScroll = await code.evaluate((el) => el.scrollTop);
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => code.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(initialScroll);
+  await page.keyboard.press("Tab");
+  await expect(code).not.toBeFocused();
+  for (const mode of ["Dark", "Light"]) {
+    await openSettings(page);
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode);
+    await closeSettings(page);
+    await page.setViewportSize({ width: 480, height: 850 });
+    await page.evaluate(
+      () => (document.documentElement.style.fontSize = "20px"),
+    );
+    await expect(tab("Guide")).toBeVisible();
+    await expect(draft("Guide")).toBeVisible();
+    const bounds = await reader.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(480);
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.evaluate(() =>
+      document.documentElement.style.removeProperty("font-size"),
+    );
+  }
+  await reader.getByRole("link", { name: "the alpha room" }).click();
+  await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
 });

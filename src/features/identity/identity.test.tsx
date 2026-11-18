@@ -3753,6 +3753,8 @@ it("Join journals the join, proves admission with the signed profile read, and c
         pubkey: member.pubkey,
         tags: [],
         content: JSON.stringify({
+          // Local time is shared by default from the first publication.
+          tz: new Intl.DateTimeFormat().resolvedOptions().timeZone,
           name: "Ada",
           display_name: "Ada",
           picture: "",
@@ -5385,6 +5387,12 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   const user = userEvent.setup();
   await welcomeBackPage(user, identity, linkedTo(owned.pubkey));
   expect(screen.getByTitle(linkedNpub)).toBeVisible();
+  // Backup status is unavailable: nothing says a backup exists.
+  expect(
+    screen.getByText(
+      "Your account’s key isn’t on this device. Enter its private key to continue.",
+    ),
+  ).toBeVisible();
   expect(screen.getByRole("button", { name: /^Saved key,/ })).toBeEnabled();
   expect(screen.queryByText(owned.pubkey)).toBeNull();
   for (const name of ["Set me up", "Use an existing key"])
@@ -5961,7 +5969,7 @@ it.each([
   },
 );
 
-it("a backup status lookup that fails hides Restore from backup, and Enter your private key still backs up the key", async () => {
+it("a backup status lookup that fails still offers the restore, whose page offers Enter my private key when no backup holds the key", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")
       return Promise.resolve({
@@ -5971,6 +5979,15 @@ it("a backup status lookup that fails hides Restore from backup, and Enter your 
       });
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_legacy_available") return Promise.resolve(false);
+    if (command === "nsec_restore_begin")
+      return Promise.resolve({ attempt: "attempt-1" });
+    if (command === "nsec_restore_wait")
+      return Promise.resolve({
+        candidates: [],
+        currentPubkey: null,
+        failedCount: 0,
+      });
+    if (command === "nsec_restore_cancel") return Promise.resolve();
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
     throw new Error(`Unexpected command ${command}`);
   });
@@ -5982,14 +5999,35 @@ it("a backup status lookup that fails hides Restore from backup, and Enter your 
   await welcomeBackPage(
     user,
     identity,
-    linkedTo(owned.pubkey, [], { backupStatus }),
+    linkedTo(owned.pubkey, [], {
+      backupStatus,
+      recovery: recoveryFor(identity),
+    }),
   );
   expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(
-    screen.queryByRole("button", { name: "Restore from backup" }),
-  ).toBeNull();
+    screen.getByText(
+      "Your account’s key isn’t on this device. Try restoring it from a backup, or enter its private key.",
+    ),
+  ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
-  await importLinkedKey(user);
+  await restoreLinkedKey(user);
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_begin");
+  expect(
+    await screen.findByText(
+      "We couldn’t find a key backup in this Builderlab account. If you have a copy of your private key, you can enter it instead.",
+    ),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Enter my private key" }),
+  );
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("identity_import", {
+      nsec: ownedNsec,
+    }),
+  );
   identity.dispose();
 });
 

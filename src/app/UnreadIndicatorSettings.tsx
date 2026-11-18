@@ -25,28 +25,30 @@ export function UnreadIndicatorSettings({
   return (
     <div className="space-y-3">
       <InlineHeader title="Dock unread badge" />
-      <SettingsGroup>
-        <Select
-          label="Badge activity"
-          variant="preference"
-          value={badgeActivity}
-          groups={[
-            {
-              label: "",
-              options: [
-                { value: "all", label: "All unread activity" },
-                {
-                  value: "mentions-and-dms",
-                  label: "Mentions and direct messages",
-                },
-              ],
-            },
-          ]}
-          onValueChange={(value) =>
-            onBadgeActivityChange(value as BadgeActivity)
-          }
-        />
-      </SettingsGroup>
+      {state.permission !== "unavailable" && (
+        <SettingsGroup>
+          <Select
+            label="Badge activity"
+            variant="preference"
+            value={badgeActivity}
+            groups={[
+              {
+                label: "",
+                options: [
+                  { value: "all", label: "All unread activity" },
+                  {
+                    value: "mentions-and-dms",
+                    label: "Mentions and direct messages",
+                  },
+                ],
+              },
+            ]}
+            onValueChange={(value) =>
+              onBadgeActivityChange(value as BadgeActivity)
+            }
+          />
+        </SettingsGroup>
+      )}
       <SettingsGroup layout="form">
         <p className="text-body-sm text-subtle">
           {state.permission === "unavailable"

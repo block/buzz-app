@@ -27,6 +27,7 @@ import {
 } from "./events.ts";
 import { yieldToHost } from "./yield.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import { SIDEBAR_COORDINATES } from "./sidebar-preferences.ts";
 import {
   ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncFilter,
@@ -109,16 +110,19 @@ export type LiveCursor = Readonly<{ liveUntil: number }>;
 export function liveResumeSince(original: number, cursor: LiveCursor): number {
   return Math.max(original, cursor.liveUntil - LIVE_RESUME_LAG);
 }
-/** Delay before the next connection attempt. A restarting relay (1001/1012)
- * gets full jitter over the spread window, widening once repeated bounces have
- * grown the backoff past it. Anything else waits half to all of the backoff.
- * `random` is in [0, 1). */
+/** Delay before the next connection attempt. A restarting relay (1001/1012),
+ * or the drop of an `established` (authenticated) connection, gets full jitter
+ * over the spread window, widening once repeated bounces have grown the backoff
+ * past it: a draining proxy cuts a whole fleet at once, often without a close
+ * frame. Anything else waits half to all of the backoff. `random` is in [0, 1). */
 export function liveReconnectDelay(
   closeCode: number | undefined,
   backoff: number,
   random: () => number,
+  established = false,
 ): number {
-  return closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode)
+  return established ||
+    (closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode))
     ? random() * Math.max(LIVE_RESTART_SPREAD_MS, backoff)
     : backoff * (0.5 + random() / 2);
 }
@@ -1370,6 +1374,13 @@ export function subscribeRelayTraffic(
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [...SIDEBAR_COORDINATES],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
               // Edits from another device; history and due times come from the reader.
               {
                 kinds: [30300],
@@ -1498,7 +1509,11 @@ export function subscribeRelayTraffic(
     const valid = () => !closed && current === generation;
     heard = false;
     probe = undefined;
-    const reconnect = (reason: string, closeCode?: number) => {
+    const reconnect = (
+      reason: string,
+      closeCode?: number,
+      established = false,
+    ) => {
       if (!valid()) return;
       log.warn(`${peer} ${reason}`);
       clearSocket();
@@ -1512,7 +1527,12 @@ export function subscribeRelayTraffic(
       notify();
       // Transient outages must recover without manual retry. Jitter spreads
       // reconnects while retaining a minimum delay under sustained failure.
-      const delay = liveReconnectDelay(closeCode, reconnectDelay, random);
+      const delay = liveReconnectDelay(
+        closeCode,
+        reconnectDelay,
+        random,
+        established,
+      );
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
       retryTimer = setTimeout(() => connect(), delay);
     };
@@ -2088,7 +2108,7 @@ export function subscribeRelayTraffic(
           // while signed out; signing in retries at once (onSignedIn).
           FEDERATED_SIGN_IN_REFUSALS.has(failure.message ?? ""),
         );
-      else reconnect("Live connection interrupted");
+      else reconnect("Live connection interrupted", undefined, authenticated);
     };
     // Keep the relay's close detail. A 1008 also ends a normally expired
     // assertion, so the first reconnects with fresh evidence. The relay denies
@@ -2106,7 +2126,8 @@ export function subscribeRelayTraffic(
       const reason = event?.code
         ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
         : "Live connection closed";
-      if (event?.code !== 1008) return reconnect(reason, event?.code);
+      if (event?.code !== 1008)
+        return reconnect(reason, event?.code, authenticated);
       if (!policyRecovery) return terminal(reason, false);
       policyRecovery = false;
       reconnect(reason);

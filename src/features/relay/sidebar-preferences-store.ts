@@ -9,6 +9,8 @@ import type {
   SidebarSectionRemovalMutator,
   SidebarSectionRenameMutator,
   SidebarSectionCreationMutator,
+  SidebarSectionDraft,
+  SidebarSectionEdit,
   SidebarStarMutator,
   SidebarMuteMutator,
   SidebarPreferences,
@@ -76,7 +78,7 @@ export function createSidebarPreferencesStore({
   writeFilter,
 }: Readonly<{
   read: (signal?: AbortSignal) => Promise<SidebarPreferences>;
-  /** Authoritative reconciliation after uncertain creation, including Retry. */
+  /** Fresh authoritative reconciliation after writes or live invalidation. */
   readAfterWrite?:
     | ((signal?: AbortSignal) => Promise<SidebarPreferences>)
     | undefined;
@@ -106,6 +108,25 @@ export function createSidebarPreferencesStore({
   let writeQueue = Promise.resolve();
   let writeLifetime = new AbortController();
   let mutation = 0;
+  let invalidation = 0;
+  let reconciled = 0;
+  let scheduled = false;
+  const owed = () => invalidation !== reconciled;
+  function scheduleReconciliation() {
+    if (closed || !available || scheduled) return;
+    scheduled = true;
+    const scheduledGeneration = generation;
+    queueMicrotask(() => {
+      if (closed || generation !== scheduledGeneration) return;
+      scheduled = false;
+      if (owed()) void refresh(true);
+    });
+  }
+  function invalidate() {
+    if (closed || !available) return;
+    invalidation++;
+    scheduleReconciliation();
+  }
   let confirmed: SidebarPreferences | undefined;
   let readFailure: string | undefined;
   let readTransient = false;
@@ -151,6 +172,7 @@ export function createSidebarPreferencesStore({
           const section = {
             id: created.id,
             name: created.name.trim(),
+            ...(created.icon === undefined ? {} : { icon: created.icon }),
             order:
               created.position === "first"
                 ? Math.min(0, ...sections.map(({ order }) => order)) - 1
@@ -325,17 +347,16 @@ export function createSidebarPreferencesStore({
       ),
     });
   };
-  function refresh(): Promise<void> {
+  function refresh(quiet = false): Promise<void> {
     if (closed || !available) return Promise.resolve();
     if (pendingMoves.size) {
       const refreshGeneration = generation;
       return writeQueue.then(() => {
-        if (!closed && generation === refreshGeneration) return refresh();
+        if (!closed && generation === refreshGeneration) return refresh(quiet);
       });
     }
     if (active) return active.promise;
     const controller = new AbortController();
-    const requestedMutation = mutation;
     const job = { controller, promise: Promise.resolve() };
     active = job;
     job.promise = Promise.resolve().then(async () => {
@@ -346,20 +367,31 @@ export function createSidebarPreferencesStore({
         while (current()) {
           // Other preference families share the queue. Read after they settle,
           // and repeat if a write admitted during the read invalidates it.
-          if (creationUncertain) await writeQueue;
+          const authoritative = creationUncertain || owed();
+          const writes = writeQueue;
+          if (authoritative) await writes;
           if (!current()) return;
-          const refreshMutation = creationUncertain
-            ? mutation
-            : requestedMutation;
+          // A newly admitted writer must settle before a strong read starts.
+          if (authoritative && writes !== writeQueue) continue;
+          const refreshMutation = mutation;
+          const refreshInvalidation = invalidation;
           try {
-            const data = await (creationUncertain ? readAfterWrite : read)(
+            const data = await (authoritative ? readAfterWrite : read)(
               controller.signal,
             );
             if (!current()) return;
-            if (mutation !== refreshMutation) {
-              if (creationUncertain) continue;
+            if (
+              mutation !== refreshMutation ||
+              (authoritative && writes !== writeQueue)
+            ) {
+              if (creationUncertain || owed()) continue;
               return;
             }
+            if (invalidation !== refreshInvalidation) continue;
+            // Reconciliation installs current preferences, not confirmation of
+            // the failed creation. Its caller retains the error and exact draft;
+            // a conflicting retry is rejected by the existing writer policy.
+            if (authoritative) reconciled = refreshInvalidation;
             readFailure = undefined;
             creationUncertain = false;
             confirmed = data;
@@ -367,10 +399,14 @@ export function createSidebarPreferencesStore({
             return;
           } catch (error) {
             if (!current()) return;
-            if (mutation !== refreshMutation) {
-              if (creationUncertain) continue;
+            if (
+              mutation !== refreshMutation ||
+              (authoritative && writes !== writeQueue)
+            ) {
+              if (creationUncertain || owed()) continue;
               return;
             }
+            if (invalidation !== refreshInvalidation) continue;
             readFailure =
               error instanceof Error ? error.message : String(error);
             readTransient = isTransientFailure(error);
@@ -388,11 +424,14 @@ export function createSidebarPreferencesStore({
         if (active === job) active = undefined;
       }
     });
-    publish({
-      status: "loading",
-      ...(snapshot.cached ? { cached: true as const } : {}),
-      ...(snapshot.data ? { data: snapshot.data } : {}),
-    });
+    // Live reconciliation is quiet while useful confirmed content is mounted.
+    if (!quiet || !confirmed) {
+      publish({
+        status: "loading",
+        ...(snapshot.cached ? { cached: true as const } : {}),
+        ...(snapshot.data ? { data: snapshot.data } : {}),
+      });
+    }
     return job.promise;
   }
   function rejectMove(channelId: string, message: string): Promise<never> {
@@ -655,6 +694,11 @@ export function createSidebarPreferencesStore({
   };
   return {
     ready,
+    invalidate,
+    reconnect(continuous = false) {
+      if (!continuous) invalidate();
+      else if (owed()) scheduleReconciliation();
+    },
     queries: Object.freeze({
       available,
       get sectionRemovalWritable() {
@@ -673,11 +717,23 @@ export function createSidebarPreferencesStore({
       get sectionRenameWritable() {
         return renameWritable();
       },
-      renameSection(sectionId: string, name: string) {
+      renameSection(
+        sectionId: string,
+        edit: string | SidebarSectionEdit,
+        expectedName?: string,
+      ) {
         if (!renameWritable() || !renameSection)
-          return Promise.reject(new Error("Section rename is unavailable"));
-        return writeGroups("Section rename is unavailable", (signal) =>
-          renameSection({ sectionId, name }, signal),
+          return Promise.reject(new Error("Section edit is unavailable"));
+        const changes = typeof edit === "string" ? { name: edit } : edit;
+        return writeGroups("Section edit is unavailable", (signal) =>
+          renameSection(
+            {
+              sectionId,
+              ...changes,
+              ...(expectedName === undefined ? {} : { expectedName }),
+            },
+            signal,
+          ),
         );
       },
       get sectionCreationWritable() {
@@ -688,17 +744,15 @@ export function createSidebarPreferencesStore({
           !!(createSection || write)
         );
       },
-      createSection(section: Readonly<{ id: string; name: string }>) {
+      createSection(section: SidebarSectionDraft) {
         const failure = groupsOnly
           ? "Workspaces are unavailable"
           : "Section creation is unavailable";
         const create =
           createSection ??
           (write
-            ? (
-                section: Readonly<{ id: string; name: string }>,
-                signal: AbortSignal,
-              ) => write({ createSection: section }, signal)
+            ? (section: SidebarSectionDraft, signal: AbortSignal) =>
+                write({ createSection: section }, signal)
             : undefined);
         if (!writable() || creationUncertain || snapshot.cached || !create)
           return Promise.reject(new Error(failure));
@@ -1054,11 +1108,13 @@ export function createSidebarPreferencesStore({
         snapshot.status === "idle"
           ? refresh()
           : (active?.promise ?? Promise.resolve()),
-      refresh,
+      refresh: () => refresh(),
     }),
     clear() {
       if (closed) return;
       generation++;
+      invalidation = reconciled = 0;
+      scheduled = false;
       confirmed = undefined;
       pendingSorts.clear();
       latestSort.clear();
@@ -1083,6 +1139,8 @@ export function createSidebarPreferencesStore({
       closed = true;
       writeLifetime.abort();
       generation++;
+      invalidation = reconciled = 0;
+      scheduled = false;
       confirmed = undefined;
       pendingSorts.clear();
       latestSort.clear();

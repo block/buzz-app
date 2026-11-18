@@ -49,7 +49,7 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
 import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
@@ -92,6 +92,7 @@ async function nativeReadInvoke<T>(
 }
 
 export const nativeWriteKinds = [
+  48103,
   30078,
   7,
   9,
@@ -611,6 +612,7 @@ export async function connectNativeTransport(
       ? {
           configArtifacts: {
             kinds: [ARTIFACT_KIND],
+            isNotSent: (error: unknown) => error instanceof PublishNotSent,
             async sign(event: EventTemplate, signal: AbortSignal) {
               if (event.kind !== ARTIFACT_KIND)
                 throw new Error("Not an artifact");
@@ -633,11 +635,25 @@ export async function connectNativeTransport(
           },
         }
       : {}),
-    async openDirectMessage(pubkeys, signal) {
+    async openDirectMessage(pubkeys, signal, history) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
         community: origin,
         pubkeys,
+        ...(history
+          ? {
+              channel: history.channelId,
+              history:
+                history.includeHistory === "ask"
+                  ? "ask"
+                  : history.includeHistory
+                    ? "include"
+                    : undefined,
+            }
+          : {}),
+      }).catch((error: unknown) => {
+        // The command rejects with its refusal's words; callers expect an Error.
+        throw typeof error === "string" ? new Error(error) : error;
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))

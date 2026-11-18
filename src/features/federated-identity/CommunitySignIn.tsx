@@ -23,13 +23,17 @@ export function recoveryMessage(code: string) {
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")
     return "Sign-in was canceled. Sign in when you’re ready.";
+  if (code === "sign-in-link-unavailable")
+    return "Couldn’t copy the sign-in link. Try again.";
   if (code === "reauthentication-required")
     return "Your sign-in has expired. Sign in again to continue.";
   return "Sign-in did not finish. Try again.";
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
- * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+ * assertion.rs). An automatic retry repeats them; a person's Try again
+ * (`askAgain`), a sign-in that installs a new session, or a restart asks the
+ * issuer again. */
 const ISSUER_REFUSALS = new Set([
   "adapter-refused",
   "grant-refused",
@@ -46,6 +50,7 @@ const SIGN_IN_REQUIRED =
 function explains(state: SessionSnapshot, error: string | undefined) {
   const refusal = error || state.failure || "";
   return (
+    refusal === "clock-skew" ||
     /binding[-_]mismatch|authorization[-_]denied/.test(refusal) ||
     ISSUER_REFUSALS.has(refusal) ||
     (!!error &&
@@ -77,6 +82,17 @@ export function useExplainedRefusal(
   return !!error && explained.current === error;
 }
 
+/** Refusals the sign-in server may answer differently when asked again, for
+ * example once an administrator fixes access or the identity link. */
+export function issuerMayAnswerAgain(error: string | undefined) {
+  return (
+    !!error &&
+    (ISSUER_REFUSALS.has(error) ||
+      error === "clock-skew" ||
+      /authorization[-_]denied|binding[-_]mismatch/.test(error))
+  );
+}
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -84,10 +100,14 @@ export function CommunitySignIn({
   retry,
   relay,
   memberships = [],
+  asksAgain = false,
 }: {
   identity?: FederatedIdentity | undefined;
   error?: string | undefined;
   retry: () => void;
+  /** The caller shows its own Try again that asks the issuer again
+   * (`askAgain`), so an issuer refusal needn't wait for a restart. */
+  asksAgain?: boolean | undefined;
   /** The refusing community, so a switch names the others it affects. */
   relay?: string | undefined;
   memberships?: readonly Membership[] | undefined;
@@ -100,21 +120,65 @@ export function CommunitySignIn({
       retry={retry}
       relay={relay}
       memberships={memberships}
+      asksAgain={asksAgain}
     />
   );
 }
-function Action({
+/** A refusal whose response suggested this computer's clock is off keeps
+ * its own explanation; this line only adds the likely cause. */
+function ClockHint({
+  state,
+  error,
+}: {
+  state: SessionSnapshot;
+  error?: string | undefined;
+}) {
+  const offset = state.clockOffset;
+  const refusal = error || state.failure || "";
+  if (!offset || !refusal || refusal === "clock-skew") return null;
+  const minutes = Math.max(1, Math.round(Math.abs(offset) / 60));
+  return (
+    <p className="text-body-sm text-danger">
+      Your computer’s clock looks about {minutes}{" "}
+      {minutes === 1 ? "minute" : "minutes"} off, which can cause this. Check
+      your date and time settings.
+    </p>
+  );
+}
+function Action(props: {
+  identity: FederatedIdentity;
+  error?: string | undefined;
+  retry: () => void;
+  relay?: string | undefined;
+  memberships: readonly Membership[];
+  asksAgain: boolean;
+}) {
+  const state = useSyncExternalStore(
+    props.identity.subscribe,
+    props.identity.snapshot,
+    props.identity.snapshot,
+  );
+  return (
+    <>
+      <Explanation {...props} />
+      <ClockHint state={state} error={props.error} />
+    </>
+  );
+}
+function Explanation({
   identity,
   error,
   retry,
   relay,
   memberships,
+  asksAgain,
 }: {
   identity: FederatedIdentity;
   error?: string | undefined;
   retry: () => void;
   relay?: string | undefined;
   memberships: readonly Membership[];
+  asksAgain: boolean;
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -168,12 +232,19 @@ function Action({
       />
     );
   }
+  if (refusal === "clock-skew")
+    return (
+      <p role="alert" className="text-body-sm text-danger">
+        Your computer’s date and time look wrong. Check them in System Settings,
+        then try again.
+      </p>
+    );
   if (ISSUER_REFUSALS.has(refusal))
     return (
       <p role="alert" className="text-body-sm text-danger">
-        Buzz couldn’t confirm your organization sign-in for this community.
-        Restart Buzz to try again. If it keeps happening, contact your
-        administrator.
+        Buzz couldn’t confirm your organization sign-in for this community.{" "}
+        {asksAgain ? "Try again." : "Restart Buzz to try again."} If it keeps
+        happening, contact your administrator.
       </p>
     );
   // What remains is a sign-in the community requires.

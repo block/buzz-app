@@ -167,7 +167,9 @@ where the backup step can run (see
 `404` wherever backups are not configured. Not sent, a `404` or any failure
 leaves the lookup unavailable rather than empty, and never fails setup: it only
 decides whether Welcome back offers a restore and whether an import needs
-automatic backup.
+automatic backup. A lookup that fails, unlike one that isn't configured, still
+lets Welcome back offer the restore: a backup may hold the key, and the restore
+page says when none does and offers **Enter my private key**.
 
 **Not linked** pauses on **Get started with Buzz**, which says the account will
 manage the Buzz identity. **Set me up** creates and links a key; **Use an
@@ -246,8 +248,12 @@ no other sign-in brings up the OS prompt for old Buzz's storage.
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
-line under the body. A linked key does not mean a
-backed-up one, so only when the lookup lists the linked key does the page also
+line under the body. When the linked key isn't the one on this device, the page
+says so: *Your account’s key isn’t on this device*, then to try a restore from a
+backup or enter its private key or, with no restore offered, to enter its private key.
+With a restore offered, an **Enter your private key** row under the key row
+opens the import page without waiting on the restore. A linked key does not mean a
+backed-up one, so only when the lookup lists the linked key, or failed, does the page also
 offer **Restore from backup** (primary), with **Enter your private key** as a
 smaller choice; otherwise **Enter your private key** is primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
@@ -1093,7 +1099,9 @@ Membership in any community this build's Builderlab hosts, by the welcome
 screen's `builderlab-hosted.ts` list matched on the saved relay host alone (no
 relay is read for its `self`), saves automatic backup with no prompt, unless
 a choice was saved since it was read: the save checks under the choice lock.
-Otherwise **Back up your key?** asks: **Back up key** and **I will manage my own
+Otherwise **Back up your key?** asks; it says that a self-managed key needs a
+kept copy of its private key to use the account on another device or after
+losing access to this one. **Back up key** and **I will manage my own
 key** save the answer, which a hosted
 membership arriving while it is saved does not override; closing it saves
 nothing, and it asks again on the next launch or Builderlab sign-in. A build
@@ -1256,12 +1264,14 @@ issuance cannot silently start another enrollment. A new sign-in revision or
 explicit agent deletion permits a reset; ordinary restore of the same session does
 not. Failure to persist the reservation prevents dispatch. A known transient
 outcome releases it only if that storage write succeeds.
+An issuer still answering 429 when retries or the deadline run out is reported
+to the owner as a limit rather than an unreachable service; it stays transient.
 
-The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes and
-`Nostr-Agent-Proof` header are this configured adapter's wire contract, not
-standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
-`nip-fi-agent+jwt` assertion class and owner checks; that does not establish
-interoperability with another adapter's enrollment endpoints.
+The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes follow
+NIP-FA's agent-route contract, including its neutral token types and
+`Nostr-Authorization` proof header. The issuer must accept these NIP-FA token
+types and the `Nostr-Authorization` header before clients send them. NIP-FI defines the
+`nip-fi-agent+jwt` assertion class and owner checks.
 
 ### Local credential service
 
@@ -1337,14 +1347,31 @@ open. It shows cards for each configured server, its name and origin, account,
 and saved communities that require its sign-in. Static community artwork exposes
 names and tooltips. **Sign out** confirms before ending that server’s session only.
 Within seven days of expiry, **Renew sign-in** and the expiry date appear, with
-**Sign out** in the renewal caret menu. The Builderlab connection row observes
+**Sign out** in the renewal caret menu. While the renewal's browser step runs,
+the card says "Finish in your browser" with **Cancel**; the current session stays
+signed in, and Cancel ends only that step. The native snapshot's `renewing`
+keeps that state when the page is left and opened again. The Builderlab connection row observes
 the existing plugin session and opens its settings; it starts no account read.
 A sign-out native could not finish (for example, secure storage refused) stays below the list, naming the
 server, with **Try again**; so does an ended session whose saved record native
 could not remove. A saved session native could not check, for example offline,
-is kept and offers no **Try again**. Communities no server covers are not listed.
+is kept and offers no **Try again** and no sign-in: **Check again** retries the
+restore (`federated_identity_snapshot`). It keeps the stored record while the
+check stays inconclusive; a record the server denies, or one already refused on
+this device, is cleaned up as on any restore. Communities no server covers are not listed.
 While the build’s Builderlab isn’t signed in, its row to sign in from stays listed alongside the other configured servers, with its recovery
 message when applicable.
+
+NIP-FA issuer refusals (`refused()` in `assertion.rs`, including
+`authorization-denied`) are cached for the session revision, viewer and
+community, so automatic retries (reconnects, focus, network changes) repeat them
+without asking the issuer. A user's own retry asks again: the relay service's
+`tryAgain()` (every community-connection retry button, including the live
+socket's sign-in error in the sidebar; Settings' **Check again** uses
+`recheck` instead) and each
+join-dialog **Continue** call `federated_identity_ask_again`, which forgets
+that community's cached refusals, before retrying. Automatic paths call
+`retry()` and never ask. A restart or a new session revision also asks again.
 
 When a community refuses a signed-in account (`authorization-denied` or
 `binding-mismatch`), its prompt names the community's server and account, and

@@ -27,6 +27,15 @@ restoring settings never plays a preview. Silent stops the current preview. The
 Sound switch turns playback off without disabling alerts. Each category also offers
 Silent, which is saved like other sound choices and suppresses that category’s
 audio without changing its desktop alerts. Silent has no audio preview.
+A saved sound name this build does not bundle (chosen on a newer build, for
+example) restores as the default for that category only. Alerts and the other
+choices stay as saved. Restore writes nothing, so a later upgrade finds the name
+unless a notification setting was changed on this build in the meantime: any
+change saves all four categories as currently restored, replacing the name.
+
+Alerts and previews use one-shot Web Audio buffers, not resumable media elements,
+so notification clips do not take over the system’s play/pause controls. Each
+playback closes its audio context on completion, cancellation or failure.
 
 ```ts
 export const inject = ["notifications"];
@@ -75,7 +84,14 @@ checks, not that an OS banner was displayed or read.
   Remote-capable hosts wait for the initial marker merge (bounded observation or
   complete snapshot); local-only hosts wait only for local storage. Failed or
   cancelled observation does not release alerts. Visibility is checked after UI
-  presentation, without publishing read intent.
+  presentation, without publishing read intent. The conversation in view stays
+  quiet unless **Notify while viewing** is on. This running-app policy, not the
+  platform adapter, decides whether an arrival alerts: a platform adapter that
+  suppressed a submitted alert because Buzz was the active application would
+  overrule it and leave that preference without a visible effect.
+- A fresh live arrival can still alert when a channel read or replay cached the
+  message first. Content caching does not count as live alert delivery; duplicate
+  live copies do not produce additional alerts.
 - Channel Mute/Unmute uses the session's confirmed, encrypted `channel-mutes`
   preference, independently of whether Channels is mounted. Muted channels suppress
   DM and participating-thread alerts; explicit mentions still pass the channel-mute
@@ -139,8 +155,11 @@ Tauri response channel is registered before native submission.
 
 Desktop clicks restore/foreground Buzz and then call the existing activation
 closure. macOS installs one app-lifetime delegate at setup and routes body
-clicks by request ID to the running presentation callback. Its foreground completion keeps
-notifications in Notification Center without displaying a banner. Native
+clicks by request ID to the running presentation callback. Its foreground
+completion presents the banner and keeps the Notification Center entry, so an
+alert that passed the running-app policy is visible whether or not Buzz is the
+active application. It never adds the OS sound or badge options: alert audio
+stays app-owned and the Dock badge is projected from unread state. Native
 submission completion reports errors but does not confirm display; successful
 submissions stay registered for clicks. Unbundled development processes do not
 call UserNotifications or borrow Terminal's notification identity. Windows
@@ -187,8 +206,10 @@ Chromium/WebKit fixtures replace only OS/IPC boundaries; tests and native builds
 do not prove actual permission dialogs, appearance, sound or foregrounding.
 Report native checks and real banner/click results separately for each platform.
 
-For macOS, Windows and Linux, manual acceptance includes background and minimized
-Buzz, two distinct message/thread targets, immediate banner click, banner fade
+For macOS, Windows and Linux, manual acceptance includes background, minimized
+and focused Buzz (the last both for an alert outside the conversation in view
+and, with **Notify while viewing** on, for one inside it),
+two distinct message/thread targets, immediate banner click, banner fade
 then Notification Center click, dismissal without navigation, and old-account or
 revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
 
@@ -202,8 +223,8 @@ conversations; a mention in a DM counts once. This bounded evidence is not a
 complete-history total. Unknown and observed-zero omit the badge unless explicit
 channel-unread intent contributes a dot. Existing unread/read-state owns startup
 and updates; this projection adds no relay reads, network subscriptions, or storage.
-Confirmed channel mutes remove that channel from the projection without removing
-its retained unread evidence, so unmuting can restore its badge. The badge stays
+The Dock follows sidebar mute behavior: unread DMs and explicit mentions still
+count in muted conversations. The badge stays
 clear while mute preferences are unresolved. Personal space, account/session
 changes, access loss and host disposal clear or recompute the indicator. Disabling
 Channels does not stop host ownership. Desktop alert preferences do not alter this
@@ -214,7 +235,9 @@ mention. Viewer mentions still qualify, including mentions in replies. Replies s
 to the channel do not qualify without a mention. A manually unread DM can show a
 dot when there is no known message count. Existing channel mutes, row-seen state
 and read/access checks continue to apply. This account-local choice takes effect
-immediately and does not change desktop alerts or sidebar unread state.
+immediately and does not change desktop alerts or sidebar unread state. Closing
+a DM hides its sidebar row without marking messages read, so those messages still
+count. A new incoming DM message restores the row.
 
 One ordered host writer calls a main-window-only command using Tauri's standard
 `set_badge_label` API. macOS draws the badge; no custom artwork is supplied.

@@ -1,6 +1,11 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
-import { navigationOwner, orderPages, pagePlacement } from "./presentation";
+import {
+  navigationOwner,
+  orderPages,
+  pagePlacement,
+  legacySidebarAvailable,
+} from "./presentation";
 import {
   useCallback,
   useEffect,
@@ -21,9 +26,10 @@ import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { CommunityUnreads } from "../../features/notifications/community-unread";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
-import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { JoinRequest } from "../../features/communities/invite-intent";
+import type { JoinReports } from "../../features/communities/CommunityDialog";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
   CommunityPicker,
@@ -34,6 +40,7 @@ import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
+import { FindInPage } from "./FindInPage";
 import { BestieNavigationProvider } from "./BestieNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -69,8 +76,13 @@ function AppShellContent({
   workspace,
   workspaceRef,
   sidebar,
+  sidebarAvailable,
   communities,
+  communityUnreads,
   invite,
+  joinVisit,
+  onJoin,
+  joinReports,
   onInviteClose,
   settingsCards,
   federatedIdentity,
@@ -100,9 +112,16 @@ function AppShellContent({
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
+  sidebarAvailable?: boolean;
   communities: Communities;
-  invite?: (JoinRequest & { requestId: number }) | undefined;
-  onInviteClose?: ((requestId: number) => void) | undefined;
+  /** Unread for communities other than the selected one, on the switcher. */
+  communityUnreads?: CommunityUnreads | undefined;
+  invite?: (JoinRequest & { requestId: string }) | undefined;
+  joinVisit?: string | undefined;
+  onJoin?: (() => void) | undefined;
+  /** The open join dialog's reports to the app: writes and the typed address. */
+  joinReports?: JoinReports | undefined;
+  onInviteClose?: ((requestId: string) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
@@ -181,12 +200,9 @@ function AppShellContent({
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
   const connection = useRelayConnection(communities.relay);
-  const sidebarScope = connection.scope ?? "disconnected";
   const owner = navigationOwner(pages, selected);
-  const channelsNavigation = owner === "buzz.channels/channels";
   const hasNavigation =
-    channelsNavigation ||
-    pages.some((page) => page.key === selected && !!page.sidebar);
+    sidebarAvailable ?? legacySidebarAvailable(pages, selected);
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
   );
@@ -198,7 +214,7 @@ function AppShellContent({
     return () => query.removeEventListener("change", update);
   }, []);
   const collapsibleSidebar =
-    channelsNavigation ||
+    hasNavigation ||
     selected === "settings" ||
     pages.some(
       (page) => page.key === selected && (page.primary || !!page.sidebar),
@@ -247,9 +263,6 @@ function AppShellContent({
   // navigation element stable across those renders so React skips the whole
   // sidebar subtree instead of re-rendering every row on each click.
   const navigation = useMemo(() => {
-    const selectedPageHasSidebar = pages.some(
-      (page) => page.key === selected && !!page.sidebar,
-    );
     // Sidebars retain their documented app-link and creation slots.
     const content = sidebar
       ? sidebar(
@@ -266,14 +279,8 @@ function AppShellContent({
           creationInNavigation ? <div ref={setCreationContainer} /> : null,
         )
       : null;
-    return selectedPageHasSidebar ? (
-      <ResizableSidebar scope={sidebarScope} className="shell-sidebar">
-        {content}
-      </ResizableSidebar>
-    ) : (
-      content
-    );
-  }, [pages, selected, sidebar, sidebarScope, onSelect, creationInNavigation]);
+    return content;
+  }, [pages, selected, sidebar, onSelect, creationInNavigation]);
   const dockPages = orderPages(
     pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
     "dock",
@@ -342,6 +349,7 @@ function AppShellContent({
             onSelect={onSelect}
             services={searchServices}
           />
+          <FindInPage shortcuts={searchServices?.shortcuts} />
         </div>
         <div
           ref={actionsRef}
@@ -371,7 +379,11 @@ function AppShellContent({
           <div className="shell-community-switcher">
             <CommunityPicker
               communities={communities}
+              unreads={communityUnreads}
               invite={invite}
+              joinVisit={joinVisit}
+              onJoin={onJoin}
+              joinReports={joinReports}
               onInviteClose={onInviteClose}
               settingsCards={settingsCards}
               federatedIdentity={federatedIdentity}

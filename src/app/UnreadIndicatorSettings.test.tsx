@@ -162,6 +162,9 @@ it("shows no dead permission actions when Dock badges are unavailable", async ()
   expect(
     screen.queryByRole("button", { name: "Check Dock permission" }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "Badge activity" }),
+  ).not.toBeInTheDocument();
   expect(h.permission.mock.calls).toEqual([[false]]);
 });
 

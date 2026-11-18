@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callTool } from "../../buzz-mcp/tools";
@@ -13,6 +13,10 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import {
+  PROMPTS_BUDGET,
+  sessionPrompts,
+} from "../../features/agents/session-prompts";
 import type {
   Agent,
   AgentHandle,
@@ -28,12 +32,26 @@ import type {
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
+import {
+  createToolOperation,
+  type AgentToolAuthority,
+} from "../../features/agents/tool-operation";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { AgentSessions, localSessions } from "./sessions";
+import {
+  AgentSessions,
+  localSessions,
+  PROCESS_LIMIT,
+  withRoom,
+} from "./sessions";
+import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import {
+  assignConversationFolder,
+  conversationKey,
+} from "../../features/agents/conversation-folders";
 import { quoted } from "../../features/agent-harness/turn-records";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
@@ -89,9 +107,14 @@ function setup(
     nativeHistory?: readonly unknown[];
     /** Raw text after the history, as a line Claude is still writing. */
     nativeTail?: string;
+    resolveDirectory?: Host["resolveDirectory"];
+    /** Claude processes the host runs at once before it refuses one, as it
+     * refuses past its limit on all plugins' processes. */
+    claudeLimit?: number;
   }> = {},
 ) {
   const fake = fakeSpawn();
+  const running = new Set<FakeClaude>();
   const transcriptReaders: { options: unknown }[] = [];
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
@@ -143,12 +166,27 @@ function setup(
         kill: async () => {},
       } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
     }
-    const process = fake.spawn(id, spawnOptions);
+    // Like the host, a process holds its place until it exits.
+    if (
+      options.claudeLimit !== undefined &&
+      CLAUDES.has(id) &&
+      running.size >= options.claudeLimit
+    )
+      throw "Too many processes are running";
+    const process = await fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (started && CLAUDES.has(id)) {
+      running.add(started);
+      void process.exited.finally(() => running.delete(started));
+    }
     return process;
   };
-  const host = { spawn, request: vi.fn() } as unknown as Host;
+  const host = {
+    spawn,
+    request: vi.fn(),
+    resolveDirectory: options.resolveDirectory,
+  } as unknown as Host;
   const read = vi.fn(async (_filters: readonly ReadFilter[]) => thread);
   const memoryRead = vi.fn(
     async (_pubkey: string, _signal: AbortSignal, _slug?: string) => ({
@@ -201,12 +239,15 @@ function setup(
       status: "ready",
       session,
       viewer: alice,
-      origin: "https://agent.example",
       scope: `https://agent.example:${alice}`,
     }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
+    get length() {
+      return data.size;
+    },
+    key: (index: number) => [...data.keys()][index] ?? null,
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
     removeItem: (key: string) => void data.delete(key),
@@ -300,14 +341,16 @@ function setup(
       interruptible,
       ...(options.named ? { named: options.named } : {}),
       ...picks,
-      // The host's answer, as it is when asked.
-      current: () =>
-        trigger.type === "mention" ||
-        trigger.type === "plugin" ||
-        trigger.type === "attention" ||
-        (attention.on &&
-          objects.get(trigger.slug)?.enabled === true &&
-          !stale.has(trigger.slug)),
+      // The host's answer, as it is when asked, unless the test gives one.
+      current:
+        picks.current ??
+        (() =>
+          trigger.type === "mention" ||
+          trigger.type === "plugin" ||
+          trigger.type === "attention" ||
+          (attention.on &&
+            objects.get(trigger.slug)?.enabled === true &&
+            !stale.has(trigger.slug))),
     } as unknown as Delivery;
     if (
       trigger.type === "mention" ||
@@ -341,6 +384,7 @@ function setup(
     memoryRead,
     core,
     data,
+    storage,
     agent,
     workingUntil,
     interruptible,
@@ -417,6 +461,208 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
   expect(published).toEqual([]);
+});
+
+const threadMention = (id: string, created_at: number) => {
+  const root = message(`root-${id}`, `Topic ${id}`);
+  return [
+    root,
+    message(`mention-${id}`, "@Claude can you look?", {
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  ] as const;
+};
+
+it("stops an idle conversation's process when the host runs no more", async () => {
+  const [rootA, a] = threadMention("a", 110);
+  const [rootB, b] = threadMention("b", 120);
+  const { deliver, claudes } = setup([rootA, a, rootB, b], {
+    claudeLimit: 1,
+  });
+  await deliver({ type: "mention", event: a });
+  await flush(10);
+  const [idle] = claudes();
+  await deliver({ type: "mention", event: b });
+  await flush(10);
+  expect(idle?.killed).toBe(true);
+  const next = claudes().at(-1);
+  expect(next).not.toBe(idle);
+  expect(next?.prompts[0]).toContain(b.id);
+});
+
+it("stops the next idle conversation's process when a stopped one never exits", async () => {
+  vi.useFakeTimers();
+  try {
+    const [rootA, a] = threadMention("a", 110);
+    const [rootB, b] = threadMention("b", 120);
+    const [rootC, c] = threadMention("c", 130);
+    const { deliver, claudes } = setup([rootA, a, rootB, b, rootC, c], {
+      claudeLimit: 2,
+    });
+    await deliver({ type: "mention", event: a });
+    await deliver({ type: "mention", event: b });
+    await vi.advanceTimersByTimeAsync(0);
+    const [stuck, idle] = claudes();
+    // Its output stays held open, so the host never reports its exit.
+    if (stuck) stuck.exitOnKill = false;
+    const answered = deliver({ type: "mention", event: c });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stuck?.killed).toBe(true);
+    expect(idle?.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await answered;
+    expect(idle?.killed).toBe(true);
+    expect(claudes().at(-1)?.prompts[0]).toContain(c.id);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops reclaiming idle conversations when the pending turn is interrupted", async () => {
+  vi.useFakeTimers();
+  const [rootA, a] = threadMention("cancel-a", 110);
+  const [rootB, b] = threadMention("cancel-b", 120);
+  const [rootC, c] = threadMention("cancel-c", 130);
+  const f = setup([rootA, a, rootB, b, rootC, c], { claudeLimit: 2 });
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await f.deliver({ type: "mention", event: b });
+    await vi.advanceTimersByTimeAsync(0);
+    const [stuck, idle] = f.claudes();
+    if (!stuck || !idle) throw new Error("Expected two idle conversations");
+    stuck.exitOnKill = false;
+    await f.deliver({ type: "mention", event: c });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stuck.killed).toBe(true);
+    expect(idle.killed).toBe(false);
+    const stopped = f.runtime.session(
+      agent,
+      { channelId: channel, root: c.id },
+      "interrupt",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await stopped;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(idle.killed).toBe(false);
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(2);
+  } finally {
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+
+/** Holds the next spawn, as the host prepares it, until refused. */
+const heldSpawn = (f: ReturnType<typeof setup>) => {
+  let refuse: (() => void) | undefined;
+  vi.spyOn(f.fake, "spawn").mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        refuse = () => reject(PROCESS_LIMIT);
+      }),
+  );
+  return () => refuse;
+};
+
+it("moves past a spare still starting once its wait runs out", async () => {
+  vi.useFakeTimers();
+  const [root, a] = threadMention("a", 110);
+  const f = setup([root, a]);
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  let refuse: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await vi.advanceTimersByTimeAsync(0);
+    const [idle] = f.claudes();
+    const held = heldSpawn(f);
+    f.runtime.sync([agent]);
+    await vi.advanceTimersByTimeAsync(0);
+    refuse = held();
+    expect(refuse).toBeTypeOf("function");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const room = f.runtime.room();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await room;
+    }
+    expect(idle?.killed).toBe(true);
+  } finally {
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+  }
+});
+
+it("stops no conversation for a wait that ran out after its caller gave up", async () => {
+  vi.useFakeTimers();
+  const [root, a] = threadMention("a", 110);
+  const f = setup([root, a]);
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  let refuse: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await vi.advanceTimersByTimeAsync(0);
+    const [idle] = f.claudes();
+    if (idle) idle.exitOnKill = false;
+    const held = heldSpawn(f);
+    f.runtime.sync([agent]);
+    await vi.advanceTimersByTimeAsync(0);
+    refuse = held();
+    let wanted = true;
+    const settled = withRoom(
+      async () => {
+        throw PROCESS_LIMIT;
+      },
+      () => f.runtime.room(),
+      () => wanted,
+    )("claude").then(
+      () => "started",
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    wanted = false;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await settled).toBe(PROCESS_LIMIT);
+    // Only now is the spare refused, after its caller has finished.
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle?.killed).toBe(false);
+  } finally {
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+  }
+});
+
+it("leaves a working conversation running and refuses the new one when none is idle", async () => {
+  const [rootA, a] = threadMention("a", 110);
+  const [rootB, b] = threadMention("b", 120);
+  const { deliver, claudes } = setup([rootA, a, rootB, b], {
+    claudeLimit: 1,
+    hold: true,
+  });
+  void deliver({ type: "mention", event: a });
+  await flush(10);
+  const [working] = claudes();
+  expect(working?.prompts).toHaveLength(1);
+  const refused = deliver({ type: "mention", event: b });
+  await flush(10);
+  expect(working?.killed).toBe(false);
+  expect(claudes()).toHaveLength(1);
+  working?.finish();
+  await refused;
 });
 
 it("shares projected native history with incoming and combined action reviews", async () => {
@@ -823,6 +1069,109 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
   expect(notes).toHaveBeenCalledWith(channel, mention.id);
 });
 
+it("ends every turn's prompt with plugins' instructions, before the attention note", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([mention]);
+  Object.assign(agent, {
+    instructions: () => [
+      { plugin: "acme.dibs", text: "Run dibs_check before a fix." },
+    ],
+  });
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(
+    /\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check before a fix\.\n<\/plugin-instructions>\n\n<attention>/,
+  );
+});
+
+it("ends a turn's prompt with its conversation's instructions, after plugins'", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([mention]);
+  const conversationInstructions = vi.fn(() => ({
+    plugin: "acme.tasks",
+    text: "Review only.",
+  }));
+  Object.assign(agent, {
+    instructions: () => [{ plugin: "acme.dibs", text: "Run dibs." }],
+    conversationInstructions,
+  });
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(
+    /<\/plugin-instructions>\n\n<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>\n\n<attention>/,
+  );
+  // Keyed as its notes are: this thread's session.
+  expect(conversationInstructions).toHaveBeenCalledWith(channel, mention.id);
+});
+
+it("gives each turn of a kept session the plugins' instructions as they are now", async () => {
+  // Replies in one thread, so one session takes all three turns.
+  const mention = (id: string) =>
+    message(id, "@Claude go on", {
+      created_at: 100 + Number(id),
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ...(id === "1" ? [] : [["e", "1".repeat(64), "", "reply"]]),
+      ],
+    });
+  const { deliver, claudes, agent } = setup([mention("1")]);
+  let current = [{ plugin: "acme.dibs", text: "Run dibs_check first." }];
+  Object.assign(agent, { instructions: () => current });
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  // Changed: the session is kept and its next turn has only the new text.
+  current = [{ plugin: "acme.dibs", text: "Run dibs_watch first." }];
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  // Removed: the next turn has no section, which the base prompt says
+  // means none apply now.
+  current = [];
+  await deliver({ type: "mention", event: mention("3") });
+  await flush(10);
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  const [first, second, third] = used[0]?.prompts ?? [];
+  expect(first).toContain("Run dibs_check first.");
+  expect(second).toContain("Run dibs_watch first.");
+  expect(second).not.toContain("Run dibs_check first.");
+  expect(third).not.toContain("<plugin-instructions");
+  expect(BASE_PROMPT).toContain(
+    "a turn without any means no plugin instructions apply now",
+  );
+});
+
+it("gives a timer's one-off turn plugins' instructions once", async () => {
+  const { deliver, claudes, agent } = setup();
+  Object.assign(agent, {
+    instructions: () => [
+      { plugin: "acme.dibs", text: "Run dibs_check before a fix." },
+    ],
+  });
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(
+    prompt.match(/<plugin-instructions plugin="acme\.dibs">/g),
+  ).toHaveLength(1);
+  expect(prompt).toMatch(/<\/plugin-instructions>\n\n<attention>/);
+});
+
 it("keeps the notes of a turn Claude never started for the next, ahead of newer ones", async () => {
   const mention = message("2", "@Claude go on", {
     tags: [
@@ -1199,6 +1548,59 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).not.toContain("<team>");
   runtime.dispose();
+});
+
+it("runs a timer on the core memory as it is then, after an ordinary turn read it", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, core } = setup([root]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  core.mockResolvedValue("Old rules.");
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  core.mockResolvedValue("New rules.");
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const standalone = prompted()[1];
+  expect(standalone?.prompts[0]).toContain("Timer: daily");
+  expect(systemPromptOf(standalone)).toContain("New rules.");
+  expect(systemPromptOf(standalone)).not.toContain("Old rules.");
+});
+
+it("resumes an idle session on the agent's new core memory", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, core } = setup([root, reply]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  core.mockResolvedValue("Old rules.");
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  const [first] = prompted();
+  expect(systemPromptOf(first)).toContain("Old rules.");
+  // Written from another conversation: the host's copy is all that changed.
+  core.mockResolvedValue("New rules.");
+  await deliver({ type: "mention", event: reply });
+  await flush(10);
+  const second = prompted()[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(systemPromptOf(second)).toContain("New rules.");
+  expect(systemPromptOf(second)).not.toContain("Old rules.");
 });
 
 it("starts each session from the host's core memory, reading only recent notes from the relay", async () => {
@@ -1847,8 +2249,10 @@ it("takes a plugin's wake in its thread's session, as the plugin's and not a mes
   await deliver({ type: "mention", event: root });
   await flush(10);
   read.mockResolvedValue([root]);
-  await deliver(pluginWake(root.id));
+  const accepted = vi.fn();
+  await deliver(pluginWake(root.id), { accepted });
   await flush(10);
+  expect(accepted).toHaveBeenCalledOnce();
   const used = claudes().filter((process) => process.prompts.length);
   expect(used).toHaveLength(1);
   const prompt = used[0]?.prompts[1] ?? "";
@@ -2073,47 +2477,99 @@ it.each([true, false])(
   },
 );
 
-it.each([
-  ["https://agent.example", false],
-  ["https://other.example", true],
-])(
-  "refuses an owner's workflow mention where the build restricts %s",
-  async (restricted, runs) => {
-    vi.stubEnv("VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES", restricted);
-    const relay = keypair();
-    const event = eventDto(
-      signed(relay, {
-        kind: 9,
-        content: "@Claude workflow",
-        tags: [
-          ["h", channel],
-          ["p", self],
-          ["buzz:workflow", "true"],
-          ["buzz:workflow-owner", alice],
-          ["buzz:workflow-mention", self],
-        ],
-      }),
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event], { workflowAuthority: relay.pubkey });
+  try {
+    const ignored = vi.fn();
+    await f.deliver({ type: "mention", event }, { ignored });
+    expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+    expect(f.claudes()).toHaveLength(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Claude workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event]);
+  try {
+    let live = true;
+    Object.assign(f.runtime, {
+      readyReads: async () => {
+        live = false;
+        return f.runtime["reads"](self);
+      },
+    });
+    const ignored = vi.fn();
+    await f.deliver(
+      { type: "mention", event },
+      { ignored, current: () => live },
     );
-    const f = setup([event], { workflowAuthority: relay.pubkey });
-    try {
-      await f.deliver({ type: "mention", event });
-      if (runs) {
-        await vi.waitFor(() =>
-          expect(f.claudes().some((process) => process.prompts.length)).toBe(
-            true,
-          ),
-        );
-      } else {
-        await flush(10);
-        expect(f.claudes()).toHaveLength(0);
-        expect(f.workingUntil).not.toHaveBeenCalled();
-      }
-    } finally {
-      f.runtime.dispose();
-      vi.unstubAllEnvs();
-    }
-  },
-);
+    expect(ignored).toHaveBeenCalledExactlyOnceWith();
+    expect(f.claudes()).toHaveLength(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event]);
+  try {
+    const readyReads = vi.fn(async () => f.runtime["reads"](self));
+    Object.assign(f.runtime, { readyReads });
+    await f.deliver({ type: "mention", event }, { ignored: vi.fn() });
+    expect(readyReads).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ owner: alice }),
+      expect.any(AbortSignal),
+      "chan-1",
+    );
+    await f.deliver(
+      { type: "mention", event: { ...event, pubkey: alice } },
+      { ignored: vi.fn() },
+    );
+    expect(readyReads).toHaveBeenCalledOnce();
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
@@ -2253,6 +2709,30 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(claude?.killed).toBe(true);
   expect(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}").toBe("{}");
   expect(runtime.sessions(self)).toEqual([]);
+});
+
+it("records a one-off turn's session as the agent's, for its usage", async () => {
+  const { deliver, claudes, runtime, storage } = setup();
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  const args = claude?.options.args ?? [];
+  const session = args[args.indexOf("--session-id") + 1];
+  expect(session).toBeTruthy();
+  expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+    { place: "~/.buzz", saved: [], standalone: [session] },
+  ]);
+  // Later sessions' prompts push its prompt out of the saved prompts, and
+  // it is still the agent's.
+  const prompts = sessionPrompts(storage, "claude-code", self);
+  for (const later of ["l1", "l2", "l3"])
+    await prompts.save(later, [
+      { label: "", text: later.repeat(PROMPTS_BUDGET / 6) },
+    ]);
+  expect(prompts.sessions().map(({ id }) => id)).not.toContain(session);
+  expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+    { place: "~/.buzz", saved: [], standalone: [session] },
+  ]);
 });
 
 it("runs a watch on anyone's event as a one-off turn that sees it as data", async () => {
@@ -3059,6 +3539,35 @@ it("grants a listed folder its owner referenced by chip for the rest of the conv
   }
 });
 
+it("names a skill its owner chose for this agent by chip, never one chosen for another agent", async () => {
+  const skill = "/example/.claude/skills/review/SKILL.md";
+  const mention = (id: string, target: string) =>
+    message(id, "@Claude review", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ...messageTokenTags([
+          { kind: "skill", id: skill, label: "review", target },
+        ]),
+      ],
+    });
+  const { deliver, claudes, runtime } = setup([], {
+    solo: new Set([channel]),
+  });
+  try {
+    await deliver({ type: "mention", event: mention("2", "f".repeat(64)) });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(process?.prompts[0]).not.toContain("<referenced-skills>");
+    await deliver({ type: "mention", event: mention("3", self) });
+    await flush(10);
+    expect(process?.prompts[1]).toContain("<referenced-skills>");
+    expect(process?.prompts[1]).toContain(JSON.stringify(skill));
+  } finally {
+    runtime.dispose();
+  }
+});
+
 it("hands no Canvas to a shared channel's turns", async () => {
   const event = message("1", "@Claude go", {
     tags: [
@@ -3256,6 +3765,54 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
 
+it("hands a channel-level wake into a thread only where the host says threads have their own sessions", async () => {
+  const root = message("7", "a thread in the channel");
+  const metadata = message("8", "", { kind: 39000, tags: [["d", channel]] });
+  for (const scope of ["thread", "channel"] as const) {
+    const f = setup([], { hold: true });
+    f.agent.query.mockImplementation(async (...args: unknown[]) => {
+      const [[filter] = []] = args as { ids?: string[]; kinds?: number[] }[][];
+      if (filter?.ids?.includes(root.id)) return [root];
+      if (filter?.kinds?.includes(39000)) return [metadata];
+      return [];
+    });
+    const handoff = vi.fn();
+    // The host answers from the agent's session scope, as Agents does.
+    const threadsApart = () => scope === "thread";
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      {
+        agent: {
+          ...f.agent,
+          handoff,
+          threadsApart,
+        } as unknown as Delivery["agent"],
+        config: { ...DEFAULT_CONFIG, scope },
+      },
+    );
+    await flush(10);
+    const claude = f.claudes().find((process) => process.prompts.length);
+    const result = (await mcp(claude, 1, "tools/call", {
+      name: "self_handoff",
+      arguments: { channel, thread: root.id, text: "answer there" },
+    })) as { isError?: boolean; content: { text: string }[] } | undefined;
+    if (scope === "thread") {
+      expect(result?.isError).toBeFalsy();
+      expect(handoff).toHaveBeenCalledWith(
+        expect.objectContaining({ channel, root: root.id }),
+      );
+    } else {
+      // One session per channel: the threads share this conversation.
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ text: "That is this conversation." }],
+      });
+      expect(handoff).not.toHaveBeenCalled();
+    }
+    f.runtime.dispose();
+  }
+});
+
 it("refreshes Attention instructions after Claude starts", async () => {
   let release!: () => void;
   const starting = new Promise<void>((resolve) => {
@@ -3381,4 +3938,357 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     release();
     f.runtime.dispose();
   }
+});
+
+it.each(["host", "self", "background"] as const)(
+  "revokes a native Claude operation proof when its %s turn ends during a read",
+  async (turn) => {
+    const f = setup([], { hold: true });
+    const provider = createToolOperation("example/proposal", () => ({
+      viewer: "a".repeat(64),
+      community: "https://relay.example.test",
+      check: () => {},
+      release: () => {},
+    }));
+    let authority: AgentToolAuthority | undefined;
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const saved = vi.fn();
+    f.added.push({
+      name: "consumer_propose",
+      description: "Propose a question.",
+      inputSchema: { type: "object" },
+      operation: provider.operation,
+      async call(_client, _context, args, proof) {
+        if (!proof) throw new Error("Expected operation proof");
+        authority = provider.resolve(proof, args);
+        authority.check();
+        expect(authority.context.channel).toBe(channel);
+        enter();
+        await reading;
+        authority.check();
+        saved();
+        return "accepted";
+      },
+    });
+    try {
+      await f.deliver({
+        type: "mention",
+        event: message("1", "@Claude propose", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().some((process) => process.prompts.length)).toBe(
+          true,
+        ),
+      );
+      const process = f.claudes().find((process) => process.prompts.length);
+      if (!process) throw new Error("Expected active Claude");
+      if (turn !== "host") {
+        process.finish();
+        if (turn === "background")
+          process.emit({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ id: "task-1" }],
+          });
+        process.emit({
+          type: "system",
+          subtype: "session_state_changed",
+          state: "working",
+        });
+      }
+      const call = mcp(process, 200, "tools/call", {
+        name: "consumer_propose",
+        arguments: { question: "Question" },
+      });
+      await entered;
+      if (turn === "host") process.finish();
+      else
+        process.emit({
+          type: "system",
+          subtype: "session_state_changed",
+          state: "idle",
+        });
+      await vi.waitFor(() =>
+        expect(() => authority?.check()).toThrow("Claude turn has ended"),
+      );
+      await f.deliver({
+        type: "mention",
+        event: message("2", "@Claude continue", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+            ["e", message("1", "").id, "", "reply"],
+          ],
+        }),
+      });
+      await vi.waitFor(() => expect(process.prompts).toHaveLength(2));
+      expect(() => authority?.check()).toThrow("Claude turn has ended");
+      release();
+      await call;
+      await vi.waitFor(() =>
+        expect(
+          process.received.some(
+            (message) =>
+              message.type === "control_response" &&
+              (message.response as { request_id?: string }).request_id ===
+                "mcp-200",
+          ),
+        ).toBe(true),
+      );
+      expect(saved).not.toHaveBeenCalled();
+    } finally {
+      release();
+      f.runtime.dispose();
+    }
+  },
+);
+
+describe("a conversation given its own folder", () => {
+  const scope = `https://agent.example:${alice}`;
+  const root = message("1", "Build is red");
+  const mention = message("2", "@Claude can you look?", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const folders = (missing = new Set<string>()) =>
+    vi.fn(async (path: string, options?: { create?: boolean }) => {
+      if (options?.create === false && missing.has(path))
+        throw new Error(`Could not find ${path}`);
+      return path === "~/.buzz" ? "/Users/me/.buzz" : path;
+    });
+  const assign = (
+    data: Map<string, string>,
+    folder: string,
+    conversation = `${channel}/${root.id}`,
+  ) =>
+    assignConversationFolder(
+      localStore({
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => void data.set(key, value),
+        removeItem: (key: string) => void data.delete(key),
+      } as Storage),
+      scope,
+      self,
+      conversation,
+      folder,
+    );
+
+  it("starts its session there, with the workspace within reach", async () => {
+    const resolveDirectory = folders();
+    const { deliver, claudes, data, published } = setup([root, mention], {
+      resolveDirectory,
+    });
+    await assign(data, "/repos/worktree");
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/worktree");
+    expect(resolveDirectory).toHaveBeenCalledWith("/repos/worktree", {
+      create: false,
+    });
+    const args = claude?.options.args ?? [];
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/Users/me/.buzz");
+    const prompt = systemPromptOf(claude);
+    expect(prompt).toContain(
+      "<workspace>\nCurrent working directory: /repos/worktree\n</workspace>",
+    );
+    expect(prompt).toContain(
+      "Your persistent workspace is at `/Users/me/.buzz`, not in your working directory",
+    );
+    expect(published).toEqual([]);
+  });
+
+  it("starts a protected agent there, contained as in its workspace", async () => {
+    const { deliver, claudes, data, agent, runtime } = setup([root, mention], {
+      hold: true,
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/worktree");
+    const protection = {
+      key: "policy",
+      stateKey: "revision",
+      processProtection: {
+        readOnlyPaths: ["/guarded"],
+        hiddenPaths: ["/private"],
+      },
+      assertAvailable() {},
+      check: vi.fn<AgentProtection["check"]>().mockResolvedValue(),
+      spawn: async () => {
+        throw new Error("Unused protected runtime");
+      },
+    };
+    await deliver(
+      { type: "mention", event: mention },
+      { agent: { ...agent, protection } as unknown as Delivery["agent"] },
+    );
+    await vi.waitFor(() =>
+      expect(claudes().some((worker) => worker.prompts.length)).toBe(true),
+    );
+    const worker = claudes().find((candidate) => candidate.prompts.length);
+    try {
+      expect(worker?.options.cwd).toBe("/repos/worktree");
+      // The policy's containment names no folder, so the folder neither
+      // widens nor narrows it; and as in the workspace, no repository
+      // settings, CLAUDE.md or MCP servers load.
+      expect(worker?.options.protection).toEqual({
+        readOnlyPaths: ["/guarded", expect.any(String)],
+        hiddenPaths: ["/private"],
+      });
+      const args = worker?.options.args ?? [];
+      expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
+      expect(args).toContain("--strict-mcp-config");
+      expect(args[args.indexOf("--add-dir") + 1]).toBe("/Users/me/.buzz");
+      expect(worker?.options.env).toMatchObject({
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+      });
+    } finally {
+      worker?.finish();
+      await runtime.retire(self);
+    }
+  });
+
+  it("starts there for a message from the owner's other client", async () => {
+    // The owner's phone signs as the owner, and its message reaches this
+    // device from the relay like any other; the folder is this device's.
+    const theirs = message("5", "Deploy failed", { pubkey: "b".repeat(64) });
+    const fromPhone = message("6", "@Claude take a look", {
+      created_at: 130,
+      tags: [
+        ["h", channel],
+        ["e", theirs.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    const { deliver, claudes, data } = setup([theirs, fromPhone], {
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/worktree", `${channel}/${theirs.id}`);
+    await deliver({ type: "mention", event: fromPhone });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/worktree");
+  });
+
+  it("starts a Solo chat's one session in the folder it was given", async () => {
+    const { deliver, claudes, data } = setup([], {
+      solo: new Set([channel]),
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/solo", channel);
+    await deliver({
+      type: "mention",
+      event: message("7", "@Claude hi", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/solo");
+  });
+
+  it("refuses its turn, naming the folder, once the folder is gone", async () => {
+    const resolveDirectory = folders(new Set(["/repos/removed"]));
+    const { deliver, claudes, data, published, workingUntil } = setup(
+      [root, mention],
+      { resolveDirectory },
+    );
+    await assign(data, "/repos/removed");
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    await expect(workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "This conversation's folder /repos/removed no longer exists",
+      ),
+    });
+    // It never falls back to the agent's workspace.
+    expect(claudes().filter((process) => process.prompts.length)).toEqual([]);
+    expect(published.find((event) => event.kind === 9)?.content).toContain(
+      "/repos/removed no longer exists",
+    );
+  });
+
+  it("leaves conversations without a folder in the workspace", async () => {
+    const resolveDirectory = folders();
+    const other = message("3", "Elsewhere");
+    const { deliver, claudes, data, runtime } = setup([other], {
+      resolveDirectory,
+    });
+    await assign(data, "/repos/worktree");
+    await deliver({
+      type: "mention",
+      event: message("4", "@Claude hi", {
+        created_at: 120,
+        tags: [
+          ["h", channel],
+          ["e", other.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("~/.buzz");
+    expect(claude?.options.args).not.toContain("/Users/me/.buzz");
+    expect(resolveDirectory).not.toHaveBeenCalled();
+    // Listed from its first turn, so Agents gives it no folder later.
+    expect(
+      runtime
+        .conversations(self)
+        .map(({ channelId, root }) => conversationKey(channelId, root)),
+    ).toEqual([`${channel}/${other.id}`]);
+  });
+
+  it("reads its sessions' history from the folder without visiting it", async () => {
+    const { runtime, data, fake } = setup([], { resolveDirectory: folders() });
+    await assign(data, "/repos/worktree");
+    const saved = localSessions(
+      localStore({
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => void data.set(key, value),
+        removeItem: (key: string) => void data.delete(key),
+      } as Storage),
+      self,
+    );
+    saved.set(`${channel}/${root.id}`, { id: "in-folder", seen: 100, at: 5 });
+    saved.set(channel, { id: "in-workspace", seen: 100, at: 4 });
+    // Usage reads each place's sessions.
+    expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+      { place: "~/.buzz", saved: ["in-workspace"], standalone: [] },
+      {
+        place: { folder: "/repos/worktree" },
+        saved: ["in-folder"],
+        standalone: [],
+      },
+    ]);
+    await runtime.find(
+      self,
+      { channelId: channel, root: root.id },
+      "~/.buzz",
+      new AbortController().signal,
+    );
+    // Finding the workspace starts `pwd` there; the folder's project is known.
+    expect(fake.processes.some((process) => process.id === "workspace")).toBe(
+      false,
+    );
+  });
 });

@@ -1,6 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
-import { closeSettings } from "./navigation.mjs";
+import {
+  closeSettings,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 // The palette scales in and its content slides in after a delay. Both hold
@@ -791,9 +795,8 @@ test("search result keys follow a saved rebind alongside the arrows and update t
   );
   // ⌃K and ⌃J on a Mac; elsewhere Ctrl+K opens search, so previous is Ctrl+P.
   const previousKey = apple ? "k" : "p";
-  const modifier = apple ? "Meta" : "Control";
-  await page.keyboard.press(`${modifier}+,`);
-  await button(page, "Shortcuts").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Shortcuts");
   const region = page.getByRole("region", { name: "Shortcuts", exact: true });
   for (const [title, chord] of [
     ["Previous search result", `Control+${previousKey}`],

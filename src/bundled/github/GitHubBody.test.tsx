@@ -941,6 +941,39 @@ it("sizes an image's frame from an early off-screen read", async () => {
   expect(frame()?.style.getPropertyValue("--media-ratio")).toBe("400 / 1200");
 });
 
+it("keeps an image's off-screen read on its link until that link fails", () => {
+  const slow =
+    "https://github.com/user-attachments/assets/7e1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
+  const signed = (jwt: string) =>
+    `https://private-user-images.githubusercontent.com/1/2-7e1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b.png?jwt=${jwt}`;
+  const reads: { link: string; onerror: (() => void) | null }[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(value: string) {
+        reads.push(Object.assign(this, { link: value }));
+      }
+    },
+  );
+  const body = (jwt: string) => (
+    <GitHubBody
+      url={url}
+      body={`![Slow](${slow})`}
+      bodyHtml={`<img src="${signed(jwt)}">`}
+    />
+  );
+  const { rerender } = render(body("first"));
+  rerender(body("second"));
+  expect(reads.map(({ link }) => link)).toEqual([signed("first")]);
+  act(() => reads[0]?.onerror?.());
+  expect(reads.map(({ link }) => link)).toEqual([
+    signed("first"),
+    signed("second"),
+  ]);
+});
+
 it("takes an image's new size when it loads after a remembered one", () => {
   const changing =
     "https://github.com/user-attachments/assets/5d2e8f10-7a3b-4c6d-9e1f-2a3b4c5d6e7f";

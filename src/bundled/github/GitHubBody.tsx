@@ -223,8 +223,16 @@ function EmbeddedAttachment({
   }
   const [size, setSize] = useState(() => knownSize(source));
   // GitHub gives no image height, so an image loads at once, off screen, and
-  // its frame takes the image's size before it scrolls into view.
-  const probe = image && !size ? (signed ?? source) : undefined;
+  // its frame takes the image's size before it scrolls into view. Like the
+  // shown link, the probe keeps its link until that link fails.
+  const [probe, setProbe] = useState(() =>
+    image && !size ? (signed ?? source) : undefined,
+  );
+  const [probeFailed, setProbeFailed] = useState(false);
+  if (probeFailed && signed && signed !== probe) {
+    setProbe(signed);
+    setProbeFailed(false);
+  }
   useEffect(() => {
     if (!probe) return;
     const element = new Image();
@@ -233,9 +241,11 @@ function EmbeddedAttachment({
       rememberSize(source, { width, height });
       if (width > 0 && height > 0) setSize({ width, height });
     };
+    element.onerror = () => setProbeFailed(true);
     element.src = probe;
     return () => {
       element.onload = null;
+      element.onerror = null;
     };
   }, [probe, source]);
   const show = (next: boolean) => {

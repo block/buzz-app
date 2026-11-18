@@ -65,7 +65,7 @@ jobs:
     # and saves the lot under the new key, so main's caches only grow. Once a
     # week, delete the ones this run rebuilds so desktop and refresh_ci save
     # them from scratch. Ordered before both; a failed purge still rebuilds.
-    if: github.repository == 'block/buzz-app' && (github.event.schedule == '37 9 * * 0' || github.event_name == 'workflow_dispatch')
+    if: github.repository == 'block/buzz-app' && github.event.schedule == '37 9 * * 0'
     name: Delete main's growing caches
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,9 +80,9 @@ jobs:
         # Hermit saves exact keys without fallback and doesn't grow; mesh and
         # Windows native caches aren't rebuilt by this run.
         run: |
-          for prefix in vtest-rust-macos-prerelease- vtest-rust-windows-release- vtest-rust-linux-release- \
-                        vtest-rust-native- vtest-rust-agent-protection- vtest-rust-browser-fixture- pnpmtest-; do
-            gh cache list --ref refs/heads/ci/weekly-cache-refresh --key "$prefix" --limit 100 --json id,key \
+          for prefix in v0-rust-macos-prerelease- v0-rust-windows-release- v0-rust-linux-release- \
+                        v0-rust-native- v0-rust-agent-protection- v0-rust-browser-fixture- pnpm-; do
+            gh cache list --ref refs/heads/main --key "$prefix" --limit 100 --json id,key \
               --jq '.[] | "\(.id) \(.key)"' | while read -r id key; do
               echo "Deleting $key"
               gh cache delete "$id"

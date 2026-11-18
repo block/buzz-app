@@ -78,6 +78,7 @@ export function AgentResponsePreview({
                 >
                   <Avatar
                     src={showLoop ? (loop ?? agent.picture) : agent.picture}
+                    fallbackSrc={showLoop ? agent.picture : undefined}
                     alt=""
                     fallback={agent.name}
                     shape="squircle"

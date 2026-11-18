@@ -110,6 +110,11 @@ Humans are circles and agents are squircles: `Avatar shape="circle"` or
 picture. Format public-key labels with `src/shared/identity/public-key.ts`; don't
 slice keys by hand.
 
+For alternate artwork such as an uploaded animation, pass the still portrait as
+`fallbackSrc`. `Avatar` keeps it mounted and visible until the alternate is
+ready, and restores it without reloading. Features own playback eligibility and
+Reduce Motion.
+
 ## Icons
 
 Tabler is the only icon family. Import named icons from `icons/index.ts`. If

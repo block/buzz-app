@@ -53,6 +53,7 @@ export function useChatAvatar(
   const [loaded, setLoaded] = useState<string>();
 
   useEffect(() => {
+    setLoaded(undefined);
     if (!original || !still || original === still || !window.matchMedia) return;
     const motion = window.matchMedia("(prefers-reduced-motion: no-preference)");
     let image: HTMLImageElement | undefined;

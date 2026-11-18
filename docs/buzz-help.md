@@ -208,7 +208,8 @@ if that desktop app is up and running.
   can't finish, it says why and offers **Retry**.
 - **Animated avatars.** Uploaded animated avatars play during responses and in
   the expanded agent profile. Cards, sidebar entries and completed replies use
-  a still portrait. Reduce Motion keeps uploaded avatars still.
+  a still portrait. Reduce Motion keeps uploaded avatars still. The still
+  portrait stays visible while an animation loads or if it cannot load.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

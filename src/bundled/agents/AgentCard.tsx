@@ -48,6 +48,7 @@ export function AgentPortrait({
   return (
     <Avatar
       src={animate ? (animated ?? src) : src}
+      fallbackSrc={animate ? src : undefined}
       alt=""
       fallback={agent.name}
       size="fill"

@@ -959,6 +959,13 @@
     opacity: 1;
   }
 
+  /* Keep the decoded still mounted through source swaps. Hide it only when
+     the displayed alternate is ready, including for transparent artwork. */
+  .buzz-avatar:has(> img[data-avatar-foreground][data-loaded="true"])
+  > :not([data-avatar-foreground]) {
+    visibility: hidden;
+  }
+
   .buzz-avatar-status {
     position: relative;
     display: inline-grid;

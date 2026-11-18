@@ -19,6 +19,42 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("keeps the same still image through a delayed alternate, failure, retry, and return", () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const still = "https://example.test/retained-still.webp";
+  const original = "https://example.test/retained-original.webp";
+  const props = { alt: "Agent", fallback: "A", fallbackSrc: still };
+  const view = render(<Avatar {...props} src={still} />);
+  const poster = view.container.querySelector("img");
+  if (!poster) throw new Error("Expected still artwork");
+  fireEvent.load(poster);
+  view.rerender(<Avatar {...props} src={original} />);
+  expect(view.container.querySelector(`img[src="${still}"]`)).toBe(poster);
+  expect(poster).toHaveAttribute("data-loaded", "true");
+  const alternate = () => {
+    const image = view.container.querySelector(`img[src="${original}"]`);
+    if (!image) throw new Error("Expected alternate artwork");
+    return image;
+  };
+  act(() => vi.advanceTimersByTime(150));
+  expect(view.container.querySelector("[data-avatar-fallback]")).toBeNull();
+  fireEvent.error(alternate());
+  expect(view.container.querySelector(`img[src="${still}"]`)).toBe(poster);
+  expect(view.container.querySelector("[data-avatar-fallback]")).toBeNull();
+  act(() => vi.advanceTimersByTime(2_000));
+  fireEvent.load(alternate());
+  expect(alternate()).toHaveAttribute("data-loaded", "true");
+  view.rerender(<Avatar {...props} src={still} />);
+  expect(view.container.querySelectorAll("img")).toHaveLength(1);
+  expect(view.container.querySelector("img")).toBe(poster);
+  expect(poster).toHaveAttribute("data-loaded", "true");
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("reveals completed cached artwork on mount without waiting for a load event", () => {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
   vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(

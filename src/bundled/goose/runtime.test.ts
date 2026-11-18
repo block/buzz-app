@@ -1,4 +1,6 @@
 import { memoryStorage } from "../../features/agents/test-fakes";
+import { workspaceCanvas } from "../../features/solo/workspace";
+import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
@@ -1283,6 +1285,97 @@ describe("GooseRuntime", () => {
       ),
     );
     expect(prompt()).not.toContain("## Progress");
+  });
+
+  it("builds a conversation's prompt with the sections of the plugin that manages it, and updates it in place", async () => {
+    const { agent, deliver, goose } = setup();
+    const managedRoot = message("1", "@Gander hi");
+    const otherRoot = message("2", "@Gander hi");
+    let managed: SectionChoices = {
+      plugin: {
+        id: "example.plugin",
+        sections: { "working-location": "Work in the task's folder." },
+      },
+    };
+    const promptSections = vi.fn((channelId?: string, root?: string) =>
+      channelId === channel && root === managedRoot.id ? managed : {},
+    );
+    Object.assign(agent, { promptSections });
+    const wrapper =
+      '## Working location\n<plugin-section id="working-location" plugin="example.plugin">\nWork in the task\'s folder.\n</plugin-section>';
+    const promptOf = (turn: number) =>
+      goose()?.prompts.get(goose()?.turns[turn]?.sessionId ?? "");
+    await deliver(managedRoot);
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    await deliver(otherRoot);
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(2));
+    expect(promptSections).toHaveBeenCalledWith(channel, managedRoot.id);
+    expect(promptOf(0)).toContain(wrapper);
+    expect(promptOf(0)).not.toContain("Make file changes on a new branch");
+    // Another conversation of the same agent has the default rule.
+    expect(promptOf(1)).not.toContain("<plugin-section id=");
+    expect(promptOf(1)).toContain("Make file changes on a new branch");
+
+    // The plugin clears its sections: the session gets the default in place.
+    managed = {};
+    const opened = goose()?.opened.length;
+    await deliver(
+      message("3", "@Gander again", {
+        tags: [
+          ["h", channel],
+          ["e", managedRoot.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(3));
+    expect(goose()?.turns[2]?.sessionId).toBe(goose()?.turns[0]?.sessionId);
+    expect(goose()?.opened).toHaveLength(opened ?? 0);
+    expect(promptOf(2)).not.toContain("<plugin-section id=");
+    expect(promptOf(2)).toContain("Make file changes on a new branch");
+  });
+
+  it("builds a one-off turn's prompt with no conversation's sections", async () => {
+    const { agent, runOnce } = setup();
+    const promptSections = vi.fn(() => ({}));
+    Object.assign(agent, { promptSections });
+    await runOnce("timer/daily", "Post the daily summary.");
+    // Asked as the session opens and as its turn starts.
+    expect(promptSections.mock.calls).toEqual([
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+  });
+
+  it("tells a Solo chat whose plugin gives the working location to read its Canvas's folders", async () => {
+    const { agent, deliver, goose } = setup({
+      solo: new Set([channel]),
+      canvas: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+    });
+    Object.assign(agent, {
+      // A Solo chat is one conversation, with no thread root.
+      promptSections: (channelId?: string, root?: string): SectionChoices =>
+        channelId === channel && !root
+          ? {
+              plugin: {
+                id: "example.plugin",
+                sections: { "working-location": "Work in the task's folder." },
+              },
+            }
+          : {},
+    });
+    await deliver(message("1", "@Gander go"));
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      '<plugin-section id="working-location" plugin="example.plugin">',
+    );
+    const turn = goose()?.turns[0]?.text;
+    expect(turn).toContain("They are for reading.");
+    expect(turn).not.toContain("create a new worktree");
   });
 
   it("starts a session from the host's core memory, reading none from the relay", async () => {

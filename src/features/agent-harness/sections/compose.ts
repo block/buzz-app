@@ -87,6 +87,18 @@ const print = ({ section, body, source }: Printed) =>
     ? `## ${section.title}${source ? "\n" : "\n\n"}${body}`.trimEnd()
     : body;
 
+/** The choices the base prompt of the conversation session `key` is built
+ * with; a session outside any conversation has only the owner's. */
+export const sectionsOf = (
+  handle:
+    | { promptSections?(channelId?: string, root?: string): SectionChoices }
+    | undefined,
+  key: string | undefined,
+) => {
+  const [channelId, root] = key?.split("/") ?? [];
+  return handle?.promptSections?.(channelId, root);
+};
+
 /** One hash for a prompt's `parts`. */
 export const sectionsKey = (parts: Readonly<Record<string, string>>) =>
   hash(JSON.stringify(parts));

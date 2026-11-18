@@ -101,6 +101,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     hooks: { events: ["beforeTool", "afterTool"] },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
+    conversationSections: true,
     title: "Pi",
     icon: PiLogoIcon,
     description:

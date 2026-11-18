@@ -87,6 +87,7 @@ import {
   readProject,
   worksElsewhere,
 } from "../../features/agent-harness/project";
+import { sectionsOf } from "../../features/agent-harness/sections/compose";
 import {
   referencedFolders,
   referencedSkills,
@@ -267,15 +268,6 @@ const NOTICE_LIMIT = 100;
 type Gateway = Readonly<{ route: EligibleRoute; turn: TurnContext }>;
 /** The label of a base prompt that a saved session prompt got later. */
 const BASE_LABEL = "base ";
-/** The choices the base prompt of the conversation session `key` is built
- * with; a session outside any conversation has only the owner's. */
-const sectionsOf = (
-  handle: Pick<AgentHandle, "promptSections"> | undefined,
-  key: string | undefined,
-) => {
-  const [channelId, root] = key?.split("/") ?? [];
-  return handle?.promptSections?.(channelId, root);
-};
 /** The base prompt in a system prompt. */
 const baseOf = (systemPrompt: string) =>
   promptSections(systemPrompt).find(({ tag }) => tag === "base")?.body ?? "";

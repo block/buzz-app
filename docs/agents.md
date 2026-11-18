@@ -746,11 +746,14 @@ holds a conversation's set manages that conversation: the agent's next turn
 there gets each text in place of the section's default text, in a
 `<plugin-section>` wrapper that names the plugin, and the base prompt ranks it
 as the section it replaces. A running session gets a changed section at its
-next turn: Claude restarts its process and resumes the session, and Codex sends
-the changed sections to the resumed thread. A Codex thread saved by a Buzz
-version that did not keep its sections cannot be told which sections changed:
-a local one starts a new thread once, without its earlier context, and one on
-an execution target stops with an error that asks for a new session. Each call replaces the plugin's
+next turn: Claude restarts its process and resumes the session, Codex sends
+the changed sections to the resumed thread, Goose gives the session the new
+prompt in place, and Pi sends the conversation its instructions with each
+turn. A message that steers a turn already running does not change that turn's
+prompt. A Codex thread saved by a Buzz version that did not keep its sections
+cannot be told which sections changed: a local one starts a new thread once,
+without its earlier context, and one on an execution target stops with an
+error that asks for a new session. Each call replaces the plugin's
 whole set, and an empty set clears it. Each ID must be one the manifest
 declares, each text has from 1 to 4096 UTF-8 bytes after trimming, and the set
 at most 12 KiB; a plugin cannot turn a section off. `place` follows the rules
@@ -768,8 +771,10 @@ set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`,
 the plugin holds none there. When the plugin replaces `working-location` in a
 Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
 folder. The set is kept on this device, survives a restart, and is dropped
-when the agent is deleted. Claude and Codex (`conversationSections` on the
-type) support it; other harnesses reject. Plugins feature-detect the methods.
+when the agent is deleted. Claude, Codex, Goose and Pi (`conversationSections`
+on the type) support it; other harnesses reject. Goose and Pi have no
+conversation folders, so a `working-location` text there changes the rule the
+agent reads, not the folder its session starts in. Plugins feature-detect the methods.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

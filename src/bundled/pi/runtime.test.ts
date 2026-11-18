@@ -1,4 +1,6 @@
 import { memoryStorage } from "../../features/agents/test-fakes";
+import { workspaceCanvas } from "../../features/solo/workspace";
+import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   promptMessage,
@@ -462,6 +464,98 @@ it("builds a turn's instructions with the owner's base section choices", async (
     '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
   );
   expect(instructions).not.toContain("## Progress");
+});
+
+it("builds a conversation's instructions with the sections of the plugin that manages it, at each turn", async () => {
+  // Each turn ends, so the next one in its conversation is a new turn.
+  const { host, deliver, agent, settled } = setup({
+    wait: () => ({ status: "done", answer: 1, text: "" }),
+  });
+  let managed: SectionChoices = {
+    plugin: {
+      id: "example.plugin",
+      sections: { "working-location": "Work in the task's folder." },
+    },
+  };
+  Object.assign(agent, {
+    promptSections: (channelId?: string, thread?: string) =>
+      channelId === channel && thread === root.id ? managed : {},
+  });
+  const wrapper =
+    '## Working location\n<plugin-section id="working-location" plugin="example.plugin">\nWork in the task\'s folder.\n</plugin-section>';
+  const instructions = (turn: number) =>
+    String(host.requests("deliver")[turn]?.params.instructions);
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run;
+  await settled(first);
+  // Another conversation of the same agent has the default rule.
+  await deliver({
+    type: "mention",
+    event: message("3", "@Pi hi", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  }).run;
+  expect(instructions(0)).toContain(wrapper);
+  expect(instructions(0)).not.toContain("Make file changes on a new branch");
+  expect(instructions(1)).not.toContain("<plugin-section id=");
+  expect(instructions(1)).toContain("Make file changes on a new branch");
+
+  // The plugin clears its sections: the conversation's next turn has the default.
+  managed = {};
+  await deliver({ type: "mention", event: reply("4", "@Pi again") }).run;
+  expect(host.requests("deliver")[2]?.params.key).toBe(
+    host.requests("deliver")[0]?.params.key,
+  );
+  expect(instructions(2)).not.toContain("<plugin-section id=");
+});
+
+it("builds a one-off turn's instructions with no conversation's sections", async () => {
+  const { runOnce, agent } = setup({
+    wait: () => ({ status: "done", answer: 1, text: "" }),
+  });
+  const promptSections = vi.fn(() => ({}));
+  Object.assign(agent, { promptSections });
+  await runOnce("watch", "Check the build");
+  expect(promptSections.mock.calls).toEqual([[undefined, undefined]]);
+});
+
+it("tells a Solo chat whose plugin gives the working location to read its Canvas's folders", async () => {
+  const { host, deliver, solo, agent } = setup({}, [], {
+    content: workspaceCanvas({
+      folders: ["~/Development/app"],
+      worktree: { location: "~/Development/trees", baseBranch: "main" },
+      canvas: "Use the design system.",
+    }),
+  });
+  solo.add("solo-1");
+  Object.assign(agent, {
+    // A Solo chat is one conversation, with no thread root.
+    promptSections: (channelId?: string, thread?: string): SectionChoices =>
+      channelId === "solo-1" && !thread
+        ? {
+            plugin: {
+              id: "example.plugin",
+              sections: { "working-location": "Work in the task's folder." },
+            },
+          }
+        : {},
+  });
+  await deliver(
+    {
+      type: "mention",
+      event: message("2", "@Pi", { tags: [["h", "solo-1"]] }),
+    },
+    { channelId: "solo-1" },
+  ).run;
+  const [delivered] = host.requests("deliver");
+  expect(String(delivered?.params.instructions)).toContain(
+    '<plugin-section id="working-location" plugin="example.plugin">',
+  );
+  expect(String(delivered?.params.text)).toContain("They are for reading.");
+  expect(String(delivered?.params.text)).not.toContain("create a new worktree");
 });
 
 it("hands a conversation its own community repositories without changing its workspace", async () => {

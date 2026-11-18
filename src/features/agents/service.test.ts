@@ -2303,7 +2303,7 @@ describe("a conversation's sections", () => {
     expect(saved(f)).toHaveLength(1);
   });
 
-  it("are refused by a harness without them, such as goose or Pi", async () => {
+  it("are refused by a harness without them", async () => {
     const f = await ready({ conversationSections: undefined });
     await expect(
       f.plugin.agents.setConversationSections(f.agent.key, thread, {

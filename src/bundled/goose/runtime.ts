@@ -83,8 +83,13 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { ownerCanvas, readProject } from "../../features/agent-harness/project";
+import {
+  ownerCanvas,
+  readProject,
+  worksElsewhere,
+} from "../../features/agent-harness/project";
 import type { Exclusive } from "../../features/agent-harness/acp/agent-sessions";
+import { sectionsOf } from "../../features/agent-harness/sections/compose";
 import {
   bindSession,
   type TurnContext,
@@ -1265,7 +1270,11 @@ export class GooseRuntime {
             }),
           }),
         launch: async () => {
-          ({ systemPrompt } = await this.launch(agent, entry));
+          ({ systemPrompt } = await this.launch(
+            agent,
+            entry,
+            held ? key : undefined,
+          ));
           return { cwd: await workspace(), systemPrompt };
         },
         tools: entry.tools,
@@ -1464,6 +1473,7 @@ export class GooseRuntime {
                   session.channelWrites.startingCanvas(channelId),
                 )
             : undefined,
+          worksElsewhere(undefined, entry.handle?.promptSections?.(channelId)),
         )
       : Promise.resolve(undefined);
     const threadRead = (thread || (resumed && !dm)) && !topLevel;
@@ -1682,10 +1692,11 @@ export class GooseRuntime {
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => this.choice(entry),
-      // The prompt's other parts, its instructions, team, name and core
-      // memory, reach a running session in place as its next turn starts. A
-      // changed compaction threshold reaches only new sessions, in a goose
-      // started with it: open ones keep their history in theirs.
+      // The prompt's other parts, its instructions, team, name, core memory
+      // and its conversation's sections, reach a running session in place
+      // as its next turn starts. A changed compaction threshold reaches only
+      // new sessions, in a goose started with it: open ones keep their
+      // history in theirs.
       fingerprint: () =>
         JSON.stringify([
           entry.config.provider.trim() ? 0 : this.defaultsRevision,
@@ -1693,7 +1704,7 @@ export class GooseRuntime {
           entry.config.scope,
           addedKey(this.added()),
         ]),
-      launch: () => this.launch(agent, entry),
+      launch: (conversation) => this.launch(agent, entry, conversation),
     });
     this.agents.set(agent, entry);
     return entry;
@@ -1706,7 +1717,7 @@ export class GooseRuntime {
       effort: entry.config.effort,
     };
   }
-  private async launch(agent: AgentKey, entry: Entry) {
+  private async launch(agent: AgentKey, entry: Entry, conversation?: string) {
     const { workspace, instructions, scope } = entry.config;
     const memory = await this.core(agent);
     return {
@@ -1721,7 +1732,9 @@ export class GooseRuntime {
         instructions,
         team: entry.team,
         ...(memory === undefined ? {} : { memory }),
-        sections: entry.handle?.promptSections?.(),
+        // A conversation's prompt has the sections of the plugin that
+        // manages it.
+        sections: sectionsOf(entry.handle, conversation),
       }),
     };
   }

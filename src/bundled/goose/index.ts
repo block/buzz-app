@@ -141,6 +141,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     gateway: { harness: HARNESS },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
+    conversationSections: true,
     title: "Goose",
     icon: GooseLogoIcon,
     description:

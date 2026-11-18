@@ -2,13 +2,25 @@ import type { VerifiedEvent } from "nostr-tools";
 
 // Wire contract only: no imports beyond types, so the browser broker can load it.
 /** NIP-AR sync (docs/nips/NIP-AR.md "Sync" in block/buzz): a REQ with one
- * `"artifact": "current"` filter. `#h` is required; paging keys are refused. */
-export type ArtifactSyncFilter = Readonly<{
-  artifact: "current";
-  kinds?: readonly [45010];
-  "#h": readonly string[];
-  [tag: `#${string}`]: readonly string[] | undefined;
-}>;
+ * `"artifact": "current"` filter. A channel sync needs `#h`; a community sync
+ * (`"scope": "community"`) needs exactly one `#type` and no `#h`. Paging keys
+ * are refused. */
+export type ArtifactSyncFilter =
+  | Readonly<{
+      artifact: "current";
+      kinds?: readonly [45010];
+      scope?: never;
+      "#h": readonly string[];
+      [tag: `#${string}`]: readonly string[] | undefined;
+    }>
+  | Readonly<{
+      artifact: "current";
+      kinds?: readonly [45010];
+      scope: "community";
+      "#type": readonly [string];
+      "#h"?: never;
+      [tag: `#${string}`]: readonly string[] | undefined;
+    }>;
 
 export const ARTIFACT_REVISION_KIND = 45010;
 export const ARTIFACT_REMOVAL_KIND = 45011;
@@ -55,6 +67,10 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
       )
         throw new Error("Artifact sync kinds must be [45010]");
       out.kinds = [ARTIFACT_REVISION_KIND];
+    } else if (name === "scope") {
+      if (value !== "community")
+        throw new Error('Artifact sync accepts only "scope": "community"');
+      out.scope = value;
     } else if (/^#[A-Za-z0-9_.:-]{1,64}$/.test(name)) {
       if (
         !Array.isArray(value) ||
@@ -75,9 +91,12 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
   if (out.artifact !== "current")
     throw new Error('Artifact sync needs "artifact": "current"');
   const channels = out["#h"];
-  if (!Array.isArray(channels) || !channels.length)
+  if (out.scope) {
+    if (channels || (out["#type"] as string[] | undefined)?.length !== 1)
+      throw new Error("Community artifact sync needs one #type and no #h");
+  } else if (!Array.isArray(channels) || !channels.length)
     throw new Error("Artifact sync needs #h with at least one channel");
-  if (channels.length > ARTIFACT_SYNC_MAX_CHANNELS)
+  else if (channels.length > ARTIFACT_SYNC_MAX_CHANNELS)
     throw new Error(
       `Artifact sync accepts at most ${ARTIFACT_SYNC_MAX_CHANNELS} channels`,
     );

@@ -25,7 +25,8 @@ export type ArtifactSyncStatus =
   | "live"
   /** The last complete set; a new sync is starting. */
   | "stale"
-  /** The reader cannot read a channel that `#h` names. Terminal. */
+  /** The reader cannot read a channel that `#h` names, or has lost access to
+   * the community. Terminal. */
   | "restricted"
   /** This relay or transport has no sync. Use finite reads instead. */
   | "unsupported"

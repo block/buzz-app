@@ -417,6 +417,78 @@ it("saves the viewer's config artifacts when the broker admits kind 45010", asyn
   expect((await connectBrokerTransport()).configArtifacts).toBeUndefined();
 });
 
+it("reads and sets community artifact type policy through the broker's typed routes", async () => {
+  const community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  const type = "com.example.groups.group";
+  const command = signed(key, {
+    kind: 9034,
+    content: "",
+    tags: [
+      ["community", community],
+      ["type", type],
+      ["policy", "admins"],
+      ["prev", "0"],
+    ],
+  });
+  const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
+    if (url.endsWith("/session"))
+      return Response.json({
+        viewer: key.pubkey,
+        relayAuthor: "relay",
+        artifactCommunity: community,
+      });
+    if (url.endsWith("/artifact-type-policy"))
+      return Response.json({ policy: "admins", revision: command.id });
+    if (url.endsWith("-sign")) return Response.json(command);
+    return Response.json({ accepted: true, event_id: command.id });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const transport = await connectBrokerTransport();
+  expect(transport.artifactCommunity).toBe(community);
+  const policy = transport.artifactTypePolicy;
+  assert.exists(policy);
+  const signal = new AbortController().signal;
+  expect(await policy.read(type, signal)).toEqual({
+    policy: "admins",
+    revision: command.id,
+  });
+  const { created_at, kind, content, tags } = command;
+  await policy.writer.publish(
+    await policy.writer.sign({ kind, content, tags, created_at }, signal),
+    signal,
+  );
+  expect(
+    fetcher.mock.calls.map(([url, init]) => [
+      url,
+      init?.body ? JSON.parse(init.body as string) : null,
+    ]),
+  ).toEqual([
+    ["/api/relay/session", null],
+    ["/api/relay/artifact-type-policy", { type }],
+    [
+      "/api/relay/artifact-type-policy-sign",
+      { kind, content, tags, created_at },
+    ],
+    [
+      "/api/relay/artifact-type-policy-publish",
+      JSON.parse(JSON.stringify(command)),
+    ],
+  ]);
+  // A malformed or missing community offers neither.
+  for (const artifactCommunity of [community.toUpperCase(), 7, undefined]) {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        viewer: key.pubkey,
+        relayAuthor: "relay",
+        artifactCommunity,
+      }),
+    );
+    const other = await connectBrokerTransport();
+    expect(other.artifactCommunity).toBeUndefined();
+    expect(other.artifactTypePolicy).toBeUndefined();
+  }
+});
+
 it("exposes the relay HTTP base for display, preferring the broker's explicit value", async () => {
   const session = (extra: Record<string, unknown>) => async () =>
     Response.json({ viewer: key.pubkey, relayAuthor: "relay", ...extra });

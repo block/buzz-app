@@ -6,6 +6,7 @@ import {
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
 } from "../agents/catalog-envelope.ts";
 import { CANVAS_FRAME_BYTES } from "../channel-templates/canvas-limits.ts";
+import { ARTIFACT_TYPE_POLICY_KIND } from "./artifact-community.ts";
 
 /** False means proven non-delivery, not merely a negative or missing OK.
  * `refusal` is the log-safe summary; `reason` is the relay's own bounded text
@@ -122,11 +123,11 @@ export function createSocketPublications(wake: () => void) {
           /^(invalid|blocked|restricted|auth-required|rate-limited):/.test(
             data[3],
           ) ||
-          // Buzz workflow CAS/authority and Canvas/artifact CAS refusals precede
-          // domain mutation.
+          // Buzz workflow CAS/authority and Canvas/artifact/artifact-policy CAS
+          // refusals precede domain mutation.
           ([30620, 46020].includes(job.event.kind) &&
             /^(conflict|forbidden):/.test(data[3])) ||
-          ([40100, 45010].includes(job.event.kind) &&
+          ([40100, 45010, ARTIFACT_TYPE_POLICY_KIND].includes(job.event.kind) &&
             data[3].startsWith("conflict:"));
         job.finish(
           undefined,

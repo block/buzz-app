@@ -55,6 +55,30 @@ describe("artifactSyncFilter", () => {
     });
   });
 
+  it("accepts a community sync of one type, without #h or paging keys", () => {
+    const community = {
+      artifact: "current",
+      scope: "community",
+      "#type": ["com.example.groups.group"],
+    };
+    expect(artifactSyncFilter(community)).toEqual(community);
+    expect(artifactSyncFilter({ ...community, kinds: [45010] })).toEqual({
+      ...community,
+      kinds: [45010],
+    });
+    for (const [bad, reason] of [
+      [{ ...community, "#h": [C1] }, "one #type and no #h"],
+      [{ ...community, "#type": ["a.b", "c.d"] }, "one #type and no #h"],
+      [{ artifact: "current", scope: "community" }, "one #type and no #h"],
+      [{ ...community, "#type": [] }, "#type"],
+      [{ ...community, scope: "channel" }, '"scope"'],
+      [{ ...filter, scope: "channel" }, '"scope"'],
+      [{ ...community, limit: 10 }, '"limit"'],
+      [{ ...community, offset: 10 }, '"offset"'],
+    ] as const)
+      expect(() => artifactSyncFilter(bad)).toThrow(reason);
+  });
+
   it("refuses what the relay's predicate parser refuses", () => {
     for (const bad of [
       "NOT-A-UUID",

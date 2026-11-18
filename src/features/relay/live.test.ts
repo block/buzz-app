@@ -3285,13 +3285,17 @@ it.each([
     try {
       if (authenticated) await h.first.auth();
       // An abrupt TCP drop fires error, then close 1006.
+      // The close arrives later, so only the error can meet the deadline.
       h.first.onerror?.(new Event("error"));
+      await vi.advanceTimersByTimeAsync(10);
       h.first.close(1006);
-      await vi.advanceTimersByTimeAsync(delay - 1);
+      await vi.advanceTimersByTimeAsync(delay - 11);
       expect(h.sockets).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
-      // The late close must not schedule a second reconnect alongside it.
-      await vi.advanceTimersByTimeAsync(100);
+      expect(h.sockets).toHaveLength(2);
+      // The late close must not schedule a second reconnect, which would
+      // come at the doubled backoff.
+      await vi.advanceTimersByTimeAsync(500);
       expect(h.sockets).toHaveLength(2);
     } finally {
       h.owner.dispose();

@@ -9103,6 +9103,27 @@ it("seeds from history over a follow-up an earlier release saved as the draft, u
   expect(typed.input()).toHaveValue("@Honey ");
 });
 
+it("places the caret after a seed that lands while the composer is unfocused", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  // The composer was focused once, so a later focus request keeps its caret.
+  act(() => h.input().focus());
+  act(() => h.input().blur());
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({ focusRequest: 1 });
+  expect(h.input()).toHaveFocus();
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([7, 7]);
+});
+
 it("does not seed a channel composer until its window is ready", () => {
   const viewer = "e".repeat(64);
   const h = mount({}, undefined, viewer);

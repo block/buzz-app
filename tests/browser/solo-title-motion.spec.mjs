@@ -3,7 +3,8 @@ import { newChat } from "./navigation.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
 const other = "44444444-4444-8444-4444-444444444444";
-const title = "Release planning and follow-up for the next workspace review";
+const title =
+  "Release planning and follow-up for the next workspace review and the upcoming project launch checklist";
 const titleSelector = "[data-solo-chat-title] > [aria-hidden]";
 
 test.use({
@@ -116,6 +117,8 @@ test("Solo rename animates both titles without interrupting typing or overflowin
         }),
       ),
     );
+  await page.keyboard.type("Still typing");
+  await expect(composer).toHaveText("Still typing");
   const finishPhase = (values) =>
     values.evaluateAll((nodes) => {
       for (const node of nodes.flatMap((node) => [node, ...node.children]))
@@ -152,9 +155,12 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       ),
     )
     .toEqual([true, true]);
+  await page.keyboard.type(" through the rename");
   await finishPhase(titles);
   await expect(characters).toHaveCount(0);
   await expect(titles).toHaveText([title, title]);
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveText("Still typing through the rename");
 
   for (const [mode, width, scale] of [
     ["light", 1440, 1],
@@ -170,8 +176,15 @@ test("Solo rename animates both titles without interrupting typing or overflowin
     );
     for (const control of [row, renamedHeader]) {
       await expect(control).toBeVisible();
+      const value = control.locator(titleSelector);
+      await expect(value).toHaveCSS("text-overflow", "ellipsis");
+      await expect(value).toHaveCSS("overflow-x", "hidden");
+      if (scale > 1)
+        expect(
+          await value.evaluate((node) => node.scrollWidth > node.clientWidth),
+        ).toBe(true);
       expect(
-        await control.locator(titleSelector).evaluate(
+        await value.evaluate(
           (node, owner) => {
             const text = node.getBoundingClientRect();
             const bounds = owner.getBoundingClientRect();

@@ -118,7 +118,9 @@ export function createIdentityArchives(
     archived: empty,
   });
   // Replacement lookups for the current snapshot read, shared by every
-  // profile that shows the same key; a stop cancels them.
+  // profile that shows the same key; a stop cancels them. A new snapshot read
+  // only forgets them: one still in flight finishes unused, at most one per
+  // key per snapshot read.
   let lookups = new Map<
     string,
     { readAt: number | undefined; answer: Promise<string | undefined> }
@@ -452,15 +454,17 @@ export function createIdentityArchives(
     if (!snapshot.transient) publish(retired(snapshot));
   }
   /** Once a dropped connection is back: a snapshot that a view subscribes to
-   * and that the drop left stale, or whose reads failed during it, is read
-   * again, since nothing else would ask before that view's next opening. */
+   * is read again when the drop left it stale, its read failed during the
+   * drop, or a read is still retrying from the drop, since nothing else would
+   * ask before that view's next opening. */
   function reconnect() {
-    if (
-      !closed &&
-      listeners.size &&
-      (snapshot.status === "idle" || snapshot.status === "error")
-    )
-      void refresh();
+    if (closed || !listeners.size || snapshot.status === "ready") return;
+    if (snapshot.status === "loading") {
+      controller?.abort();
+      controller = undefined;
+      pending = undefined;
+    }
+    void refresh();
   }
   return {
     queries: Object.freeze({

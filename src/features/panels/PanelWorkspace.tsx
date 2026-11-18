@@ -20,6 +20,7 @@ import {
   type TabAction,
 } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { PaneShownScope } from "./pane-shown";
 import styles from "./Panels.module.css";
 import type { TabDragHost } from "./useTabDrag";
 
@@ -62,14 +63,6 @@ const TabHost = createContext<{
 } | null>(null);
 export function usePanelTabHost() {
   return useContext(TabHost);
-}
-/** Retained tab content stays mounted while another tab is selected. */
-const PaneShown = createContext(true);
-/** Whether this content's tab is the selected one; true outside a tab host.
- * Content that reads the relay can wait until it is shown, and read again
- * when it is selected again, as when a link returns to its retained tab. */
-export function usePanelShown() {
-  return useContext(PaneShown);
 }
 
 export function usePanelTabTitle(
@@ -568,9 +561,9 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              <PaneShown.Provider value={selected === item.id}>
+              <PaneShownScope shown={selected === item.id}>
                 {item.content}
-              </PaneShown.Provider>
+              </PaneShownScope>
             </div>
           </TabScope>
         ))}

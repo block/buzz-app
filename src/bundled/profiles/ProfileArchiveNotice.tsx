@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { usePanelShown } from "../../features/panels/PanelWorkspace";
+import { usePanelShown } from "../../features/panels/pane-shown";
 import { profileTarget } from "../../features/profiles/target";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";

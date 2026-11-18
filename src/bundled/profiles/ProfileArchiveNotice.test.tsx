@@ -15,6 +15,7 @@ import { type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import type { Agent, Agents } from "../../features/agents/service";
+import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
@@ -67,28 +68,29 @@ function delta(
  * a relay that ignores the authors filter. While `failing.deltas` or
  * `failing.snapshots` is set, those reads fail. While `held.snapshots` is
  * set, snapshot reads wait for it. `tabbed` shows the profile as a retained
- * channel tab beside a thread tab, as Channels and Inbox do. */
+ * channel tab beside a thread tab, as Channels and Inbox do; `docked` puts
+ * those tabs in a collapsible side dock, as Channels does. */
 function mount(
   events: RelayEvent[],
   extra: RelayEvent[] = [],
   {
     ownedBy,
     tabbed,
-  }: { ownedBy?: (viewer: string) => Agents; tabbed?: boolean } = {},
+    docked,
+  }: {
+    ownedBy?: (viewer: string) => Agents;
+    tabbed?: boolean;
+    docked?: boolean;
+  } = {},
 ) {
   const failing = { deltas: false, snapshots: false };
   const held: { snapshots?: Promise<void> } = {};
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
-    if (
-      held.snapshots &&
-      filters.some((filter) => filter.kinds?.includes(13535))
-    )
-      await held.snapshots;
-    if (
-      failing.snapshots &&
-      filters.some((filter) => filter.kinds?.includes(13535))
-    )
-      throw new Error("relay unavailable");
+    const snapshots = filters.some((filter) => filter.kinds?.includes(13535));
+    // A read that starts while failing fails, also after it is held.
+    const fails = snapshots && failing.snapshots;
+    if (snapshots && held.snapshots) await held.snapshots;
+    if (fails) throw new Error("relay unavailable");
     return filters.flatMap((filter) => {
       if (failing.deltas && filter.kinds?.includes(8002))
         throw new Error("relay unavailable");
@@ -158,7 +160,11 @@ function mount(
   );
   let openings = 0;
   const view = render(
-    tabbed ? <Workspace profile={panel(openings)} /> : panel(openings),
+    tabbed || docked ? (
+      <Workspace profile={panel(openings)} docked={docked} />
+    ) : (
+      panel(openings)
+    ),
   );
   /** Closes the profile and opens it again in the same session. */
   const reopen = () => view.rerender(panel(++openings));
@@ -188,10 +194,18 @@ function mount(
     reopen,
   };
 }
-/** A thread tab and the profile's tab, both retained while the other shows. */
-function Workspace({ profile }: { profile: ReactNode }) {
+/** A thread tab and the profile's tab, both retained while the other shows,
+ * optionally in a dock that keeps them while collapsed. */
+function Workspace({
+  profile,
+  docked,
+}: {
+  profile: ReactNode;
+  docked?: boolean | undefined;
+}) {
   const [value, select] = useState("profile");
-  return (
+  const [open, setOpen] = useState(true);
+  const tabs = (
     <PanelWorkspace
       value={value}
       select={select}
@@ -200,6 +214,17 @@ function Workspace({ profile }: { profile: ReactNode }) {
         { id: "profile", label: "Profile", content: profile },
       ]}
     />
+  );
+  if (!docked) return tabs;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen((shown) => !shown)}>
+        {open ? "Collapse" : "Expand"}
+      </button>
+      <PanelDock open={open} className={undefined} keepMounted>
+        {tabs}
+      </PanelDock>
+    </>
   );
 }
 const people = [
@@ -488,6 +513,82 @@ it("reads a retained profile tab's archive when it is selected again, and nothin
     expect(screen.queryByTestId("profile-archived")).toBeNull(),
   );
   expect(reads(13535)).toBe(snapshots + 2);
+});
+
+it("reads a collapsed dock's profile tab again when the dock opens, and nothing while it is collapsed", async () => {
+  const events: RelayEvent[] = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { query, archives } = mount(events, [], { docked: true });
+  const reads = (kind: number) =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(kind)).length;
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await user.click(screen.getByRole("button", { name: "Collapse" }));
+  const snapshots = reads(13535);
+  const deltas = reads(8002);
+  await act(() => archives.refresh());
+  await act(async () => {});
+  expect(reads(8002)).toBe(deltas);
+  // Another device unarchives the key, then the dock opens on the same tab.
+  events.push(
+    snapshot([], 1_700_000_050),
+    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
+  );
+  await user.click(screen.getByRole("button", { name: "Expand" }));
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+  expect(reads(13535)).toBe(snapshots + 2);
+});
+
+it("reads the archive again once the connection is back, while a read from the drop is still in flight", async () => {
+  const events: RelayEvent[] = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { archives, failing, held, drop, restore, query } = mount(events);
+  const snapshots = () =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(13535)).length;
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  // Settle startup access, as in the test above.
+  const before = snapshots();
+  restore();
+  await waitFor(() => expect(snapshots()).toBe(before + 1));
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  // The open profile reads again while the connection is down; that read
+  // will fail, but it is still in flight when the connection comes back.
+  let release!: () => void;
+  held.snapshots = new Promise((resolve) => {
+    release = resolve;
+  });
+  failing.snapshots = true;
+  const during = snapshots();
+  drop();
+  await waitFor(() => expect(snapshots()).toBe(during + 1));
+  failing.snapshots = false;
+  events.push(
+    snapshot([], 1_700_000_050),
+    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
+  );
+  restore();
+  // The session acts on the reconnect in a timer; let it run first.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await act(async () => {
+    delete held.snapshots;
+    release();
+  });
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+  expect(archives.snapshot().status).toBe("ready");
 });
 
 it("shares one delta read among the profiles that show a key under one snapshot read", async () => {

@@ -482,6 +482,20 @@ export function placeTable(
   return at;
 }
 
+export function tableAllowed(state: EditorState) {
+  const { $from, $to } = state.selection;
+  return $from.depth <= 1 && $to.depth <= 1;
+}
+
+export function hasTable(node: EditorNode) {
+  let found = false;
+  node.descendants((child) => {
+    if (child.type === table) found = true;
+    return !found;
+  });
+  return found;
+}
+
 export function insertTable(state: EditorState): Transaction | undefined {
   if (state.selection.$from.parent.type !== paragraph) return;
   const tr = state.tr;

@@ -180,8 +180,16 @@ export function ComposerFormattingTools({
                     format?.binding ?? (isLink ? linkBindings[0] : undefined);
                   const active = format && activeFormats.includes(format.mark);
                   const blocked =
-                    activeFormats.includes("table") &&
-                    blockFormats.some((item) => item.mark === format?.mark);
+                    (activeFormats.includes("table") &&
+                      blockFormats.some(
+                        (item) => item.mark === format?.mark,
+                      )) ||
+                    (format?.mark === "table" &&
+                      activeFormats.some((name) =>
+                        ["blockquote", "bullet_list", "ordered_list"].includes(
+                          name,
+                        ),
+                      ));
                   const apple = isApplePlatform(navigator.platform);
                   return (
                     <IconButton

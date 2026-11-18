@@ -26,6 +26,7 @@ import {
   deleteTableColumn,
   deleteTableRow,
   insertTable,
+  pasteGrid,
   paragraphTables,
   tableArrow,
   tableCursor,
@@ -168,12 +169,6 @@ describe("table serialization", () => {
   it("separates a table from the paragraphs around it with blank lines", () => {
     const root = doc(para("before"), grid([["a"], ["b"]]), para("after"));
     expect(markdown(root)).toBe("before\n\n| a |\n| --- |\n| b |\n\nafter");
-  });
-  it("serializes a table inside a quote", () => {
-    const root = doc(
-      schema.nodes.blockquote.create(null, [grid([["a"], ["b"]]), para("x")]),
-    );
-    expect(markdown(root)).toBe("> | a |\n> | --- |\n> | b |\n>\n> x");
   });
   it("counts draft text as one line per cell", () => {
     expect(
@@ -441,6 +436,83 @@ describe("table conversion", () => {
     });
     const next = apply(state, composerBlockLineBreak(state));
     expect(next.doc.child(0).type).toBe(table);
+  });
+});
+
+describe("tables at the top level only", () => {
+  const source = "| a |\n| - |\n| 1 |";
+  const quote = (...blocks: EditorNode[]) =>
+    schema.nodes.blockquote.create(null, blocks);
+  const list = (
+    name: "bullet_list" | "ordered_list",
+    ...blocks: EditorNode[]
+  ) =>
+    schema.nodes[name].create(
+      null,
+      schema.nodes.list_item.create(null, blocks),
+    );
+  const containers = {
+    quote: { make: quote, markdown: "> | a |\n> | - |\n> | 1 |" },
+    "bullet list": {
+      make: (...blocks: EditorNode[]) => list("bullet_list", ...blocks),
+      markdown: "- | a |\n  | - |\n  | 1 |",
+    },
+    "ordered list": {
+      make: (...blocks: EditorNode[]) => list("ordered_list", ...blocks),
+      markdown: "1. | a |\n   | - |\n   | 1 |",
+    },
+  };
+  const inside = (root: EditorNode) =>
+    EditorState.create({ doc: root, selection: Selection.atEnd(root) });
+
+  it("refuses a table inside a quote or a list item", () => {
+    const made = grid([["a"], ["b"]]);
+    expect(() => schema.nodes.blockquote.createChecked(null, made)).toThrow();
+    expect(() =>
+      schema.nodes.list_item.createChecked(null, [para("x"), made]),
+    ).toThrow();
+    expect(() => doc(para("x"), made).check()).not.toThrow();
+  });
+  it.each(Object.entries(containers))(
+    "starts no table in a %s",
+    (_name, { make }) => {
+      const state = inside(doc(make(para())));
+      expect(insertTable(state)).toBeUndefined();
+      expect(toggleComposerBlock(state, "table")).toBeUndefined();
+    },
+  );
+  it.each(Object.entries(containers))(
+    "keeps table source in a %s as text and sends it unchanged",
+    (_name, { make, markdown: sent }) => {
+      const root = doc(make(para(source)));
+      expect(markdown(root)).toBe(sent);
+      expect(withTables(root).eq(root)).toBe(true);
+      const tr = inside(root).tr;
+      expect(convertTables(tr, 0, root.content.size)).toBe(false);
+      expect(convertTypedTable(inside(root))).toBeUndefined();
+    },
+  );
+  it.each(Object.entries(containers))(
+    "pastes a grid into a %s as nothing",
+    (_name, { make }) => {
+      const state = inside(doc(make(para())));
+      expect(
+        pasteGrid(
+          state,
+          tableFromRows([
+            ["a", "b"],
+            ["1", "2"],
+          ]),
+        ),
+      ).toBe(undefined);
+    },
+  );
+  it("rejects a saved draft that nests a table", () => {
+    const nested = doc(quote(para("x"), grid([["h"], ["v"]])));
+    const json = JSON.parse(
+      JSON.stringify(projectComposerDocument(nested).draft),
+    );
+    expect(readComposerSnapshot(json.document)).toBeUndefined();
   });
 });
 

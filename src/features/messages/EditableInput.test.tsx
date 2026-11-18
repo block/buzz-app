@@ -5126,6 +5126,91 @@ describe("editable tables", () => {
     ]);
   });
 
+  describe("inside a list or quote", () => {
+    const grid = "| a | b |\n| - | - |\n| 1 | 2 |";
+    const composerHtml =
+      '<div data-buzz-copy="composer"><table><tbody><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table></div>';
+    const sheetsHtml =
+      "<meta charset='utf-8'><google-sheets-html-origin><table><tbody><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></tbody></table>";
+    const cases = [
+      ["bullet_list", "- ", "  "],
+      ["ordered_list", "1. ", "   "],
+      ["blockquote", "> ", "> "],
+    ] as const;
+    const sent = (prefix: string, indent: string, text: string) =>
+      prefix +
+      text
+        .split("\n")
+        .map((line, index) => (index ? indent : "") + line)
+        .join("\n")
+        .trimEnd();
+
+    it.each(cases)(
+      "keeps a table pasted into a %s as Markdown text, and restores it",
+      (kind, prefix, indent) => {
+        const flavors = [
+          [grid, ""],
+          [grid, composerHtml],
+          ["a\tb\n1\t2", sheetsHtml],
+        ] as const;
+        for (const [text, html] of flavors) {
+          const h = mount();
+          act(() => h.input.toggleFormat(kind));
+          paste(h.input, text, html);
+          expect(h.input.querySelector("table")).toBeNull();
+          expect(h.markdown()).toBe(sent(prefix, indent, text));
+          const saved = h.draft();
+          cleanup();
+          const again = mount(saved);
+          expect(again.input.querySelector("table")).toBeNull();
+          expect(again.markdown()).toBe(sent(prefix, indent, text));
+        }
+      },
+    );
+
+    it.each(cases)(
+      "keeps a table inserted into a %s as Markdown text",
+      (kind, prefix, indent) => {
+        const h = mount();
+        act(() => h.input.toggleFormat(kind));
+        act(() => {
+          h.input.insertText(grid);
+        });
+        expect(h.input.querySelector("table")).toBeNull();
+        expect(h.markdown()).toBe(sent(prefix, indent, grid));
+      },
+    );
+
+    it.each(cases)("keeps the lines typed into a %s as text", async (kind) => {
+      const h = mount();
+      act(() => h.input.toggleFormat(kind));
+      await h.user.keyboard(
+        "| a | b |{Shift>}{Enter}{/Shift}| - | - |{Shift>}{Enter}{/Shift}| 1 | 2 |{Shift>}{Enter}{/Shift}",
+      );
+      expect(h.input.querySelector("table")).toBeNull();
+      const saved = h.draft();
+      cleanup();
+      const again = mount(saved);
+      expect(again.input.querySelector("table")).toBeNull();
+      expect(again.markdown()).toBe(composerMarkdown(saved));
+    });
+
+    it("does not start a table from the formatting control", () => {
+      const h = mount();
+      act(() => h.input.toggleFormat("bullet_list"));
+      act(() => h.input.toggleFormat("table"));
+      expect(h.input.querySelector("table")).toBeNull();
+    });
+
+    it("still pastes a table at the top level beside a list", () => {
+      const h = mount();
+      act(() => h.input.toggleFormat("bullet_list"));
+      act(() => h.input.toggleFormat("bullet_list"));
+      paste(h.input, grid);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    });
+  });
+
   it("keeps a table in a restored draft", () => {
     const first = mount();
     act(() => {

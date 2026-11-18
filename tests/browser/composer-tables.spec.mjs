@@ -115,3 +115,28 @@ test("only spreadsheet cells paste as a table, never indented code", async ({
   await expect(input.locator("tr")).toHaveCount(2);
   await expect(input.locator("th").first()).toHaveText("Name");
 });
+
+test("a table pasted into a list item or a quote stays Markdown text", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  const grid = "| a | b |\n| - | - |\n| 1 | 2 |";
+  await page
+    .getByRole("button", { name: "Toggle formatting", exact: true })
+    .click();
+  await input.click();
+  for (const [name, container] of [
+    ["Bullet list", "ul"],
+    ["Quote", "blockquote"],
+  ]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Table", exact: true }),
+    ).toBeDisabled();
+    await paste(input, grid);
+    await expect(input.locator(container)).toHaveCount(1);
+    await expect(input.locator("table")).toHaveCount(0);
+    await expect(input).toHaveJSProperty("value", grid);
+    await input.fill("");
+  }
+});

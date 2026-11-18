@@ -880,7 +880,9 @@ and are asked to sign in again in Buzz.
   row. Shift+Enter moves down a row. Backspace in an empty table removes it. While
   the caret is in a table, a toolbar adds or deletes rows and columns, and Alt+F10
   moves focus to it. Wide or long tables scroll inside the composer. A table is
-  sent as the same Markdown, and Enter still sends.
+  sent as the same Markdown, and Enter still sends. Only cells copied from a
+  spreadsheet paste as a table, so tab-indented code stays text. Tables sit
+  outside lists and quotes; one pasted or typed there stays as Markdown text.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
   Some plugins prepare before a message sends. After a restart, Buzz can't

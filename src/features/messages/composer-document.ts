@@ -52,7 +52,7 @@ export const composerSchema = new Schema<
   | "strike"
 >({
   nodes: {
-    doc: { content: "block+" },
+    doc: { content: "(block | table)+" },
     paragraph: {
       group: "block",
       content: "inline*",
@@ -96,7 +96,6 @@ export const composerSchema = new Schema<
     ordered_list: { ...orderedList, group: "block", content: "list_item+" },
     list_item: { ...listItem, content: "paragraph block*" },
     table: {
-      group: "block",
       content: "table_row+",
       isolating: true,
       defining: true,

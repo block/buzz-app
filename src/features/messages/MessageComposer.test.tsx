@@ -17613,6 +17613,21 @@ describe("table editing controls", () => {
     expect(screen.queryByRole("toolbar", { name: "Table" })).toBeNull();
   });
 
+  it("disables the Table control in a list and a quote", async () => {
+    const h = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+    const control = await screen.findByRole("button", { name: "Table" });
+    expect(control).toBeEnabled();
+    for (const name of ["Bullet list", "Quote"]) {
+      fireEvent.mouseDown(screen.getByRole("button", { name }));
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(control).toBeDisabled());
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(control).toBeEnabled());
+    }
+    expect(h.input().querySelector("table")).toBeNull();
+  });
+
   it("moves focus into the toolbar with Alt+F10 and back with Escape", async () => {
     const h = mount();
     act(() => h.input().insertText("| a | b |\n| - | - |\n| 1 | 2 |"));

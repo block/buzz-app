@@ -89,12 +89,14 @@ import {
   deleteTable,
   deleteTableColumn,
   deleteTableRow,
+  hasTable,
   pasteGrid,
   leaveTable,
   tableArrow,
   tableBelow,
   tableCursor,
   tableFromRows,
+  tableAllowed,
   tableNeighbour,
   tableShape,
   tableTab,
@@ -1078,7 +1080,7 @@ export function EditableInput({
         current.current.maxLength
       ) {
         current.current.onPasteTooLong?.();
-        return false;
+        return true;
       }
       editor.dispatch(closeHistory(tr).scrollIntoView());
       editor.focus();
@@ -2560,15 +2562,15 @@ export function EditableInput({
               return true;
             const html = event.clipboardData?.getData("text/html") ?? "";
             const inCell = !!tableCursor(editor.state.selection.$from);
-            const grid = code || inCell ? undefined : tsvRows(plain, html);
-            if (grid) {
-              insertPastedGrid(tableFromRows(grid));
-              return true;
-            }
+            const flat = !tableAllowed(editor.state);
+            const grid = code || flat ? undefined : tsvRows(plain, html);
+            if (grid && insertPastedGrid(tableFromRows(grid))) return true;
             // Code takes visible text verbatim; prose preserves copied web links.
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
-            const copy = code || inCell ? undefined : buzzCopyDocument(html);
+            const found = code || inCell ? undefined : buzzCopyDocument(html);
+            const tableSource = !!found && flat && hasTable(found);
+            const copy = tableSource ? undefined : found;
             // Unformatted prose takes the text path: it inherits the caret's
             // marks and the link spacing below. Structure pastes as nodes.
             const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
@@ -2596,6 +2598,7 @@ export function EditableInput({
               end = source.source(editor.state.selection.to);
             let text =
               (!code &&
+                !tableSource &&
                 (prose ??
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||

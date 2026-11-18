@@ -441,12 +441,22 @@ and are asked to sign in again in Buzz.
   without sharable attachment metadata (including custom emoji), show an
   explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
-- Select text in a message, such as by double-clicking a word, and choose
-  **Quote** (or press Q) to add it to the end of that conversation's draft as a
-  quote, ready for your reply below it. A selection in a thread quotes into the
-  thread's reply box. Quoting keeps formatting and links but does not notify
-  anyone mentioned in the quoted text. The floating Quote button hides while
-  a menu, picker, or dialog is open.
+- Select text in a message, such as by double-clicking a word, then right-click
+  the highlight and choose **Quote highlight** (or press Q) to add it to that
+  conversation's draft as a quote, ready for your reply below it. Published
+  messages include a “From” attribution linking to the original above the quote,
+  followed by a blank line for your reply. A selection
+  in a thread quotes into the thread's reply box. Quoting keeps formatting and
+  links but does not notify anyone mentioned in the quoted text. **Copy highlight**
+  keeps formatting and links where supported, with a plain-text alternative.
+  Both highlight actions appear above the usual message actions when you right-click
+  highlighted text. On a selected link, **Copy link URL** copies the link's
+  destination; **Copy message link** copies the message's permalink.
+  Supported browsers keep that text highlighted while the menu is
+  open. On touch devices, select text and open the message's **⋯** menu for these
+  highlight actions. Only messages included in the selection offer them; a
+  selection spanning messages works from any included message. Long presses
+  keep the native text-selection menu.
 - Copying or quoting a selection that takes in a message from its start, such
   as one dragged from beside the message or across several messages, puts
   that message's author and time on one line above its text. The time is left

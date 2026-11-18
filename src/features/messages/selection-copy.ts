@@ -59,9 +59,10 @@ export function serializeNode(
   node: Node,
   format: CopyFormat,
   range?: Range,
+  { includeHiddenBylines = true }: { includeHiddenBylines?: boolean } = {},
 ): string {
   if (format === "markdown") return markdown(node, range);
-  const value = serialize(node, format, range);
+  const value = serialize(node, format, range, includeHiddenBylines);
   // A byline is the first line of the paragraph it precedes, so no consumer
   // spaces the two apart; before any other block it is its own paragraph.
   return format === "html"
@@ -80,18 +81,21 @@ const bylineParagraph = new RegExp(`${bylineOpen}(.*?)</p>(<p>)?`, "gs");
 function serialize(
   node: Node,
   format: CopyFormat,
-  range?: Range,
+  range: Range | undefined,
+  includeHiddenBylines: boolean,
   inList = false,
 ): string {
   if (range && !range.intersectsNode(node)) return "";
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
-  if (!(node instanceof Element)) return children(node, format, range);
+  if (!(node instanceof Element))
+    return children(node, format, range, includeHiddenBylines);
   // A message's byline copies as one line, name then time, whether the row
   // shows it or a grouped row keeps it for assistive technology alone. A
   // selection holding only part of it copies that text.
   const author = node.getAttribute("data-copy-author");
-  if (author && whole(node, range)) {
+  const selectable = !unselectable(node);
+  if (author && (includeHiddenBylines || selectable) && whole(node, range)) {
     const seconds = Number.parseFloat(
       node.getAttribute("data-copy-time") ?? "",
     );
@@ -102,7 +106,7 @@ function serialize(
       ? `${bylineOpen}<strong>${escapeHtml(author)}</strong>${escapeHtml(time)}</p>`
       : author + time;
   }
-  if (unselectable(node)) return "";
+  if (!selectable) return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";
   // SVG tag names keep their case.
@@ -140,7 +144,7 @@ function serialize(
   // Element children that copy as something, so a list can tell which items
   // it keeps without serializing them again.
   const kept: Element[] = [];
-  const inner = children(node, format, range, kept);
+  const inner = children(node, format, range, includeHiddenBylines, kept);
   // A triple-click ends its range at the next block's start, often past an
   // empty reaction row, and a drag can start at a block's end. An empty layout
   // container, or a block holding none of the selection, copies as nothing,
@@ -445,7 +449,8 @@ function within(element: Element, range: Range): Range {
 function children(
   node: Node,
   format: CopyFormat,
-  range?: Range,
+  range: Range | undefined,
+  includeHiddenBylines: boolean,
   kept?: Element[],
 ): string {
   let text = "";
@@ -456,6 +461,7 @@ function children(
       child,
       format,
       range,
+      includeHiddenBylines,
       /^(UL|OL)$/.test(node.nodeName),
     );
     if (value && child instanceof Element) kept?.push(child);

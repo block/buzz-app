@@ -16,7 +16,6 @@ import { moveMessageSelection } from "./message-selection";
 import { MessageSelection } from "./use-message-selection";
 import { MessageEditScope } from "./MessageEditScope";
 import { useMessageSelectionCopy } from "./selection-copy";
-import { SelectionQuote } from "./SelectionQuote";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -2272,8 +2271,12 @@ function ThreadMessages({
         />
       </section>
       {/* After the scroller, so its ref is attached when this registers. */}
-      <MessageSelection list={scroller} rows={rows} session={session} />
-      <SelectionQuote list={scroller} />
+      <MessageSelection
+        list={scroller}
+        rows={rows}
+        session={session}
+        conversationId={rootId}
+      />
       {preview && (
         <ChannelJoinNotice
           ready={

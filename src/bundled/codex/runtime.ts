@@ -45,9 +45,11 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
 import {
   referencedFolders,
@@ -2369,17 +2371,27 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.key);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    // A chat its owner is still creating has nothing earlier to read.
-    const starting = (await reads.channel(request.conversation.channelId))
-      ?.starting;
-    return conversationHistory(
-      request.event,
-      request.conversation,
-      (filters) =>
-        starting ? Promise.resolve([]) : reads.read(filters, signal),
-      reads,
-      reads.workflowAuthority(),
-    );
+    try {
+      // A chat its owner is still creating has nothing earlier to read.
+      const starting = (await reads.channel(request.conversation.channelId))
+        ?.starting;
+      return await conversationHistory(
+        request.event,
+        request.conversation,
+        (filters) =>
+          starting ? Promise.resolve([]) : reads.read(filters, signal),
+        reads,
+        reads.workflowAuthority(),
+      );
+    } catch (error) {
+      // The relay session already retried; a slow relay costs the turn its
+      // earlier messages, not the turn itself.
+      if (signal.aborted || !isRetryableRead(error)) throw error;
+      console.warn("Codex could not read the conversation", error);
+      // Without history, the turn still names who asked.
+      await readAuthorNames(reads, [request.event]);
+      return "";
+    }
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.

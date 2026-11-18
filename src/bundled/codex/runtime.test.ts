@@ -17,6 +17,7 @@ import {
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
   fileStore,
@@ -2460,6 +2461,49 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
+});
+it("starts a turn without history when the history read times out", async () => {
+  const f = fixture();
+  f.read.mockRejectedValue(
+    new ReadError("unavailable", "Relay read timed out"),
+  );
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.read).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(f.starts()[0]?.params)).toContain("FIRST_REQUEST");
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
+});
+it("accepts a steer without history when the history read times out", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // The native transport rejects with its own message, not a ReadError.
+  f.read.mockRejectedValue("Relay request could not be confirmed");
+  await f.runtime.run(f.delivery("STEER_REQUEST"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  expect(f.read).toHaveBeenCalledTimes(2);
+  expect(
+    JSON.stringify(f.sent.find((wire) => wire.method === "turn/steer")?.params),
+  ).toContain("STEER_REQUEST");
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
+});
+it("still fails a turn whose history read is denied", async () => {
+  const f = fixture();
+  f.read.mockRejectedValue(new ReadError("denied", "Relay read failed (403)"));
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "Codex could not finish: Relay read failed (403).",
+  });
+  expect(f.starts()).toHaveLength(0);
 });
 it("cuts delayed history messages off before the request while applying current edits", async () => {
   const f = fixture();

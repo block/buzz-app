@@ -964,3 +964,30 @@ it("refuses a staged opening the opening check closes after consent opened", asy
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
 });
+
+it.each([
+  ["Public", "member"],
+  ["View only", "guest"],
+] as const)(
+  "keeps switching an already %s channel open when opening is blocked",
+  async (current, joinRole) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "public", joinRole });
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        openingBlocked
+      />,
+    );
+    const control = screen.getByRole("combobox", { name: "General access" });
+    await waitFor(() => expect(control).toHaveTextContent(current));
+    await user.click(control);
+    for (const name of ["Public", "View only"])
+      expect(await screen.findByRole("option", { name })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+  },
+);

@@ -37,6 +37,9 @@ function setup(
   initialJoinRole: "member" | "guest" | undefined = undefined,
   members?: string[],
   profilesLoaded = true,
+  /** Profiles and a complete inventory arrive only through the loads the
+   * component starts (profiles.ensure, agentChoices.retain). */
+  onDemand = false,
 ) {
   let clock = 100,
     role = "owner",
@@ -120,14 +123,14 @@ function setup(
     { name: "Morgan" },
   ];
   let people = new Map<string, Profile>(
-    profilesLoaded ? others.map(person) : [],
+    profilesLoaded && !onDemand ? others.map(person) : [],
   );
   const owners = new Map<string, string>();
   const profileListeners = new Set<() => void>();
   let inventory: AgentChoicesSnapshot = Object.freeze({
     ...owner.session.agentChoices.snapshot(),
     identities: [],
-    complete: true,
+    complete: !onDemand,
     pending: false,
   });
   const inventoryListeners = new Set<() => void>();
@@ -143,7 +146,14 @@ function setup(
           profileListeners.add(listener);
           return () => profileListeners.delete(listener);
         },
-        ensure: async () => {},
+        ensure: async (keys: readonly string[]) => {
+          const missing = keys.filter(
+            (key) => onDemand && others.includes(key) && !people.has(key),
+          );
+          if (!missing.length) return;
+          people = new Map([...people, ...missing.map(person)]);
+          for (const listener of profileListeners) listener();
+        },
       },
       agentChoices: {
         ...owner.session.agentChoices,
@@ -152,7 +162,13 @@ function setup(
           inventoryListeners.add(listener);
           return () => inventoryListeners.delete(listener);
         },
-        retain: () => () => {},
+        retain: () => {
+          if (onDemand && !inventory.complete) {
+            inventory = Object.freeze({ ...inventory, complete: true });
+            for (const listener of inventoryListeners) listener();
+          }
+          return () => {};
+        },
         ensure: () => {},
       },
     }),
@@ -811,3 +827,29 @@ it("refuses a View only pick the opening check closes after it was made", async 
   await ready();
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+it("closes opening from the profile and inventory loads it starts", async () => {
+  setup(true, "private", undefined, [viewer, "d".repeat(64)], true, true);
+  await ready();
+  const user = userEvent.setup();
+  await waitFor(async () => expect(await viewOnlyDisabled(user)).toBe(true));
+});
+
+it.each([
+  ["Public", "member"],
+  ["View only", "guest"],
+] as const)(
+  "keeps switching an already %s chat open when someone else is a member",
+  async (current, joinRole) => {
+    setup(true, "public", joinRole, [viewer, "d".repeat(64)]);
+    await ready();
+    expect(accessControl()).toHaveTextContent(current);
+    const user = userEvent.setup();
+    await user.click(accessControl());
+    for (const name of ["Public", "View only"])
+      expect(await screen.findByRole("option", { name })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+  },
+);

@@ -1597,3 +1597,29 @@ it("Back never walks history behind a pending Share, and the dialog still closes
     await ctx.fiber.dispose();
   }
 });
+
+it("closes opening once Manage members loads a person member's profile", async () => {
+  const t = fixture(true);
+  t.setSourceMembers([t.viewer.pubkey, t.aria.pubkey]);
+  await t.ready();
+  t.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const audience = await screen.findByRole("combobox", {
+    name: "General access",
+  });
+  await waitFor(() => expect(audience).toBeEnabled());
+  await waitFor(async () => {
+    await user.click(audience);
+    const option = await screen.findByRole("option", { name: "View only" });
+    await user.keyboard("{Escape}");
+    expect(option).toHaveAttribute("aria-disabled", "true");
+  });
+  await user.click(audience);
+  expect(
+    await screen.findByRole("option", { name: "View only" }),
+  ).toHaveAccessibleDescription(
+    "Has other members. Create a new public channel instead.",
+  );
+  expect(t.published).toEqual([]);
+});

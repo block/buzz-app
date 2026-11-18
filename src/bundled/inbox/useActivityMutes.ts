@@ -16,12 +16,13 @@ export function useActivityMutes({ sidebarPreferences }: RelaySession) {
   return useMemo(() => new Set(muted), [muted]);
 }
 
-/** DM rows target their channel. A muted non-DM row shows only direct mentions. */
+/** DM rows target their channel. A muted non-DM row shows direct mentions and
+ * explicit manual-unread reminders. */
 export function activityConversation(
   item: InboxItem,
   muted: ReadonlySet<string>,
 ): InboxItem | undefined {
   return item.target.kind === "channel" || !muted.has(item.channelId)
     ? item
-    : item.mention;
+    : (item.mention ?? (item.manual ? item : undefined));
 }

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { devicePreference } from "./device-preference";
 import { editKeyPreference } from "./edit-key-preference";
 import { sendKeyPreference } from "./send-key-preference";
 
@@ -107,4 +108,24 @@ it("isolates unsaved choices and their save errors, and ignores unrelated storag
   expect(edit.result.current).toBe(false);
   expect(editError.result.current).toBeNull();
   expect(send.result.current).toBe(true);
+});
+
+it("starts on with defaultEnabled until a choice is saved", () => {
+  const key = "buzz-test-default-on.v1";
+  const preference = devicePreference(
+    key,
+    "buzz-test-default-on-changed",
+    true,
+  );
+  expect(preference.read()).toBe(true);
+  localStorage.setItem(key, "unknown");
+  expect(preference.read()).toBe(true);
+  expect(preference.set(false)).toBeNull();
+  expect(preference.read()).toBe(false);
+  expect(preference.set(true)).toBeNull();
+  expect(localStorage.getItem(key)).toBe("on");
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("unavailable");
+  });
+  expect(preference.read()).toBe(true);
 });

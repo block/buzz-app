@@ -20,17 +20,21 @@ type HostToolProps = Omit<ComposerToolProps, keyof TargetOpener>;
 export function ComposerTools({
   registry,
   renderLeading,
+  placement,
   ...props
 }: HostToolProps & {
   registry: ContributionReader<ComposerTool>;
   /** Host layout for tools ordered before the default group; preserves DOM order. */
   renderLeading?: (tools: ReactNode) => ReactNode;
+  /** Which tools this instance renders: the tool row's, or those placed beside Send. */
+  placement?: "send" | undefined;
 }) {
-  const tools = useSyncExternalStore(
+  const all = useSyncExternalStore(
     registry.subscribe,
     registry.snapshot,
     registry.snapshot,
   );
+  const tools = all.filter((tool) => tool.placement === placement);
   // Activation/re-enable order must not shuffle the visual or keyboard order.
   const order = (tool: ComposerTool) =>
     Number.isFinite(tool.order) ? (tool.order ?? 0) : 0;

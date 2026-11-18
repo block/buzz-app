@@ -157,6 +157,8 @@ function usageCard(
         Card = card.component;
       },
     },
+    conversation: { registerTool: () => {} },
+    effect: () => {},
   } as unknown as Parameters<PluginModule["apply"]>[0]);
   return {
     Card,

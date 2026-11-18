@@ -1,8 +1,8 @@
 import type { PluginModule } from "../../plugins/api";
 import type { PluginInstaller } from "../../plugins/installer";
-import { loadIndex } from "./catalog";
 import { communityIndexUrl, listingRepository } from "./config";
 import { CommunityPluginsPage } from "./CommunityPluginsPage";
+import { indexSource } from "./index-source";
 import { createRecorder } from "./recorder";
 
 export const inject = [
@@ -19,18 +19,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     | PluginInstaller
     | undefined;
   const inventory = ctx.pluginInventory;
+  const index = indexUrl && host ? indexSource(host, indexUrl) : undefined;
   // Where the page can't browse, its switch isn't shown, so nothing is recorded.
-  const recorder =
-    indexUrl && host
-      ? createRecorder({
-          relay: ctx.relay,
-          listed: listedIds(host, indexUrl),
-          inventory: {
-            installed: () => inventory.installed(),
-            subscribe: (listener) => inventory.subscribe(listener),
-          },
-        })
-      : undefined;
+  const recorder = index
+    ? createRecorder({
+        relay: ctx.relay,
+        listed: index.listed,
+        inventory: {
+          installed: () => inventory.installed(),
+          subscribe: (listener) => inventory.subscribe(listener),
+        },
+      })
+    : undefined;
   if (recorder) ctx.effect(() => () => recorder.stop());
   const openPluginSettings = () =>
     void ctx.navigation.open({
@@ -48,6 +48,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         indexUrl={indexUrl}
         listingRepository={listingRepository(indexUrl)}
         host={host}
+        readIndex={index?.read}
         installer={installer}
         relay={ctx.relay}
         recorder={recorder}
@@ -56,23 +57,3 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
 };
-
-const LISTED_TTL_MS = 10 * 60_000;
-
-/** The index's manifest ids, read again after a while; a failed read isn't kept. */
-function listedIds(host: Parameters<typeof loadIndex>[0], url: string) {
-  let cached: { at: number; ids: Promise<ReadonlySet<string>> } | undefined;
-  return () => {
-    if (!cached || Date.now() - cached.at > LISTED_TTL_MS) {
-      const ids = loadIndex(host, url).then(
-        (index) => new Set(index.plugins.map((plugin) => plugin.id)),
-      );
-      const entry = { at: Date.now(), ids };
-      cached = entry;
-      ids.catch(() => {
-        if (cached === entry) cached = undefined;
-      });
-    }
-    return cached.ids;
-  };
-}

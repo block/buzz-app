@@ -60,6 +60,17 @@ it("parses repository names, folders, links and refs", () => {
   expect(describeSource({ owner: "o", repo: "r", path: "p" })).toBe("o/r/p");
 });
 
+it("accepts the folder names a listing and the installer accept", () => {
+  expect(parseSourceInput("octo/notes/packages/@octo/notes+v2")).toEqual({
+    owner: "octo",
+    repo: "notes",
+    path: "packages/@octo/notes+v2",
+  });
+  expect(parseSourceInput(`octo/notes/${"a".repeat(101)}`)).toBeNull();
+  expect(parseSourceInput(`octo/notes/${"a/".repeat(9)}`)).toBeNull();
+  expect(parseSourceInput("octo/notes/a b")).toBeNull();
+});
+
 it("finds a built plugin through GitHub's API on the default branch", async () => {
   const host = fakeHost({
     [api]: publicRepo,

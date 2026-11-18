@@ -103,10 +103,6 @@ export function useCommunityCounts(
     return () => controller.abort();
   }, [session, show, version, written]);
 
-  useEffect(() => {
-    if (version) void recorder?.sync().catch(() => {});
-  }, [recorder, version]);
-
   const vote = useCallback(
     async (id: string, on: boolean) => {
       const { session: current, counts } = latest.current;

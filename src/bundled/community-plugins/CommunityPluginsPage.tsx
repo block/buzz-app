@@ -89,6 +89,8 @@ export type CommunityPluginsPageProps = {
   /** The GitHub repository, `owner/repo`, that takes listing requests. */
   listingRepository?: string | undefined;
   host: Requester | undefined;
+  /** Reads the index; `fresh` skips a recent read. Shared with the recorder. */
+  readIndex?: ((fresh: boolean) => Promise<Index>) | undefined;
   installer: PluginInstaller | undefined;
   relay?: RelayData | undefined;
   recorder?: Recorder | undefined;
@@ -99,6 +101,7 @@ export function CommunityPluginsPage({
   indexUrl,
   listingRepository,
   host,
+  readIndex,
   installer,
   relay,
   recorder,
@@ -121,8 +124,14 @@ export function CommunityPluginsPage({
     if (!indexUrl || !host) return;
     let current = true;
     setState((old) => ({ ...old, loading: true, error: undefined }));
-    loadIndex(host, indexUrl).then(
-      (index) => current && setState({ index, loading: false }),
+    const fresh = version > 0;
+    (readIndex ? readIndex(fresh) : loadIndex(host, indexUrl)).then(
+      (index) => {
+        if (!current) return;
+        setState({ index, loading: false });
+        // The recorder reads this same index, so a delisting shown here applies.
+        if (fresh) void recorder?.sync().catch(() => {});
+      },
       (error: unknown) =>
         current &&
         setState((old) => ({
@@ -137,7 +146,7 @@ export function CommunityPluginsPage({
     return () => {
       current = false;
     };
-  }, [indexUrl, host, version]);
+  }, [indexUrl, host, readIndex, version]);
 
   const install = async (listing: Listing) => {
     if (!installer || phases.get(listing.slug) === "review") return;

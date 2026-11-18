@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import type { InstalledPlugin } from "../../features/plugin-inventory/service";
-import { INSTALL_TYPE, recordId, VOTE_TYPE } from "./community-counts";
+import {
+  INSTALL_TYPE,
+  MAX_RECONCILE,
+  recordId,
+  VOTE_TYPE,
+} from "./community-counts";
 import { createRecorder, RECORD_KEY, type Recorder } from "./recorder";
 import { fakeCommunity, switchableRelay } from "./testing";
 
@@ -376,4 +381,66 @@ it("withdraws nothing when the index can't be read", async () => {
   fail = true;
   await expect(recorder.sync()).rejects.toThrow("offline");
   expect(on(community)).toEqual(["octo.notes"]);
+});
+
+it("keeps the opt-out pending until every batch is withdrawn", async () => {
+  const community = fakeCommunity();
+  const many: InstalledPlugin[] = Array.from(
+    { length: MAX_RECONCILE + 10 },
+    (_, n) => ({ id: `octo.p${n}`, source: "local" }),
+  );
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory(many),
+    listed: async () => new Set(many.map((plugin) => plugin.id)),
+    delayMs: 60_000,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  expect(on(community)).toHaveLength(many.length);
+  await recorder.setRecording(false);
+  expect(on(community)).toEqual([]);
+});
+
+it("reports an opt-out it can't confirm when the viewer's records were too many to read", async () => {
+  const community = fakeCommunity();
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    listed,
+    delayMs: 60_000,
+    retryMs: 60_000,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  const read = community.snapshotRead.getMockImplementation();
+  const foreign = { ...community.store.heads()[0], pubkey: bob };
+  community.snapshotRead.mockImplementation(async (filters) => {
+    const page = (await read?.(filters)) ?? [];
+    const filter = filters[0] as Record<string, unknown>;
+    return filter["#installer"]
+      ? [...page, ...Array(500 - page.length).fill(foreign)]
+      : page;
+  });
+  await expect(recorder.setRecording(false)).rejects.toThrow(
+    "Some of your records couldn't be read.",
+  );
+  expect(on(community)).toEqual([]);
+});
+
+it("checks the index again on its own and withdraws a plugin it stopped listing", async () => {
+  const community = fakeCommunity();
+  let ids = new Set(["octo.notes", "octo.board"]);
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes, board]),
+    listed: async () => ids,
+    delayMs: 1,
+    relistMs: 5,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  expect(on(community)).toEqual(["octo.board", "octo.notes"]);
+  ids = new Set(["octo.notes"]);
+  await vi.waitFor(() => expect(on(community)).toEqual(["octo.notes"]));
 });

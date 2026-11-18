@@ -268,7 +268,7 @@ export async function readCounts(
   ]);
   const mine = (type: RecordType) =>
     new Set(
-      own
+      own.records
         .filter((record) => record.type === type && record.on)
         .map((record) => record.id),
     );
@@ -320,16 +320,23 @@ export type OwnRecord = Readonly<{
   event: EventData;
 }>;
 
-/** The viewer's own current install and upvote records in `channel`. */
+/** The viewer's own current install and upvote records in `channel`.
+ * `partial` means the relay's offset limit stopped the read, so records may
+ * be missing. */
 export async function readOwn(
   session: RelaySession,
   channel: string,
   signal?: AbortSignal,
-): Promise<OwnRecord[]> {
+): Promise<{ records: OwnRecord[]; partial: boolean }> {
   const { read, viewer } = capabilities(session);
   const records: OwnRecord[] = [];
+  let partial = false;
   for (const type of [INSTALL_TYPE, VOTE_TYPE] as const) {
-    for (let offset = 0; offset <= MAX_OFFSET; offset += PAGE) {
+    for (let offset = 0; ; offset += PAGE) {
+      if (offset > MAX_OFFSET) {
+        partial = true;
+        break;
+      }
       const page = await read(
         [
           {
@@ -358,7 +365,7 @@ export async function readOwn(
       if (page.length < PAGE) break;
     }
   }
-  return records;
+  return { records, partial };
 }
 
 /** Turns the viewer's install or upvote record for plugin `id` on or off,

@@ -210,13 +210,16 @@ is used first. Otherwise it's the oldest open, unarchived one, whoever created
 it. When a complete lookup finds none, the first member's Buzz to need it
 creates it, and joins it to write.
 
-The plugin records every installed plugin, wherever it came from: from the
-page, a Git repository, or a local folder. Bundled plugins aren't recorded. In
-the background, at startup, whenever the installed set changes and whenever
-another community is selected, it brings the member's records in that
-community in line with what is installed, adding missing ones and withdrawing
-those for removed plugins. It writes only what differs, at most 50 records per
-pass, for the plugins the index lists; other installed plugins aren't recorded, and a plugin the index stops listing has its records withdrawn. A member's install or upvote is one NIP-AR artifact (type
+The plugin records the installed plugins the index lists, wherever they were
+installed from: the page, a Git repository or a local folder. Plugins the index
+doesn't list, and bundled plugins, aren't recorded. In the background, at
+startup, whenever the installed set changes, whenever another community is
+selected and every 10 minutes, it brings the member's records in that community
+in line: it adds missing ones and withdraws those for removed or delisted
+plugins. It writes only what differs, in batches of 50 until it's done. The page
+and the recorder share one index read, so a refresh that shows a plugin is
+delisted also withdraws its records. If the index can't be read, nothing is
+withdrawn. A member's install or upvote is one NIP-AR artifact (type
 `buzz.plugin.install` or `buzz.plugin.vote`) with the plugin's manifest id in a
 `plugin` tag and the writer in an `installer` tag. An install also records the
 kind of source in a `source` tag, `git` or `local`, never the repository, which

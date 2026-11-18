@@ -22,13 +22,16 @@ export type CheckResult =
   | { ok: false; message: string };
 
 const NAME = /^[A-Za-z0-9_.-]{1,100}$/;
-const SEGMENT = /^[A-Za-z0-9._-]+$/;
+// The same folder names a listing key and the installer accept.
+const SEGMENT = /^[A-Za-z0-9._@+-]{1,100}$/;
+const MAX_SEGMENTS = 8;
 const REF = /^[A-Za-z0-9_][A-Za-z0-9_./+-]{0,199}$/;
 const PLUGIN_ID = /^[a-z][a-z0-9.-]{0,79}$/;
 
 const validName = (value: string) =>
   NAME.test(value) && value !== "." && value !== "..";
 const validPath = (segments: string[]) =>
+  segments.length <= MAX_SEGMENTS &&
   segments.every(
     (segment) => SEGMENT.test(segment) && segment !== "." && segment !== "..",
   );

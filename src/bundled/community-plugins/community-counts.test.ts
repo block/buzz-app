@@ -364,7 +364,7 @@ it("reads only the viewer's own records", async () => {
     true,
     "00000009-0000-4000-8000-000000000000",
   );
-  const own = await readOwn(community.session, channel);
+  const { records: own } = await readOwn(community.session, channel);
   expect(own.map(({ type, id, on }) => ({ type, id, on }))).toEqual([
     { type: INSTALL_TYPE, id: key, on: true },
     { type: VOTE_TYPE, id: key, on: false },
@@ -376,7 +376,7 @@ it("reconciles records with what is installed, within a bound", async () => {
   await record(community, INSTALL_TYPE, alice, other);
   await record(community, VOTE_TYPE, alice, other);
   await record(community, INSTALL_TYPE, alice, "octo.kept");
-  const own = await readOwn(community.session, channel);
+  const { records: own } = await readOwn(community.session, channel);
   expect(
     reconcile(
       own,

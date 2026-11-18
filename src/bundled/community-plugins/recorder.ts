@@ -16,6 +16,13 @@ import {
 /** Each community's saved choice, by session scope: `{ [scope]: boolean }`. */
 export const RECORD_KEY = "buzz.community-plugins.record.v2";
 const RETRY_MS = 30_000;
+/** How often the recorder checks the index again for listings that changed. */
+const RELIST_MS = 10 * 60_000;
+/** Batches one pass writes before it reports that it didn't finish. */
+const MAX_BATCHES = 20;
+
+/** The viewer's records couldn't all be read or written in one pass. */
+export class RecordsIncomplete extends Error {}
 
 export type Inventory = Readonly<{
   installed(): readonly InstalledPlugin[] | undefined;
@@ -67,6 +74,7 @@ export function createRecorder({
   storage = defaultStorage(),
   delayMs = 2_000,
   retryMs = RETRY_MS,
+  relistMs = RELIST_MS,
 }: Readonly<{
   relay: RelayData;
   inventory: Inventory;
@@ -75,6 +83,7 @@ export function createRecorder({
   storage?: Storage | undefined;
   delayMs?: number;
   retryMs?: number;
+  relistMs?: number;
 }>): Recorder {
   const listeners = new Set<() => void>();
   const done = new WeakMap<
@@ -86,6 +95,7 @@ export function createRecorder({
   const writes = new Set<Promise<unknown>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  let relist: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | undefined;
   let again = false;
   let stopped = false;
@@ -132,29 +142,35 @@ export function createRecorder({
         done.set(session, { fingerprint, channel: undefined });
         return;
       }
-      const changes = reconcile(
-        await readOwn(session, channel.id),
-        installed,
-        on,
-      );
-      for (const change of changes) {
-        if (stopped || readyPage(relay) !== session) return;
-        if (recordingIn(session) !== on) throw new Superseded();
-        if (
-          await writeRecord(
-            session,
-            channel.id,
-            change.type,
-            change.id,
-            change.on,
-            { source: change.source },
+      for (let batch = 1; ; batch++) {
+        const own = await readOwn(session, channel.id);
+        const changes = reconcile(own.records, installed, on);
+        for (const change of changes) {
+          if (stopped || readyPage(relay) !== session) return;
+          if (recordingIn(session) !== on) throw new Superseded();
+          if (
+            await writeRecord(
+              session,
+              channel.id,
+              change.type,
+              change.id,
+              change.on,
+              { source: change.source },
+            )
           )
-        )
-          wrote = true;
+            wrote = true;
+        }
+        if (changes.length < MAX_RECONCILE) {
+          if (own.partial)
+            throw new RecordsIncomplete(
+              "Some of your records couldn't be read.",
+            );
+          break;
+        }
+        if (batch === MAX_BATCHES)
+          throw new RecordsIncomplete("Some of your records weren't updated.");
       }
-      if (changes.length < MAX_RECONCILE)
-        done.set(session, { fingerprint, channel: channel.id });
-      else again = true;
+      done.set(session, { fingerprint, channel: channel.id });
     } catch (error) {
       if (error instanceof Superseded) {
         again = true;
@@ -182,7 +198,10 @@ export function createRecorder({
     }
     running = once(force).finally(() => {
       running = undefined;
-      if (again && !stopped) {
+      if (stopped) return;
+      clearTimeout(relist);
+      relist = setTimeout(() => void run(false).catch(() => {}), relistMs);
+      if (again) {
         again = false;
         schedule();
       }
@@ -258,6 +277,7 @@ export function createRecorder({
       stopped = true;
       clearTimeout(timer);
       clearTimeout(retry);
+      clearTimeout(relist);
       for (const stop of unsubscribe) stop();
       listeners.clear();
     },

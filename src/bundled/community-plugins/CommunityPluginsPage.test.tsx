@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { PluginInstaller } from "../../plugins/installer";
 import { CommunityPluginsPage } from "./CommunityPluginsPage";
 import { INSTALL_TYPE, recordId, VOTE_TYPE } from "./community-counts";
+import { indexSource } from "./index-source";
 import { createRecorder, type Recorder } from "./recorder";
 import { fakeCommunity, listing, rawIndex } from "./testing";
 
@@ -66,19 +67,22 @@ async function setup(
   installer?: PluginInstaller,
   community?: ReturnType<typeof fakeCommunity>,
   listingRepository: string | undefined = "block/buzz-plugins",
+  { shared = false }: { shared?: boolean } = {},
 ) {
   const relay = community ?? (await seeded());
+  let served: unknown = index;
   const request = vi.fn(async ({ url }: { url: string }) => {
     if (url === indexUrl)
-      return { status: 200, headers: {}, body: JSON.stringify(index) };
+      return { status: 200, headers: {}, body: JSON.stringify(served) };
     if (url.startsWith("https://api.github.com/"))
       return { status: 200, headers: {}, body: '{"private":false}' };
     return { status: 202, headers: {}, body: "{}" };
   });
   const openPluginSettings = vi.fn();
+  const source = shared ? indexSource({ request }, indexUrl) : undefined;
   const recorder = createRecorder({
     relay: relay.relay,
-    listed: async () => new Set([listing().id, popular.id]),
+    listed: source?.listed ?? (async () => new Set([listing().id, popular.id])),
     delayMs: 0,
     inventory: {
       installed: () =>
@@ -103,13 +107,17 @@ async function setup(
       indexUrl={indexUrl}
       listingRepository={listingRepository}
       host={{ request }}
+      readIndex={source?.read}
       installer={installer}
       relay={relay.relay}
       recorder={recorder}
       openPluginSettings={openPluginSettings}
     />,
   );
-  return { request, openPluginSettings, community: relay };
+  const serve = (next: unknown) => {
+    served = next;
+  };
+  return { request, openPluginSettings, community: relay, serve };
 }
 
 function fakeInstaller(
@@ -539,4 +547,38 @@ it("shows the upvote that finished while a refresh was reading", async () => {
   release();
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(screen.getByRole("button", { name: "Upvoted" })).toBeInTheDocument();
+});
+
+it("withdraws the record of a plugin a refresh shows is no longer listed", async () => {
+  const installer = fakeInstaller("installed");
+  const { community, serve } = await setup(installer, undefined, undefined, {
+    shared: true,
+  });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Open Octo notes" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to Buzz" }));
+  const mine = () =>
+    community.store
+      .heads()
+      .filter(
+        (event) =>
+          event.pubkey === "a".repeat(64) &&
+          event.tags.some((t) => t[0] === "plugin" && t[1] === listing().id),
+      )
+      .map((event) => JSON.parse(event.content).on);
+  await waitFor(() => expect(mine()).toEqual([true]));
+  await userEvent.click(
+    screen.getByRole("button", { name: "All community plugins" }),
+  );
+  serve(rawIndex([popular]));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Refresh community plugins" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Open Octo notes" }),
+    ).toBeNull(),
+  );
+  await waitFor(() => expect(mine()).toEqual([false]));
 });

@@ -2670,17 +2670,32 @@ export class CodexRuntime {
       finished: false,
     });
     try {
-      await rpc.request("turn/interrupt", { threadId, turnId });
-      await withTimeout(
-        followed.completed,
-        "Codex did not finish the rejected speech turn",
-        INTERRUPTED_TURN_COMPLETION_MS,
-      );
+      await this.drainInterruptedTurn(rpc, threadId, {
+        id: turnId,
+        completed: followed.completed,
+      });
+    } finally {
+      followed.stop();
+    }
+  }
+
+  private async drainInterruptedTurn(
+    rpc: AppServer,
+    threadId: string,
+    turn?: { id: string; completed: Promise<string> },
+  ) {
+    try {
+      if (turn) {
+        await rpc.request("turn/interrupt", { threadId, turnId: turn.id });
+        await withTimeout(
+          turn.completed,
+          "Codex did not finish the interrupted turn",
+          INTERRUPTED_TURN_COMPLETION_MS,
+        );
+      }
       await this.terminals(rpc, threadId, STOP_LINGER_MS);
     } catch {
       await rpc.close();
-    } finally {
-      followed.stop();
     }
   }
 
@@ -3671,26 +3686,24 @@ export class CodexRuntime {
         active.threadId &&
         active.turnId
       ) {
-        try {
-          if (!drainingWake || !active.finished) {
+        if (drainingWake) {
+          await this.drainInterruptedTurn(
+            server.rpc,
+            active.threadId,
+            active.finished
+              ? undefined
+              : { id: active.turnId, completed: followed.completed },
+          );
+        } else {
+          try {
             await server.rpc.request("turn/interrupt", {
               threadId: active.threadId,
               turnId: active.turnId,
             });
-            if (drainingWake)
-              await withTimeout(
-                followed.completed,
-                "Codex did not finish the interrupted wake",
-                INTERRUPTED_TURN_COMPLETION_MS,
-              );
+            await this.terminals(server.rpc, active.threadId);
+          } catch {
+            await server.rpc.close();
           }
-          await this.terminals(
-            server.rpc,
-            active.threadId,
-            drainingWake ? STOP_LINGER_MS : 0,
-          );
-        } catch {
-          await server.rpc.close();
         }
       }
       active.finished = true;

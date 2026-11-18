@@ -212,7 +212,8 @@ export const COMMUNITY_DECISION_BACKENDS_KEY =
 const MAX_QUESTIONS = 32;
 const NAME_LIMIT = 64;
 const INPUT_LIMIT = 128 * 1024;
-const MAX_TIMEOUT_MS = 30_000;
+/** The longest a decision may take. */
+export const MAX_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 1_000;
 
 const orderOf = (provider: DecisionProvider) =>

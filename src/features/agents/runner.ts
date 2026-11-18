@@ -96,7 +96,7 @@ import {
   type ClassifierOutcome,
   type ClassifierInput,
 } from "./classifier";
-import type { Decisions } from "../decisions/service";
+import { MAX_TIMEOUT_MS, type Decisions } from "../decisions/service";
 import { readErrorKind } from "../relay/errors";
 import type { EventWatch } from "./attention";
 import {
@@ -2974,11 +2974,17 @@ export class AgentRunners {
     const decisions = this.host.decisions();
     if (!decisions) return notRun();
     // A provider still checking its setup, such as reading a saved key, is
-    // waited for rather than let the event pass unchecked. One that cannot
-    // confirm its setup is still asked: it may be able to answer.
+    // waited for rather than let the event pass unchecked, for as long as a
+    // decision may take; one still checking then does not run. One that
+    // cannot confirm its setup is still asked: it may be able to answer.
     await statusKnown(decisions, agent.relay);
     const status = decisions.status(agent.relay);
-    if (status === "needs-setup" || status === "unavailable") return notRun();
+    if (
+      status === "needs-setup" ||
+      status === "unavailable" ||
+      status === "checking"
+    )
+      return notRun();
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const facts: ClassifierInput =
@@ -4920,14 +4926,18 @@ async function standalone<T>(
 }
 
 /** Resolves once the status of the provider that answers in `community` is
- * not `checking`. */
+ * not `checking`, or after as long as the longest decision may take. */
 function statusKnown(decisions: Decisions, community: string): Promise<void> {
   if (decisions.status(community) !== "checking") return Promise.resolve();
   return new Promise((resolve) => {
-    const stop = decisions.subscribe(() => {
-      if (decisions.status(community) === "checking") return;
+    const done = () => {
+      clearTimeout(timer);
       stop();
       resolve();
+    };
+    const timer = setTimeout(done, MAX_TIMEOUT_MS);
+    const stop = decisions.subscribe(() => {
+      if (decisions.status(community) !== "checking") done();
     });
   });
 }

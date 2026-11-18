@@ -397,6 +397,12 @@ it("waits for a community's sign-in server to be restored before choosing who an
   decisions.setBackend(BUILDERLAB, COMMUNITY);
   expect(decisions.backend(COMMUNITY)).toBe(BUILDERLAB);
   expect(decisions.status(COMMUNITY)).toBe("checking");
+  // A community not joined has no server followed, so none is waited for,
+  // even with Builderlab chosen everywhere.
+  const ELSEWHERE = "wss://elsewhere.example";
+  decisions.setBackend(BUILDERLAB);
+  expect(decisions.status(ELSEWHERE)).toBe("ready");
+  expect(decisions.backend(ELSEWHERE)).toBe(DEFAULT_DECISION_PROVIDER);
   const reply = decisions.decide({ ...request, community: COMMUNITY });
   await flush();
   // Its server is known, but which session answers is not yet.

@@ -10762,6 +10762,26 @@ it("an event heard before the saved key's status is read waits for it, then is c
   });
 });
 
+it("a provider that never finishes checking its setup does not hold an event forever", async () => {
+  const jev = fakeJev();
+  jev.status.mockImplementationOnce(() => new Promise<boolean>(() => {}));
+  const { run, emit } = await classifiedAgent(jev);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    emit({ events: [event("w")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(jev.decide).not.toHaveBeenCalled();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
+  });
+});
+
 it("a failed read of the key's status does not stop a saved key from classifying", async () => {
   const jev = fakeJev();
   jev.status.mockRejectedValueOnce(new Error("The Keychain is locked"));

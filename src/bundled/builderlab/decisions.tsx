@@ -8,10 +8,11 @@
 import { useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type {
-  DecisionProvider,
-  DecisionProviderStatus,
-  DecisionReply,
+import {
+  communityKey,
+  type DecisionProvider,
+  type DecisionProviderStatus,
+  type DecisionReply,
 } from "../../features/decisions/service";
 import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
 import {
@@ -86,9 +87,15 @@ export function communityDecisionSessions(
     forCommunity: (relay) => {
       if (covering(relay)) return sessions.forCommunity(relay);
       // At launch, before the restored server is known, it may cover this
-      // community: wait for it, rather than answer with another provider.
+      // joined community: wait for it, rather than answer with another
+      // provider. Only a joined community's server is followed, and so
+      // leaves restoring.
       const { authority, status } = server(relay);
-      return !authority && status === "restoring" ? PENDING : undefined;
+      return !authority &&
+        status === "restoring" &&
+        communities().some((each) => communityKey(each) === communityKey(relay))
+        ? PENDING
+        : undefined;
     },
     account: (relay) => covering(relay)?.id,
     subscribe(listener) {

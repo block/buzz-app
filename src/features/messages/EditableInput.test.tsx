@@ -5090,6 +5090,42 @@ describe("editable tables", () => {
     expect(h.markdown()).toBe("| Name | Qty |\n| --- | --- |\n| Tea | 2 |");
   });
 
+  it("pastes tab-indented code as text, not a table", () => {
+    const go = "\tif err != nil {\n\t\treturn err\n\t}\n";
+    const make = "build:\n\tgo build ./...\n\tgo test ./...";
+    const editor =
+      "<meta charset='utf-8'><div style=\"white-space: pre;\"><div><span>\tif err != nil {</span></div><div><span>\t\treturn err</span></div><div><span>\t}</span></div></div>";
+    for (const [text, html] of [
+      [go, ""],
+      [go, editor],
+      [make, ""],
+    ] as const) {
+      const h = mount();
+      paste(h.input, text, html);
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe(text);
+      cleanup();
+    }
+  });
+
+  it("pastes cells copied from a spreadsheet as a table", () => {
+    const html =
+      "<meta charset='utf-8'><google-sheets-html-origin><table><tbody><tr><td>Name</td><td>Qty</td></tr><tr><td>Tea</td><td>2</td></tr></tbody></table>";
+    const h = mount();
+    paste(h.input, "Name\tQty\nTea\t2\n", html);
+    expect(cells(h.input)).toEqual([
+      ["Name", "Qty"],
+      ["Tea", "2"],
+    ]);
+    cleanup();
+    const sheet = mount();
+    paste(sheet.input, "\tQ1\tQ2\n\ta\tb\n", html);
+    expect(cells(sheet.input)).toEqual([
+      ["", "Q1", "Q2"],
+      ["", "a", "b"],
+    ]);
+  });
+
   it("keeps a table in a restored draft", () => {
     const first = mount();
     act(() => {

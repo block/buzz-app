@@ -2558,14 +2558,14 @@ export function EditableInput({
               current.current.onSemanticPaste?.(event.clipboardData)
             )
               return true;
+            const html = event.clipboardData?.getData("text/html") ?? "";
             const inCell = !!tableCursor(editor.state.selection.$from);
-            const grid = code || inCell ? undefined : tsvRows(plain);
+            const grid = code || inCell ? undefined : tsvRows(plain, html);
             if (grid) {
               insertPastedGrid(tableFromRows(grid));
               return true;
             }
             // Code takes visible text verbatim; prose preserves copied web links.
-            const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
             const copy = code || inCell ? undefined : buzzCopyDocument(html);

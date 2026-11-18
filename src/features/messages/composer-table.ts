@@ -745,7 +745,7 @@ export function convertTypedTable(state: EditorState): Transaction | undefined {
   return tr.setSelection(TextSelection.create(tr.doc, position + 1));
 }
 
-export function tsvRows(text: string): string[][] | undefined {
+export function tsvRows(text: string, html = ""): string[][] | undefined {
   const input = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
   if (!input.includes("\t") || !input.includes("\n")) return;
   const rows: string[][] = [[]];
@@ -780,6 +780,8 @@ export function tsvRows(text: string): string[][] | undefined {
   if (quoted) return;
   end();
   if (rows.length < 2 || rows.some((item) => item.length < 2)) return;
+  if (html ? !/<table[\s>]/i.test(html) : rows.every((item) => !item[0]))
+    return;
   return rows;
 }
 

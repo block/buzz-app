@@ -76,3 +76,42 @@ test("a wide, long table scrolls inside itself and the toolbar edits it", async 
   await expect(input.locator("table")).toHaveCount(0);
   await expect(toolbar).toHaveCount(0);
 });
+
+const paste = (input, text, html = "") =>
+  input.evaluate(
+    (element, { text, html }) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      if (html) clipboardData.setData("text/html", html);
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        }),
+      );
+    },
+    { text, html },
+  );
+
+test("only spreadsheet cells paste as a table, never indented code", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  const go = "\tif err != nil {\n\t\treturn err\n\t}\n";
+  const code =
+    "<meta charset='utf-8'><div style=\"white-space: pre;\"><div><span>\tif err != nil {</span></div><div><span>\t\treturn err</span></div><div><span>\t}</span></div></div>";
+  await input.click();
+  await paste(input, go);
+  await paste(input, go, code);
+  await expect(input.locator("table")).toHaveCount(0);
+  await expect(input).toHaveJSProperty("value", go + go);
+  await input.fill("");
+  await paste(
+    input,
+    "Name\tQty\nTea\t2\n",
+    "<meta charset='utf-8'><google-sheets-html-origin><table><tbody><tr><td>Name</td><td>Qty</td></tr><tr><td>Tea</td><td>2</td></tr></tbody></table>",
+  );
+  await expect(input.locator("tr")).toHaveCount(2);
+  await expect(input.locator("th").first()).toHaveText("Name");
+});

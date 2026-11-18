@@ -342,6 +342,41 @@ describe("spreadsheet paste", () => {
     expect(tsvRows("a\tb\nc")).toBeUndefined();
     expect(tsvRows('"open\tx\ny')).toBeUndefined();
   });
+  it("does not read indented code as cells", () => {
+    expect(tsvRows("\tif err != nil {\n\t\treturn err\n\t}\n")).toBeUndefined();
+    expect(
+      tsvRows("build:\n\tgo build ./...\n\tgo test ./...\n"),
+    ).toBeUndefined();
+    expect(tsvRows("\tgo build\t./...\n\tgo test\t./...\n")).toBeUndefined();
+  });
+  it("reads cells that only some rows start with a tab", () => {
+    expect(tsvRows("\tQ1\tQ2\nrev\t1\t2\n")).toEqual([
+      ["", "Q1", "Q2"],
+      ["rev", "1", "2"],
+    ]);
+  });
+  it("needs a table in the copied HTML when there is any", () => {
+    const sheets =
+      '<meta charset=\'utf-8\'><google-sheets-html-origin><style type="text/css"></style><table xmlns="http://www.w3.org/1999/xhtml" cellspacing="0" cellpadding="0" dir="ltr" border="1"><colgroup><col width="100"/></colgroup><tbody><tr><td>Name</td><td>Qty</td></tr><tr><td>Tea</td><td>2</td></tr></tbody></table>';
+    const excel =
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office"><body><!--StartFragment--><table border=0 cellpadding=0 cellspacing=0><tr><td>Name</td><td>Qty</td></tr><tr><td>Tea</td><td>2</td></tr></table><!--EndFragment--></body></html>';
+    const editor =
+      '<meta charset=\'utf-8\'><div style="color: #d4d4d4;background-color: #1e1e1e;white-space: pre;"><div><span style="color: #d4d4d4;">\tfoo\tbar</span></div><div><span style="color: #d4d4d4;">\tbaz\tqux</span></div></div>';
+    const tabs = "Name\tQty\nTea\t2\n";
+    const expected = [
+      ["Name", "Qty"],
+      ["Tea", "2"],
+    ];
+    expect(tsvRows(tabs, sheets)).toEqual(expected);
+    expect(tsvRows(tabs, excel)).toEqual(expected);
+    expect(tsvRows(tabs, editor)).toBeUndefined();
+    expect(tsvRows(tabs, "<p>Name\tQty</p>")).toBeUndefined();
+    expect(tsvRows("\tfoo\tbar\n\tbaz\tqux\n", editor)).toBeUndefined();
+    expect(tsvRows("\tfoo\tbar\n\tbaz\tqux\n", sheets)).toEqual([
+      ["", "foo", "bar"],
+      ["", "baz", "qux"],
+    ]);
+  });
   it("builds a table with a header row and flattened cells", () => {
     const built = tableFromRows([
       ["a", "b"],

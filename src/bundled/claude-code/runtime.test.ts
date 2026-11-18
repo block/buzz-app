@@ -109,6 +109,7 @@ function setup(
   }> = {},
 ) {
   const fake = fakeSpawn();
+  const running = new Set<FakeClaude>();
   const transcriptReaders: { options: unknown }[] = [];
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
@@ -160,17 +161,20 @@ function setup(
         kill: async () => {},
       } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
     }
+    // Like the host, a process holds its place until it exits.
     if (
       options.claudeLimit !== undefined &&
       CLAUDES.has(id) &&
-      fake.processes.filter(
-        (process) => CLAUDES.has(process.id) && !process.killed,
-      ).length >= options.claudeLimit
+      running.size >= options.claudeLimit
     )
       throw "Too many processes are running";
-    const process = fake.spawn(id, spawnOptions);
+    const process = await fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (started && CLAUDES.has(id)) {
+      running.add(started);
+      void process.exited.finally(() => running.delete(started));
+    }
     return process;
   };
   const host = {
@@ -482,6 +486,34 @@ it("stops an idle conversation's process when the host runs no more", async () =
   const next = claudes().at(-1);
   expect(next).not.toBe(idle);
   expect(next?.prompts[0]).toContain(b.id);
+});
+
+it("stops the next idle conversation's process when a stopped one never exits", async () => {
+  vi.useFakeTimers();
+  try {
+    const [rootA, a] = threadMention("a", 110);
+    const [rootB, b] = threadMention("b", 120);
+    const [rootC, c] = threadMention("c", 130);
+    const { deliver, claudes } = setup([rootA, a, rootB, b, rootC, c], {
+      claudeLimit: 2,
+    });
+    await deliver({ type: "mention", event: a });
+    await deliver({ type: "mention", event: b });
+    await vi.advanceTimersByTimeAsync(0);
+    const [stuck, idle] = claudes();
+    // Its output stays held open, so the host never reports its exit.
+    if (stuck) stuck.exitOnKill = false;
+    const answered = deliver({ type: "mention", event: c });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stuck?.killed).toBe(true);
+    expect(idle?.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await answered;
+    expect(idle?.killed).toBe(true);
+    expect(claudes().at(-1)?.prompts[0]).toContain(c.id);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("leaves a working conversation running and refuses the new one when none is idle", async () => {

@@ -11,6 +11,7 @@ import {
   AgentSessions,
   IDLE_MS,
   localSessions,
+  PROCESS_LIMIT,
   type SavedSession,
   Spare,
   type SessionStore,
@@ -46,6 +47,9 @@ function sessions(
     tools: ToolServer;
     started: (sessionId: string, systemPrompt: string) => void;
     agent: Readonly<{ pubkey: string; relay: string }>;
+    /** The host refuses every process, as at its process limit. */
+    full: boolean;
+    room: () => Promise<boolean>;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
@@ -53,6 +57,7 @@ function sessions(
   let model = "opus";
   let ids = 0;
   const spawn = (id: string, spawnOptions?: object) => {
+    if (options.full) return Promise.reject(PROCESS_LIMIT);
     // The fake records each process as the call begins.
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
@@ -69,6 +74,7 @@ function sessions(
   };
   const pool = new AgentSessions({
     spawn,
+    ...(options.room ? { room: options.room } : {}),
     strictResume: !!options.strictResume,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
@@ -460,6 +466,37 @@ it("offers no conversation that is working or about to take a message", async ()
     await flush(10);
     claudes()[0]?.finish();
     await next;
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("stops making room for a one-off turn once it is given up", async () => {
+  const given = new AbortController();
+  let rooms = 0;
+  const room = vi.fn(async () => {
+    given.abort(new Error("given up"));
+    return ++rooms < 3;
+  });
+  const { pool } = sessions({ full: true, room });
+  try {
+    const settled = await pool.runOnce("timer", () => "go", given.signal);
+    expect(settled.ok).toBe(false);
+    await flush(10);
+    expect(room).toHaveBeenCalledTimes(1);
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("never makes room for model discovery", async () => {
+  const room = vi.fn(async () => false);
+  const { pool } = sessions({ full: true, room });
+  try {
+    await pool.metadata().catch(() => undefined);
+    expect(room).not.toHaveBeenCalled();
+    await pool.deliver("c/a", "one", 1).catch(() => undefined);
+    expect(room).toHaveBeenCalledTimes(1);
   } finally {
     pool.dispose();
   }

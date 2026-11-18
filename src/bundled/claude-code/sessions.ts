@@ -21,6 +21,9 @@ import type { AgentStore } from "../../features/agents/store";
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
+/** How the host refuses a process when it runs all it allows, as the plugin
+ * bridge rejects (`host_process.rs`). */
+export const PROCESS_LIMIT = "Too many processes are running";
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -43,6 +46,9 @@ export type SessionStore = {
 
 export type SessionsOptions = Readonly<{
   spawn: Spawn;
+  /** At the host's process limit, stops some idle conversation's process to
+   * make a place for a conversation's; false when none is idle. */
+  room?(): Promise<boolean>;
   strictResume?: boolean;
   /** Where a new conversation looks for a process already started. */
   spare?: Spare;
@@ -484,6 +490,7 @@ export class AgentSessions {
             if (over) void process.kill();
           },
           label,
+          () => !over && !signal?.aborted,
         ),
         signal,
       );
@@ -594,13 +601,15 @@ export class AgentSessions {
     key?: string,
     spawned?: (process: ClaudeProcess) => void,
     once?: string,
+    wanted: () => boolean = () => true,
   ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
     const launch = await this.options.launch(key);
+    const spawn = this.roomy(wanted);
     const process = resume
-      ? await ClaudeProcess.start(this.spawn, { ...launch, resume })
-      : await this.fresh(launch, spawned);
+      ? await ClaudeProcess.start(spawn, { ...launch, resume })
+      : await this.fresh(launch, spawn, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed) {
       if (!resume && process.sessionId)
         this.options.started?.(process.sessionId, launch.systemPrompt, once);
@@ -608,11 +617,31 @@ export class AgentSessions {
     }
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key, spawned, once);
+    return this.start(resume, key, spawned, once, wanted);
+  }
+  /** `spawn` for a conversation: at the host's process limit, it makes room
+   * and tries again, while the process is still wanted. Discovery and the
+   * spare, started ahead of need, never stop a conversation. */
+  private roomy(wanted: () => boolean): Spawn {
+    return async (id, options) => {
+      for (;;)
+        try {
+          return await this.spawn(id, options);
+        } catch (error) {
+          if (
+            error !== PROCESS_LIMIT ||
+            this.disposed ||
+            !wanted() ||
+            !(await this.options.room?.())
+          )
+            throw error;
+        }
+    };
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(
     launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
+    spawn: Spawn,
     spawned?: (process: ClaudeProcess) => void,
   ) {
     const spare =
@@ -627,7 +656,7 @@ export class AgentSessions {
       } catch {
         void spare.kill();
       }
-    const process = await ClaudeProcess.spawn(this.spawn, {
+    const process = await ClaudeProcess.spawn(spawn, {
       ...launch,
       sessionId: this.newId(),
     });

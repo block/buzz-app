@@ -140,8 +140,9 @@ export type SavedConversation = Conversation &
     at: number;
   };
 
-/** The host's refusal of a process past its limit. */
-const PROCESS_LIMIT = "Too many processes are running";
+/** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
+ * process. */
+const STOP_WAIT_MS = 5_000;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -459,32 +460,29 @@ export class ClaudeRuntime {
     return spawn;
   }
 
-  /** Starts a conversation's process. When the host already runs all the
-   * processes it allows, which every plugin's processes share, it stops the
-   * conversation process of any agent that has been idle longest, waits for
-   * it to exit and tries again, until it starts or nothing idle is left.
-   * Idle processes would stop on their own after `IDLE_MS`; until then they
-   * hold places a new conversation needs. */
-  private async spawnSession(
-    id: string,
-    options?: Parameters<Spawn>[1],
-  ): ReturnType<Spawn> {
-    for (;;) {
-      try {
-        return await this.spawn(id, options);
-      } catch (error) {
-        // The host's refusal (`host_process.rs`), as the plugin bridge rejects.
-        if (error !== PROCESS_LIMIT) throw error;
-        let idlest: ReturnType<AgentSessions["idlest"]>;
-        for (const entry of this.agents.values()) {
-          const candidate = entry.sessions.idlest();
-          if (candidate && (!idlest || candidate.used < idlest.used))
-            idlest = candidate;
-        }
-        if (!idlest) throw error;
-        await idlest.stop();
-      }
+  /** Makes a place when the host already runs all the processes it allows,
+   * which every plugin's processes share: stops the conversation process of
+   * any agent that has been idle longest, and waits for it to exit, or until
+   * the host has had time to kill it. False when none is idle. Idle processes
+   * would stop on their own after `IDLE_MS`; until then they hold places a
+   * new conversation needs. */
+  private async room() {
+    let idlest: ReturnType<AgentSessions["idlest"]>;
+    for (const entry of this.agents.values()) {
+      const candidate = entry.sessions.idlest();
+      if (candidate && (!idlest || candidate.used < idlest.used))
+        idlest = candidate;
     }
+    if (!idlest) return false;
+    // A descendant holding its output can keep it from ever reporting exit;
+    // its place may still be held, so the caller then asks again.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      idlest.stop(),
+      new Promise((done) => (timer = setTimeout(done, STOP_WAIT_MS))),
+    ]);
+    clearTimeout(timer);
+    return true;
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
@@ -1648,7 +1646,8 @@ export class ClaudeRuntime {
       };
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawnSession(id, options),
+      spawn: (id, options) => this.spawn(id, options),
+      room: () => this.room(),
       ...(!this.target ? { spare: this.spare } : {}),
       strictResume: !!this.target,
       store: {

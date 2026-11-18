@@ -535,7 +535,8 @@ and are asked to sign in again in Buzz.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
 - **Thread titles** are shared, channel-visible names for threads. A titled thread shows its title under
   its first message in the channel (choose it to open the thread) and on its thread tab. Renaming a thread
-  tab sets the shared title; if that can't be saved, the name stays on that tab on this device only.
+  tab sets the shared title. If it can't be saved, the tab shows the current title again and an error says why,
+  with Retry; if someone else changed the title first, rename the tab again to replace theirs.
   Agents and the `buzz threads title` CLI also set titles, and Buzz 0.x shows the same titles; they are not
   searchable. Provided by the optional Named threads plugin, on by default.
 - **New messages** marks the first known unread incoming channel message when

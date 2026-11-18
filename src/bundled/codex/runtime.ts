@@ -192,6 +192,8 @@ type Active = {
   turnId?: string;
   ready: Promise<void>;
   released: Promise<void>;
+  nativeCompleted?: Promise<string>;
+  voiceRetirement?: Promise<void>;
   rejectedSpeech?: Promise<void>;
   steering: Promise<void>;
   reply: Request;
@@ -1565,11 +1567,13 @@ export class CodexRuntime {
       // Queued wakes can take the lane before ordered voice admission.
       const failed = new AbortController();
       let interrupted = Promise.resolve();
+      let interrupting: Active | undefined;
       const interrupt = () => {
         const entry = this.entries.get(agent.key);
         const active = entry?.lanes.get(key)?.active;
-        if (entry && active && !active.stopped) {
-          interrupted = this.interrupt(entry, key, active.reply);
+        if (entry && active && !active.finished && active !== interrupting) {
+          interrupting = active;
+          interrupted = this.interruptForVoice(entry, key, active);
           void interrupted.catch((error) => failed.abort(error));
         }
       };
@@ -1628,7 +1632,7 @@ export class CodexRuntime {
     lane.voiceOpening = true;
     try {
       const active = lane.active;
-      if (active) await this.interrupt(entry, key, active.reply);
+      if (active) await this.interruptForVoice(entry, key, active);
     } catch (error) {
       delete lane.voiceOpening;
       if (
@@ -2600,6 +2604,22 @@ export class CodexRuntime {
     return active.stopping;
   }
 
+  private async interruptForVoice(entry: Entry, key: string, active: Active) {
+    await this.interrupt(entry, key, active.reply);
+    if (active.finished || !active.nativeCompleted) return;
+    try {
+      await withTimeout(
+        active.nativeCompleted.catch(() => {}),
+        "Codex did not finish the turn while opening the Huddle",
+        INTERRUPTED_TURN_COMPLETION_MS,
+      );
+    } catch (error) {
+      active.voiceRetirement = active.rpc.close();
+      await active.voiceRetirement;
+      throw error;
+    }
+  }
+
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
@@ -3391,6 +3411,7 @@ export class CodexRuntime {
           );
       },
     );
+    active.nativeCompleted = followed.completed;
     let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     let explain: (() => string | undefined) | undefined;
     try {
@@ -3690,6 +3711,7 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
       await hookBridge?.close();
+      if (active.voiceRetirement) await active.voiceRetirement.catch(() => {});
       if (lane.active === active) {
         delete lane.active;
         if (request.unaddressed?.signal.aborted && !entry.abort.signal.aborted)

@@ -9617,6 +9617,71 @@ it.each(["channel", "community"] as const)(
   },
 );
 
+it.each(["channel", "community"])(
+  "waits for Codex exit when %s voice preemption never completes",
+  async (scope) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("typed work");
+    const config = { ...(d.config as object), scope };
+    const signal = new AbortController();
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const channelId = scope === "community" ? "room" : "channel";
+    f.huddleChannels.add(channelId);
+    f.delayedInterruptCompletions.add("turn-1");
+    f.process.end.mockResolvedValue(undefined);
+    const opened = vi.mocked(openVoice).mock.calls.length;
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    let opening: Promise<unknown> | undefined;
+    try {
+      vi.useFakeTimers();
+      const result = vi.fn();
+      opening = f.runtime
+        .voice(
+          {
+            config,
+            agent,
+            conversation: { channelId },
+            signal: signal.signal,
+            async output() {},
+            async transcript() {},
+            ended() {},
+          },
+          d.agent,
+        )
+        .then(result, result);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(
+        true,
+      );
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(f.process.end).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.process.end).toHaveBeenCalledOnce();
+      expect(result).not.toHaveBeenCalled();
+      expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+        "active",
+      );
+      expect(openVoice).toHaveBeenCalledTimes(opened);
+      f.exits.resolve(0);
+      await opening;
+      expect(result).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("Codex did not finish"),
+        }),
+      );
+      expect(openVoice).toHaveBeenCalledTimes(opened);
+    } finally {
+      vi.useRealTimers();
+      signal.abort();
+      f.exits.resolve(0);
+      f.runtime.dispose();
+      await opening;
+    }
+  },
+);
+
 it.each(["wake", "typed-wake", "wake-typed", "published"])(
   "interrupts community work and queued wakes before voice admission (%s)",
   async (order) => {

@@ -10,14 +10,13 @@ export type RecoveryStatus = "failed" | "busy" | "settled";
 export type RecoverySource = Readonly<{
   status(): RecoveryStatus;
   subscribe(listener: () => void): () => void;
-  retry(): void;
+  /** `background` is true only from recovery's own timer, so a source can
+   * keep a retry it has already scheduled; signals and credentials omit it. */
+  retry(background?: boolean): void;
   /** Credentials changed: read again after any read already in flight, even
    * one its status does not show (a ready catalog revalidating). Without it,
    * recovery waits out a `busy` read before retrying. */
   reauthorize?(): void;
-  /** True while the source has its own retry scheduled. The background
-   * timer leaves it to that schedule; signals and credentials do not. */
-  scheduled?(): boolean;
 }>;
 export type RecoverySnapshot = Readonly<{
   /** True while at least one source shows a failure. */
@@ -192,12 +191,8 @@ export function createRecovery(
     running = true;
     try {
       for (const source of sources)
-        if (
-          source !== except &&
-          source.status() === "failed" &&
-          !(background && source.scheduled?.())
-        )
-          source.retry();
+        if (source !== except && source.status() === "failed")
+          source.retry(background || undefined);
     } finally {
       running = false;
     }

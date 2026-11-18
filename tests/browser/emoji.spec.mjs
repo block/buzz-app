@@ -584,7 +584,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(
       page.getByRole("button", { name: "Refresh emoji" }),
     ).toHaveCount(0);
-    await expect(surface).toHaveCSS("width", "360px");
+    await expect(surface).toHaveCSS("width", "392px");
     const initialRegion = await region.boundingBox();
     const initialSurface = await surface.boundingBox();
     const searchGutters = await searchField.evaluate((input) => {
@@ -683,12 +683,13 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       exact: true,
     });
     await expect(insert).toBeVisible();
-    // Control-sized cells around a picker-sized glyph.
+    // Control-sized cells around a picker-sized glyph; custom images keep
+    // their 2rem cap, which still fits inside the cell.
     await expect(insert).toHaveCSS("width", "40px");
     await expect(insert).toHaveCSS("height", "40px");
     await expect(insert).toHaveCSS("font-size", "28px");
-    await expect(insert.locator("img")).toHaveCSS("max-width", "40px");
-    await expect(insert.locator("img")).toHaveCSS("max-height", "40px");
+    await expect(insert.locator("img")).toHaveCSS("max-width", "32px");
+    await expect(insert.locator("img")).toHaveCSS("max-height", "32px");
     const searchNode = await search.elementHandle();
     // Exercise the actual widget boundary without recreating the picker/search.
     for (const mode of ["dark", "light"]) {
@@ -767,7 +768,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
       "width",
-      "360px",
+      "392px",
     );
     await search.fill("");
     const frequent = page.locator(

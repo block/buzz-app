@@ -55,6 +55,15 @@ export function guideFilters({
       examples: channel ? [[`in:#${channel}`, `In #${channel}`]] : [],
       icon: HashIcon,
     },
+    ask && {
+      key: "ask",
+      label: `Ask ${agent ?? "your agent"}`,
+      syntax: "ask:",
+      about: `${agent ?? "Your agent"} searches Buzz for you and answers in a new chat. Filters you’ve added stay in the question.`,
+      examples: [["ask: what did we ship?", "Ask a question"]],
+      icon: RobotIcon,
+    },
+
     {
       key: "during",
       label: "When it was sent",
@@ -95,14 +104,6 @@ export function guideFilters({
         "Messages sent on a single day. Name the day as YYYY-MM-DD, today or yesterday.",
       examples: [["on:yesterday", "Yesterday"]],
       icon: CalendarIcon,
-    },
-    ask && {
-      key: "ask",
-      label: `Ask ${agent ?? "your agent"}`,
-      syntax: "ask:",
-      about: `${agent ?? "Your agent"} searches Buzz for you and answers in a new chat. Filters you’ve added stay in the question.`,
-      examples: [["ask: what did we ship?", "Ask a question"]],
-      icon: RobotIcon,
     },
     {
       key: "phrase",

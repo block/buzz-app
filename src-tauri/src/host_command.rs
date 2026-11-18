@@ -805,6 +805,7 @@ pub(crate) mod git_bash {
             };
             let output = crate::host_command::run_command(
                 &command,
+                &[],
                 None,
                 std::time::Duration::from_secs(10),
                 true,
@@ -858,6 +859,7 @@ pub(crate) mod git_bash {
             };
             crate::host_command::run_command(
                 &command,
+                &[],
                 None,
                 std::time::Duration::from_secs(10),
                 true,

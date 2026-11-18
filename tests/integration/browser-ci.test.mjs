@@ -58,7 +58,7 @@ const browserJobs = () => {
 test("native protection produces upload evidence and preserves a failed test status", (t) => {
   if (process.platform === "win32") return t.skip("macOS shell step");
   const step = parse(workflow).jobs.agent_protection.steps.find(
-    (step) => step.name === "Native approval-state containment",
+    (step) => step.name === "Native approval-state and window-state tests",
   );
   const root = mkdtempSync(join(tmpdir(), "buzz-native-evidence-"));
   try {
@@ -279,10 +279,11 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection\]$/m,
+    /^ {4}needs: \[javascript_checks, javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
   const lanes = [
+    "JAVASCRIPT_CHECKS",
     "JAVASCRIPT",
     "NATIVE",
     "MEASUREMENTS",

@@ -100,7 +100,21 @@ Check `handle.draftContext === true` before passing
 `draft: { context: JsonValue, key?: string }` to `openDraft`. The host retains
 and returns this JSON through `started`; only the source interprets it. It uses
 the same create, first-message, Outbox and reconciliation flow as any region
-draft. There is no source callback before creation.
+draft.
+
+A source may implement `prepareStart(binding, { channelId, members, start })` to
+prepare agent notes or conversation instructions before the first message.
+On Send, the host calls it after saving the start record, before creating the
+chat or sending its first message. `members` contains the selected and workspace
+agents passed to chat creation. `start` has the same workspace and draft context
+as `handle.started(binding, channelId)`, including the saved-context fallback.
+The source must still own a running, ready region. The hook may return `void`
+or `Promise<void>`; the host waits up to three seconds, then warns and continues
+on rejection or timeout. This allows async setup while bounding Send latency.
+Timed-out work is not canceled and may finish after the message; plugins must
+handle that case. The hook runs on each Send attempt, so make preparation safe
+to repeat for the same channel ID. It does not run for `handle.createChat` or
+Outbox replay. Sources without the hook keep the existing send behavior.
 
 Without a key, context uses the existing region/workspace draft. A key gives
 the source a separate text, attachment, settings, model and effort slot. It

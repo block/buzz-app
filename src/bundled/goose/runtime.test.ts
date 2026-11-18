@@ -16,6 +16,8 @@ import type { Agent, Delivery } from "../../features/agents/service";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
@@ -90,6 +92,8 @@ function setup(
       slug?: string,
     ) => Promise<Memories>;
     thinking?: NonNullable<Parameters<typeof fakeSpawn>[0]>["thinking"];
+    /** The community's relay workflow key. */
+    workflowAuthority?: string;
     /** Wraps the fake's `spawn`, as `gated(…).wrap` does. */
     wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Host["spawn"];
     /** What agents on Recommended run on. */
@@ -139,6 +143,7 @@ function setup(
     dispose: () => {},
   };
   const session = {
+    workflowAuthority: options.workflowAuthority,
     read,
     agentMemories: {
       open: vi.fn(() => memories),
@@ -179,13 +184,16 @@ function setup(
   };
   // A reconnect is a new session to the same community.
   let connected = session;
+  const state = { status: "ready" };
   const relay = {
     snapshot: () => ({
-      status: "ready",
-      session: connected,
+      status: state.status,
+      session: state.status === "ready" ? connected : undefined,
       viewer: alice,
+      origin: "https://goose.example",
       scope: `https://goose.example:${alice}`,
     }),
+    subscribe: () => () => {},
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -209,6 +217,7 @@ function setup(
     pubkey: self,
     name: "Gander",
     owner: alice,
+    relay: "wss://goose.example",
     ...(options.protection && { protection: options.protection }),
     publish: vi.fn(async (template: (typeof published)[number]) => {
       published.push(template);
@@ -245,6 +254,7 @@ function setup(
       prompt: async () => prompt,
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
+    state,
     agent,
     core,
     deliver,
@@ -1723,8 +1733,10 @@ it("takes a plugin's wake in its thread's session, as the plugin's and not a mes
   const f = setup();
   await f.deliver(root);
   await flush(100);
-  await f.run(pluginWake(root.id));
+  const accepted = vi.fn();
+  await f.run(pluginWake(root.id), { accepted });
   await flush(100);
+  expect(accepted).toHaveBeenCalledOnce();
   const goose = f.goose();
   expect(goose?.turns).toHaveLength(2);
   expect(goose?.turns[1]?.sessionId).toBe(goose?.turns[0]?.sessionId);
@@ -1827,6 +1839,79 @@ it.each([
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(f.goose()).toBeUndefined();
+});
+
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  f.state.status = "connecting";
+  // The owner's own mention settles without waiting for the community.
+  await f.deliver(message("1", "Say hi"));
+  const stop = new AbortController();
+  const workflow = f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { signal: stop.signal },
+  );
+  stop.abort();
+  await expect(workflow).rejects.toThrow("Workflow request could not start");
+});
+
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  // The community is ready, so the wait ends at once; the agent is gone by then.
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored, current: () => false },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.goose()).toBeUndefined();
 });
 
 it("takes a wake with no thread only in a Solo chat", async () => {

@@ -1,11 +1,17 @@
 import { PRESET } from "../../features/agents/recommended";
 
 export type Config = {
+  /** Empty follows Codex's voice default. Applies when the next seat starts. */
+  voice?: string;
   model: string;
   effort: string;
   instructions: string;
   workspace: string;
   scope: "thread" | "channel";
+  /** Leaves Codex's Apps and plugins features to its own configuration
+   * instead of turning them off. This device's only, as Apps follow its
+   * Codex sign-in; never for protected agents. */
+  apps?: true;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
 };
@@ -21,6 +27,21 @@ export type Model = {
 export function resolveModel(selected: string, models: readonly Model[]) {
   return selected || models.find((model) => model.isDefault)?.model;
 }
+/** A turn uses the first supported choice, then the selected model's default. */
+export function resolveEffort(
+  model: Model,
+  ...choices: (string | undefined)[]
+) {
+  return (
+    choices.find(
+      (choice) =>
+        choice &&
+        model.supportedReasoningEfforts.some(
+          (level) => level.reasoningEffort === choice,
+        ),
+    ) ?? model.defaultReasoningEffort
+  );
+}
 export const defaults: Config = {
   model: "",
   effort: "",
@@ -32,6 +53,9 @@ export function config(raw: unknown): Config {
   const value =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
+    ...(typeof value.voice === "string" && value.voice
+      ? { voice: value.voice }
+      : {}),
     model: typeof value.model === "string" ? value.model : "",
     effort: typeof value.effort === "string" ? value.effort : "",
     instructions:
@@ -41,6 +65,7 @@ export function config(raw: unknown): Config {
         ? value.workspace.trim()
         : defaults.workspace,
     scope: value.scope === "channel" ? "channel" : "thread",
+    ...(value.apps === true ? { apps: true as const } : {}),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
   };
 }

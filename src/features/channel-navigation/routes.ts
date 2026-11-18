@@ -1,7 +1,17 @@
+import { writeView } from "../../shared/view-state";
+import type { Navigation } from "../navigation/controller";
 import type { JsonValue, OpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
 import { regionLabels } from "../solo/region-labels";
 import type { SoloDraftStart } from "./solo-navigation-contract";
+import { newMessage } from "./new-message-route";
+
+export {
+  type MessageIntent,
+  newMessage,
+  newMessageTarget,
+  nextMessageIntent,
+} from "./new-message-route";
 
 /** An unsent Solo conversation: nothing exists on the relay until its first send. */
 export type SoloDraft = Readonly<{
@@ -90,7 +100,7 @@ export function soloDraft(
 
 export function isChannelRoute(params: JsonValue) {
   return (
-    params === "new-message" ||
+    newMessage(params) !== undefined ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );
@@ -145,6 +155,14 @@ export function conversationTarget(
   return { version: 1, kind: "conversation", scope: parts, channelId };
 }
 
+/** The sidebar reads only which conversation is open, never what is open
+ * within it: a thread, message, panel or detail there is not a destination. */
+export function sidebarTarget(target: OpenTarget): OpenTarget {
+  if (target.kind !== "conversation") return target;
+  const { version, kind, scope, channelId } = target;
+  return { version, kind, scope, channelId };
+}
+
 /** A reopened conversation must still belong to this community and viewer. */
 export function matchesConversation(
   target: OpenTarget | undefined,
@@ -158,4 +176,17 @@ export function matchesConversation(
     target.scope.communityOrigin === parts?.communityOrigin &&
     target.scope.viewer === parts?.viewer
   );
+}
+
+/** Where leaving the open channel lands without a sidebar neighbor: the empty
+ * Channels page, with its saved selection forgotten so it is not reopened. */
+export function openEmptyChannels(navigator: Navigation, scope: string) {
+  writeView(scope, "selected-channel", undefined);
+  void navigator.open({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    route: { version: 1, params: "empty" },
+  });
 }

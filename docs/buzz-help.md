@@ -754,7 +754,9 @@ Quitting Buzz also turns it off.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
   lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
-  Muting does not mark messages or threads as read.
+  Activity hides replies, mentions, DMs and reactions from muted conversations
+  on the page and in its sidebar preview and count. Unmuting shows retained
+  activity again with its read state intact.
   In a channel's or DM's main message box, typing `/mute` by itself toggles
   Mute for it, and a toast confirms it once saved. The command is not posted as
   a message. If the change cannot be saved, a notice offers **Retry** instead. Thread

@@ -44,6 +44,7 @@ import {
   rowProfileIds,
 } from "./InboxRow";
 import { withMentionedIds } from "../../features/messages/PreviewText";
+import { useActivityMutes } from "./useActivityMutes";
 import { inboxTarget } from "./route";
 import type { InboxItem } from "../../features/relay/inbox";
 import listRowStyles from "../../features/messages/MessageListRow.module.css";
@@ -131,6 +132,7 @@ function InboxPreviewCard({
   navigator: Navigation;
 }) {
   const list = useChannelList(session.channels);
+  const muted = useActivityMutes(session);
   const inbox = useSyncExternalStore(
     session.unread.subscribeInbox,
     session.unread.inbox,
@@ -180,16 +182,21 @@ function InboxPreviewCard({
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const channelOf = (channelId: string) =>
     list.channels.find((channel) => channel.id === channelId);
-  const recent = [...inbox.items].sort(
-    (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id),
-  );
+  const recent = inbox.items
+    .filter((item) => !muted.has(item.channelId))
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   const unread = recent.filter(hasUnread);
   const rows = [
     ...(unreadOnly ? unread : recent).map((item) => ({
       kind: "conversation" as const,
       item,
     })),
-    ...(!unreadOnly ? reactionRows(reactions.items) : []).map((item) => ({
+    ...(!unreadOnly
+      ? reactionRows(
+          reactions.items.filter((item) => !muted.has(item.channelId)),
+        )
+      : []
+    ).map((item) => ({
       kind: "reaction" as const,
       item,
     })),

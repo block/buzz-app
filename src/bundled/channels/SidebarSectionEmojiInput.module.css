@@ -4,3 +4,7 @@
   line-height: 1;
   --sidenav-emoji-size: var(--space-4);
 }
+
+.unicode {
+  display: block;
+}

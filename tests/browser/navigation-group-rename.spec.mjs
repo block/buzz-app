@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { expectSectionEmojiInkCentered } from "./section-emoji-pixels.mjs";
 import { openPage } from "./navigation.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true, sidebarIcons: true });
@@ -107,12 +108,15 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await expect(unicodeTrigger).toBeFocused();
   await select("exclamation", "❗");
   await expectIconCentered(dialog);
+  await expectSectionEmojiInkCentered(unicodeTrigger);
   await unicodeTrigger.press("Enter");
   await expect(search).toBeFocused();
   await expectIconCentered(dialog);
+  await expectSectionEmojiInkCentered(unicodeTrigger);
   await search.press("Escape");
   await expect(unicodeTrigger).toBeFocused();
   await expectIconCentered(dialog);
+  await expectSectionEmojiInkCentered(unicodeTrigger);
 
   // A multi-codepoint emoji can have a wider advance than the fixed slot.
   await unicodeTrigger.click();
@@ -280,12 +284,19 @@ async function expectIconCentered(dialog) {
       if (!artwork || !input) throw new Error("Section emoji geometry missing");
       const control = button.getBoundingClientRect();
       const icon = artwork.getBoundingClientRect();
-      // The fixed slot can be centered while its implicit grid track overflows.
-      // Range measures text advance, not the painted emoji's optical bounds.
+      // Keep the advance/grid regression separate from optical ink placement.
+      // Undo only the measured child translation, not any slot displacement.
+      const native =
+        artwork.querySelector("span")?.firstChild?.nodeType === Node.TEXT_NODE
+          ? artwork.firstElementChild
+          : null;
       const range = document.createRange();
-      range.selectNodeContents(artwork);
+      range.selectNodeContents(native ?? artwork);
+      const correction = native
+        ? new DOMMatrixReadOnly(getComputedStyle(native).transform).m41
+        : 0;
       const content =
-        artwork.firstChild?.nodeType === Node.TEXT_NODE
+        native || artwork.firstChild?.nodeType === Node.TEXT_NODE
           ? range.getBoundingClientRect()
           : (
               artwork.querySelector("img, svg") ?? artwork
@@ -293,7 +304,9 @@ async function expectIconCentered(dialog) {
       const name = input.getBoundingClientRect();
       return {
         contentX: Math.abs(
-          control.x + control.width / 2 - (content.x + content.width / 2),
+          control.x +
+            control.width / 2 -
+            (content.x + content.width / 2 - correction),
         ),
         x: Math.abs(control.x + control.width / 2 - (icon.x + icon.width / 2)),
         y: Math.abs(

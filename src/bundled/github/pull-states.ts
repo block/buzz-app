@@ -270,7 +270,6 @@ type StateData = {
   };
   reviews?: { nodes?: ({ id?: string; comments?: Ids } | null)[] };
   comments?: Ids;
-  reviewDecision?: string | null;
   isInMergeQueue?: boolean;
   autoMergeRequest?: object | null;
   reviewThreads?: {

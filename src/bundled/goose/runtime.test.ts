@@ -189,8 +189,10 @@ function setup(
       status: "ready",
       session: connected,
       viewer: alice,
+      origin: "https://goose.example",
       scope: `https://goose.example:${alice}`,
     }),
+    subscribe: () => () => {},
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -214,6 +216,7 @@ function setup(
     pubkey: self,
     name: "Gander",
     owner: alice,
+    relay: "wss://goose.example",
     ...(options.protection && { protection: options.protection }),
     publish: vi.fn(async (template: (typeof published)[number]) => {
       published.push(template);

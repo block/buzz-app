@@ -28,7 +28,7 @@ import {
   workflowOf,
 } from "../../features/agents/owner-attestation";
 import type { TranscriptTurn } from "../../features/agents/activity-transcript";
-import type { AgentReads } from "../../features/agents/reads";
+import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   agentFolders,
@@ -268,6 +268,12 @@ export class ClaudeRuntime {
     private readonly bound: (agent: AgentKey) => boolean = () => false,
     private readonly target?: AgentExecution,
     private readonly targetKey?: string,
+    /** The agent's reads once its community is ready, for a workflow's
+     * mention that arrived while it reconnects; rejects when `signal` aborts. */
+    private readonly readyReads?: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+    ) => Promise<AgentReads | undefined>,
   ) {}
 
   /** A failed turn's error as its report says it, such as where to fix
@@ -420,6 +426,7 @@ export class ClaudeRuntime {
           undefined,
           execution,
           saved.key,
+          this.readyReads,
         );
         runtime.subscribe(() => this.notify());
         this.remote.set(key, { agent, conversation, runtime, execution });
@@ -985,10 +992,19 @@ export class ClaudeRuntime {
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
+      // A workflow's mention waits out a reconnect; the check below decides.
+      const ready = workflowMarked(trigger.event, agent.owner)
+        ? this.readyReads
+        : undefined;
+      const reads = ready ? await ready(agent, signal) : this.reads(agent.key);
+      if (ready) {
+        signal.throwIfAborted();
+        if (current && !current()) return ignored?.();
+      }
       const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
-        workflowOf(this.reads(agent.key), agent.pubkey),
+        workflowOf(reads, agent.pubkey),
       );
       if (authority !== "owner") return ignored?.(authority);
     }

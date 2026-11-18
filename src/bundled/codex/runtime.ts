@@ -22,7 +22,7 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import type { AgentKey } from "../../features/agents/membership";
-import type { AgentReads } from "../../features/agents/reads";
+import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import {
   EACH_TURN,
   sessionPrompts,
@@ -398,6 +398,12 @@ export class CodexRuntime {
     private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
       undefined,
     private readonly resolveDirectory?: Host["resolveDirectory"],
+    /** The agent's reads once its community is ready, for a workflow's
+     * mention that arrived while it reconnects; rejects when `signal` aborts. */
+    private readonly readyReads?: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+    ) => Promise<AgentReads | undefined>,
   ) {}
   /** The folder a plugin gave the conversation, if any. Only the local
    * runtime keeps them; an execution target's conversations refuse one. */
@@ -528,6 +534,10 @@ export class CodexRuntime {
         execution,
         undefined,
         sessionKey,
+        undefined,
+        undefined,
+        undefined,
+        this.readyReads,
       );
       const update = () => {
         this.views.set(
@@ -1730,7 +1740,18 @@ export class CodexRuntime {
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const reads = this.reads(agent.key);
+    // A workflow's mention waits out a reconnect; the check below decides.
+    const ready =
+      trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
+        ? this.readyReads
+        : undefined;
+    const reads = ready
+      ? await ready(agent, delivery.signal)
+      : this.reads(agent.key);
+    if (ready) {
+      delivery.signal.throwIfAborted();
+      if (delivery.current && !delivery.current()) return delivery.ignored?.();
+    }
     if (trigger.type === "mention") {
       const authority = await mentionAuthority(
         trigger.event,

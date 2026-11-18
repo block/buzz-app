@@ -6,7 +6,7 @@ import {
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { pubkeyOf } from "../../features/agents/membership";
 import { PROMPTS_PREFIX } from "../../features/agents/session-prompts";
-import { ownerReads } from "../../features/agents/reads";
+import { type AgentReads, ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
@@ -505,6 +505,40 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
     ),
   });
   await turn.run;
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(host.processes).toEqual([]);
+});
+
+/** Reads a ready community answers with, as `readyReads` acquired them. */
+const acquiredReads = (authority: string) =>
+  ({
+    workflowAuthority: () => authority,
+    profiles: async () => {},
+    profile: () => undefined,
+  }) as unknown as AgentReads;
+
+it("checks a workflow mention with the reads it waited for", async () => {
+  const { host, deliver, runtime } = setup();
+  const relay = keypair();
+  const readyReads = vi.fn(async () => acquiredReads(relay.pubkey));
+  Object.assign(runtime, { readyReads });
+  const turn = deliver({
+    type: "mention",
+    event: eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+  });
+  await turn.run;
+  expect(readyReads).toHaveBeenCalledOnce();
   expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
   expect(host.processes).toEqual([]);
 });

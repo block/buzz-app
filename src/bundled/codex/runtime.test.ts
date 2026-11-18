@@ -16,7 +16,7 @@ import {
   conversationKey,
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { type AgentReads, ownerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
@@ -3063,6 +3063,44 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
   expect(f.spawn).not.toHaveBeenCalled();
 });
+
+it("checks a workflow mention, and answers it, with the reads it waited for", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  // Only the community the wait ends on knows the workflow key.
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const acquired = ownerReads(replacement, pubkey) as AgentReads;
+  const channel = vi.fn(acquired.channel);
+  const readyReads = vi.fn(async () => ({ ...acquired, channel }));
+  Object.assign(f.runtime, { readyReads });
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  expect(readyReads).toHaveBeenCalledExactlyOnceWith(ask.agent, ask.signal);
+  expect(channel).toHaveBeenCalledWith("channel");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(ignored).not.toHaveBeenCalled();
+  await f.complete();
+});
+
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
   async (cancelled) => {

@@ -1,3 +1,5 @@
+import type { RelayData } from "../relay/service";
+import { readyOwnerReads } from "./reads";
 import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
@@ -13344,6 +13346,64 @@ it("keeps a handed-off request and its original scope through reconnect, without
     expect(f.run).toHaveBeenCalledTimes(1);
   } finally {
     finish({ ok: true });
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("fails a workflow mention visibly when its community does not reconnect by the delivery deadline", async () => {
+  const f = await setup({ timeoutMs: 100 });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  // A community that stays reconnecting.
+  const listeners = new Set<() => void>();
+  const relay = {
+    snapshot: () => ({
+      status: "connecting",
+      generation: 1,
+      session: { channels: { subscribeList: () => () => {} } },
+    }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  } as unknown as RelayData;
+  let waited!: () => void;
+  const started = new Promise<void>((resolve) => {
+    waited = resolve;
+  });
+  f.run.mockImplementationOnce(async (delivery) => {
+    const reads = readyOwnerReads(
+      relay,
+      { relay: "wss://buzz.example", owner: viewer, pubkey: bot },
+      delivery.signal,
+    );
+    waited();
+    await reads;
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    f.emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await started;
+    expect(listeners.size).toBe(1);
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: expect.stringContaining(
+          "Workflow request could not start: its community did not reconnect before the delivery deadline.",
+        ),
+      }),
+    );
+    expect(listeners.size).toBe(0);
+  } finally {
+    log.mockRestore();
     await f.ctx.fiber.dispose();
   }
 });

@@ -193,6 +193,14 @@ export class ClaudeAuth {
   /** The person's own setup, asked once until it is checked again. An
    * answer Claude could not give is not kept. A change of answer is a change
    * of credentials, so listeners are told. */
+  /** The person's own setup, or none when the host is too full to ask, as
+   * for any check that cannot make room. */
+  private settled() {
+    return this.connection().catch((error: unknown) => {
+      if (error === PROCESS_LIMIT) return undefined;
+      throw error;
+    });
+  }
   private connection() {
     const spawn = this.spawn;
     if (!spawn) return Promise.resolve(undefined);
@@ -229,7 +237,7 @@ export class ClaudeAuth {
   async check(): Promise<Connection | undefined> {
     this.saved = undefined;
     this.own = undefined;
-    const own = await this.connection();
+    const own = await this.settled();
     if (own) return own;
     return (await this.has()) ? {} : undefined;
   }
@@ -240,7 +248,7 @@ export class ClaudeAuth {
   private readonly credentials = async () => {
     this.saved = undefined;
     this.own = undefined;
-    const [own, key] = await Promise.all([this.connection(), this.has()]);
+    const [own, key] = await Promise.all([this.settled(), this.has()]);
     return { own: !!own, key };
   };
 

@@ -142,6 +142,15 @@ it("passes a full host's refusal on, rather than taking it for no setup", async 
   expect(started).toEqual([]);
 });
 
+it("reads a full host as no own setup outside a turn", async () => {
+  const capped: Spawn = () => Promise.reject(PROCESS_LIMIT);
+  const auth = new ClaudeAuth(capped);
+  // The saved key still counts, as when the setup check found none.
+  await expect(auth.check()).resolves.toEqual({});
+  store(false);
+  await expect(auth.check()).resolves.toBeUndefined();
+});
+
 it("asks again until a key is saved, then once until it is saved or checked", async () => {
   const { spawn } = host();
   store(false);

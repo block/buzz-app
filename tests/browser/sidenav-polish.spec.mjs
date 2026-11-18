@@ -887,11 +887,17 @@ test("Personal space preserves the global sidebar row geometry", async ({
       const rows = frame
         .querySelector('[aria-label="Pages"]')
         .querySelectorAll('[data-variant="row"]');
+      // In a community, page rows sit under the orderable Plugins heading,
+      // so compare their tops relative to the first row.
+      const first = rows[0].getBoundingClientRect().top;
       return [...rows].map((element) => {
         const box = element.getBoundingClientRect();
-        // In a community, page rows sit under the orderable Plugins heading,
-        // so only their inset and width carry over to Personal space.
-        return { left: box.left - bounds.left, width: box.width };
+        return {
+          left: box.left - bounds.left,
+          top: box.top - first,
+          width: box.width,
+          height: box.height,
+        };
       });
     });
   await expect(

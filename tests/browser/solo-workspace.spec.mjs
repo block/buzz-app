@@ -477,6 +477,17 @@ test("Solo row status rules keep :has() out of minified :is() lists", async ({
 });
 
 // Reading needs real focus inside the chat; a pointer selection leaves it on the row.
+// The session reads activity for saved sorts; Solo's unsaved Recent default
+// must ask for it too, or a cold load orders Solo chats without it.
+test("Solo's default Recent sort reads channel activity on a cold load", async ({
+  page,
+  app,
+}) => {
+  const activity = page.waitForRequest("**/channel-activity");
+  await page.goto(app.origin);
+  await activity;
+});
+
 test.describe("reading", () => {
   test.use({ readState: true });
   const bold = (row) =>

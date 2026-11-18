@@ -289,11 +289,17 @@ export function ChannelInventory({
     (channel: ChannelSummary) => eligibleSolo(channel, viewer),
     [viewer],
   );
+  const soloRecent = sectionSort("solo") === "recent";
   const list = useChannelRoster(queries.channels, {
-    activity:
-      needsActivity || (sectionSort("solo") === "recent" && soloActivity),
+    activity: needsActivity || (soloRecent && soloActivity),
     preview: pluginSorted,
   });
+  // The session reads activity only for saved sorts; Solo's default needs it
+  // too, but only while there are Solo chats to order.
+  const soloOrdered = soloRecent && list.channels.some(soloActivity);
+  useEffect(() => {
+    if (soloOrdered) return queries.channels.demandActivity?.();
+  }, [soloOrdered, queries.channels]);
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );

@@ -274,6 +274,27 @@ type Entry = {
   /** Requests delivered and not yet taken into a turn, nor ended. */
   waiting: Set<Request>;
 };
+
+/** The conversation's lane. A new community lane waits for every other lane. */
+function laneFor(entry: Entry, key: string, community: boolean) {
+  let lane = entry.lanes.get(key);
+  if (!lane) {
+    lane = {
+      tail: community
+        ? Promise.all([
+            entry.after,
+            ...[...entry.lanes.values()].map((other) => other.tail),
+          ]).then(() => {})
+        : entry.after,
+      queued: 0,
+      steering: Promise.resolve(),
+      behind: 0,
+    };
+    entry.lanes.set(key, lane);
+  }
+  return lane;
+}
+
 type Loaded = Awaited<ReturnType<CodexRuntime["loadThread"]>>;
 type Server = {
   protection?: AgentProtection;
@@ -1667,21 +1688,9 @@ export class CodexRuntime {
     );
     seat.signal.throwIfAborted();
     const entry = this.entry(agent.key, reads.scope);
-    const lane = entry.lanes.get(key) ?? {
-      tail:
-        settings.scope === "community"
-          ? Promise.all([
-              entry.after,
-              ...[...entry.lanes.values()].map((other) => other.tail),
-            ]).then(() => {})
-          : entry.after,
-      queued: 0,
-      steering: Promise.resolve(),
-      behind: 0,
-    };
+    const lane = laneFor(entry, key, settings.scope === "community");
     if (lane.voice || lane.voiceOpening)
       throw new Error("This conversation already has a voice seat");
-    entry.lanes.set(key, lane);
     lane.voiceOpening = true;
     try {
       const active = lane.active;
@@ -2209,18 +2218,7 @@ export class CodexRuntime {
     const entry = this.entry(agent.key, request.scope);
     // Reserve the shared position before asynchronous admission can yield.
     const communityLane =
-      settings.scope === "community"
-        ? (entry.lanes.get(key) ?? {
-            tail: Promise.all([
-              entry.after,
-              ...[...entry.lanes.values()].map((other) => other.tail),
-            ]).then(() => {}),
-            queued: 0,
-            steering: Promise.resolve(),
-            behind: 0,
-          })
-        : undefined;
-    if (communityLane) entry.lanes.set(key, communityLane);
+      settings.scope === "community" ? laneFor(entry, key, true) : undefined;
     const activeCommunityTurn = communityLane?.active;
     const nextCommunityTurn = communityLane?.queued
       ? communityLane.next
@@ -2260,16 +2258,7 @@ export class CodexRuntime {
         }
         if (queueCommunity) return;
         const text = textOf(request.event, agent.name);
-        let lane = entry.lanes.get(key);
-        if (!lane) {
-          lane = {
-            tail: entry.after,
-            queued: 0,
-            steering: Promise.resolve(),
-            behind: 0,
-          };
-          entry.lanes.set(key, lane);
-        }
+        const lane = laneFor(entry, key, false);
         if (lane.active || lane.queued || lane.behind) {
           const current = lane;
           let queued = false;
@@ -2486,16 +2475,7 @@ export class CodexRuntime {
       }
       if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);
-      const lane = entry.lanes.get(key) ?? {
-        tail: Promise.all([
-          entry.after,
-          ...[...entry.lanes.values()].map((other) => other.tail),
-        ]).then(() => {}),
-        queued: 0,
-        steering: Promise.resolve(),
-        behind: 0,
-      };
-      entry.lanes.set(key, lane);
+      const lane = laneFor(entry, key, true);
       let outcome: TurnResult = { ok: true };
       const request: TextRequest = {
         scope,

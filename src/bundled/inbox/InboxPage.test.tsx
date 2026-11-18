@@ -1354,6 +1354,20 @@ function fixture(
         readSteps.push({ target, id, work });
         return work;
       },
+      prepareReadThrough(
+        steps: Parameters<typeof owner.session.unread.prepareReadThrough>[0],
+      ) {
+        // Record each step as it is saved, as markThrough records its one.
+        return owner.session.unread
+          .prepareReadThrough(steps)
+          .map((save, index) => () => {
+            const work = save();
+            const step = steps[index];
+            if (step)
+              readSteps.push({ target: step.target, id: step.messageId, work });
+            return work;
+          });
+      },
     },
   };
   let connection: RelaySnapshot = {
@@ -2922,6 +2936,71 @@ it("two-step read access loss during its first save stops before the second step
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Reading observation expired",
   );
+});
+
+it("stops a two-step Mark as read before a newer unread reminder, even on Retry", async () => {
+  const h = fixture();
+  const root = message(h.alice, "room", "Reminder root", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const child = message(h.alice, "room", "Reminder reply", 31, [
+    ["p", h.viewer.pubkey],
+    ["e", root.id, "", "reply"],
+  ]);
+  h.events.push(root, child);
+  h.emit([root, child]);
+  render(h.view);
+  await screen.findByText("Reminder reply");
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  const item = () =>
+    h.owner.session.unread
+      .inbox()
+      .items.find((entry) => entry.id === `room:${root.id}`);
+  expect(item()?.readThrough).toHaveLength(2);
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("Reminder reply"),
+  );
+  if (!row) throw Error("Missing two-step row");
+  const release = h.holdSave();
+  let reminder: Promise<unknown> | undefined;
+  try {
+    fireEvent.click(
+      within(row).getByRole("button", { name: /^Mark as read / }),
+    );
+    await waitFor(() => expect(h.saveStarted()).toBe(true));
+    // A newer reminder, as another window's Mark as unread, queues behind the
+    // first step's save.
+    reminder = h.owner.session.unread.markUnreadLocal({
+      kind: "thread",
+      channelId: "room",
+      rootId: root.id,
+    });
+  } finally {
+    await act(async () => release());
+  }
+  await act(async () => {
+    await reminder;
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Reading observation expired",
+  );
+  // The first step saved; the older second step never erases the reminder.
+  expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
+  expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeTypeOf("number");
+  expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
+  // Retry cannot resume the stopped read and erase the reminder either.
+  fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
+  await waitFor(() =>
+    expect(screen.getByRole("list", { name: "Activity" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    ),
+  );
+  expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeTypeOf("number");
+  expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
+  await waitFor(() => expect(item()?.unreadCount).toBeGreaterThan(0));
 });
 
 it.each(["retry", "other", "blur"] as const)(

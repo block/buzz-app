@@ -199,6 +199,13 @@ export interface UnreadCapability {
   markReadThrough(
     steps: readonly Readonly<{ target: ReadTarget; messageId: string }>[],
   ): Promise<readonly ReadMutationResult[]>;
+  /** `markReadThrough`'s steps, each saved when its caller runs it, so a
+   * caller can check between steps and retry one. The cut is still the
+   * preparing call's: running a step again cannot clear a newer Mark as
+   * unread on its target. Run them in order. */
+  prepareReadThrough(
+    steps: readonly Readonly<{ target: ReadTarget; messageId: string }>[],
+  ): readonly (() => Promise<ReadMutationResult>)[];
   /** Explicit read of these verified top-level messages in one save, as the
    * reader's catch-up reads a channel bottom: the channel catch-up mark reads
    * ordinary messages through the newest, and still-unread mentions,
@@ -3013,6 +3020,12 @@ export function createUnread({
       );
     },
     async markReadThrough(steps) {
+      const results: ReadMutationResult[] = [];
+      for (const save of capability.prepareReadThrough(steps))
+        results.push(await save());
+      return results;
+    },
+    prepareReadThrough(steps) {
       const generation = epoch;
       const admitted = steps.map(({ target, messageId }) => ({
         target,
@@ -3021,13 +3034,10 @@ export function createUnread({
       }));
       // Reserve one saved cut at the click, before any newer manual action.
       const cut = reads.captureLocalUnreadRevision();
-      const fences = admitted.map(({ target }) =>
-        reads.captureLocalUnread([targetKey(target)], cut),
-      );
-      const results: ReadMutationResult[] = [];
-      for (const [index, { target, messageId, event }] of admitted.entries())
-        results.push(
-          await serialize(target.channelId, () =>
+      return admitted.map(({ target, messageId, event }) => {
+        const fence = reads.captureLocalUnread([targetKey(target)], cut);
+        return () =>
+          serialize(target.channelId, () =>
             reads.read(
               targetKey(target),
               event.created_at,
@@ -3038,11 +3048,10 @@ export function createUnread({
               true,
               undefined,
               undefined,
-              fences[index],
+              fence,
             ),
-          ),
-        );
-      return results;
+          );
+      });
     },
     async markTimelineRead(channelId, messageIds) {
       const target = { kind: "channel" as const, channelId };

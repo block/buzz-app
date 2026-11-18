@@ -900,6 +900,7 @@ function InboxList({
     };
     // Prepare once per click, not once per Retry: later arrivals are a new intent.
     let readChannel: (() => Promise<unknown>) | undefined;
+    let readSteps: readonly (() => Promise<unknown>)[] | undefined;
     const work = async () => {
       if (unread) await session.unread.markUnreadLocal(item.target);
       else if (item.target.kind === "channel") {
@@ -910,7 +911,9 @@ function InboxList({
         await readChannel();
       } else if (item.timeline)
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
-      else
+      else {
+        // One cut for every step and Retry: a newer Mark as unread stops it.
+        readSteps ??= session.unread.prepareReadThrough(item.readThrough);
         while (remaining.length) {
           // Close/Escape retires undispatched steps, not the admitted save.
           // Its genuine storage/access rejection still propagates through run.
@@ -919,12 +922,13 @@ function InboxList({
             throw new Error(
               "This action expired. Close and reopen the conversation.",
             );
-          const step = remaining[0];
-          if (!step) break;
-          await session.unread.markThrough(step.target, step.messageId);
+          const save = readSteps[item.readThrough.length - remaining.length];
+          if (!save) break;
+          await save();
           remaining.shift();
           revision = session.unread.revision();
         }
+      }
     };
     // An interrupted read (Close, Escape, a newer intent) does not continue.
     void run(

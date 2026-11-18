@@ -279,6 +279,9 @@ timeline and the thread being read, without reading unopened threads' replies.
   as one explicit intent. Local manual-unread intent is cut once, at the call: a
   newer Mark as unread on a later step's target, even one queued behind an
   earlier step's save, rejects that step and stops the rest.
+  `prepareReadThrough(steps)` takes that cut at its call and returns one save per
+  step, for a caller that checks between steps or retries one (the Activity
+  page); running a step again keeps the preparing call's cut.
 - `markChannelRead(channelId)` captures the greater of invocation-time integer
   seconds and the newest retained verified message timestamp (including replies),
   then atomically advances the explicit channel frontier and clears the channel's

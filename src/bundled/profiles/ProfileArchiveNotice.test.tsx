@@ -523,12 +523,15 @@ it("reads an archived key's deltas once per opening", async () => {
   held.snapshots = new Promise((resolve) => {
     release = resolve;
   });
-  reopen();
-  await waitFor(() => expect(reads(13535)).toBe(snapshots + 1));
-  // The reread is in flight, so the opening waits to read deltas.
-  await act(async () => {});
-  expect(reads(8002)).toBe(1);
-  await act(async () => release());
+  try {
+    reopen();
+    await waitFor(() => expect(reads(13535)).toBe(snapshots + 1));
+    // The reread is in flight, so the opening waits to read deltas.
+    await act(async () => {});
+    expect(reads(8002)).toBe(1);
+  } finally {
+    await act(async () => release());
+  }
   await waitFor(() => expect(reads(8002)).toBe(2));
   expect(
     screen.getByRole("button", { name: "Open new key profile: New Key" }),

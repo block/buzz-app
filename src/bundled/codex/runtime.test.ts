@@ -1069,6 +1069,40 @@ it("rejects failed terminal cleanup and retries the same agent without ending th
     "BACK",
   ]);
 });
+it("treats a thread the server no longer has as already cleaned when retiring", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessionState(
+        { ...b.agent, config: f.delivery("unused").config } as unknown as Agent,
+        { channelId: "channel", root: "7".repeat(64) },
+      ),
+    ).toBe("idle"),
+  );
+  f.failures.set(
+    "thread/backgroundTerminals/clean",
+    `thread not found: ${thread}`,
+  );
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  await driver.retire(b.agent.key);
+  await driver.retire(b.agent.key);
+  expect(
+    f.sent
+      .filter((wire) => wire.method === "thread/backgroundTerminals/clean")
+      .map((wire) => wire.params),
+  ).toEqual([{ threadId: thread }]);
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
 it("does not clean or log a cleanup error after the last agent closes the server", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start a dev server"));

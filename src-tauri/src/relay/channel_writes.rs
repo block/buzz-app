@@ -304,7 +304,7 @@ mod tests {
         unset[2][1] = "everyone";
         unset[3][1] = "0";
         assert!(valid("artifact-type-policy", &command(unset)));
-        for value in ["a1.b_c-d", "com.example.mention-groups.group"] {
+        for value in ["a1.b_c-d", "com.example.settings.item"] {
             let mut tags = base;
             tags[1][1] = value;
             assert!(valid("artifact-type-policy", &command(tags)), "{value}");

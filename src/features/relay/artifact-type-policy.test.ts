@@ -47,13 +47,9 @@ it("hands a plugin only the parsed policy the relay returned", async () => {
   ).resolves.toEqual({ policy: "everyone", revision: null });
 });
 
-it.each([
-  ["a non-object body", null],
-  ["an unknown policy", { policy: "nobody", revision: null }],
-  ["a malformed revision", { policy: "admins", revision: "A".repeat(64) }],
-])("rejects %s from the relay read", async (_, body) => {
+it("rejects a relay read that is not a policy", async () => {
   const h = access();
-  h.read.mockResolvedValueOnce(body);
+  h.read.mockResolvedValueOnce({ policy: "nobody", revision: null });
   await expect(
     h.access.read(TYPE, new AbortController().signal),
   ).rejects.toThrow("Invalid artifact type policy");

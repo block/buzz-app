@@ -3554,28 +3554,24 @@ test("type policy commands use dedicated exact-shape routes for the relay's own 
   try {
     const transport = await connectBrokerTransport(h.base);
     expect(transport.writer.kinds).not.toContain(ARTIFACT_TYPE_POLICY_KIND);
-    const [scope, ...rest] = template.tags;
-    const invalid = [
-      {
-        ...template,
-        tags: [["community", "11111111-1111-4111-8111-111111111111"], ...rest],
-      },
-      { ...template, tags: [...rest, scope] },
-      { ...template, tags: [...template.tags, ["h", community]] },
-    ];
-    for (const event of invalid) {
-      expect((await h.post("artifact-type-policy-sign", event)).status).toBe(
-        400,
-      );
-      expect(
-        (
-          await h.post(
-            "artifact-type-policy-publish",
-            finalizeEvent(event, viewerKey),
-          )
-        ).status,
-      ).toBe(400);
-    }
+    // Bound to this relay's community; the shape matrix lives in
+    // artifact-community.test.ts.
+    const other = {
+      ...template,
+      tags: [
+        ["community", "11111111-1111-4111-8111-111111111111"],
+        ...template.tags.slice(1),
+      ],
+    };
+    expect((await h.post("artifact-type-policy-sign", other)).status).toBe(400);
+    expect(
+      (
+        await h.post(
+          "artifact-type-policy-publish",
+          finalizeEvent(other, viewerKey),
+        )
+      ).status,
+    ).toBe(400);
     const signal = new AbortController().signal;
     expect((await h.post("sign", template)).status).toBe(400);
     live = await openBrokerSocket(transport);

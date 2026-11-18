@@ -6,6 +6,7 @@ import {
   UserIcon,
 } from "../../shared/design-system/icons/index";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { ValueChip } from "../../shared/design-system/ui/ValueChip";
 
 /** A filter the guide teaches, with what Enter on its row types. */
 export type GuideFilter = {
@@ -111,7 +112,10 @@ export function guideFilters({
       syntax: '"',
       about:
         "Words in quotes match together, in that order. Put - before a word to leave it out.",
-      examples: [['"release notes"', "That phrase"]],
+      examples: [
+        ['"release notes"', "That phrase"],
+        ["-draft", "Without “draft”"],
+      ],
       icon: ChatCircleIcon,
     },
   ];
@@ -122,7 +126,7 @@ export function guideFilters({
 export const syntaxOf = (filter: GuideFilter) =>
   filter.key === "phrase" ? "“…”" : filter.syntax;
 
-/** A filter as it's typed, in the hue of its operator. */
+/** A filter as it's typed, led by a dot in the hue of its operator. */
 export function FilterSyntax({
   text,
   operator = text.slice(0, text.indexOf(":")),
@@ -131,21 +135,29 @@ export function FilterSyntax({
   operator?: string;
 }) {
   return (
-    <code className="search-guide-syntax text-caption" data-operator={operator}>
-      {text}
-    </code>
+    <ValueChip
+      icon={
+        <svg
+          viewBox="0 0 12 12"
+          className="search-guide-dot"
+          data-operator={operator}
+          aria-hidden="true"
+        >
+          <circle cx="6" cy="6" r="3" />
+        </svg>
+      }
+    >
+      <code>{text}</code>
+    </ValueChip>
   );
 }
 
-/** What a filter finds, with examples to try and a combined one. */
+/** What a filter finds, with examples to try. */
 export function FilterGuidePreview({
   filter,
-  combined,
   onTry,
 }: {
   filter: GuideFilter;
-  /** Several filters together, as one search. */
-  combined: readonly string[];
   onTry: (example: string) => void;
 }) {
   return (
@@ -180,14 +192,6 @@ export function FilterGuidePreview({
           </div>
         </div>
       )}
-      <div className="search-guide-examples">
-        <span className="text-label-sm text-subtle">Combine them</span>
-        <p className="search-guide-combined">
-          {combined.map((text) => (
-            <FilterSyntax key={text} text={text} />
-          ))}
-        </p>
-      </div>
     </div>
   );
 }

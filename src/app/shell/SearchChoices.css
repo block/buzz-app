@@ -536,17 +536,10 @@
 
   /* Filters overhangs the field as Clear does, so the field keeps its
      height. */
-  .search-palette :is([data-search-filters], [data-search-filter-chip]) {
-    margin-block: calc(-1 * var(--space-half));
-  }
-
   /* Chosen filters lead the field. Long names shorten rather than
      squeeze the typed text out. */
-  .search-palette [data-search-filter-chip] {
-    min-width: 0;
-  }
-  .search-palette [data-search-filter-chip] .buzz-button-label {
-    min-width: 0;
+  .search-palette-author-prefix > * {
+    flex-shrink: 1;
   }
   .search-filter-chip-text {
     min-width: 0;
@@ -563,25 +556,9 @@
     background: var(--filter-dot, var(--icon-subtle));
   }
 
-  /* The filter guide shows each filter as it's typed, led by its hue. */
-  .search-guide-syntax {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1h);
-    border-radius: var(--radius-chip);
-    padding: 0 var(--space-1h);
-    background: var(--affordance-subtle);
-    color: var(--text-standard);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-  .search-guide-syntax::before {
-    content: "";
-    flex: none;
-    width: var(--space-1h);
-    height: var(--space-1h);
-    border-radius: var(--radius-pill);
-    background: var(--filter-dot, var(--icon-subtle));
+  /* A guide pill's dot, in its filter's hue. */
+  .search-guide-dot {
+    fill: var(--filter-dot, var(--icon-subtle));
   }
   .search-guide-examples {
     display: flex;
@@ -595,14 +572,6 @@
     flex-direction: column;
     margin-inline: calc(-1 * var(--space-2));
   }
-  /* Filters that go together wrap whole, never inside one. */
-  .search-guide-combined {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1h);
-    margin: 0;
-  }
-
   .search-peek-keys {
     display: flex;
     flex-wrap: wrap;

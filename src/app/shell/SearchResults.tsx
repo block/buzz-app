@@ -1951,17 +1951,11 @@ export function SearchResults({
         }
       : undefined;
   };
-  const combined = [
-    "from:me",
-    ...(sampleChannel && !scopedChannelId ? [`in:#${sampleChannel}`] : []),
-    "during:7d",
-  ];
   const guidePreview = (row: SearchDestination | undefined) => {
     const filter = filters.find(({ key }) => `guide:${key}` === row?.key);
     return filter ? (
       <FilterGuidePreview
         filter={filter}
-        combined={combined}
         onTry={(example) => {
           const chip = exampleChip(example);
           // As a picker would: it replaces a typed filter of its kind.

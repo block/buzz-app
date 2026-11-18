@@ -8225,6 +8225,91 @@ it("steers a working community thread with a Solo message and replies to both re
   await f.complete(0, "");
 });
 
+it("steers community follow-ups received while Codex starts the first turn", async () => {
+  const f = fixture();
+  const first = f.delivery("Start the channel task");
+  const config = { ...(first.config as object), scope: "community" };
+  const starting = deferred<void>();
+  f.held.set("turn/start", starting.promise);
+  f.soloChannels.add("channel");
+  const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
+  try {
+    await f.runtime.run({ ...first, channelId: "other", config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const accepted = deferred<void>();
+    const followUp = f.runtime.run({
+      ...f.delivery("Quick Solo question", "e".repeat(64)),
+      config,
+      prepareSession: async () => {
+        accepted.resolve();
+        return undefined;
+      },
+    });
+    await accepted.promise;
+    const later = f.runtime.run({
+      ...f.delivery("One more detail", "f".repeat(64)),
+      config,
+    });
+    starting.resolve();
+    await Promise.all([followUp, later]);
+    await vi.waitFor(() => expect(steers()).toHaveLength(2));
+    expect(steers().map((wire) => wire.params)).toEqual([
+      expect.objectContaining({
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+      }),
+      expect.objectContaining({
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+      }),
+    ]);
+    expect(inputText(steers()[0])).toContain("Quick Solo question");
+    expect(inputText(steers()[1])).toContain("One more detail");
+    expect(f.starts()).toHaveLength(1);
+    await f.complete(0, "");
+  } finally {
+    starting.resolve();
+    f.runtime.dispose();
+  }
+});
+
+it("steers community follow-ups into an earlier queued human turn", async () => {
+  const f = fixture();
+  const first = f.delivery("First task");
+  const config = { ...(first.config as object), scope: "community" };
+  const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...f.delivery("Next task", "e".repeat(64)),
+      config,
+      model: "deep-model",
+    });
+    const admitted = deferred<void>();
+    const followUp = f.runtime.run({
+      ...f.delivery("Follow-up to the next task", "f".repeat(64)),
+      config,
+      prepareSession: async () => {
+        admitted.resolve();
+        return undefined;
+      },
+    });
+    await admitted.promise;
+    expect(steers()).toHaveLength(0);
+    await f.complete(0, "FIRST");
+    await followUp;
+    await vi.waitFor(() => expect(steers()).toHaveLength(1));
+    expect(inputText(f.starts()[1])).toContain("Next task");
+    expect(inputText(steers()[0])).toContain("Follow-up to the next task");
+    expect(steers()[0]?.params).toMatchObject({ expectedTurnId: "turn-2" });
+    expect(f.starts()).toHaveLength(2);
+    await f.complete(1, "SECOND");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps community sessions apart for memberships of the same identity", async () => {
   const f = fixture();
   const base = f.delivery("here");
@@ -8606,25 +8691,40 @@ it("reserves community mentions before later unaddressed wakes during startup", 
     ...base,
     config: { ...(base.config as object), scope: "community" },
   };
-  await f.runtime.run(delivery);
-  await reading.promise;
-  await f.runtime.run({ ...f.delivery("second"), config: delivery.config });
-  const wake = f.runtime.runOnce({
-    delivery,
-    key: "third",
-    signal: new AbortController().signal,
-    prompt: async () => "third wake",
-  });
-  gate.resolve();
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete(0);
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(inputText(f.starts()[1])).toContain("second");
-  await f.complete(1);
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-  expect(inputText(f.starts()[2])).toContain("third wake");
-  await f.complete(2);
-  await wake;
+  try {
+    await f.runtime.run(delivery);
+    await reading.promise;
+    const admitted = deferred<void>();
+    const second = f.runtime.run({
+      ...f.delivery("second"),
+      config: delivery.config,
+      prepareSession: async () => {
+        admitted.resolve();
+        return undefined;
+      },
+    });
+    await admitted.promise;
+    const wake = f.runtime.runOnce({
+      delivery,
+      key: "third",
+      signal: new AbortController().signal,
+      prompt: async () => "third wake",
+    });
+    gate.resolve();
+    await second;
+    const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
+    await vi.waitFor(() => expect(steers()).toHaveLength(1));
+    expect(inputText(steers()[0])).toContain("second");
+    expect(f.starts()).toHaveLength(1);
+    await f.complete(0);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(inputText(f.starts()[1])).toContain("third wake");
+    await f.complete(1);
+    await wake;
+  } finally {
+    gate.resolve();
+    f.runtime.dispose();
+  }
 });
 
 it("clears owner instructions on addressed and unaddressed community source changes", async () => {

@@ -238,6 +238,7 @@ type Once = {
 };
 /** A queued turn that later messages join once it starts. */
 type Next = {
+  request: TextRequest;
   began: Promise<Active | undefined>;
   begin: (active?: Active) => void;
 };
@@ -2190,18 +2191,29 @@ export class CodexRuntime {
         : undefined;
     if (communityLane) entry.lanes.set(key, communityLane);
     const activeCommunityTurn = communityLane?.active;
+    const nextCommunityTurn = communityLane?.queued
+      ? communityLane.next
+      : undefined;
+    const communityTarget =
+      nextCommunityTurn?.request ?? activeCommunityTurn?.reply;
+    const targetModel = nextCommunityTurn
+      ? nextCommunityTurn.request.model
+      : activeCommunityTurn?.model;
+    const targetEffort = nextCommunityTurn
+      ? nextCommunityTurn.request.effort
+      : activeCommunityTurn?.effort;
     const queueCommunity =
       communityLane &&
-      (!activeCommunityTurn?.turnId ||
-        activeCommunityTurn.finished ||
-        activeCommunityTurn.stopped ||
-        communityLane.queued ||
+      (!communityTarget ||
+        (!nextCommunityTurn &&
+          (activeCommunityTurn?.finished || activeCommunityTurn?.stopped)) ||
         communityLane.voice ||
+        communityLane.voiceOpening ||
         request.wake ||
-        activeCommunityTurn.reply.wake ||
-        activeCommunityTurn.reply.unaddressed ||
-        (request.model && request.model !== activeCommunityTurn.model) ||
-        (request.effort && request.effort !== activeCommunityTurn.effort));
+        communityTarget.wake ||
+        communityTarget.unaddressed ||
+        (request.model && request.model !== targetModel) ||
+        (request.effort && request.effort !== targetEffort));
     entry.waiting.add(request);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
     const handoff = this.controls.deliver(
@@ -2252,11 +2264,10 @@ export class CodexRuntime {
               if (
                 active.finished ||
                 active.stopped ||
-                current.queued ||
-                (communityLane
-                  ? active !== activeCommunityTurn
-                  : request.conversation.topLevel !==
-                    active.reply.conversation.topLevel) ||
+                (!communityLane &&
+                  (current.queued ||
+                    request.conversation.topLevel !==
+                      active.reply.conversation.topLevel)) ||
                 (request.model && request.model !== active.model) ||
                 (request.effort && request.effort !== active.effort)
               ) {
@@ -2341,9 +2352,11 @@ export class CodexRuntime {
             .then(async () => {
               // Behind a queued turn, a message joins it once it starts, so a
               // backlog clears in one turn rather than one turn per message.
-              const active = current.queued
-                ? await current.next?.began
-                : current.active;
+              const active = communityLane
+                ? await (nextCommunityTurn?.began ?? activeCommunityTurn)
+                : current.queued
+                  ? await current.next?.began
+                  : current.active;
               if (!active) return queue();
               const steered = steer(active);
               // The turn ends only once what it may take in is placed.
@@ -2823,6 +2836,7 @@ export class CodexRuntime {
     current.queued++;
     let began!: (active?: Active) => void;
     const next: Next = {
+      request,
       began: new Promise((resolve) => (began = resolve)),
       begin: (active) => {
         next.begin = () => {};

@@ -186,12 +186,9 @@ export function useSearchHighlight({
     moved: selection.query === query && !selection.untouched,
     select,
     choose,
-    /** Moves the highlight one row, as Down or Up in the field does.
-     * Returns whether there was a row to move to. */
+    /** Moves the highlight one row, as Down or Up in the field does. */
     move(down: boolean) {
-      if (!keys.length) return false;
-      select(step(down));
-      return true;
+      if (keys.length) select(step(down));
     },
     /** Highlight nothing until the keyboard, pointer or query picks a row. */
     clear: () =>

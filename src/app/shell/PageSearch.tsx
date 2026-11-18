@@ -29,6 +29,7 @@ import { conversationFocusTarget } from "../focus-navigation";
 import { orderPages, shellPresentation } from "./presentation";
 import { matchName } from "../../features/search/match";
 import {
+  DEFAULT_SEARCH_STEPS,
   SearchChoices,
   SearchStepsContext,
   type SearchInputProps,
@@ -71,9 +72,7 @@ const SEARCH_BINDINGS = [SEARCH_BINDING, { key: "t", mod: true }];
 const CONVERSATION_SEARCH_ID = "conversation-search";
 const CONVERSATION_SEARCH_BINDING: KeyBinding = { key: "f", mod: true };
 const PREVIOUS_RESULT_ID = "search-previous-result";
-const PREVIOUS_RESULT_BINDING: KeyBinding = { key: "ArrowUp" };
 const NEXT_RESULT_ID = "search-next-result";
-const NEXT_RESULT_BINDING: KeyBinding = { key: "ArrowDown" };
 const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
 const noSubscribe = () => () => {};
 const noOverrides = () => NO_OVERRIDES;
@@ -220,15 +219,19 @@ export function PageSearch({
     if (!services) return;
     const remove = (
       [
-        [PREVIOUS_RESULT_ID, "Previous search result", PREVIOUS_RESULT_BINDING],
-        [NEXT_RESULT_ID, "Next search result", NEXT_RESULT_BINDING],
+        [
+          PREVIOUS_RESULT_ID,
+          "Previous search result",
+          DEFAULT_SEARCH_STEPS.previous,
+        ],
+        [NEXT_RESULT_ID, "Next search result", DEFAULT_SEARCH_STEPS.next],
       ] as const
     ).map(([id, title, binding], index) =>
       services.shortcuts.registerHost({
         id,
         title,
         binding,
-        order: HOST_SHORTCUT_ORDER.search + 2 + index,
+        order: HOST_SHORTCUT_ORDER.search + 3 + index,
         when: () => false,
         run: () => {},
       }),
@@ -243,12 +246,10 @@ export function PageSearch({
     services?.shortcutBindings.snapshot ?? noOverrides,
   );
   const binding = overrides[SEARCH_ID] ?? SEARCH_BINDING;
-  const previous = overrides[PREVIOUS_RESULT_ID] ?? PREVIOUS_RESULT_BINDING;
-  const next = overrides[NEXT_RESULT_ID] ?? NEXT_RESULT_BINDING;
-  const steps = useMemo(
-    () => (services ? { previous, next } : undefined),
-    [services, previous, next],
-  );
+  const previous =
+    overrides[PREVIOUS_RESULT_ID] ?? DEFAULT_SEARCH_STEPS.previous;
+  const next = overrides[NEXT_RESULT_ID] ?? DEFAULT_SEARCH_STEPS.next;
+  const steps = useMemo(() => ({ previous, next }), [previous, next]);
   const apple = isApplePlatform(navigator.platform);
   // Every search surface reads pages from here, so rank and underline them
   // here too: the disconnected and personal-space views show this list as is.

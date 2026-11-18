@@ -1795,8 +1795,7 @@ it("keeps a typed opening fence literal when a later sibling paragraph closes it
 });
 
 it.each([
-  ["- ", "ul", "- "],
-  ["* ", "ul", "- "],
+  ["• ", "ul", "- "],
   ["1. ", "ol", "1. "],
   ["> ", "blockquote", "> "],
 ] as const)(
@@ -1870,7 +1869,7 @@ it("starts an ordered list at the typed number and continues it with Shift+Enter
 
 it("opens a list from a marker typed on the second line, after the first line's paragraph", async () => {
   const h = mount("intro");
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}- item");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}• item");
   expect(h.input.querySelector(":scope > p")).toHaveTextContent("intro");
   expect(h.input.querySelector(":scope > ul > li")).toHaveTextContent("item");
   expect(h.input).toHaveValue("intro\nitem");
@@ -1891,7 +1890,7 @@ it("quotes the rest of the line when the marker is typed before existing prose",
 
 it("opens a list inside a quote but keeps a quote marker typed inside a list item literal, where the sent text still nests", async () => {
   const h = mount();
-  await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}- item");
+  await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}• item");
   expect(
     h.input.querySelector(":scope > blockquote > ul > li"),
   ).toHaveTextContent("item");
@@ -2030,7 +2029,7 @@ it("restores the typed `> ` in one undo step when it nested a quote", async () =
 });
 
 it.each([
-  ["- ", "item", "- ", "ul", null, "- item\n  \n  - nested"],
+  ["• ", "item", "• ", "ul", null, "- item\n  \n  - nested"],
   ["1. ", "one", "3. ", "ol", "3", "1. one\n   \n   3. nested"],
 ] as const)(
   "nests an empty item after the first as Tab does when %j%j is followed by %j",
@@ -2128,7 +2127,7 @@ it("joins the previous item's nested list as Tab does, so the typed number is a 
 
 it("keeps a marker of the other list kind, one beside an item's prose, and one in a first item literal, where the sent text still nests", async () => {
   const h = mount();
-  await h.user.keyboard("- item{Shift>}{Enter}{/Shift}1. num");
+  await h.user.keyboard("• item{Shift>}{Enter}{/Shift}1. num");
   expect(h.input.querySelector("ol")).toBeNull();
   expect(h.input.querySelectorAll("ul > li")).toHaveLength(2);
   expect(h.input).toHaveValue("item\n1. num");
@@ -2162,14 +2161,14 @@ it("keeps a marker of the other list kind, one beside an item's prose, and one i
     ],
   });
   const prose = mount();
-  await prose.user.keyboard("- item{Shift>}{Enter}{/Shift}two");
+  await prose.user.keyboard("• item{Shift>}{Enter}{/Shift}two");
   act(() => prose.input.setSelectionRange(5, 5));
   await prose.user.keyboard("- ");
   expect(prose.input.querySelector("ul ul")).toBeNull();
   expect(prose.input).toHaveValue("item\n- two");
   expect(prose.markdown()).toBe("- item\n- - two");
   const first = mount();
-  await first.user.keyboard("- - nested");
+  await first.user.keyboard("• - nested");
   expect(first.input.querySelector("ul ul")).toBeNull();
   expect(first.input.querySelectorAll("li")).toHaveLength(1);
   expect(first.input).toHaveValue("- nested");
@@ -2250,7 +2249,7 @@ it("alternates the marker between adjacent lists of one kind so they stay separa
   ]);
   const bullets = mount();
   await bullets.user.keyboard(
-    "- a{Shift>}{Enter}{Enter}{/Shift}- b{Shift>}{Enter}{Enter}{/Shift}- c{Shift>}{Enter}{Enter}{/Shift}text{Shift>}{Enter}{/Shift}- d",
+    "• a{Shift>}{Enter}{Enter}{/Shift}• b{Shift>}{Enter}{Enter}{/Shift}• c{Shift>}{Enter}{Enter}{/Shift}text{Shift>}{Enter}{/Shift}• d",
   );
   expect(bullets.input.querySelectorAll(":scope > ul")).toHaveLength(4);
   expect(bullets.markdown()).toBe("- a\n\n* b\n\n- c\n\ntext\n\n- d");
@@ -2260,7 +2259,7 @@ it("alternates the marker between adjacent lists of one kind so they stay separa
 });
 
 it.each([
-  ["- ", "ul", "- a\n\n* b\n\n\n\n- c"],
+  ["• ", "ul", "- a\n\n* b\n\n\n\n- c"],
   ["1. ", "ol", "1. a\n\n1) b\n\n\n\n1. c"],
 ] as const)(
   "keeps alternating %j list markers across an empty paragraph so three lists stay three",
@@ -2290,23 +2289,32 @@ it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", 
   expect(h.markdown()).toBe("note - one 1. two > three");
 });
 
-it.each([" - ", "a- ", "a• ", " • ", "1.5 ", "1234567890. ", "-> ", ">> "])(
-  "leaves typed %j as paragraph text",
-  async (line) => {
-    const h = mount();
-    await h.user.keyboard(line);
-    expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
-    expect(h.input).toHaveValue(line);
-  },
-);
+it.each([
+  "- ",
+  "* ",
+  "+ ",
+  " - ",
+  "a- ",
+  "a• ",
+  " • ",
+  "1.5 ",
+  "1234567890. ",
+  "-> ",
+  ">> ",
+])("leaves typed %j as paragraph text", async (line) => {
+  const h = mount();
+  await h.user.keyboard(line);
+  expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
+  expect(h.input).toHaveValue(line);
+});
 
 it("keeps a marker typed inside a code block or inline code literal", async () => {
   const h = mount();
   act(() => h.input.toggleFormat("code_block"));
-  await h.user.keyboard("- item");
+  await h.user.keyboard("• item");
   expect(h.input.querySelector("ul")).toBeNull();
-  expect(h.input.querySelector("pre > code")).toHaveTextContent("- item");
-  expect(h.markdown()).toBe("```\n- item\n```");
+  expect(h.input.querySelector("pre > code")).toHaveTextContent("• item");
+  expect(h.markdown()).toBe("```\n• item\n```");
   const inline = mount();
   act(() => inline.input.toggleFormat("code"));
   await inline.user.keyboard("> quote");
@@ -2326,27 +2334,27 @@ it("does not convert an inserted or pasted marker, or one typed inside pasted fe
   const fenced = mount();
   paste(fenced.input, "```\ncode\n```");
   act(() => fenced.input.setSelectionRange(4, 4));
-  await fenced.user.keyboard("- ");
+  await fenced.user.keyboard("• ");
   expect(fenced.input.querySelector("ul, pre")).toBeNull();
-  expect(fenced.input).toHaveValue("```\n- code\n```");
-  expect(fenced.markdown()).toBe("```\n- code\n```");
+  expect(fenced.input).toHaveValue("```\n• code\n```");
+  expect(fenced.markdown()).toBe("```\n• code\n```");
   // A fence left open by an earlier sibling paragraph still covers the line.
   const split = mount();
   await split.user.keyboard("```");
   act(() => split.input.undo(false));
   await split.user.keyboard("{Shift>}{Enter}{/Shift}");
   splitLastLine(split, 2);
-  await split.user.keyboard("- item");
+  await split.user.keyboard("• item");
   expect(split.input.querySelector("ul, pre")).toBeNull();
-  expect(split.input).toHaveValue("```\n- item");
-  expect(split.markdown()).toBe("```\n- item");
+  expect(split.input).toHaveValue("```\n• item");
+  expect(split.markdown()).toBe("```\n• item");
 });
 
 it.each([
-  ["- ", false, "ul > li > p"],
+  ["• ", false, "ul > li > p"],
   ["1. ", false, "ol > li > p"],
   ["> ", false, "blockquote > p"],
-  ["- ", true, "ul > li > p"],
+  ["• ", true, "ul > li > p"],
   ["1. ", true, "ol > li > p"],
   ["> ", true, "blockquote > p"],
 ] as const)(
@@ -2387,7 +2395,7 @@ it.each([
       expect(h.input.value).toBe(value);
       expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
       expect(h.markdown()).toBe(
-        `${marker}${line}${followed ? "\n\nnext" : ""}`,
+        `${marker === "• " ? "- " : marker}${line}${followed ? "\n\nnext" : ""}`,
       );
     };
     await h.user.keyboard(marker);

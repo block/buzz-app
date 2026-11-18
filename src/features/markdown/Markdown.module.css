@@ -16,6 +16,17 @@
 .document > p + :where(ul, ol) {
   margin-top: var(--space-2);
 }
+/* Match the composer around lists and quotes in chat. Document views keep
+   their paragraph spacing. */
+.message > :where(ul, ol, blockquote) {
+  margin-block: var(--space-2);
+}
+.message > :where(p:has(+ :is(ul, ol, blockquote))) {
+  margin-block-end: var(--space-2);
+}
+.message > :where(:is(ul, ol, blockquote) + p) {
+  margin-block-start: var(--space-2);
+}
 .document :where(h1, h2, h3, h4, h5, h6) {
   margin: var(--space-4) 0 var(--space-1h);
   color: var(--text-standard);

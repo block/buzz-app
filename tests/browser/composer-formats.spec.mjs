@@ -92,7 +92,7 @@ test("list toolbar, native item splitting and indentation survive reload and sen
 
 // Native text input, caret selection and history are browser-owned; the marker
 // matrix and completion/IME guards remain in the component tests.
-test("typed lists use Enter to split and exit, preserve mentions and send by button", async ({
+test("typed lists use Shift+Enter to edit and Enter to send with mentions", async ({
   page,
 }) => {
   const input = await composer(page);
@@ -100,7 +100,7 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   await input.pressSequentially("3. ");
   await expect(input.locator("ol")).toHaveAttribute("start", "3");
   await expect(input.locator("[data-placeholder]")).toHaveCount(0);
-  await input.press("Enter");
+  await input.press("Shift+Enter");
   await expect(input.locator("ol")).toHaveCount(0);
   await expect(input.locator("[data-placeholder]")).toHaveCount(1);
   await input.pressSequentially("3. ");
@@ -110,7 +110,7 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await input.pressSequentially("first second");
   await input.evaluate((el) => el.setSelectionRange(6, 6));
-  await input.press("Enter");
+  await input.press("Shift+Enter");
   await expect(input.locator("ol > li")).toHaveText(["first ", "second"]);
   await page.keyboard.press("ControlOrMeta+z");
   await expect(input.locator("ol > li")).toHaveText("first second");
@@ -118,8 +118,8 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   await input.evaluate((el) =>
     el.setSelectionRange(el.value.length, el.value.length),
   );
-  await input.press("Enter");
-  await input.press("Enter");
+  await input.press("Shift+Enter");
+  await input.press("Shift+Enter");
   await expect(input.locator(":scope > p")).toHaveCount(1);
   await input.pressSequentially("• ");
   await expect(input.locator("ul > li")).toHaveCount(1);
@@ -130,20 +130,95 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   await page
     .getByRole("button", { name: "Mention Alex Chen", exact: true })
     .click();
-  await input.press("Enter");
+  await input.press("Shift+Enter");
   await input.pressSequentially("follow up");
   await expect(input.locator("ul > li")).toHaveCount(2);
-  // Both Enter presses finished synchronously without submitting the form.
+  // Editing the list preserves the draft until Enter submits it.
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.length),
   ).toBe(0);
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.linkComposerFixture.sent.at(-1)))
     .toEqual({
       text: "3. first \n4. second\n\n- @Alex Chen \n- follow up",
       mentions: ["a".repeat(64)],
     });
+});
+
+test("lists and quotes keep their spacing when the draft is sent", async ({
+  page,
+}, testInfo) => {
+  const input = await composer(page);
+  await page.evaluate(() => document.fonts.ready);
+  await input.pressSequentially("Before");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("• First item");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("Second item");
+  await input.press("Shift+Enter");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("After");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("> Quoted text");
+
+  // Measure the text itself because the composer wraps list text in paragraphs
+  // and the renderer uses bare text in tight lists.
+  const linePositions = (root) =>
+    root.evaluate((element) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      const lines = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        lines.push(range.getBoundingClientRect().top);
+      }
+      return lines.slice(1).map((top, i) => top - lines[i]);
+    });
+  const appearances = [
+    { width: 1440, mode: "light", scale: 1 },
+    { width: 800, mode: "dark", scale: 1 },
+    { width: 390, mode: "dark", scale: 1.25 },
+  ];
+  async function measure(root, phase) {
+    const spacing = [];
+    for (const { width, mode, scale } of appearances) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.evaluate(
+        ({ mode, scale }) => {
+          document.documentElement.dataset.colorMode = mode;
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            scale,
+          );
+        },
+        { mode, scale },
+      );
+      spacing.push(await linePositions(root));
+      await testInfo.attach(`${phase}-${mode}-${width}`, {
+        body: await root.screenshot(),
+        contentType: "image/png",
+      });
+    }
+    return spacing;
+  }
+  const draftSpacing = await measure(input, "draft");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  const sent = page.getByRole("region", { name: "Sent message preview" });
+  await expect(sent.locator("li")).toHaveText(["First item", "Second item"]);
+  await expect(sent.locator("blockquote")).toHaveText("Quoted text");
+  const sentSpacing = await measure(
+    sent.locator("div:has(> ul + p + blockquote)"),
+    "sent",
+  );
+  for (const [index, gaps] of sentSpacing.entries()) {
+    expect(draftSpacing[index]).toHaveLength(4);
+    expect(gaps).toHaveLength(4);
+    for (const [line, gap] of gaps.entries()) {
+      expect(Math.abs(gap - draftSpacing[index][line])).toBeLessThan(1);
+    }
+  }
 });
 
 test("a typed fence opens a code block at once, and the block sends fenced", async ({
@@ -188,7 +263,7 @@ test("caret keys at the end of a composed message never insert a character", asy
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("a**a** _a_");
   await page.keyboard.press("Shift+Enter");
-  await page.keyboard.type("- acacs");
+  await page.keyboard.type("• acacs");
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.press("Shift+Enter");
   await expect(input.locator("strong")).toHaveText("a");

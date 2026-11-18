@@ -380,18 +380,14 @@ export function composerCodeFence(
 
 /** The typed character that completes a list or quote prefix. */
 export const composerPrefixDelimiters: ReadonlySet<string> = new Set([" "]);
-// A block prefix filling the caret's line up to the typed space, as CommonMark
-// reads it: a bullet marker, one to nine digits with a dot or parenthesis, or a
-// quote marker. Every form the timeline renders as a list converts, so `* `,
-// `+ ` and `1) ` open blocks although the serializer writes each bullet as `- `
-// and each number with a dot; the sent text renders the same either way.
-// A typed Unicode bullet is a convenience alias, serialized as Markdown `- `.
-const PREFIX = /^(?:([-*+•])|(\d{1,9})[.)]|>) $/;
+// A Unicode bullet, one to nine digits with a dot or parenthesis, or a quote
+// marker starts a block. ASCII bullets stay as typed Markdown source.
+const PREFIX = /^(?:(•)|(\d{1,9})[.)]|>) $/;
 // Positions to read before the caret: the widest prefix and its space, plus the
 // character before them, so the cheap check sees whether the line starts there.
 const PREFIX_WINDOW = 12;
 
-/** Typing the space after a lone `- `, `1. ` or `> ` marker turns the caret's
+/** Typing the space after a lone `•`, `1.` or `>` marker turns the caret's
  * line into a list item or quoted paragraph at once, producing the node the
  * toolbar toggle would: prose after the caret on that line becomes the block's
  * content, and the paragraph's other lines stay where they are. Inside a quote

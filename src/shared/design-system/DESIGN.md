@@ -1733,9 +1733,9 @@ Values scale with the host interface-size preference.
 - Message prose and composer text use `text-message`: 14px with 21.5/14 leading
   (21.5px at default), Regular (400) weight and -0.01em tracking, keeping the
   same compact reading rhythm while writing and reading messages. The message
-  renderer uses `space-4` between prose blocks, with
-  `space-2` between an introductory paragraph and its following list. Labels,
-  controls, code, tables and headings retain their existing type roles.
+  renderer uses `space-4` between prose blocks. The composer and message
+  renderer use `space-2` around top-level lists and quotes and `space-1` between
+  list items. Labels, controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 

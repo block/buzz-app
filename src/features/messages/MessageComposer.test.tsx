@@ -7041,7 +7041,7 @@ it("sends with Ctrl+Enter and adds lines with Enter once that is chosen", async 
     );
     expect(h.input()).toHaveValue("");
     // In a list, Enter still continues it and Ctrl+Enter still sends.
-    await h.user.type(h.input(), "- one{Enter}two");
+    await h.user.type(h.input(), "• one{Enter}two");
     expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
     await h.user.keyboard("{Control>}{Enter}{/Control}");
     expect(h.messages.send).toHaveBeenLastCalledWith(
@@ -7062,10 +7062,10 @@ it("sends with Ctrl+Enter and adds lines with Enter once that is chosen", async 
 });
 
 it.each([
-  ["- ", "ul", "- first\n- second"],
+  ["• ", "ul", "- first\n- second"],
   ["3. ", "ol", "3. first\n4. second"],
 ])(
-  "continues a typed %s list on Enter and sends with the button",
+  "continues a typed %s list on Shift+Enter and sends with Enter",
   async (marker, tag, markdown) => {
     const h = mount();
     await h.user.type(h.input(), `${marker}first`);
@@ -7074,10 +7074,12 @@ it.each([
     fireEvent.keyDown(h.input(), { key: "Enter", isComposing: true });
     fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 229 });
     expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(1);
-    await h.user.keyboard("{Enter}second");
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}second");
     expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(2);
     expect(h.messages.send).not.toHaveBeenCalled();
-    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.keyDown(h.input(), { key: "Enter", repeat: true });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await h.user.keyboard("{Enter}");
     expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
       "channel",
       markdown,
@@ -7088,10 +7090,10 @@ it.each([
   },
 );
 
-it("exits an empty list item on Enter, then sends from ordinary prose", async () => {
+it("exits an empty list item on Shift+Enter, then sends from ordinary prose", async () => {
   const h = mount();
-  await h.user.type(h.input(), "- first");
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}{Enter}");
+  await h.user.type(h.input(), "• first");
+  await h.user.keyboard("{Shift>}{Enter}second{Enter}{Enter}{/Shift}");
   expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
   expect(h.input().querySelector(":scope > p")).not.toBeNull();
   fireEvent.keyDown(h.input(), { key: "Enter", repeat: true });
@@ -7105,20 +7107,23 @@ it("exits an empty list item on Enter, then sends from ordinary prose", async ()
   );
 });
 
-it("uses Enter to leave a nested empty item without sending", async () => {
+it("uses Shift+Enter to leave a nested empty item without sending", async () => {
   const h = mount();
-  await h.user.type(h.input(), "- first{Enter}nested{Tab}{Enter}{Enter}");
+  await h.user.type(
+    h.input(),
+    "• first{Shift>}{Enter}{/Shift}nested{Tab}{Shift>}{Enter}{Enter}{/Shift}",
+  );
   expect(h.input().querySelector("ul ul > li")).toHaveTextContent("nested");
   expect(h.input().querySelectorAll(":scope > ul > li")).toHaveLength(2);
   expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("{Enter}");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
   expect(h.input().querySelector(":scope > p")).not.toBeNull();
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
 it("accepts a completion before handling list Enter", async () => {
   const h = mount();
-  await h.user.type(h.input(), "- !search");
+  await h.user.type(h.input(), "• !search");
   expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
   await h.user.keyboard("{Enter}");
   expect(h.input().querySelectorAll("ul > li")).toHaveLength(1);
@@ -7155,7 +7160,7 @@ it("keeps a composed message unchanged through caret keys at its end and refuses
   await h.user.type(h.input(), "```");
   expect(h.input().querySelector("pre")).not.toBeNull();
   await h.user.keyboard(
-    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}- acacs{Shift>}{Enter}{Enter}{/Shift}",
+    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}• acacs{Shift>}{Enter}{Enter}{/Shift}",
   );
   expect(h.input().querySelector("pre code")).toHaveTextContent("Hello!");
   expect(h.input().querySelector("strong")).toHaveTextContent("a");
@@ -8062,7 +8067,7 @@ it.each([
 
 it("accepts an emoji with Tab in a list item without nesting it, then Tab nests", async () => {
   const h = mountEmojiTypeahead();
-  await h.user.type(h.input(), "- one{Enter}:smil");
+  await h.user.type(h.input(), "• one{Shift>}{Enter}{/Shift}:smil");
   await screen.findByRole("option", { name: ":smile:" });
   await h.user.keyboard("{Tab}");
   expect(h.input()).toHaveValue("one\n😄 ");
@@ -9904,7 +9909,7 @@ it.each([
   },
 );
 
-it("continues a list while editing and saves through Save changes", async () => {
+it("continues a list with Shift+Enter while editing and saves with Enter", async () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
@@ -9913,10 +9918,10 @@ it("continues a list while editing and saves through Save changes", async () => 
     h.input().setSelectionRange(7, 7);
     h.input().toggleFormat("bullet_list");
   });
-  await h.user.keyboard("{Enter}Added");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}Added");
   expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
   expect(h.messages.edit).not.toHaveBeenCalled();
-  await h.user.click(screen.getByRole("button", { name: "Save changes" }));
+  await h.user.keyboard("{Enter}");
   expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
     "c".repeat(64),
     "- Revised\n- Added",

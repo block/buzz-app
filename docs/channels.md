@@ -1662,19 +1662,18 @@ the start of a list item, or over a selection that starts there, cannot precede 
 list of the same kind (bulleted or numbered) has its items join the list before that item, or take
 the place of an item whose only content was selected, and other blocks, including a list of the
 other kind, which keeps its own numbering, follow the item's text. Pasted into an
-empty item, such blocks leave the list first, as Enter does there, and take the empty line's place.
-Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
+empty item, such blocks leave the list first, as Shift+Enter does there, and take the empty line's place.
+Typing the space after a list or quote marker that starts a line (`• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
 formatting toolbar creates. Mentions, emoji, links and formatting later on the line move into
 the new block, and one undo restores the typed marker and its space. The typed
-`• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
-paragraph, not beside a list marker. Enter
-continues a list and exits an empty item; use the Send button to send while the caret is
-in a list (or Save changes when editing). Enter in ordinary prose still sends or saves;
-with **Send with ⌘ Enter** on, ⌘/Ctrl+Enter sends or saves instead, including in a list. Inside a
-quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
-marker of the item's own list kind, typed as the only text of an item after the first,
+`• ` shortcut sends as Markdown `- `. ASCII bullets (`- `, `* `, `+ `) stay as typed in the
+composer and render as Markdown when sent. The channel placeholder appears only in an empty
+plain paragraph. Shift+Enter continues a list and exits an empty item. Enter sends or saves
+from anywhere in the draft. With **Send with ⌘ Enter** on, Enter adds a line and ⌘/Ctrl+Enter
+sends or saves. Inside a quote, `• ` opens a list and `> ` opens a second quote. Inside a list
+item, only a marker of the item's own list kind, typed as the only text of an item after the first,
 converts, nesting that item as Tab does. A marker typed after prose on the same line, as
 inline code or link text, inside a code block or inside pasted fenced text stays literal and
 renders as prose or code once sent. A quote marker or a marker of the other list kind typed

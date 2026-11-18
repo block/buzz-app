@@ -984,7 +984,7 @@ export function EditableInput({
      * paragraph joins the caret's line; anything else lands as sibling blocks,
      * splitting the caret's paragraph rather than merging into its text. The
      * caret then ends inside the last pasted block, as ProseMirror leaves it,
-     * so Enter continues a pasted list or quote; that is deliberate. Returns
+     * so a line break continues a pasted list or quote. Returns
      * the range the paste occupies, which can start after the caret's text. */
     const insertDocument = (doc: EditorNode) => {
       if (!editable() || composing.current || editor.composing) return null;
@@ -1027,7 +1027,7 @@ export function EditableInput({
           );
         } else {
           // A blank item that no same-kind list replaces leaves its list
-          // first, as Enter there does, until its empty paragraph is no item's
+          // first, as a line break does there, until its empty paragraph is no item's
           // first; a lift can move the following items under it, and they
           // leave with it. ProseMirror would otherwise keep the empty
           // paragraph beside the paste, which sends as an empty `- `.

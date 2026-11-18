@@ -3948,16 +3948,7 @@ function Composer({
                   !event.metaKey
                 ) {
                   event.preventDefault();
-                  // Holding Enter must not send after an empty list item exits.
-                  if (event.repeat) return;
-                  if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
-                  ) {
-                    event.currentTarget.insertLineBreak();
-                    return;
-                  }
-                  send();
+                  if (!event.repeat) send();
                 }
               }}
             />

@@ -135,7 +135,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 .input blockquote {
   margin: 0;
   border-left: 3px solid var(--text-subtle);
-  padding-left: var(--space-3);
+  padding: var(--space-half) 0 var(--space-half) var(--space-3);
 }
 .input pre {
   margin: 0;
@@ -153,6 +153,18 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 .input :is(ul, ol) {
   margin: 0;
   padding-left: var(--space-6);
+}
+.input > :is(ul, ol, blockquote) {
+  margin-block: var(--space-2);
+}
+.input > :is(ul, ol, blockquote):first-child {
+  margin-block-start: 0;
+}
+.input > :is(ul, ol, blockquote):last-child {
+  margin-block-end: 0;
+}
+.input li + li {
+  margin-block-start: var(--space-1);
 }
 .input ul {
   list-style: disc;

@@ -857,6 +857,9 @@ and are asked to sign in again in Buzz.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
   ⌘/Ctrl+Enter sends. It starts off.
+- Type `•` and a space at the start of a line to start a bulleted list. Use the
+  new-line shortcut to add another item or leave the list from an empty item.
+  The send shortcut works from inside the list.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
   Some plugins prepare before a message sends. After a restart, Buzz can't

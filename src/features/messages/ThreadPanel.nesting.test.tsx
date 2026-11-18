@@ -159,6 +159,7 @@ function setup(messageId = "root") {
       subscribe: () => () => {},
       snapshot: () => undefined,
       attention: () => ({ unread: false }),
+      threadReadThrough: () => -1,
     },
   } as unknown as RelaySession;
   render(

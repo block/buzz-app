@@ -2647,3 +2647,55 @@ it("retries transient sidebar hint failures through existing preference recovery
     owner.dispose();
   }
 });
+
+describe("session recovery and the live reconnect wait", () => {
+  const setup = () => {
+    const relay = keypair(),
+      viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const retry = vi.fn();
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry, dispose() {} };
+        },
+      },
+      { readStateFloor: () => 0 },
+    );
+    live.state({ status: "connected", routes: [] });
+    live.state({ status: "retrying", routes: [] });
+    return { owner, retry, live };
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("the background recovery timer leaves a scheduled live reconnect alone", () => {
+    vi.useFakeTimers();
+    const { owner, retry } = setup();
+    try {
+      // Recovery ticks land 1s, 3s and 7s after the drop.
+      vi.advanceTimersByTime(8_999);
+      expect(owner.session.recovery?.snapshot().recovering).toBe(true);
+      expect(retry).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it("a signal still skips the live reconnect wait", () => {
+    vi.useFakeTimers();
+    const { owner, retry, live } = setup();
+    try {
+      vi.advanceTimersByTime(2_000);
+      owner.session.recovery?.retryNow();
+      expect(retry).toHaveBeenCalledTimes(1);
+      live.state({ status: "connected", routes: [] });
+      vi.advanceTimersByTime(10_000);
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      owner.dispose();
+    }
+  });
+});

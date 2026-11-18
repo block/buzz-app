@@ -15,6 +15,9 @@ export type RecoverySource = Readonly<{
    * one its status does not show (a ready catalog revalidating). Without it,
    * recovery waits out a `busy` read before retrying. */
   reauthorize?(): void;
+  /** True while the source has its own retry scheduled. The background
+   * timer leaves it to that schedule; signals and credentials do not. */
+  scheduled?(): boolean;
 }>;
 export type RecoverySnapshot = Readonly<{
   /** True while at least one source shows a failure. */
@@ -180,16 +183,21 @@ export function createRecovery(
     timer = timers.setTimeout(() => {
       timer = undefined;
       attempt++;
-      run();
+      run(undefined, true);
     }, delay);
   }
-  function run(except?: RecoverySource) {
+  function run(except?: RecoverySource, background = false) {
     if (disposed) return;
     // Retries can publish synchronously; evaluate once after all of them.
     running = true;
     try {
       for (const source of sources)
-        if (source !== except && source.status() === "failed") source.retry();
+        if (
+          source !== except &&
+          source.status() === "failed" &&
+          !(background && source.scheduled?.())
+        )
+          source.retry();
     } finally {
       running = false;
     }

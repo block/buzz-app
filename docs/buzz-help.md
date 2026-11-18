@@ -691,12 +691,20 @@ and are asked to sign in again in Buzz.
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
-  nothing typed lists up to five of your other unread channels and DMs first,
-  most recently active first, and selects the first, so Enter opens it, instead
-  of reopening where you left it. A conversation unread only through thread
-  replies previews its newest unread reply and opens that thread. Muted
-  conversations are left out. Turn this off with **Show unread first in
-  search** in Settings → Appearance → Conversations.
+  nothing typed opens on **Unread**: your other unread DMs, then channels with
+  an unread mention of you, then channels with unread replies in threads
+  you're in, then the rest, each most recently active first. Rows are tagged
+  **DM**, **Mentioned** or **Thread**, and each row shows the message that
+  made it unread: the mention, the thread reply, or a DM's or chat's newest. The first is selected, so Enter opens it, instead of reopening
+  where you left it. A conversation unread only through thread replies
+  previews its newest unread reply and opens that thread. Muted conversations
+  are left out unless they mention you. With nothing unread, search opens on
+  **Recents**: your latest conversations, then your recent searches. Tab
+  moves between Unread, Recents and the Channels, DMs and Chats lists; Escape
+  comes back. Turn this off with **Show unread first in search** in Settings
+  → Appearance → Conversations. In a conversation, ⌘F (Ctrl+F elsewhere),
+  hinted at the bottom of search, searches only that conversation and keeps
+  what you typed.
 - **Activity** threads name their channel above the original message. Select that
   name, or **Open in channel** in the thread tab's menu, to open the thread in
   Channels beside its original message, which the channel history shows and
@@ -1424,8 +1432,7 @@ available rather than silently discarding it.
   renamed, or closed. Collapsing the side pane keeps its open threads and reply
   drafts. Its header includes the same DM controls and actions, including Huddle
   when supported and enabled. On the Bestie page, ⌘F (Ctrl+F elsewhere)
-  searches the Bestie conversation, and ⌘K (Ctrl+K elsewhere) offers
-  **Search conversation with** your Bestie. A verified existing DM stays
+  searches the Bestie conversation, from search too. A verified existing DM stays
   available if agent discovery fails.
 - Open a local Bestie's agent page to find its **Bestie** tab. **Change** chooses
   another agent and asks before replacing the saved choice. **Remove as Bestie**

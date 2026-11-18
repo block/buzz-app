@@ -531,7 +531,7 @@ async function bestieSearch() {
   };
 }
 
-it("scopes Command F and Command K's conversation row to the Bestie page's DM", async () => {
+it("scopes Command F to the Bestie page's DM, from outside search and inside it, keeping the typed text", async () => {
   const f = await bestieSearch();
   try {
     f.press("f");
@@ -551,16 +551,22 @@ it("scopes Command F and Command K's conversation row to the Bestie page's DM", 
     );
     f.press("k");
     const search = await screen.findByRole("dialog", { name: "Search Buzz" });
-    fireEvent.click(
-      await within(search).findByRole("option", {
-        name: /Search conversation with Pollen/,
-      }),
-    );
+    const field = within(search).getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.change(field, { target: { value: "deploy" } });
+    expect(
+      within(search).queryByRole("option", { name: /Search conversation/ }),
+    ).toBeNull();
+    f.press("f");
     expect(
       await within(search).findByRole("button", {
         name: "Remove Pollen search scope",
       }),
     ).toBeVisible();
+    expect(
+      within(search).getByRole("combobox", {
+        name: "Search this conversation",
+      }),
+    ).toHaveValue("deploy");
   } finally {
     await f.dispose();
   }
@@ -1125,9 +1131,9 @@ it("finds and opens saved conversations while the community is unreachable or st
     fireEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
     const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
     const field = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-    // Recent activity lists the saved conversations.
+    // Recents lists the saved conversations.
     const recent = within(dialog).getByRole("group", {
-      name: "Recent activity",
+      name: "Recents",
     });
     expect(
       within(recent)
@@ -1523,7 +1529,7 @@ function memorySearch() {
     /** The empty view's rows, once the joined channels have loaded. */
     async recentRows() {
       const recent = await screen.findByRole("group", {
-        name: "Recent activity",
+        name: "Recents",
       });
       await waitFor(() =>
         expect(within(recent).getAllByRole("option")).not.toHaveLength(0),

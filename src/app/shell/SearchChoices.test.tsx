@@ -334,7 +334,7 @@ it("keeps an action-only group in place when Peek's order freezes", () => {
   const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
   const palette = (labels: string[]) => (
     <SearchChoices
-      query=""
+      query="a"
       onQueryChange={() => {}}
       input={createRef<HTMLElement>()}
       isAction={(key) => key.startsWith("scope:")}
@@ -355,6 +355,51 @@ it("keeps an action-only group in place when Peek's order freezes", () => {
   fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
   rerender(palette(["This conversation", "Recent activity"]));
   expect(order()).toEqual(["This conversation", "Recent activity"]);
+});
+
+it("opens an empty Peek on its first group, which Escape leaves search from", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  render(
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      conversationShortcut={{ key: "f", mod: true }}
+      groups={[
+        { label: "Unread", destinations: [row("unread")] },
+        { label: "Recents", destinations: [row("recent")] },
+      ]}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  const shown = () =>
+    screen.getByRole("button", { pressed: true }).textContent ?? "";
+  // No Top results above it: the first group is the view, shown whole.
+  expect(
+    screen
+      .getAllByRole("button", { pressed: false })
+      .map((chip) => chip.textContent),
+  ).toEqual([expect.stringMatching(/^Recents/)]);
+  expect(shown()).toMatch(/^Unread/);
+  expect(
+    screen.getAllByRole("option").map((option) => option.textContent),
+  ).toEqual([expect.stringMatching(/^unread/)]);
+  // Before the first group, Shift+Tab leaves the field.
+  expect(fireEvent.keyDown(field, { key: "Tab", shiftKey: true })).toBe(true);
+  expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(false);
+  expect(shown()).toMatch(/^Recents/);
+  expect(screen.getByText("Back to Unread")).toBeInTheDocument();
+  // Escape from another group comes back to the first.
+  expect(fireEvent.keyDown(field, { key: "Escape" })).toBe(false);
+  expect(shown()).toMatch(/^Unread/);
+  // From the first, Escape is left to close search.
+  expect(screen.getByText("Close")).toBeInTheDocument();
+  expect(fireEvent.keyDown(field, { key: "Escape" })).toBe(true);
+  // The chord that searches the current conversation is hinted.
+  expect(screen.getByText("This conversation")).toHaveTextContent(
+    "Ctrl+F This conversation",
+  );
 });
 
 it("draws a long group Peek shows whole near the view, keeping the highlighted row drawn and placed", () => {

@@ -82,17 +82,13 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const first = dialog
+  const recents = dialog
     .locator(
-      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
+      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
     )
     .locator("[data-search-result]");
-  const second = dialog
-    .locator(
-      '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
-    )
-    .locator("[data-search-result]")
-    .first();
+  const first = recents.first();
+  const second = recents.nth(1);
   await expect(second).toBeVisible();
   for (const [key, result] of [
     ["ArrowDown", first],
@@ -146,13 +142,15 @@ test("changing search scope returns focus to the input without clearing the quer
 }) => {
   await page.goto(app.origin);
   await button(page, "Search Buzz").click();
-  const scopeAction = page
+  const hint = page
     .getByRole("dialog", { name: "Search Buzz" })
-    .locator(
-      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
-    )
-    .locator("[data-search-result]");
-  await scopeAction.click();
+    .locator(".search-peek-keys")
+    .getByText("This conversation");
+  await expect(hint).toBeVisible();
+  const modifier = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+  );
+  await page.keyboard.press(`${modifier}+f`);
 
   const scoped = page.getByRole("dialog", { name: "Search this conversation" });
   const scopedInput = scoped.getByRole("combobox", {
@@ -171,7 +169,7 @@ test("changing search scope returns focus to the input without clearing the quer
   const input = global.getByRole("combobox", { name: "Search Buzz" });
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("hello");
-  // Relevance can put an inline setting or plugin ahead of the scope action.
+  // Relevance can put an inline setting or plugin first.
   const first = global
     .locator("[data-search-result], .search-control-row")
     .first();
@@ -602,18 +600,15 @@ test("a resting pointer does not steal the typed selection when results move und
   await button(page, "Search Buzz").click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
-  const rows = dialog.locator("[data-search-result]");
   // Measure where the row stays: after the entrance and recent activity load.
-  await expect(
-    dialog
-      .locator(
-        '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
-      )
-      .locator("[data-search-result]")
-      .filter({ hasText: /Beta/ }),
-  ).toBeVisible();
+  const row = dialog
+    .locator(
+      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
+    )
+    .locator("[data-search-result]")
+    .filter({ hasText: /Beta/ });
+  await expect(row).toBeVisible();
   await entered(dialog);
-  const row = rows.nth(2);
   // The first move inside the palette only records the pointer; the next
   // one is a real move and selects.
   await row.hover({ position: { x: 20, y: 10 } });
@@ -822,17 +817,13 @@ test("search result keys follow a saved rebind alongside the arrows and update t
     apple ? "⌃K" : `Ctrl+${previousKey.toUpperCase()}`,
   );
   await expect(hints.nth(1)).toHaveText(apple ? "⌃J" : "Ctrl+J");
-  const first = dialog
+  const recents = dialog
     .locator(
-      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
+      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
     )
     .locator("[data-search-result]");
-  const second = dialog
-    .locator(
-      '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
-    )
-    .locator("[data-search-result]")
-    .first();
+  const first = recents.first();
+  const second = recents.nth(1);
   await expect(second).toBeVisible();
   // Up and Down still move, as a combobox's arrows do.
   for (const [chord, result] of [

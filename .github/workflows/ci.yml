@@ -520,7 +520,7 @@ jobs:
 
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
-    if: always()
+    if: always() && github.event_name != 'workflow_dispatch'
     needs: [javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

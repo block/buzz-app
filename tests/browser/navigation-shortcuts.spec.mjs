@@ -44,6 +44,34 @@ test("Command arrows traverse empty composers and move the caret in a draft", as
   await page.keyboard.type(" end");
   await expect(alpha).toHaveJSProperty("value", "start hello world end");
 
+  await alpha.fill("first line\nsecond line");
+  await alpha.evaluate((input) =>
+    input.setSelectionRange(input.value.length, input.value.length),
+  );
+  await page.keyboard.press("Meta+ArrowLeft");
+  await expect(alpha).toHaveJSProperty("selectionStart", "first line\n".length);
+  await page.keyboard.press("Meta+ArrowRight");
+  await expect(alpha).toHaveJSProperty(
+    "selectionStart",
+    "first line\nsecond line".length,
+  );
+
+  const wrapped = "wrapped words ".repeat(100);
+  await alpha.fill(wrapped);
+  await alpha.evaluate((input) =>
+    input.setSelectionRange(input.value.length, input.value.length),
+  );
+  await page.keyboard.press("Meta+ArrowLeft");
+  await expect
+    .poll(() => alpha.evaluate((input) => input.selectionStart))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => alpha.evaluate((input) => input.selectionStart))
+    .toBeLessThan(wrapped.length);
+  await page.keyboard.press("Meta+ArrowRight");
+  await expect(alpha).toHaveJSProperty("selectionStart", wrapped.length);
+  await expect(alpha).toBeFocused();
+
   await alpha.fill("");
   await page.keyboard.press("Meta+ArrowLeft");
   await expect(beta).toBeFocused();

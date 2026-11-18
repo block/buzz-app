@@ -67,6 +67,10 @@ export type Section = Readonly<{
   text: string | ((facts: Facts) => string);
 }>;
 
+/** Changes when a released section's id or title does, or one is removed:
+ * a prompt with another layout has other sections to name. */
+export const LAYOUT = 1;
+
 export const SECTIONS: readonly Section[] = [
   { id: "intro", text: intro },
   { id: "turn-contract", title: "Incoming Turn Contract", text: turnContract },

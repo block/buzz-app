@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { systemPrompt } from "../../../bundled/claude-code/prompt";
 import { developerInstructions } from "../../../bundled/codex/prompt";
-import { composeBase } from "./compose";
-import { type Facts, locked, SECTIONS } from "./index";
+import {
+  composeBase,
+  sectionsKey,
+  sectionUpdates,
+  startedSections,
+} from "./compose";
+import { type Facts, LAYOUT, locked, SECTIONS } from "./index";
 
 const workspace = "/home/owner/.buzz/agents/example";
 const folder = "/home/owner/code/project";
@@ -47,10 +52,13 @@ describe("the session prompt of each harness", () => {
       // The thread for a message in a channel's thread.
       const place = scope === "thread" ? "thread" : "conversation";
       await expect(
-        developerInstructions(agent, scope, undefined, place),
+        developerInstructions(agent, composeBase({ scope, place }).text),
       ).toMatchFileSnapshot(snapshot(`codex.${scope}.default`));
       await expect(
-        developerInstructions(agent, scope, workspace, place),
+        developerInstructions(
+          agent,
+          composeBase({ scope, ownFolder: workspace, place }).text,
+        ),
       ).toMatchFileSnapshot(snapshot(`codex.${scope}.own-folder`));
     });
   }
@@ -82,8 +90,11 @@ describe("composeBase", () => {
   });
 
   // Settings, plugins and saved sessions name a section by its id and title,
-  // and who may replace it decides what a prompt can lose.
+  // and who may replace it decides what a prompt can lose. A saved session
+  // is told which sections changed by their titles, so a released id or
+  // title that changes here, or a section that goes, needs a new `LAYOUT`.
   it("keeps each section's id, its title and who can replace it", () => {
+    expect(LAYOUT).toBe(1);
     expect(
       SECTIONS.map(({ id, title, owner, plugin }) =>
         [id, title, owner && "owner", plugin && "plugin"]
@@ -177,4 +188,60 @@ describe("the default texts", () => {
       }
     },
   );
+});
+
+describe("a session that keeps the prompt it started with", () => {
+  const facts: Facts = { scope: "thread" };
+  const { parts, key } = composeBase(facts);
+
+  it("is told nothing while its sections are the current ones", () => {
+    expect(Object.keys(parts)).toEqual(SECTIONS.map(({ id }) => id));
+    expect(key).toBe(sectionsKey(parts));
+    expect(sectionUpdates(startedSections(parts), facts)).toBe("");
+    // Another fact picks another text, so the key differs.
+    expect(composeBase({ scope: "channel" }).key).not.toBe(key);
+  });
+
+  it("is sent the current text of each section that changed, never a locked one", () => {
+    const older = Object.fromEntries(
+      Object.keys(parts).map((id) => [id, "older"]),
+    );
+    const block = sectionUpdates(startedSections(older), facts);
+    expect(block).toMatch(
+      /^<base-section-updates>\nThese sections replace the sections with the same titles in your base instructions\. An empty section is off now\.\n\n## /,
+    );
+    expect(block).toMatch(/\n<\/base-section-updates>$/);
+    for (const section of SECTIONS) {
+      const heading = `## ${section.title}\n\n${defaultText(section, facts)}`;
+      if (locked(section))
+        expect(block).not.toContain(defaultText(section, facts));
+      else expect(block).toContain(heading);
+    }
+    // Only what changed, as the complete current set.
+    expect(
+      sectionUpdates(startedSections({ ...parts, progress: "older" }), facts)
+        .split("\n")
+        .filter((line) => line.startsWith("## ")),
+    ).toEqual(["## Progress"]);
+    // The session's scope changed since: its Session Model is the new one.
+    expect(
+      sectionUpdates(startedSections(parts), { scope: "channel" }),
+    ).toContain("## Session Model");
+  });
+
+  it("is told nothing when its sections were not kept, or have another layout", () => {
+    expect(sectionUpdates(undefined, facts)).toBe("");
+    expect(
+      sectionUpdates(
+        { layout: LAYOUT + 1, parts: { progress: "older" } },
+        facts,
+      ),
+    ).toBe("");
+    expect(
+      sectionUpdates(
+        { layout: LAYOUT } as Parameters<typeof sectionUpdates>[0],
+        facts,
+      ),
+    ).toBe("");
+  });
 });

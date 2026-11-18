@@ -6,7 +6,6 @@ import {
   unframed,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
-import { composeBase } from "../../features/agent-harness/sections/compose";
 import type { Facts } from "../../features/agent-harness/sections/index";
 import type { AgentKey } from "../../features/agents/membership";
 import type { AgentHandle } from "../../features/agents/service";
@@ -34,18 +33,13 @@ export const rootOf = (event: EventData) =>
   threadReference(event)?.rootId ?? event.id;
 export function developerInstructions(
   agent: Pick<AgentHandle, "name" | "pubkey">,
-  /** Whether each Buzz thread is a Codex thread of its own. */
-  scope: Config["scope"],
-  /** The agent's workspace, absolute, when the thread runs in a folder of
-   * the conversation's own instead. */
-  workspace?: string,
-  /** What the thread is: see `sessionPlace`. */
-  place?: Facts["place"],
+  /** The base prompt, composed for the thread. */
+  base: string,
 ) {
   return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
 The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Prefer these tools for Buzz operations. You may use the buzz CLI through the agent-specific BUZZ_CREDENTIAL_PROVIDER supplied by the runtime to this thread's shell commands. The host handles access and signing as this agent without exposing private keys. If that provider is unavailable or refuses an operation, use the available Buzz tools or report the blocker. Do not look for credentials, read private keys, change the provider, or pair the CLI as your owner. Use Codex's native coding tools in the workspace.
 
-${composeBase({ scope, ownFolder: workspace, place }).text}`;
+${base}`;
 }
 /** What a conversation's Codex thread is. A conversation without a root is
  * a whole one, as every conversation of an agent with channel scope is. */
@@ -69,6 +63,9 @@ export function turnContext(
   /** The agent's `core` memory: `null` when it has none, undefined if unread. */
   memory?: string | null,
   repositories = "",
+  /** Buzz's own block of the base sections that changed since the thread
+   * started; see `sectionUpdates`. */
+  updates = "",
 ) {
   const core = coreMemorySection(memory);
   const text = `You are ${agent.name} (pubkey ${agent.pubkey}).\nCurrent Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}`;
@@ -79,9 +76,14 @@ export function turnContext(
   const values = [""];
   let size = 0;
   // None of it is Buzz's event or steer section.
-  for (const line of unframed(
+  // The block is Buzz's own text, so it goes in after the rest is escaped.
+  // A thread keeps the blocks of its earlier turns, so each turn says that
+  // only this turn's counts: a section that is as it started is in none.
+  const escaped = unframed(
     `${text}${community}${repositories ? `\n\n${repositories}` : ""}`,
-  ).split(/(?<=\n)/)) {
+  );
+  const block = `\n\nCurrent base section updates replace all prior base section updates. None means your base instructions apply as written.${updates ? `\n${updates}` : ""}`;
+  for (const line of `${escaped}${block}`.split(/(?<=\n)/)) {
     // A line over the limit splits by code point.
     const pieces = bytes(line) > CONTEXT_VALUE_BYTES ? [...line] : [line];
     for (const piece of pieces) {

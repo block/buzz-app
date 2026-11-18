@@ -1,5 +1,4 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { PanelProps } from "../../features/panels/service";
 import { profileTarget } from "../../features/profiles/target";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -11,15 +10,17 @@ import { useProfileName } from "./useProfileName";
 export function ProfileArchiveNotice({
   session,
   pubkey,
-  context,
+  canOpen,
   open,
   hidden,
 }: {
   session: RelaySession;
   pubkey: string;
-  context: PanelProps["context"];
-  /** Opens the replacement's profile; defaults to the panel context. */
-  open?: ((target: string) => void) | undefined;
+  /** Whether this surface can open a profile target; when not, the
+   * replacement's name shows without a link. */
+  canOpen: ((target: string) => boolean) | undefined;
+  /** Opens the replacement's profile target. */
+  open: ((target: string) => unknown) | undefined;
   /** Hides the text but keeps it mounted, so its reads continue. */
   hidden?: boolean | undefined;
 }) {
@@ -86,7 +87,7 @@ export function ProfileArchiveNotice({
           <SuccessorLink
             session={session}
             successor={successor}
-            context={context}
+            canOpen={canOpen}
             open={open}
           />
           .
@@ -101,22 +102,22 @@ export function ProfileArchiveNotice({
 function SuccessorLink({
   session,
   successor,
-  context,
+  canOpen,
   open,
 }: {
   session: RelaySession;
   successor: string;
-  context: PanelProps["context"];
-  open: ((target: string) => void) | undefined;
+  canOpen: ((target: string) => boolean) | undefined;
+  open: ((target: string) => unknown) | undefined;
 }) {
   const name = useProfileName(session, successor);
   const target = profileTarget(successor);
-  return target && context?.canOpen(target) ? (
+  return target && open && canOpen?.(target) ? (
     <Button
       size="text"
       variant="link"
       aria-label={`Open new key profile: ${name}`}
-      onClick={() => (open ?? context.push ?? context.open)(target)}
+      onClick={() => void open(target)}
     >
       {name}
     </Button>

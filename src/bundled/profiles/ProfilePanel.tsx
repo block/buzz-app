@@ -362,7 +362,7 @@ function OwnedAgentProfile({
           <ProfileArchiveNotice
             session={session}
             pubkey={pubkey}
-            context={context}
+            canOpen={context && ((link) => context.canOpen(link))}
             open={openLink}
             hidden={hidden}
           />
@@ -692,7 +692,8 @@ function ProfileDetails({
             <ProfileArchiveNotice
               session={session}
               pubkey={pubkey}
-              context={context}
+              canOpen={context && ((link) => context.canOpen(link))}
+              open={context && (context.push ?? context.open)}
             />
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">

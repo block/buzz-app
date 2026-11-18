@@ -16,6 +16,7 @@ import {
 import { ConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails, useSyncLine } from "./AgentDetails";
+import { ProfileArchiveNotice } from "../profiles/ProfileArchiveNotice";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
 import { communityName } from "../../features/communities/names";
@@ -735,6 +736,13 @@ export function AgentsPage({
       historyActive(params, route),
     );
   };
+  // This page opens only agents in its own list, and asks before leaving
+  // unsaved edits.
+  const canOpenOwned = (target: string) => !!find(profileKey(target));
+  const openOwned = (target: string) => {
+    const pubkey = profileKey(target);
+    return !!find(pubkey) && browse(pubkey);
+  };
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -801,11 +809,21 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}
-        openLink={(target) => {
-          const pubkey = profileKey(target);
-          return !!find(pubkey) && browse(pubkey);
-        }}
-        canOpenLink={(target) => !!find(profileKey(target))}
+        openLink={openOwned}
+        canOpenLink={canOpenOwned}
+        notice={
+          connection.status === "ready"
+            ? (hidden) => (
+                <ProfileArchiveNotice
+                  session={connection.session}
+                  pubkey={selected.pubkey}
+                  canOpen={canOpenOwned}
+                  open={openOwned}
+                  hidden={hidden}
+                />
+              )
+            : undefined
+        }
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,

@@ -34,6 +34,7 @@ import {
   type ReactNode,
 } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { keypair, signed } from "../../features/relay/testing";
 import type {
   Agent,
   AgentCreateProps,
@@ -4669,6 +4670,85 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(field).toBeVisible();
   expect(field).toHaveValue("Unsaved reply");
   expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("shows an archived agent's replacement and asks before leaving unsaved edits", async () => {
+  const user = userEvent.setup();
+  const view = setup([agent("Ada", 1), agent("Bo", 2)], {
+    dirtySettings: true,
+  });
+  const relayKey = keypair();
+  const [ada, bo] = [agent("Ada", 1).pubkey, agent("Bo", 2).pubkey];
+  const events = [
+    signed(relayKey, { kind: 13535, content: "", tags: [["-"], ["p", ada]] }),
+    signed(relayKey, {
+      kind: 8002,
+      content: "",
+      tags: [["-"], ["p", ada], ["consent", "self", ada], ["replaced-by", bo]],
+    }),
+  ];
+  const owner = createRelaySession({
+    viewer: "f".repeat(64),
+    relayAuthor: relayKey.pubkey,
+    archiveAuthority: relayKey.pubkey,
+    query: async (filters) =>
+      events.filter((event) =>
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(event.kind) &&
+            (!filter["#p"] ||
+              event.tags.some(
+                ([name, key]) =>
+                  name === "p" && filter["#p"]?.includes(key ?? ""),
+              )),
+        ),
+      ),
+    media: () => undefined,
+  });
+  const connection = {
+    status: "ready",
+    generation: 1,
+    viewer: "f".repeat(64),
+    session: owner.session,
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+    const grid = screen.getByRole("grid", { name: "Agents" });
+    await user.click(within(grid).getByText("Ada"));
+    const link = await screen.findByRole("button", {
+      name: /^Open new key profile: /,
+    });
+    const field = screen.getByRole("textbox", { name: "Reply" });
+    await user.clear(field);
+    await user.type(field, "Unsaved reply");
+    await user.click(link);
+    const prompt = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    await user.click(
+      within(prompt).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+    expect(field).toHaveValue("Unsaved reply");
+    await user.click(link);
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Bo" }),
+    ).toBeInTheDocument();
+    // Bo is not archived, so its profile shows no notice.
+    expect(screen.queryByTestId("profile-archived")).toBeNull();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
 });
 
 it("asks before choosing another agent discards an unsaved draft", async () => {

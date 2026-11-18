@@ -283,10 +283,9 @@ function fixture({
     status: "reconciled" as const,
     completeness: "snapshot" as const,
   };
-  const preferences = {
-    status: "ready" as const,
-    data: { sections: [], assignments: {}, starred: [], muted: muted ?? [] },
-  };
+  const preferences = muted
+    ? { ...projects, data: { ...projects.data, muted } }
+    : projects;
   const setMute = vi.fn(async (channel: string, mute: boolean) =>
     mute
       ? [...(muted ?? []), channel]
@@ -367,25 +366,16 @@ function fixture({
     },
     sidebarPreferences: {
       ...owner.session.sidebarPreferences,
-      snapshot: () => projects,
+      snapshot: () => preferences,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => {
           listeners.delete(listener);
         };
       },
+      ...(muted ? { muteWritable: true, ensure: async () => {}, setMute } : {}),
     },
     messages: { ...owner.session.messages, send },
-    sidebarPreferences: muted
-      ? {
-          ...owner.session.sidebarPreferences,
-          muteWritable: true,
-          snapshot: () => preferences,
-          subscribe: () => () => {},
-          ensure: async () => {},
-          setMute,
-        }
-      : owner.session.sidebarPreferences,
     unread:
       unread === undefined
         ? owner.session.unread

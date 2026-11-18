@@ -41,7 +41,11 @@ export function captureSelectedQuote() {
       !target.ranges.some(
         (range) =>
           range.intersectsNode(element) &&
-          serializeNode(element, "text", range).trim(),
+          // A grouped byline can enrich the clipboard without contributing
+          // selectable text to the highlight.
+          serializeNode(element, "text", range, {
+            includeHiddenBylines: false,
+          }).trim(),
       )
     )
       continue;

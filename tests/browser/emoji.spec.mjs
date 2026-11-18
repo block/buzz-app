@@ -233,7 +233,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       trusted: true,
     });
     // Across rows, the handler must omit the same user-select: none row chrome
-    // engines do: the hovered action bars and the hidden full dates.
+    // engines do: the hovered action bars and the hidden full dates. The byline
+    // the range holds copies as one line, name then time.
     const brokenBody = page.getByText("Broken :missing:", { exact: true });
     await historic.hover();
     await brokenBody.hover();
@@ -258,7 +259,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       /^Historic :unknown:party: and https:\/\/example\.test\/:party:\n/,
     );
     expect(rowsText).toMatch(
-      /\nFixture ReaderJan 1, 1970 at 12:00 AM\nBroken :missing:$/,
+      /\nFixture Reader Jan 1, 1970 at 12:00 AM\nBroken :missing:$/,
     );
     expect(rowsText).not.toMatch(/Thursday|👍|❤️|😂/u);
     // Independently prove this browser's real clipboard transport with the exact

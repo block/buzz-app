@@ -124,7 +124,8 @@ it("attributes each selected message and skips the next row when selection ends 
   const { element } = list(firstId);
   const second = document.createElement("div");
   second.dataset.messageId = secondId;
-  second.innerHTML = "<p>Second message</p>";
+  second.innerHTML =
+    '<div data-copy-author="Second author" style="user-select: none">Second author</div><p>Second message</p>';
   element.append(second);
   const range = select(text(element, "strong"), 0, text(second, "p"));
   expect(captureSelectedQuote()?.sourceLinks).toEqual([
@@ -136,10 +137,13 @@ it("attributes each selected message and skips the next row when selection ends 
     secondId,
   ]);
   range.setEnd(text(second, "p"), 0);
-  expect([...(captureSelectedQuote()?.messageIds ?? [])]).toEqual([firstId]);
-  expect(captureSelectedQuote()?.sourceLinks).toEqual([
+  const quote = captureSelectedQuote();
+  expect([...(quote?.messageIds ?? [])]).toEqual([firstId]);
+  expect(quote?.sourceLinks).toEqual([
     `buzz://message?channel=general&id=${firstId}`,
   ]);
+  expect(quote?.text).toContain("Second author");
+  expect(quote?.html).toContain("<strong>Second author</strong>");
 });
 
 it("keeps quoting without inventing a link for an unpublished message", () => {

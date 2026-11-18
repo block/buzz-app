@@ -456,3 +456,47 @@ test("a selection spanning rows copies only the visible conversation", async ({
   ).toBeVisible();
   await page.keyboard.press("Escape");
 });
+
+// WebKit fills a selection across the padding and empty space of Markdown
+// boxes, which reads as slabs inside a selected message. Only its text should
+// highlight, so the panel beside a short code line keeps its own paint.
+test("a selected message paints no fill beside its code", async ({
+  page,
+  app,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page, app);
+  const message = app.append(
+    "primary",
+    "alpha",
+    "A sentence long enough to make the code block wider than its line.\n\n```\nlet a = 1;\n```\n\nAfter the code.",
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const code = row.locator("pre code");
+  await expect(code).toBeVisible();
+  const box = await code.boundingBox();
+  const clip = {
+    x: box.x + box.width * 0.5,
+    y: box.y + box.height / 2 - 2,
+    width: box.width * 0.25,
+    height: 4,
+  };
+  const unselected = await page.screenshot({ clip });
+  const paragraphs = row.locator("p");
+  const [first, last] = await Promise.all([
+    paragraphs.first().boundingBox(),
+    paragraphs.last().boundingBox(),
+  ]);
+  await page.mouse.move(first.x + 1, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width - 1, last.y + last.height / 2, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(() => page.evaluate(() => getSelection()?.toString()))
+    .toContain("let a = 1;");
+  expect(await page.screenshot({ clip })).toEqual(unselected);
+});

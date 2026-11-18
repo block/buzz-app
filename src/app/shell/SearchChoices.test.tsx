@@ -457,6 +457,34 @@ it("keeps an attached row with the row above it where Top results cuts a group",
   );
 });
 
+it("still shows an attached row when Top results cuts the row above it", () => {
+  // Five rows show; the row above the attached one (index 6) is cut.
+  const rows = destinations
+    .slice(0, 8)
+    .map((row, index) => (index === 6 ? { ...row, attached: true } : row));
+  render(
+    <SearchChoices
+      query="channel"
+      onQueryChange={() => {}}
+      input={createRef<HTMLInputElement>()}
+      groups={[{ label: "Agents", destinations: rows }]}
+      peek={{ ranked: true, preview: () => null }}
+    />,
+  );
+  const group = within(screen.getByRole("group", { name: "Agents" }));
+  expect(group.getAllByRole("option").map((row) => row.textContent)).toEqual([
+    ...destinations.slice(0, 5).map(({ label }) => label),
+    "channel-6",
+  ]);
+  // The rest are still a click away, in their own order.
+  fireEvent.click(group.getByRole("button", { name: "Show all Agents" }));
+  expect(
+    within(screen.getByRole("group", { name: "Agents" }))
+      .getAllByRole("option")
+      .map((row) => row.textContent),
+  ).toEqual(destinations.slice(0, 8).map(({ label }) => label));
+});
+
 it("keeps a chosen group while an edited query's results land, and lets it go if they settle without it", () => {
   const peekOf = (query: string, rows: number, busy: boolean) => (
     <SearchChoices

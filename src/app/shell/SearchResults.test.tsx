@@ -8342,6 +8342,73 @@ function renderBestieSearch({
   };
 }
 
+it("keeps the Bestie DM in Top results when the cut hides its New chat too", async () => {
+  // Five better-matching agents put Bestie's New chat sixth, past the five
+  // rows Top results shows of its lead group. Its DM is not listed under
+  // Direct messages, so Top results must still show it.
+  localStorage.clear();
+  const { openConversation, dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 5,
+  });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() => {
+      const rows = agents.getAllByRole("option").map((row) => row.textContent);
+      expect(rows).toEqual([
+        ...Array.from({ length: 5 }, () =>
+          expect.stringMatching(/Scout [A-E].*New chat/),
+        ),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]);
+    });
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("option", { name: /Z Scout.*Direct message/ }),
+    );
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
+
+it("puts the Bestie DM back under its New chat when Agents is shown whole", async () => {
+  localStorage.clear();
+  const { dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 5,
+  });
+  try {
+    await screen.findByRole("group", { name: "Agents" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show all Agents" }),
+    );
+    const expanded = within(screen.getByRole("group", { name: "Agents" }));
+    await waitFor(() =>
+      expect(
+        expanded
+          .getAllByRole("option")
+          .slice(5, 7)
+          .map((row) => row.textContent),
+      ).toEqual([
+        expect.stringMatching(/Z Scout.*New chat/),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]),
+    );
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
+
 it("keeps the Bestie DM under its New chat when Top results cuts Agents after it", async () => {
   // Four better-matching agents put Bestie's New chat fifth, the last row
   // Top results shows of its lead group; its DM is not listed under Direct

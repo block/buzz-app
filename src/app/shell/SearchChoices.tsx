@@ -68,7 +68,8 @@ export type SearchDestination = {
    * show, e.g. "Open Activity". */
   action?: string | undefined;
   /** Stays with the row above it: a group cut short in Top results keeps
-   * the two together, one row past its usual limit if need be. */
+   * the two together, one row past its usual limit if need be. A cut that
+   * hides the row above still shows this one, after the rows shown. */
   attached?: boolean | undefined;
   run: () => void;
 };
@@ -377,7 +378,10 @@ export function SearchChoices({
             const count = countOf(group);
             return {
               ...group,
-              destinations: rows.slice(0, limit),
+              destinations: [
+                ...rows.slice(0, limit),
+                ...rows.slice(limit).filter((row) => row.attached),
+              ],
               total: /^\d+$/.test(count) ? Number(count) : -1,
             };
           });

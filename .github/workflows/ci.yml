@@ -22,7 +22,7 @@ env:
 
 jobs:
   javascript:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: JavaScript (${{ matrix.shard }}/8)
     runs-on: ubuntu-24.04
     # Vitest shards by path hash and equal file count, not duration, so slow
@@ -58,7 +58,7 @@ jobs:
           retention-days: 7
 
   agent_protection:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: Protected agents (macOS)
     runs-on: macos-15
     # Native pinned runtime builds add cold compilation to the kernel fixtures.
@@ -80,7 +80,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: agent-protection
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
+          prefix-key: vtest-rust
       - name: Install exact protected Claude fixture
         run: ./bin/node scripts/install-protected-claude-test.mjs
       - name: Native Claude protection boundary
@@ -102,7 +103,7 @@ jobs:
           retention-days: 7
 
   native:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: Rust and tool integration
     runs-on: ubuntu-24.04
     # A Cargo.lock change rebuilds most crates from a cold cache, and only a
@@ -124,7 +125,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
+          prefix-key: vtest-rust
       - name: Dependency policy
         run: ./bin/cargo-deny --locked check
       - name: Rust formatting
@@ -161,7 +163,7 @@ jobs:
         run: ./bin/node --test tests/integration/*.test.mjs
 
   windows-native:
-    if: github.event_name == 'workflow_dispatch'
+    if: false
     name: Windows native validation
     runs-on: windows-2025
     timeout-minutes: 20
@@ -182,14 +184,15 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-native
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
+          prefix-key: vtest-rust
       - name: Native lint including Windows backend
         run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --all-targets -- -D warnings
       - name: All native package tests
         run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --no-fail-fast
 
   measurements:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: Browser measurements
     runs-on: ubuntu-24.04
     # Match package.json's Playwright version and pin immutable browser/OS layers.
@@ -255,7 +258,7 @@ jobs:
           retention-days: 7
 
   browser_fixture:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: Native browser fixture
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -269,7 +272,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: browser-fixture
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
+          prefix-key: vtest-rust
       - name: Build native browser fixture
         timeout-minutes: 8
         run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture
@@ -292,7 +296,7 @@ jobs:
           retention-days: 7
 
   browser:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
@@ -374,7 +378,7 @@ jobs:
           retention-days: 7
 
   media_recorder:
-    if: github.event_name != 'workflow_dispatch'
+    if: true
     name: WebKit recording (macOS)
     # Playwright disables ENABLE_MEDIA_RECORDER in its GTK/WPE builds.
     # Keep the real recorder and every assertion on the supported WebKit host.
@@ -516,7 +520,7 @@ jobs:
 
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
-    if: always() && github.event_name != 'workflow_dispatch'
+    if: always()
     needs: [javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

@@ -1064,6 +1064,7 @@ test.each([
     true,
     "You are banned from this community",
   ],
+  ["auth-required: sign in first", true, "auth-required: sign in first"],
   [
     'invalid: an open channel named "Launch" already exists',
     true,

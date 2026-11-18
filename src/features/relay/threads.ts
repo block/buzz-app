@@ -9,6 +9,7 @@ import { threadReference } from "./thread-reference";
 export { threadReference } from "./thread-reference";
 import type { ChannelMessage } from "./contracts";
 import type { EventData, ReadFilter, RelayEvent } from "./events";
+import { newer } from "./events";
 import type { LocalEvents } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import { listByteSize } from "./budget";
@@ -48,6 +49,9 @@ export type ThreadSnapshot = Readonly<{
   /** Exact navigation target, folded independently of bounded thread traversal. */
   target?: ChannelMessage | undefined;
   targetStatus?: "loading" | "ready" | "unavailable" | "error" | undefined;
+  /** Rows include a closed view's resumed rows, until this view's first
+   * refresh settles either way. */
+  resumed?: true | undefined;
 }>;
 /** What a closed ordinary thread last showed. A view opened from it shows
  * these rows at once, as display only: they are never evidence, and the
@@ -191,6 +195,7 @@ export function createThreadView({
     ? "loading"
     : undefined;
   let remote: readonly RelayEvent[] = [];
+  let remoteIds = new Set<string>();
   let staged: readonly RelayEvent[] = [];
   let selectionStaged: readonly RelayEvent[] = [];
   let selectionController: AbortController | undefined;
@@ -288,9 +293,22 @@ export function createThreadView({
     return [...result.values()];
   }
   function union(...batches: readonly (readonly RelayEvent[])[]) {
-    return [
-      ...new Map(batches.flat().map((event) => [event.id, event])).values(),
-    ];
+    const events = new Map<string, RelayEvent>();
+    const summaries = new Map<string, RelayEvent>();
+    for (const event of batches.flat()) {
+      if (event.kind === 39005) {
+        const target = event.tags.find(([name]) => name === "e")?.[1];
+        if (!target || event.pubkey !== relayAuthor) continue;
+        const previous = summaries.get(target);
+        const latest = newer(previous, event);
+        if (latest !== event) continue;
+        if (previous) events.delete(previous.id);
+        summaries.set(target, event);
+      }
+      events.set(event.id, event);
+    }
+    // Match the fold before budgeting; messages and tombstones remain evidence.
+    return [...events.values()];
   }
   /** A fold that changed nothing keeps the snapshot and notifies no one. */
   function emit(next: ThreadSnapshot) {
@@ -399,6 +417,7 @@ export function createThreadView({
       ...patch,
       root: nextRoot,
       replies,
+      resumed: shown ? true : undefined,
       ...(exact ? { target, targetStatus } : {}),
     });
   }
@@ -409,6 +428,7 @@ export function createThreadView({
       selectionController?.abort();
       selectionStaged = [];
       remote = [];
+      remoteIds.clear();
       staged = [];
       rootId = undefined;
       cursor = undefined;
@@ -426,12 +446,17 @@ export function createThreadView({
       });
       return false;
     }
-    if (commit) remote = events;
+    if (commit) {
+      remote = events;
+      remoteIds = new Set(events.map((event) => event.id));
+    }
     return true;
   }
   function receive(events: readonly RelayEvent[]) {
     if (disposed || !canAccess() || (!rootId && !exact)) return;
-    const incoming = related(events);
+    const fresh = events.filter((event) => !remoteIds.has(event.id));
+    if (!fresh.length) return;
+    const incoming = related(fresh);
     if (!incoming.length) return;
     if (retain(union(remote, incoming))) {
       publish();
@@ -439,7 +464,10 @@ export function createThreadView({
   }
   if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
     rootId = threadReference(seed)?.rootId ?? seed.id;
-    if (seed.id === rootId) remote = [seed];
+    if (seed.id === rootId) {
+      remote = [seed];
+      remoteIds.add(seed.id);
+    }
     publish();
   }
   if (
@@ -480,6 +508,7 @@ export function createThreadView({
       pages = 0;
       held = undefined;
     } else remote = visible(remote);
+    remoteIds = new Set(remote.map((event) => event.id));
     publish({
       status: "idle",
       canLoadMore: false,

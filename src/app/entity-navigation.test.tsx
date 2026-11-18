@@ -73,11 +73,9 @@ vi.mock("../plugins/modules", async (original) => {
 });
 // Counts the sidebar inventory's renders.
 const soloRenders = vi.hoisted(() => ({ count: 0 }));
-vi.mock("../features/channel-navigation/SoloInventory", async (original) => {
+vi.mock("../bundled/channels/SoloInventory", async (original) => {
   const actual =
-    await original<
-      typeof import("../features/channel-navigation/SoloInventory")
-    >();
+    await original<typeof import("../bundled/channels/SoloInventory")>();
   return {
     ...actual,
     SoloInventory: (props: Parameters<typeof actual.SoloInventory>[0]) => {
@@ -227,6 +225,25 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     ingress: true,
     retryable: true,
   });
+  // Join a community opens in place: a join visit would replace the failed
+  // link and its Retry.
+  const failed = current.navigation.snapshot().entry;
+  await userEvent.click(
+    screen.getByRole("button", { name: /^Community switcher:/ }),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Join a community" }),
+  );
+  const joining = await screen.findByRole("dialog", {
+    name: "Join a community",
+  });
+  expect(current.navigation.snapshot()).toMatchObject({
+    ingress: true,
+    retryable: true,
+    entry: failed,
+  });
+  await userEvent.click(within(joining).getByRole("button", { name: "Close" }));
+  expect(current.navigation.snapshot().ingress).toBe(true);
   await userEvent.click(
     screen.getByRole("button", { name: /^Community switcher:/ }),
   );
@@ -341,8 +358,7 @@ it("opens Inbox for a malformed launch link when the catalog settles after the c
     }),
   );
   expect(current.plugins.startup()).toBe("loading");
-  release();
-  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await act(async () => release());
   await waitFor(() =>
     expect(current.navigation.snapshot()).toMatchObject({
       status: "opened",
@@ -356,6 +372,7 @@ it("opens Inbox for a malformed launch link when the catalog settles after the c
       },
     }),
   );
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
 });
 
 it("opens Inbox for a malformed launch link when Inbox activates last", async () => {
@@ -945,7 +962,7 @@ it("offers to join a code-less link's community, or opens it once joined", async
   );
   expect(current.communities.snapshot().selected).toBe(origin);
   // The latest link replaces the unjoined community's dialog.
-  expect(current.invites.snapshot()).toBeUndefined();
+  expect(current.navigation.snapshot().entry.target.join).toBeUndefined();
   await waitFor(() =>
     expect(screen.queryByLabelText("Community URL")).not.toBeInTheDocument(),
   );

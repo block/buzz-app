@@ -219,6 +219,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    readModelSettings: (saved, context) =>
+      providerDefaults.readModelSettings(saved, context),
     Create,
     CreateAction,
     CreateConfiguration,
@@ -276,7 +278,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           const found = await Promise.all(
             runtime
               .sessionPlaces(agent.key, config(agent.config).workspace)
-              .map(({ place, saved }) =>
+              .map(({ place, saved, standalone }) =>
                 readUsage(
                   { spawn, readFile },
                   place,
@@ -284,6 +286,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   saved,
                   since,
                   signal,
+                  standalone,
                 ),
               ),
           );

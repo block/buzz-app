@@ -861,6 +861,20 @@ describe("Markdown profile mentions", () => {
 });
 
 describe("Markdown inline extensions", () => {
+  it.each(["Agent2", "Agent"])(
+    "keeps numeric boundaries across a mention named %s",
+    (name) => {
+      const html = render(`@${name}:25: @${name} :25: @${name}:party_parrot:`, {
+        participantProfiles: new Map([[mic, { name }]]),
+        emoji: [party, { shortcode: "25", url: party.url }],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      });
+      expect(html.match(/<button/g)).toHaveLength(3);
+      expect(html.match(/<img/g)).toHaveLength(name === "Agent2" ? 2 : 3);
+    },
+  );
+
   it("preserves custom emoji and plugin prose alongside profile mentions", () => {
     const html = render("**:party_parrot:** PLUGIN @Mic", {
       emoji: [party],
@@ -1638,4 +1652,20 @@ it("opens a plugin page link in message content through the host opener", () => 
   );
   fireEvent.click(screen.getByRole("link", { name: "the entry" }));
   expect(onOpenLink).toHaveBeenCalledWith(href);
+});
+
+it("renders frozen forwarded mention labels without source profiles or notifications", () => {
+  const content = `@A*B* (${other}) and @A*B*`;
+  const html = render(content, {
+    participantProfiles: new Map(),
+    patch: {
+      mentions: [],
+      mentionReferences: [other],
+      mentionLabels: [{ id: other, names: ["A*B*"] }],
+    },
+  });
+  expect(html).toContain("A*B*");
+  expect(html).not.toContain("<em>");
+  expect(html).not.toContain(`(${other})`);
+  expect(html).toContain("data-mention-kind");
 });

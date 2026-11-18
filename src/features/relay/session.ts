@@ -368,6 +368,10 @@ export function createRelaySession(
               if (event.kind === 9007 || event.kind === 9000) return;
               const id = event.tags.find(([name]) => name === "h")?.[1];
               if (!id) return;
+              // Opening agents receive admin before either local wake or publication.
+              const opening =
+                event.kind === 9 ? channelWrites.prepareOpening(id) : undefined;
+              if (opening) return opening;
               const ready = channelWrites.starting(id);
               if (ready && event.kind === 9) hearStarting(event, id);
               return ready;
@@ -1214,6 +1218,8 @@ export function createRelaySession(
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
+  /** Callers holding `demandActivity`, beyond the sidebar's own needs. */
+  let activityDemand = 0;
   let sourceChannelList = channels.queries.list();
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
@@ -1266,6 +1272,19 @@ export function createRelaySession(
       });
       return activityChannelList;
     },
+    ...(transport?.channelActivity && {
+      demandActivity() {
+        activityDemand++;
+        refreshChannelActivity();
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          activityDemand--;
+          refreshChannelActivity();
+        };
+      },
+    }),
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
       const offActivity = channelActivity.subscribe(listener);
@@ -1814,6 +1833,8 @@ export function createRelaySession(
     {
       selectable: () =>
         agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
+      profiles: profiles.queries,
+      viewer: transport?.viewer ?? "",
       archived: (pubkey) =>
         agentUnavailable(
           {
@@ -1827,6 +1848,7 @@ export function createRelaySession(
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
     transport?.channelIdentity === true,
+    transport?.memberAdministration,
   );
   startingChannel = (id) => channelWrites.starting(id);
   // Roster authority invalidates in-flight reads, including account-owned
@@ -2751,10 +2773,17 @@ export function createRelaySession(
       ...createMessages(
         writes?.outbox,
         transport?.viewer,
-        (id) =>
-          local().find((item) => item.event.id === id)?.event ??
-          recent.peek(id)?.event ??
-          retainedEvent(id),
+        (id) => {
+          const outgoing = local().find((item) => item.event.id === id);
+          // The optimistic projection is unsigned even after publication. Use
+          // its admitted signed record when an operation needs source evidence.
+          return (
+            outgoing?.signed ??
+            recent.peek(id)?.event ??
+            retainedEvent(id) ??
+            outgoing?.event
+          );
+        },
         emoji.tags,
         validateMentions,
         (id, owner) =>
@@ -4012,6 +4041,7 @@ export function createRelaySession(
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
+      !activityDemand &&
       !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {

@@ -12,6 +12,7 @@ import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
 import { createTabs } from "./tabs";
 import { upstreamFor } from "../../features/agents/gateway/route";
+import { readModelSettings } from "../../features/agents/model-settings";
 import { GATEWAY_SEAM, HARNESS } from "./gateway";
 
 export const TYPE_ID = "pi";
@@ -93,6 +94,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
 
   agents.register<Config>({
+    supportsGuardedWake: true,
     id: TYPE_ID,
     hooks: { events: ["beforeTool", "afterTool"] },
     retire: (pubkey) => runtime.retire(pubkey),
@@ -102,6 +104,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    readModelSettings: (saved) =>
+      readModelSettings(config(saved), { provider: true }),
     Create,
     CreateModel,
     createModelReportsReadiness: true,

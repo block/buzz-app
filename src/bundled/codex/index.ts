@@ -181,6 +181,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    readModelSettings: (saved, context) =>
+      providerController.readModelSettings(saved, context),
     Create,
     CreateModel,
     createModelReportsReadiness: true,

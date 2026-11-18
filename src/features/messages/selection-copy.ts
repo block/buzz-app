@@ -4,6 +4,7 @@ import {
   Fragment,
   type Node as EditorNode,
 } from "prosemirror-model";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
 import { safeLinkUrl } from "../relay/message-content";
@@ -60,8 +61,21 @@ export function serializeNode(
   range?: Range,
 ): string {
   if (format === "markdown") return markdown(node, range);
-  return serialize(node, format, range);
+  const value = serialize(node, format, range);
+  // A byline is the first line of the paragraph it precedes, so no consumer
+  // spaces the two apart; before any other block it is its own paragraph.
+  return format === "html"
+    ? value.replace(
+        bylineParagraph,
+        (_, line: string, next?: string) =>
+          `<p>${line}${next ? "<br>" : "</p>"}`,
+      )
+    : value;
 }
+
+// Its own text is escaped, so the first `</p>` after a byline opens is its own.
+const bylineOpen = '<p data-copy-byline="">';
+const bylineParagraph = new RegExp(`${bylineOpen}(.*?)</p>(<p>)?`, "gs");
 
 function serialize(
   node: Node,
@@ -73,6 +87,21 @@ function serialize(
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
   if (!(node instanceof Element)) return children(node, format, range);
+  // A message's byline copies as one line, name then time, whether the row
+  // shows it or a grouped row keeps it for assistive technology alone. A
+  // selection holding only part of it copies that text.
+  const author = node.getAttribute("data-copy-author");
+  if (author && whole(node, range)) {
+    const seconds = Number.parseFloat(
+      node.getAttribute("data-copy-time") ?? "",
+    );
+    const time = Number.isFinite(seconds)
+      ? ` ${formatItemTimestamp(seconds, { withTime: true })}`
+      : "";
+    return format === "html"
+      ? `${bylineOpen}<strong>${escapeHtml(author)}</strong>${escapeHtml(time)}</p>`
+      : author + time;
+  }
   if (unselectable(node)) return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";
@@ -198,9 +227,11 @@ function serialize(
   return `<${block}>${inner}</${block}>`;
 }
 
-/** Engines omit computed `user-select: none` chrome from copies; so do we. */
+/** Engines omit computed `user-select: none` chrome from copies; so do we.
+ * The macOS system webview knows only the prefixed property. */
 export function unselectable(element: Element): boolean {
-  return getComputedStyle(element).userSelect === "none";
+  const style = getComputedStyle(element);
+  return style.userSelect === "none" || style.webkitUserSelect === "none";
 }
 
 function anchor(node: Element, inner: string, format: CopyFormat): string {

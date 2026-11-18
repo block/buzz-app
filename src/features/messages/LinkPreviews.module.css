@@ -60,3 +60,28 @@ html[data-keyboard-navigation] .setup:focus-visible {
   line-height: var(--text-caption--line-height);
   color: var(--text-subtle);
 }
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-half);
+  min-width: 0;
+}
+.card > :first-child {
+  min-width: 0;
+}
+.card > [data-dismiss-action] {
+  flex: none;
+}
+/* A renderer that draws nothing leaves no card to hide. */
+.card:has(> [data-dismiss-action]:first-child) {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card [data-dismiss-action] {
+    opacity: 0;
+  }
+  .card:hover [data-dismiss-action],
+  .card:focus-within [data-dismiss-action] {
+    opacity: 1;
+  }
+}

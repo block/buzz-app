@@ -19672,13 +19672,11 @@ it("restarts an unchanged command watch after changing the agent's harness", asy
   const exited = new Promise<number | null>((resolve) => {
     exit = resolve;
   });
-  const spawn = vi
-    .fn(heldCommand)
-    .mockImplementationOnce(async () => ({
-      ...(await heldCommand()),
-      exited,
-      kill,
-    }));
+  const spawn = vi.fn(heldCommand).mockImplementationOnce(async () => ({
+    ...(await heldCommand()),
+    exited,
+    kill,
+  }));
   ctx.provide("host", {
     spawn,
     serveMcp: async () => ({

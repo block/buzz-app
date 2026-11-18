@@ -321,7 +321,7 @@ it("withholds the replacement when deltas at the newest second disagree", async 
     replaced,
     plain,
   ]);
-  // The owner's own answer is the completion barrier for the negative check.
+  // The owner's own answer: the tie policy names no replacement.
   await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
   await waitFor(() =>
     expect(screen.getByTestId("profile-archived")).toHaveTextContent(
@@ -356,52 +356,54 @@ it("retries a failed lookup after a reconnect, with an unchanged archive", async
   expect(archives.snapshot().eventId).toBe(eventId);
 });
 
-it("shows an owned agent's replacement and asks before leaving unsaved edits", async () => {
-  const type = {
-    key: "test/echo",
-    title: "Echo",
-    tabs: [
-      {
-        id: "notes",
-        title: "Notes",
-        component: function Notes() {
-          const [dirty, setDirty] = useState(false);
-          useAgentSaveState(dirty, false);
-          return (
-            <button type="button" onClick={() => setDirty(true)}>
-              Make a change
-            </button>
-          );
-        },
+const ownedType = {
+  key: "test/echo",
+  title: "Echo",
+  tabs: [
+    {
+      id: "notes",
+      title: "Notes",
+      component: function Notes() {
+        const [dirty, setDirty] = useState(false);
+        useAgentSaveState(dirty, false);
+        return (
+          <button type="button" onClick={() => setDirty(true)}>
+            Make a change
+          </button>
+        );
       },
-    ],
-  };
-  const ownedBy = (viewer: string) => {
-    const agent = {
-      key: old.pubkey,
-      pubkey: old.pubkey,
-      owner: viewer,
-      name: "Old Agent",
-      type: type.key,
-      place: "here",
-      config: {},
-      attention: {},
-    } as unknown as Agent;
-    const snapshot = { agents: [agent], teams: [] };
-    const types = [type];
-    const none: never[] = [];
-    return {
-      subscribe: () => () => {},
-      snapshot: () => snapshot,
-      types: () => types,
-      find: (pubkey: string) => (pubkey === old.pubkey ? agent : undefined),
-      memberships: () => none,
-      configHistory: () => undefined,
-      addedTabs: () => none,
-      registerTab: () => {},
-      controlAttention: () => {},
-    } as unknown as Agents;
-  };
+    },
+  ],
+};
+/** The viewer's own agent for the old key, as the agents feature lists it. */
+function ownedBy(viewer: string) {
+  const agent = {
+    key: old.pubkey,
+    pubkey: old.pubkey,
+    owner: viewer,
+    name: "Old Agent",
+    type: ownedType.key,
+    place: "here",
+    config: {},
+    attention: {},
+  } as unknown as Agent;
+  const snapshot = { agents: [agent], teams: [] };
+  const types = [ownedType];
+  const none: never[] = [];
+  return {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+    find: (pubkey: string) => (pubkey === old.pubkey ? agent : undefined),
+    memberships: () => none,
+    configHistory: () => undefined,
+    addedTabs: () => none,
+    registerTab: () => {},
+    controlAttention: () => {},
+  } as unknown as Agents;
+}
+
+it("shows an owned agent's replacement and asks before leaving unsaved edits", async () => {
   const { open, push } = mount(
     [
       ...people,
@@ -435,6 +437,17 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
   // The profile's own navigation, push before open, as its other links use.
   expect(push).toHaveBeenCalledExactlyOnceWith(profileTarget(successor.pubkey));
   expect(open).not.toHaveBeenCalled();
+});
+
+it("adds nothing to an owned agent's profile when its key is not archived", async () => {
+  mount([...people, snapshot([])], [], { ownedBy });
+  const name = await screen.findByRole("heading", { name: "Old Agent" });
+  await waitFor(() =>
+    expect(name.parentElement?.nextElementSibling).toBeTruthy(),
+  );
+  // An empty element would still take a gap in the hero's flex column.
+  expect(name.parentElement?.nextElementSibling).not.toBeEmptyDOMElement();
+  expect(screen.queryByTestId("profile-archived")).toBeNull();
 });
 
 it("reads the archive again when a profile opens, in both directions", async () => {

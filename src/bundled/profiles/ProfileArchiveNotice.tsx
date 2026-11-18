@@ -16,12 +16,15 @@ export function ProfileArchiveNotice({
   pubkey,
   context,
   open,
+  hidden,
 }: {
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
   /** Opens the replacement's profile; defaults to the panel context. */
   open?: ((target: string) => void) | undefined;
+  /** Hides the text but keeps it mounted, so its reads continue. */
+  hidden?: boolean | undefined;
 }) {
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -70,7 +73,11 @@ export function ProfileArchiveNotice({
       ? replacement.key
       : undefined;
   return (
-    <p className="text-body-sm text-secondary" data-testid="profile-archived">
+    <p
+      className="text-body-sm text-secondary"
+      data-testid="profile-archived"
+      hidden={hidden}
+    >
       {successor ? (
         <>
           This key was replaced by{" "}

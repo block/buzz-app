@@ -276,11 +276,17 @@ export function ChannelInventory({
   const pluginSorted = appliedSorts.some(
     (mode) => mode !== "alpha" && mode !== "recent",
   );
+  const needsActivity =
+    pluginSorted ||
+    appliedSorts.includes("recent") ||
+    Object.values(preferences.data?.filters ?? {}).includes("active");
+  const soloActivity = useCallback(
+    (channel: ChannelSummary) => eligibleSolo(channel, viewer),
+    [viewer],
+  );
   const list = useChannelRoster(queries.channels, {
     activity:
-      pluginSorted ||
-      appliedSorts.includes("recent") ||
-      Object.values(preferences.data?.filters ?? {}).includes("active"),
+      needsActivity || (sectionSort("solo") === "recent" && soloActivity),
     preview: pluginSorted,
   });
   const rosterRecovers = useRecoveryOwns(queries, (live) =>

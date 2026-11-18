@@ -232,12 +232,84 @@ export function workspaceTombstones(
   return list;
 }
 
+type WorkspaceOrigins = { sections: Set<string>; assignments: Set<string> };
+
+function workspaceOriginKeys(record: Record<string, unknown>) {
+  return {
+    sections: ((record.sections as SidebarGroups["sections"]) ?? [])
+      .map(({ id }) => id)
+      .sort(),
+    assignments: Object.keys(record.assignments ?? {}).sort(),
+  };
+}
+
+/** Bitmap of live leaves known to have originated in the unified sidebar.
+ * Older records have no provenance, so none of their leaves are assumed new. */
+export function workspaceUnifiedOnly(
+  record: Record<string, unknown>,
+): WorkspaceOrigins {
+  const origins: WorkspaceOrigins = {
+    sections: new Set(),
+    assignments: new Set(),
+  };
+  if (record.unifiedOnly === undefined) return origins;
+  const { sections, assignments } = workspaceOriginKeys(record);
+  const size = sections.length + assignments.length;
+  const encoded = record.unifiedOnly;
+  const byteCount = Math.ceil(size / 8);
+  if (
+    typeof encoded !== "string" ||
+    encoded.length !== Math.ceil((byteCount * 4) / 3) ||
+    !/^[A-Za-z0-9+/]*$/.test(encoded)
+  )
+    throw new Error("Invalid workspace provenance");
+  const bytes = atob(encoded);
+  if (
+    bytes.length !== byteCount ||
+    (size % 8 && bytes.charCodeAt(bytes.length - 1) >>> (size % 8)) ||
+    btoa(bytes).replace(/=+$/, "") !== encoded
+  )
+    throw new Error("Invalid workspace provenance");
+  const has = (index: number) =>
+    (bytes.charCodeAt(index >> 3) & (1 << (index % 8))) !== 0;
+  sections.forEach((id, index) => {
+    if (has(index)) origins.sections.add(id);
+  });
+  assignments.forEach((id, index) => {
+    if (has(sections.length + index)) origins.assignments.add(id);
+  });
+  return origins;
+}
+
+export function encodeWorkspaceUnifiedOnly(
+  record: Record<string, unknown>,
+  origins: WorkspaceOrigins,
+): string | undefined {
+  if (!origins.sections.size && !origins.assignments.size) return undefined;
+  const { sections, assignments } = workspaceOriginKeys(record);
+  const bytes = new Uint8Array(
+    Math.ceil((sections.length + assignments.length) / 8),
+  );
+  const mark = (index: number) => {
+    const offset = index >> 3;
+    bytes[offset] = (bytes[offset] ?? 0) | (1 << (index % 8));
+  };
+  sections.forEach((id, index) => {
+    if (origins.sections.has(id)) mark(index);
+  });
+  assignments.forEach((id, index) => {
+    if (origins.assignments.has(id)) mark(sections.length + index);
+  });
+  return btoa(String.fromCharCode(...bytes)).replace(/=+$/, "");
+}
+
 /** Cross-version catch-up owns only leaves the unified record has never seen. */
 export function importWorkspaceFallback(
   current: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
 ): Record<string, unknown> {
-  if (!legacy?.sections.length) return current;
+  if (current.legacyImportClosed === true || !legacy?.sections.length)
+    return current;
   const removed = new Set(workspaceTombstones(current, "removedSections"));
   const unfiled = new Set(workspaceTombstones(current, "unfiled"));
   const sections = [...(current.sections as SidebarGroups["sections"])];
@@ -281,8 +353,26 @@ export function importWorkspaceFallback(
     assigned++;
     changed = true;
   }
+  if (current.unifiedOnly === undefined)
+    return changed
+      ? { ...current, sections, assignments, legacyTemplates: templates }
+      : current;
+
+  const origins = workspaceUnifiedOnly(current);
+  for (const { id } of legacy.sections) {
+    if (origins.sections.delete(id)) changed = true;
+  }
+  for (const id of Object.keys(legacy.assignments)) {
+    if (origins.assignments.delete(id)) changed = true;
+  }
   if (!changed) return current;
-  return { ...current, sections, assignments, legacyTemplates: templates };
+  const next = {
+    ...current,
+    sections,
+    assignments,
+    legacyTemplates: templates,
+  };
+  return { ...next, unifiedOnly: encodeWorkspaceUnifiedOnly(next, origins) };
 }
 
 function workspaceTree(current: Record<string, unknown>) {
@@ -314,8 +404,15 @@ function workspaceProjection(current: Record<string, unknown>, tree: Tree) {
   const unfiled = Object.entries(tree.a ?? {}).flatMap(([id, reg]) =>
     Array.isArray(reg) && reg[2] === null ? [id] : [],
   );
+  // The filing/section keys changed. Rebuild the bitmap when saving, using
+  // the previous verified record as the source of provenance.
+  const {
+    unifiedOnly: _unifiedOnly,
+    legacyImportClosed: _legacyImportClosed,
+    ...base
+  } = current;
   return {
-    ...current,
+    ...base,
     ...projection("channel-sections", tree),
     removedSections,
     unfiled,

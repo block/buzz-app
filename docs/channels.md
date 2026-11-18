@@ -250,15 +250,25 @@ assignments, section order, and removal markers. The first edit saves the
 combined legacy projection. Older desktop and mobile clients read their
 original coordinates. Their writes cannot replace the unified record. An
 upgraded client can import previously unseen workspaces and filings. A saved
-unified placement or removal takes precedence, including when the legacy client
-already removed that entry before the unified save. The fallback stops adding
+unified placement or removal of a known legacy entry takes precedence, even
+if the older client had already removed that entry before the unified save. The fallback stops adding
 legacy data when the unified record reaches 200 workspaces or 2,000 filings,
-respectively. Excess entries stay available in the original legacy records. A
-confirmed deletion attempts to clear its filing in the background. If that
+respectively. Excess entries stay available in the original legacy records.
+If migration provenance or removal history would exceed the signing budget,
+Buzz can finish import once a complete legacy read confirms every legacy entry
+is represented or deliberately removed. The unified layout then keeps those choices without
+reading in future changes from older clients. A confirmed deletion attempts to
+clear its filing in the background. If that
 fails, a later filing can reuse the slot while this session still has proof of
 the deletion.
 The relay selects one whole record when same-account writers race, so
 confirmation can precede a later replacement of the same edit.
+
+A cold load or uncached reconnect gap starts three preference reads in parallel,
+with seven filters total. If the unified sort or filter is absent, a fourth
+read requests the missing legacy coordinates with one or two more filters.
+These counts are before scheduler caching and coalescing. A continuous
+reconnect does not force a preference reread.
 
 ## Starting a direct message
 

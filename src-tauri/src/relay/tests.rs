@@ -1616,7 +1616,9 @@ async fn workspace_signer_round_trips_full_compact_filings() {
         filings.insert(id, serde_json::json!(rows));
     }
     let payload = serde_json::json!({
-        "version":1, "sections":sections, "filings":filings, "sectionOrder":[]
+        "version":1, "sections":sections, "filings":filings, "sectionOrder":[],
+        "packedUnfiled": [format!("~{}", STANDARD_NO_PAD.encode([200_u8; 32]))],
+        "unifiedOnly": STANDARD_NO_PAD.encode([1_u8; 275]),
     });
     let event = host
         .sign_sidebar(coordinate.into(), payload.clone(), 1)
@@ -1628,6 +1630,38 @@ async fn workspace_signer_round_trips_full_compact_filings() {
         payload
     );
 
+    let mut closed = payload.clone();
+    let closed_fields = closed.as_object_mut().unwrap();
+    closed_fields.remove("packedUnfiled");
+    closed_fields.remove("unifiedOnly");
+    closed_fields.insert("legacyImportClosed".into(), true.into());
+    let event = host
+        .sign_sidebar(coordinate.into(), closed.clone(), 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()[coordinate],
+        closed
+    );
+    let mut invalid = payload.clone();
+    invalid["legacyImportClosed"] = true.into();
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+
+    let mut invalid = payload.clone();
+    invalid["unifiedOnly"] = serde_json::json!("AQ");
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+    let mut invalid = payload.clone();
+    invalid["unfiled"] = serde_json::json!(["elsewhere"]);
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
     let mut invalid = payload;
     let rows = invalid["filings"]["00000000-0000-4000-8000-000000000000"]
         .as_array_mut()

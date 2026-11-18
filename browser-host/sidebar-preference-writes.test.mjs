@@ -393,7 +393,7 @@ it("preserves split UTF-8 section names in the published record and response", a
   try {
     const published = h.heads.get("channel-workspaces");
     const projection = JSON.parse(nip44.v2.decrypt(published.content, key));
-    expect(projection).toEqual({ version: 1, ...expected });
+    expect(projection).toMatchObject({ version: 1, ...expected });
   } finally {
     key.fill(0);
   }
@@ -573,7 +573,7 @@ it("serializes different sidebar endpoints through one relay queue", async () =>
   ]);
 });
 
-it("real broker removal tombstones only the selected section and confirms readback", async () => {
+it("real broker removal drops a unified-only section and its filings", async () => {
   const h = await harness();
   const signal = new AbortController().signal;
   const id = "11111111-1111-4111-8111-111111111111";
@@ -602,8 +602,8 @@ it("real broker removal tombstones only the selected section and confirms readba
   key.fill(0);
   expect(saved.sections).toEqual([]);
   expect(saved.assignments).toEqual({});
-  expect(saved.removedSections).toEqual([id]);
-  expect(saved.unfiled).toEqual(["alpha"]);
+  expect(saved.removedSections).toBeUndefined();
+  expect(saved.unfiled).toBeUndefined();
 });
 it("broker removal rejects invalid envelopes and unconfirmed publication", async () => {
   const h = await harness();

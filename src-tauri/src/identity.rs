@@ -491,6 +491,25 @@ impl Identity {
     }
 }
 
+fn valid_compact_workspace_id(row: &str) -> bool {
+    if let Some(escaped) = row.strip_prefix("~~") {
+        escaped.encode_utf16().count() < 256
+    } else if let Some(packed) = row.strip_prefix('~') {
+        packed.len() == 43
+            && STANDARD_NO_PAD
+                .decode(packed)
+                .is_ok_and(|bytes| bytes.len() == 32)
+    } else {
+        row != "__proto__"
+            && !row.trim().is_empty()
+            && row.encode_utf16().count() <= 256
+            && !(row.len() == 64
+                && row
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f')))
+    }
+}
+
 // Reject renderer-supplied arbitrary ciphertext/plaintext at the purpose-bound signer.
 fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Result<()> {
     let invalid = || "Invalid sidebar payload".to_owned();
@@ -536,6 +555,9 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                             | "legacyTemplates"
                             | "removedSections"
                             | "unfiled"
+                            | "packedUnfiled"
+                            | "unifiedOnly"
+                            | "legacyImportClosed"
                     )
                 }) {
                     return Err(invalid());
@@ -568,6 +590,28 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                         }) {
                             return Err(invalid());
                         }
+                    }
+                }
+                if let Some(value) = data.get("legacyImportClosed") {
+                    if value.as_bool() != Some(true)
+                        || ["removedSections", "unfiled", "packedUnfiled", "unifiedOnly"]
+                            .iter()
+                            .any(|key| data.contains_key(*key))
+                    {
+                        return Err(invalid());
+                    }
+                }
+                if let Some(value) = data.get("packedUnfiled") {
+                    if !data.contains_key("filings") || data.contains_key("unfiled") {
+                        return Err(invalid());
+                    }
+                    let list = value.as_array().ok_or_else(invalid)?;
+                    let mut unique = std::collections::HashSet::new();
+                    if list.iter().any(|id| {
+                        !id.as_str()
+                            .is_some_and(|id| valid_compact_workspace_id(id) && unique.insert(id))
+                    }) {
+                        return Err(invalid());
                     }
                 }
                 if let Some(templates) = data.get("legacyTemplates") {
@@ -606,7 +650,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     return Err(invalid());
                 }
             }
-            if workspaces && data.contains_key("filings") {
+            let assignment_count = if workspaces && data.contains_key("filings") {
                 let filings = data["filings"].as_object().ok_or_else(invalid)?;
                 if data.contains_key("assignments") {
                     return Err(invalid());
@@ -619,22 +663,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     }
                     for row in rows {
                         let row = row.as_str().ok_or_else(invalid)?;
-                        let valid = if let Some(escaped) = row.strip_prefix("~~") {
-                            escaped.encode_utf16().count() < 256
-                        } else if let Some(packed) = row.strip_prefix('~') {
-                            packed.len() == 43
-                                && STANDARD_NO_PAD
-                                    .decode(packed)
-                                    .is_ok_and(|bytes| bytes.len() == 32)
-                        } else {
-                            !row.trim().is_empty()
-                                && row.encode_utf16().count() <= 256
-                                && !(row.len() == 64
-                                    && row
-                                        .bytes()
-                                        .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f')))
-                        };
-                        if !valid
+                        if !valid_compact_workspace_id(row)
                             || !conversations.insert(row)
                             || conversations.len() > assignment_limit
                         {
@@ -642,6 +671,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                         }
                     }
                 }
+                conversations.len()
             } else {
                 let assignments = data["assignments"].as_object().ok_or_else(invalid)?;
                 if assignments.len() > assignment_limit
@@ -650,6 +680,17 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                             || id.encode_utf16().count() > 256
                             || !text(section, 256)
                     })
+                {
+                    return Err(invalid());
+                }
+                assignments.len()
+            };
+            if let Some(value) = data.get("unifiedOnly").filter(|_| workspaces) {
+                let count = sections.len() + assignment_count;
+                let bits = value.as_str().ok_or_else(invalid)?;
+                let bytes = STANDARD_NO_PAD.decode(bits).map_err(|_| invalid())?;
+                if bytes.len() != count.div_ceil(8)
+                    || (count % 8 != 0 && bytes.last().is_some_and(|last| last >> (count % 8) != 0))
                 {
                     return Err(invalid());
                 }

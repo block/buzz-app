@@ -296,3 +296,166 @@ it("only reclaims an unchanged archived filing when a new filing needs room", ()
   expect(saved.assignments).not.toHaveProperty(archivedId);
   expect(saved.unfiled).toEqual([archivedId]);
 });
+
+it("does not accumulate removal markers under sustained unified-only filing churn", () => {
+  const sections = [{ id: "work", name: "Work", order: 0 }];
+  const id = (index: number) => index.toString(16).padStart(64, "0");
+  const assignments = Object.fromEntries(
+    Array.from({ length: 1000 }, (_, index) => [id(index), "work"]),
+  );
+  const legacy = { sections, assignments: {} };
+  const source = workspaceBaseRecord({ sections, assignments });
+  let current = workspacePayloadForSigning(source, legacy);
+  for (let index = 1000; index < 2300; index++) {
+    const channelId = id(index);
+    // Writes can still proceed when a verified unified head is available but
+    // the two legacy heads temporarily cannot be read.
+    const availableLegacy = index < 2250 ? legacy : undefined;
+    const save = (sectionId?: string) => {
+      const previous = expandWorkspaceRecord(current);
+      const next = editSidebarAssignment(previous, 0, {
+        channelId,
+        ...(sectionId ? { sectionId } : {}),
+      });
+      current = JSON.parse(
+        JSON.stringify(
+          workspacePayloadForSigning(next, availableLegacy, previous),
+        ),
+      );
+    };
+    save("work");
+    save();
+  }
+  expect(current).not.toHaveProperty("unfiled");
+  expect(current).not.toHaveProperty("packedUnfiled");
+  expect(expandWorkspaceRecord(current).assignments).toEqual(assignments);
+}, 30_000);
+
+it("retains a protected legacy origin through refile and another unfile", () => {
+  const sections = [{ id: "work", name: "Work", order: 0 }];
+  const legacy = { sections, assignments: { [channel]: "work" } };
+  const missing = { sections, assignments: {} };
+  const source = workspaceBaseRecord(legacy);
+  const unfiled = workspaceRecordForWrite(
+    editSidebarAssignment(source, 0, { channelId: channel }),
+    legacy,
+    source,
+  );
+  const filedAgain = workspaceRecordForWrite(
+    editSidebarAssignment(unfiled, 0, {
+      channelId: channel,
+      sectionId: "work",
+    }),
+    missing,
+    unfiled,
+  );
+  const unfiledAgain = workspaceRecordForWrite(
+    editSidebarAssignment(filedAgain, 0, { channelId: channel }),
+    undefined,
+    filedAgain,
+  );
+  expect(unfiledAgain.unfiled).toEqual([channel]);
+  expect(importWorkspaceFallback(unfiledAgain, legacy)).toEqual(unfiledAgain);
+});
+
+it("retains a filing once a legacy client is observed using it", () => {
+  const sections = [{ id: "work", name: "Work", order: 0 }];
+  const empty = { sections, assignments: {} };
+  const legacy = { sections, assignments: { [channel]: "work" } };
+  const first = workspaceBaseRecord(empty);
+  const filed = workspaceRecordForWrite(
+    editSidebarAssignment(first, 0, { channelId: channel, sectionId: "work" }),
+    empty,
+    first,
+  );
+  const observed = importWorkspaceFallback(filed, legacy);
+  const renamed = workspaceRecordForWrite(
+    editSidebarSectionRename(observed, 0, "work", "Renamed"),
+    legacy,
+    observed,
+  );
+  const unfiled = workspaceRecordForWrite(
+    editSidebarAssignment(renamed, 0, { channelId: channel }),
+    empty,
+    renamed,
+  );
+  expect(unfiled.unfiled).toEqual([channel]);
+  expect(importWorkspaceFallback(unfiled, legacy)).toEqual(unfiled);
+});
+
+it("compacts protective legacy markers without restoring their filings", () => {
+  const sectionId = "00000000-0000-4000-8000-000000000001";
+  const sections = [{ id: sectionId, name: "Work", order: 0 }];
+  const assignments = (count: number, from: number) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [
+        (index + from).toString(16).padStart(64, "0"),
+        sectionId,
+      ]),
+    );
+  const legacy = { sections, assignments: assignments(700, 1900) };
+  const live = assignments(1900, 0);
+  const unfiled = Object.keys(legacy.assignments);
+  const packed = workspacePayloadForSigning(
+    { ...workspaceBaseRecord({ sections, assignments: live }), unfiled },
+    legacy,
+  );
+  expect(packed).toHaveProperty("packedUnfiled");
+  expect(JSON.stringify(packed).length).toBeLessThan(128 * 1024);
+  const roundTrip = expandWorkspaceRecord(JSON.parse(JSON.stringify(packed)));
+  expect(roundTrip).toMatchObject({ assignments: live, unfiled });
+  expect(importWorkspaceFallback(roundTrip, legacy)).toEqual(roundTrip);
+});
+
+it("closes a fully accounted legacy import when protective history would block editing", () => {
+  const sections = Array.from({ length: 200 }, (_, order) => ({
+    id: `00000000-0000-4000-8000-${String(order).padStart(12, "0")}`,
+    name: `Workspace ${order}`,
+    order,
+  }));
+  const entries = (from: number) =>
+    Array.from(
+      { length: 2000 },
+      (_, index) =>
+        [
+          (index + from).toString(16).padStart(64, "0"),
+          sections[index % sections.length]?.id ?? "",
+        ] as const,
+    );
+  const legacy = { sections, assignments: Object.fromEntries(entries(0)) };
+  const assignments = Object.fromEntries(entries(1000));
+  const legacyTemplates = {
+    [sections[0]?.id ?? ""]: "original-workspace-template",
+  };
+  const payload = {
+    ...workspaceBaseRecord({ sections, assignments, legacyTemplates }),
+    unfiled: entries(0)
+      .slice(0, 1000)
+      .map(([id]) => id),
+  };
+  const additional = {
+    ...legacy,
+    assignments: { ...legacy.assignments, missing: sections[0]?.id ?? "" },
+  };
+  expect(() => workspacePayloadForSigning(payload, additional)).toThrow(
+    "storage limit",
+  );
+  const signed = workspacePayloadForSigning(payload, legacy);
+  expect(signed).toHaveProperty("legacyImportClosed", true);
+  expect(signed).not.toHaveProperty("packedUnfiled");
+  const roundTrip = expandWorkspaceRecord(JSON.parse(JSON.stringify(signed)));
+  expect(roundTrip).toMatchObject({ assignments, legacyTemplates });
+  expect(importWorkspaceFallback(roundTrip, additional)).toBe(roundTrip);
+  const [channelId] = Object.keys(assignments);
+  if (!channelId) throw new Error("Incomplete fixture");
+  const edited = workspacePayloadForSigning(
+    editSidebarAssignment(roundTrip, 0, { channelId }),
+    undefined,
+    roundTrip,
+  );
+  expect(edited).toHaveProperty("legacyImportClosed", true);
+  expect(edited).not.toHaveProperty("unfiled");
+  expect(expandWorkspaceRecord(edited).assignments).not.toHaveProperty(
+    channelId,
+  );
+});

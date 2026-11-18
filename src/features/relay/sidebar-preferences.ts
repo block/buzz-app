@@ -6,6 +6,8 @@ import {
   projectSidebarRecord,
   projectSidebarSort,
   workspaceTombstones,
+  workspaceUnifiedOnly,
+  encodeWorkspaceUnifiedOnly,
 } from "./sidebar-registers.ts";
 export {
   MAX_WORKSPACES,
@@ -114,14 +116,33 @@ export function decodeLegacyWorkspaceEnvelope(value: unknown): SidebarGroups {
   return projectWorkspaceGroups({ ...data, version: 1, sectionOrder: [] });
 }
 
+type WorkspaceRecord = SidebarGroups & {
+  version: 1;
+  sectionOrder: readonly string[];
+  removedSections?: readonly string[];
+  unfiled?: readonly string[];
+  unifiedOnly?: string;
+  legacyImportClosed?: true;
+};
+
 /** A retained marker survives later changes to either legacy head. */
 export function workspaceRecordForWrite(
   payload: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
   previous: Record<string, unknown> = {},
-) {
+): WorkspaceRecord {
   const groups = projectWorkspaceGroups(payload);
   const live = new Set(groups.sections.map(({ id }) => id));
+  const layout = {
+    ...groups,
+    version: 1 as const,
+    sectionOrder:
+      groups.sectionOrder?.filter(
+        (key) => !key.startsWith("group:") || live.has(key.slice(6)),
+      ) ?? [],
+  };
+  if (previous.legacyImportClosed === true)
+    return { ...layout, legacyImportClosed: true };
   const legacySections = legacy && new Set(legacy.sections.map(({ id }) => id));
   const previousRemovals = new Set(
     workspaceTombstones(previous, "removedSections"),
@@ -135,41 +156,53 @@ export function workspaceRecordForWrite(
   const previousAssignments = previous.assignments as
     | SidebarGroups["assignments"]
     | undefined;
+  const unifiedOnly = workspaceUnifiedOnly(previous);
+  const fromLegacySection = (id: string) =>
+    previousRemovals.has(id) ||
+    legacySections?.has(id) ||
+    (previousSections.has(id) && !unifiedOnly.sections.has(id));
+  const legacyTarget = (id: string) =>
+    legacy && Object.hasOwn(legacy.assignments, id)
+      ? legacy.assignments[id]
+      : undefined;
+  const priorTarget = (id: string) =>
+    previousAssignments && Object.hasOwn(previousAssignments, id)
+      ? previousAssignments[id]
+      : undefined;
   const removedSections = workspaceTombstones(
     payload,
     "removedSections",
-  ).filter(
-    (id) =>
-      previousRemovals.has(id) ||
-      previousSections.has(id) ||
-      !legacySections ||
-      legacySections.has(id),
-  );
+  ).filter(fromLegacySection);
   const removed = new Set(removedSections);
   const unfiled = workspaceTombstones(payload, "unfiled").filter((id) => {
-    if (previousUnfiled.has(id) || !legacy) return true;
-    const prior =
-      previousAssignments && Object.hasOwn(previousAssignments, id)
-        ? previousAssignments[id]
-        : undefined;
-    const target = Object.hasOwn(legacy.assignments, id)
-      ? legacy.assignments[id]
-      : undefined;
-    // One section marker covers its removed filings. A standalone unfile
-    // still needs its marker even if the old client already cleared the row.
-    return (prior && !removed.has(prior)) || (target && !removed.has(target));
+    if (previousUnfiled.has(id)) return true;
+    const prior = priorTarget(id);
+    const target = legacyTarget(id);
+    // A tombstone for a legacy section covers its removed filings. A known
+    // legacy filing unfiled on its own must survive a temporary legacy absence.
+    return (
+      (prior && !unifiedOnly.assignments.has(id) && !removed.has(prior)) ||
+      (target && !removed.has(target))
+    );
   });
   const result = {
-    ...groups,
-    version: 1,
-    sectionOrder:
-      groups.sectionOrder?.filter(
-        (key) => !key.startsWith("group:") || live.has(key.slice(6)),
-      ) ?? [],
+    ...layout,
     ...(removedSections.length ? { removedSections } : {}),
     ...(unfiled.length ? { unfiled } : {}),
   };
-  return result;
+  const origins = {
+    sections: new Set([...live].filter((id) => !fromLegacySection(id))),
+    assignments: new Set(
+      Object.keys(groups.assignments).filter(
+        (id) =>
+          !legacyTarget(id) &&
+          !previousUnfiled.has(id) &&
+          (!priorTarget(id) || unifiedOnly.assignments.has(id)),
+      ),
+    ),
+  };
+  const provenance = encodeWorkspaceUnifiedOnly(result, origins);
+  return { ...result, ...(provenance ? { unifiedOnly: provenance } : {}) };
 }
 
 const hexConversationId = /^[0-9a-f]{64}$/;
@@ -199,11 +232,21 @@ function unpackConversationId(id: string) {
 /** Expand compact filings before applying migration fallbacks or an edit. */
 export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
   const data = object(value);
-  if (data.filings === undefined)
+  if (data.filings === undefined) {
+    if (data.packedUnfiled !== undefined)
+      throw new Error("Invalid compact workspace removal markers");
     return projectSidebarRecord("channel-sections", data);
+  }
   if (data.assignments !== undefined || data.meta !== undefined)
     throw new Error("Invalid compact workspace filings");
-  const { filings, ...record } = data;
+  const { filings, packedUnfiled, ...record } = data;
+  if (packedUnfiled !== undefined) {
+    if (record.unfiled !== undefined || !Array.isArray(packedUnfiled))
+      throw new Error("Invalid compact workspace removal markers");
+    record.unfiled = packedUnfiled.map((id) =>
+      text(unpackConversationId(text(id, 257))),
+    );
+  }
   const entries = Object.entries(object(filings));
   if (entries.length > MAX_WORKSPACES || !Array.isArray(record.sections))
     throw new Error("Invalid compact workspace filings");
@@ -217,7 +260,11 @@ export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
       throw new Error("Invalid compact workspace filings");
     for (const row of rows) {
       const id = text(unpackConversationId(text(row, 257)));
-      if (assignments.has(id) || assignments.size >= MAX_WORKSPACE_ASSIGNMENTS)
+      if (
+        id === "__proto__" ||
+        assignments.has(id) ||
+        assignments.size >= MAX_WORKSPACE_ASSIGNMENTS
+      )
         throw new Error("Invalid compact workspace filings");
       assignments.set(id, section);
     }
@@ -225,28 +272,67 @@ export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
   return { ...record, assignments: Object.fromEntries(assignments) };
 }
 
-/** Group large records by workspace and compact hexadecimal IDs within the same byte budget. */
+function workspaceRecordFits(value: unknown) {
+  return new TextEncoder().encode(JSON.stringify(value)).length <= 128 * 1024;
+}
+
+/** Compact filings and history together before considering closing legacy import. */
 export function workspacePayloadForSigning(
   payload: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
   previous?: Record<string, unknown>,
 ) {
-  const record = compactWorkspaceRecord(
-    workspaceRecordForWrite(payload, legacy, previous),
-  );
-  if (new TextEncoder().encode(JSON.stringify(record)).length <= 128 * 1024)
-    return record;
+  const record = workspaceRecordForWrite(payload, legacy, previous);
+  const packed = compactWorkspaceRecord(record);
+  if (workspaceRecordFits(packed)) return packed;
+
+  // Close catch-up only from a complete legacy read, and only when every
+  // legacy leaf is already represented or intentionally suppressed.
+  if (legacy && legacyWorkspaceCoverageComplete(record, legacy)) {
+    const {
+      removedSections: _removed,
+      unfiled: _unfiled,
+      unifiedOnly: _unifiedOnly,
+      ...layout
+    } = record;
+    const closed = compactWorkspaceRecord({
+      ...layout,
+      legacyImportClosed: true,
+    });
+    if (workspaceRecordFits(closed)) return closed;
+  }
   throw new Error("Saved workspaces exceed the storage limit.");
+}
+
+function legacyWorkspaceCoverageComplete(
+  record: SidebarGroups & {
+    removedSections?: readonly string[];
+    unfiled?: readonly string[];
+  },
+  legacy: SidebarGroups,
+) {
+  const sections = new Set(record.sections.map(({ id }) => id));
+  const removed = new Set(record.removedSections);
+  const unfiled = new Set(record.unfiled);
+  return (
+    legacy.sections.every(({ id }) => sections.has(id) || removed.has(id)) &&
+    Object.entries(legacy.assignments).every(
+      ([id, section]) =>
+        Object.hasOwn(record.assignments, id) ||
+        unfiled.has(id) ||
+        removed.has(section),
+    )
+  );
 }
 
 export function encodeLegacyWorkspaceEnvelope(groups: SidebarGroups) {
   return compactWorkspaceRecord(workspaceBaseRecord(groups));
 }
 
-function compactWorkspaceRecord<T extends SidebarGroups>(record: T) {
-  const fits = (value: unknown) =>
-    new TextEncoder().encode(JSON.stringify(value)).length <= 128 * 1024;
-  if (fits(record)) return record;
+function compactWorkspaceRecord<
+  T extends SidebarGroups & { unfiled?: readonly string[] },
+>(record: T) {
+  if (workspaceRecordFits(record)) return record;
   const { assignments, ...metadata } = record;
   const filings = new Map<string, string[]>();
   for (const [id, section] of Object.entries(assignments)) {
@@ -255,7 +341,14 @@ function compactWorkspaceRecord<T extends SidebarGroups>(record: T) {
     if (rows) rows.push(packed);
     else filings.set(section, [packed]);
   }
-  return { ...metadata, filings: Object.fromEntries(filings) };
+  const compact = { ...metadata, filings: Object.fromEntries(filings) };
+  const unfiled = record.unfiled ?? [];
+  if (!unfiled.length || workspaceRecordFits(compact)) return compact;
+  const packedUnfiled = unfiled.map(packConversationId);
+  if (JSON.stringify(packedUnfiled).length >= JSON.stringify(unfiled).length)
+    return compact;
+  const { unfiled: _unfiled, ...rest } = compact;
+  return { ...rest, packedUnfiled };
 }
 
 export function projectWorkspacePreferences(
@@ -505,6 +598,15 @@ export function projectSidebarPreferences(
       result.sectionOrder = data.sectionOrder;
       workspaceTombstones(data, "removedSections");
       workspaceTombstones(data, "unfiled");
+      workspaceUnifiedOnly(data);
+      if (
+        data.legacyImportClosed !== undefined &&
+        (data.legacyImportClosed !== true ||
+          ["removedSections", "unfiled", "unifiedOnly"].some((key) =>
+            Object.hasOwn(data, key),
+          ))
+      )
+        throw new Error("Invalid workspace legacy import state");
       if (data.legacyTemplates !== undefined) {
         const templates = Object.entries(object(data.legacyTemplates));
         if (

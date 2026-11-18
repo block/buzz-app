@@ -240,6 +240,9 @@ test.describe("plugin sidebar contributions", () => {
 
 appTest.describe("workspace composition", () => {
   appTest.use({
+    // Keep the fixture's framed Work and Mixed headings in view together.
+    // This journey tests cross-frame collision independently of auto-scroll.
+    viewport: { width: 1440, height: 1300 },
     productionBroker: true,
     channelIds: ["alpha", "beta", "gamma"],
     channelNames: { alpha: "Alpha", beta: "Beta", gamma: "Gamma" },
@@ -269,32 +272,29 @@ appTest.describe("workspace composition", () => {
         mixed.locator('[data-solo-workspace="mixed"]'),
       ).toBeVisible();
 
+      const sidebar = page.getByRole("complementary", {
+        name: "Sidebar",
+        exact: true,
+      });
       const moveToMixed = async (row, header) => {
-        await row.hover();
+        await expect(row).toBeInViewport({ ratio: 1 });
+        await expect(header).toBeInViewport({ ratio: 1 });
         const start = await row.boundingBox();
+        const panel = await sidebar.boundingBox();
         const target = await header.boundingBox();
-        if (!start || !target)
-          throw new Error("Workspace drag target is missing");
-        await page.mouse.move(
-          start.x + start.width / 2,
-          start.y + start.height / 2,
-        );
+        if (!start || !panel || !target)
+          throw new Error("Workspace drag source or target is missing");
+        const outside = panel.x + panel.width + 16;
+        const startY = start.y + start.height / 2;
+        await page.mouse.move(start.x + start.width / 2, startY);
         await page.mouse.down();
-        await page.mouse.move(
-          target.x + target.width / 2,
-          target.y + target.height / 2,
-          {
-            steps: 10,
-          },
-        );
-        // An expanded creation target can shift the heading as the pointer crosses it.
-        await header.scrollIntoViewIfNeeded();
-        const current = await header.boundingBox();
-        if (!current) throw new Error("Workspace drag target disappeared");
-        await page.mouse.move(
-          current.x + current.width / 2,
-          current.y + current.height / 2,
-        );
+        // Move vertically outside the sidebar so crossing the workspace
+        // creation slot cannot expand it and move Mixed during the drag.
+        await page.mouse.move(outside, startY);
+        await expect(page.locator("[data-channel-dragging]")).toHaveCount(1);
+        const targetY = target.y + target.height / 2;
+        await page.mouse.move(outside, targetY);
+        await page.mouse.move(target.x + target.width / 2, targetY);
         await expect(mixed).toHaveAttribute("data-drop-target");
         await Promise.all([
           page.waitForResponse(

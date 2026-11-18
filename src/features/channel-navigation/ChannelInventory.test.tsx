@@ -4283,3 +4283,21 @@ it("re-sorts a plugin order that compares previews on a preview-only publish", a
     preferences.dispose();
   }
 });
+
+it("keeps default Solo recency as live activity changes", async () => {
+  const h = fixture(undefined, "ready", [
+    { id: "alpha", name: "Alpha", channelType: "solo", lastActivityAt: 2 },
+    { id: "beta", name: "Beta", channelType: "solo", lastActivityAt: 1 },
+    { id: "gamma", name: "Gamma", channelType: "stream" },
+  ]);
+  const soloOrder = () =>
+    [
+      ...document.querySelectorAll(
+        '[data-sidebar-section="solo"] [data-channel-id]',
+      ),
+    ].map((row) => row.getAttribute("data-channel-id"));
+  render(h.view("gamma"));
+  await waitFor(() => expect(soloOrder()).toEqual(["alpha", "beta"]));
+  h.publish("beta", { lastActivityAt: 4 });
+  await waitFor(() => expect(soloOrder()).toEqual(["beta", "alpha"]));
+});

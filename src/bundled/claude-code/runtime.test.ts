@@ -41,7 +41,12 @@ import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { AgentSessions, localSessions } from "./sessions";
+import {
+  AgentSessions,
+  localSessions,
+  PROCESS_LIMIT,
+  withRoom,
+} from "./sessions";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import {
   assignConversationFolder,
@@ -548,6 +553,93 @@ it("stops reclaiming idle conversations when the pending turn is interrupted", a
   } finally {
     for (const process of f.claudes()) process.exit(null);
     f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+
+/** Holds the next spawn, as the host prepares it, until refused. */
+const heldSpawn = (f: ReturnType<typeof setup>) => {
+  let refuse: (() => void) | undefined;
+  vi.spyOn(f.fake, "spawn").mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        refuse = () => reject(PROCESS_LIMIT);
+      }),
+  );
+  return () => refuse;
+};
+
+it("moves past a spare still starting once its wait runs out", async () => {
+  vi.useFakeTimers();
+  const [root, a] = threadMention("a", 110);
+  const f = setup([root, a]);
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  let refuse: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await vi.advanceTimersByTimeAsync(0);
+    const [idle] = f.claudes();
+    const held = heldSpawn(f);
+    f.runtime.sync([agent]);
+    await vi.advanceTimersByTimeAsync(0);
+    refuse = held();
+    expect(refuse).toBeTypeOf("function");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const room = f.runtime.room();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await room;
+    }
+    expect(idle?.killed).toBe(true);
+  } finally {
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+  }
+});
+
+it("stops no conversation for a wait that ran out after its caller gave up", async () => {
+  vi.useFakeTimers();
+  const [root, a] = threadMention("a", 110);
+  const f = setup([root, a]);
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  let refuse: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await vi.advanceTimersByTimeAsync(0);
+    const [idle] = f.claudes();
+    if (idle) idle.exitOnKill = false;
+    const held = heldSpawn(f);
+    f.runtime.sync([agent]);
+    await vi.advanceTimersByTimeAsync(0);
+    refuse = held();
+    let wanted = true;
+    const settled = withRoom(
+      async () => {
+        throw PROCESS_LIMIT;
+      },
+      () => f.runtime.room(),
+      () => wanted,
+    )("claude").then(
+      () => "started",
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    wanted = false;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await settled).toBe(PROCESS_LIMIT);
+    // Only now is the spare refused, after its caller has finished.
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle?.killed).toBe(false);
+  } finally {
+    refuse?.();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    await vi.advanceTimersByTimeAsync(0);
     vi.useRealTimers();
   }
 });

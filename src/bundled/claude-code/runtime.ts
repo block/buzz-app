@@ -468,28 +468,28 @@ export class ClaudeRuntime {
    * would stop on their own after `IDLE_MS`; until then they hold places a
    * new conversation needs. */
   async room() {
-    // The spare, started ahead of need, goes before any conversation's.
-    const stopping = this.spare.free().then((freed) => {
-      if (freed) return true;
+    // The spare, started ahead of need, goes before any conversation's. Both
+    // are chosen now: a wait that runs out never stops another later.
+    let stopping = this.spare.free();
+    if (!stopping) {
       let idlest: ReturnType<AgentSessions["idlest"]>;
       for (const entry of this.agents.values()) {
         const candidate = entry.sessions.idlest();
         if (candidate && (!idlest || candidate.used < idlest.used))
           idlest = candidate;
       }
-      return idlest ? idlest.stop().then(() => true) : false;
-    });
+      if (!idlest) return false;
+      stopping = idlest.stop();
+    }
     // A descendant holding its output can keep it from ever reporting exit;
     // its place may still be held, so the caller then asks again.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const freed = await Promise.race([
+    await Promise.race([
       stopping,
-      new Promise<boolean>(
-        (done) => (timer = setTimeout(() => done(true), STOP_WAIT_MS)),
-      ),
+      new Promise((done) => (timer = setTimeout(done, STOP_WAIT_MS))),
     ]);
     clearTimeout(timer);
-    return freed;
+    return true;
   }
 
   /** Brings the runtime in line with this type's agents: changed settings

@@ -278,11 +278,11 @@ it("stops the spare to free its place, and starts no other until asked", async (
   spare.warm({ cwd: "/work", model: "opus" });
   await flush();
   const [first] = claudes();
-  await expect(spare.free()).resolves.toBe(true);
+  await spare.free();
   expect(first?.killed).toBe(true);
   await flush();
   expect(claudes()).toHaveLength(1);
-  await expect(spare.free()).resolves.toBe(false);
+  expect(spare.free()).toBeUndefined();
 });
 
 it("makes no more room for a cancelled message, but does for the next one", async () => {

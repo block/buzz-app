@@ -892,16 +892,18 @@ export class Spare {
 
   /** Stops the spare so a conversation can have its place at the host's
    * process limit; it is not started again until a conversation asks for
-   * one. Resolves once it has exited; false when there is none. */
-  async free() {
+   * one. Taken at once, so no later call waits on it too; resolves once it
+   * has exited, or never started. Undefined when there is none. */
+  free(): Promise<unknown> | undefined {
     const next = this.next;
-    const process = await next?.process;
-    if (!next || this.next !== next || !process?.running) return false;
+    if (!next) return undefined;
     this.next = undefined;
     this.stopped = true;
-    void process.kill();
-    await process.exited;
-    return true;
+    return next.process.then((process) => {
+      if (!process) return;
+      void process.kill();
+      return process.exited;
+    });
   }
 
   private place(where: Where) {

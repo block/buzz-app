@@ -47,6 +47,7 @@ import {
   HashIcon,
   InfoIcon,
   RobotIcon,
+  SlidersHorizontalIcon,
   SparklesIcon,
   ThreadIcon,
   XIcon,
@@ -80,6 +81,12 @@ import type {
   SearchViews,
 } from "./SearchChoices";
 import { type SearchChip, SearchChoices } from "./SearchChoices";
+import {
+  FilterGuidePreview,
+  FilterSyntax,
+  guideFilters,
+  syntaxOf,
+} from "./SearchFilterGuide";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import { useUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import {
@@ -356,6 +363,12 @@ export function SearchResults({
   const question = askMatch
     ? [...chips.map(({ text }) => text), askText].filter(Boolean).join(" ")
     : "";
+  // The filter guide shows over the results until the query changes, so
+  // choosing a filter, or typing, goes back to them for good.
+  const [guideQuery, setGuideQuery] = useState<string>();
+  if (guideQuery !== undefined && guideQuery !== query)
+    setGuideQuery(undefined);
+  const guideOpen = guideQuery === query && !asking;
   const parsed = useMemo(
     () => parseSearchOperators(asking ? "" : query.trim()),
     [query, asking],
@@ -406,10 +419,15 @@ export function SearchResults({
     setChipState(next.length ? { query: nextQuery, chips: next } : undefined);
     onQueryChange(nextQuery);
   };
-  const updateDisplayQuery = (value: string) =>
-    chips.length
-      ? setChipQuery(chips, value.trimStart())
-      : onQueryChange(value);
+  const updateDisplayQuery = (value: string) => {
+    // `?` typed alone opens the filter guide rather than searching for it.
+    if (value.trim() === "?" && !visibleQuery.trim()) {
+      setGuideQuery(query);
+      return;
+    }
+    if (chips.length) setChipQuery(chips, value.trimStart());
+    else onQueryChange(value);
+  };
   const removeChip = (chip: SearchChip) => {
     setChipQuery(
       chips.filter((other) => other !== chip),
@@ -1864,6 +1882,108 @@ export function SearchResults({
           },
         })
       : undefined;
+  /** Types `text` after what's typed: a filter for its picker to complete,
+   * or a whole one to try, which ends with a space for typing to carry on.
+   * `ask:` leads instead, keeping the rest as the question. */
+  const addFilter = (text: string, whole = false) => {
+    if (text.startsWith("ask:"))
+      setChipQuery(
+        chips,
+        text === "ask:" ? `ask: ${visibleQuery.trim()}` : text,
+      );
+    else
+      updateDisplayQuery(
+        `${visibleQuery.trimEnd()}${visibleQuery.trim() ? " " : ""}${text}${whole ? " " : ""}`,
+      );
+    input.current?.focus();
+  };
+  const sampleChannel = channels.find(
+    (channel) =>
+      channel.channelType !== "dm" &&
+      channel.channelType !== "solo" &&
+      !channel.archived,
+  )?.name;
+  const filters = guideOpen
+    ? guideFilters({
+        channel: sampleChannel,
+        ask: !!openAsk && !offline,
+        agent: askAgent?.name,
+        scoped: !!scopedChannelId,
+      })
+    : [];
+  const guideGroup: SearchGroup = {
+    label: "Filters",
+    why: "Type one, or press ↵ to add it",
+    destinations: filters.map((filter) => ({
+      key: `guide:${filter.key}`,
+      label: filter.label,
+      detail:
+        filter.examples.map(([example]) => example).join(" · ") || filter.about,
+      icon: filter.icon,
+      trailing: <FilterSyntax operator={filter.key} text={syntaxOf(filter)} />,
+      run: () => addFilter(filter.syntax),
+    })),
+  };
+  /** A guide example as the chip choosing it would make, when it is one. */
+  const exampleChip = (example: string): SearchChip | undefined => {
+    const date = restoreChips(example).chips[0];
+    if (date) return date;
+    if (/^from:@?me$/i.test(example))
+      return {
+        operand: example,
+        text: example,
+        edit: example,
+        label: "Remove author me",
+      };
+    const channel = /^in:#(.+)$/.exec(example)?.[1];
+    const found = channel
+      ? channels.find(({ name }) => name === channel)
+      : undefined;
+    return found
+      ? {
+          operand: `in:${found.id}`,
+          text: `in:#${found.name}`,
+          edit: `in:#${found.name}`,
+          label: `Remove channel ${found.name}`,
+          title: found.id,
+        }
+      : undefined;
+  };
+  const combined = [
+    "from:me",
+    ...(sampleChannel && !scopedChannelId ? [`in:#${sampleChannel}`] : []),
+    "during:7d",
+  ];
+  const guidePreview = (row: SearchDestination | undefined) => {
+    const filter = filters.find(({ key }) => `guide:${key}` === row?.key);
+    return filter ? (
+      <FilterGuidePreview
+        filter={filter}
+        combined={combined}
+        onTry={(example) => {
+          const chip = exampleChip(example);
+          if (!chip) return addFilter(example, true);
+          const kind = chip.operand.slice(0, chip.operand.indexOf(":"));
+          // One author and one conversation; dates intersect.
+          setChipQuery(
+            [
+              ...chips.filter(
+                (other) =>
+                  other.operand !== chip.operand &&
+                  !(
+                    (kind === "from" || kind === "in") &&
+                    other.operand.startsWith(`${kind}:`)
+                  ),
+              ),
+              chip,
+            ],
+            visibleQuery,
+          );
+          input.current?.focus();
+        }}
+      />
+    ) : null;
+  };
   const hints = asking ? (
     <div className="search-peek-hints">
       <Button
@@ -1897,7 +2017,7 @@ export function SearchResults({
   // An author or date picker replaces the result groups, so it announces
   // none of their lookups.
   const resultsShown =
-    !showAuthorPicker && !showDateChoices && !showChannelPicker;
+    !guideOpen && !showAuthorPicker && !showDateChoices && !showChannelPicker;
   /** Results with a preview beside them: not a question or a picker. */
   const previewed = !asking && resultsShown;
   const searchAnnouncement = useSearchAnnouncement(
@@ -2107,7 +2227,7 @@ export function SearchResults({
     !messagesPending &&
     !rankedGroups.some((group) => group.destinations.length);
   const offerAsk = !!parsed.text && (words >= 4 || settledEmpty);
-  const groups: readonly SearchGroup[] =
+  const resultGroups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
           {
@@ -2270,8 +2390,9 @@ export function SearchResults({
                   // nothing moves when it goes.
                   ...(hits ? [] : [messageGroup]),
                 ];
+  const groups = guideOpen ? [guideGroup] : resultGroups;
   const askReader =
-    openAsk && !offline && (asking || !!parsed.text) ? (
+    openAsk && !offline && (asking || guideOpen || !!parsed.text) ? (
       <DefaultAgent
         session={session}
         scope={sidebarScope ?? ""}
@@ -2306,43 +2427,64 @@ export function SearchResults({
         onDisplayQueryChange={updateDisplayQuery}
         input={input}
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+        onBack={guideOpen ? () => setGuideQuery(undefined) : undefined}
         fieldAction={
-          sortable ? (
-            <MenuRoot>
-              <MenuTrigger
-                render={(props) => (
-                  <IconButton
-                    {...props}
-                    variant="ghost"
-                    // The heading's order is visual only; name it here.
-                    aria-label={`Sort messages: ${order}`}
-                    title="Sort messages"
-                    icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
-                  />
-                )}
-              />
-              <MenuPopup
-                align="end"
-                size="compact"
-                aria-label="Sort messages"
-                finalFocus={input}
-              >
-                <MenuRadioGroup
-                  value={sort}
-                  onValueChange={(value) =>
-                    setSort(value === "newest" ? "newest" : "relevance")
-                  }
+          <>
+            {sortable && (
+              <MenuRoot>
+                <MenuTrigger
+                  render={(props) => (
+                    <IconButton
+                      {...props}
+                      variant="ghost"
+                      // The heading's order is visual only; name it here.
+                      aria-label={`Sort messages: ${order}`}
+                      title="Sort messages"
+                      icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+                    />
+                  )}
+                />
+                <MenuPopup
+                  align="end"
+                  size="compact"
+                  aria-label="Sort messages"
+                  finalFocus={input}
                 >
-                  <MenuRadioItem value="relevance" closeOnClick>
-                    Most relevant
-                  </MenuRadioItem>
-                  <MenuRadioItem value="newest" closeOnClick>
-                    Most recent
-                  </MenuRadioItem>
-                </MenuRadioGroup>
-              </MenuPopup>
-            </MenuRoot>
-          ) : undefined
+                  <MenuRadioGroup
+                    value={sort}
+                    onValueChange={(value) =>
+                      setSort(value === "newest" ? "newest" : "relevance")
+                    }
+                  >
+                    <MenuRadioItem value="relevance" closeOnClick>
+                      Most relevant
+                    </MenuRadioItem>
+                    <MenuRadioItem value="newest" closeOnClick>
+                      Most recent
+                    </MenuRadioItem>
+                  </MenuRadioGroup>
+                </MenuPopup>
+              </MenuRoot>
+            )}
+            {!asking && (
+              <IconButton
+                variant={guideOpen ? "subtle" : "ghost"}
+                size="sm"
+                aria-label="Filters"
+                aria-pressed={guideOpen}
+                aria-keyshortcuts="?"
+                data-search-filters=""
+                title="Filters (type ?)"
+                // The field keeps focus, so typing goes on from the guide.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setGuideQuery(guideOpen ? undefined : query);
+                  input.current?.focus();
+                }}
+                icon={<SlidersHorizontalIcon size={16} aria-hidden="true" />}
+              />
+            )}
+          </>
         }
         scope={
           scopedChannelId && onScopeChange
@@ -2358,13 +2500,16 @@ export function SearchResults({
         }
         groups={groups}
         open={open}
-        highlightEmpty={!scopedChannelId && !query.trim() && unread.length > 0}
+        highlightEmpty={
+          guideOpen || (!scopedChannelId && !query.trim() && unread.length > 0)
+        }
         // Enter before any row, or on search actions alone, waits for a
         // channel or person row, or for the lookups to settle, rather than
         // opening a message that lands first. A cold joined list has not yet
         // started the open-channel lookup.
         pending={
           !asking &&
+          !guideOpen &&
           (directoryPending ||
             operatorLookupPending ||
             search.loading ||
@@ -2398,30 +2543,35 @@ export function SearchResults({
           // A filter or a conversation's own search asks for messages
           // only, so they aren't ranked with other results, but each still
           // previews.
-          ranked: previewed && !scopedChannelId && !hasOperator,
+          ranked: !guideOpen && previewed && !scopedChannelId && !hasOperator,
           hints,
-          busy: !!query.trim() && (messagesPending || directoryPending),
+          busy:
+            !guideOpen &&
+            !!query.trim() &&
+            (messagesPending || directoryPending),
           unsearched:
-            search.tooShort || search.onlyExclusions
+            !guideOpen && (search.tooShort || search.onlyExclusions)
               ? { Messages: messageEmpty }
               : undefined,
-          preview: previewed
-            ? (row, tone, follow) => (
-                <SearchPreview
-                  session={session}
-                  cache={previews}
-                  row={row}
-                  tone={tone}
-                  follow={follow}
-                  terms={terms}
-                  nameOf={nameOf}
-                  whereOf={whereOf}
-                />
-              )
-            : undefined,
+          preview: guideOpen
+            ? guidePreview
+            : previewed
+              ? (row, tone, follow) => (
+                  <SearchPreview
+                    session={session}
+                    cache={previews}
+                    row={row}
+                    tone={tone}
+                    follow={follow}
+                    terms={terms}
+                    nameOf={nameOf}
+                    whereOf={whereOf}
+                  />
+                )
+              : undefined,
         }}
       >
-        {dateOperator === "on" && (
+        {dateOperator === "on" && !guideOpen && (
           <Calendar
             mode="single"
             aria-label="Choose a day"
@@ -2434,6 +2584,8 @@ export function SearchResults({
         <div
           className="space-y-2 px-3 text-body-sm text-subtle"
           aria-live="polite"
+          // Lookup status belongs to the results the guide covers.
+          hidden={guideOpen}
         >
           {list.status === "loading" &&
             query.trim() &&

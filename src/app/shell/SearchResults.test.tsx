@@ -14,6 +14,7 @@ import {
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
+import userEvent from "@testing-library/user-event";
 import {
   bindNames,
   type IdentityNames,
@@ -87,6 +88,12 @@ afterEach(() => {
   vi.useRealTimers();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
+
+/** A chip's hover hint, which shows what its text leaves out. */
+async function expectHint(target: HTMLElement, hint: string) {
+  await userEvent.setup().hover(target);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(hint);
+}
 
 it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
   const relay = keypair(),
@@ -4483,7 +4490,7 @@ it.each(
       const chip = screen.getByRole("button", {
         name: `Remove ${operator.startsWith("in:") ? "conversation with" : "author"} ${label}`,
       });
-      expect(chip).toHaveAttribute("title", npubEncode(person.pubkey));
+      await expectHint(chip, npubEncode(person.pubkey));
       expect(chip).toHaveTextContent(
         `${operator.startsWith("in:") ? "in" : "from"}:@${label}`,
       );
@@ -5981,7 +5988,7 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     );
     const chip = screen.getByRole("button", { name: "Remove author Wes" });
     expect(chip).toHaveTextContent("from:@Wes");
-    expect(chip).toHaveAttribute("title", npubEncode(human.pubkey));
+    await expectHint(chip, npubEncode(human.pubkey));
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     expect(input).toHaveValue("");
     expect(input).toHaveFocus();
@@ -6263,6 +6270,99 @@ it("offers during: periods and an on: calendar that insert local dates", async (
   }
 });
 
+it("opens a filter guide from Filters or ?, adds a filter for its picker, and closes on Escape", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  const change = vi.fn();
+  const dismiss = vi.fn();
+  function Harness() {
+    const [query, setQuery] = useState("");
+    return (
+      // biome-ignore lint/a11y/noStaticElementInteractions: Hears Escape that leaves the palette.
+      <div onKeyDown={(event) => event.key === "Escape" && dismiss()}>
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={(next) => {
+            change(next);
+            setQuery(next);
+          }}
+          input={createRef<HTMLInputElement>()}
+          pages={[]}
+          openNewMessage={() => {}}
+          openConversation={() => {}}
+        />
+      </div>
+    );
+  }
+  try {
+    render(<Harness />);
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    const filters = screen.getByRole("button", { name: "Filters" });
+    expect(filters).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(filters);
+    expect(filters).toHaveAttribute("aria-pressed", "true");
+    const guide = within(screen.getByRole("group", { name: "Filters" }));
+    expect(
+      guide.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      expect.stringMatching(/^Who sent itfrom:me/),
+      expect.stringMatching(/^Where it was sent/),
+      expect.stringMatching(/^When it was sentduring:today/),
+      expect.stringMatching(/^Before a daybefore:today/),
+      expect.stringMatching(/^After a dayafter:yesterday/),
+      expect.stringMatching(/^On one dayon:yesterday/),
+      expect.stringMatching(/^Exact words/),
+    ]);
+    // Escape leaves the guide, not search.
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByRole("group", { name: "Filters" })).toBeNull();
+    expect(dismiss).not.toHaveBeenCalled();
+    // So does Escape from the button that opened it.
+    fireEvent.click(filters);
+    fireEvent.keyDown(filters, { key: "Escape" });
+    expect(screen.queryByRole("group", { name: "Filters" })).toBeNull();
+    expect(dismiss).not.toHaveBeenCalled();
+    // `?` alone opens it without searching for "?".
+    fireEvent.change(field, { target: { value: "?" } });
+    expect(change).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Filters" })).getByRole(
+        "option",
+        { name: /When it was sent/ },
+      ),
+    );
+    // Its filter waits for the picker to finish it.
+    expect(change).toHaveBeenLastCalledWith("during:");
+    expect(screen.queryByRole("group", { name: "Filters" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Dates" })).toBeInTheDocument();
+    // Deleting back to where it opened doesn't bring it back.
+    fireEvent.change(field, { target: { value: "" } });
+    expect(screen.queryByRole("group", { name: "Filters" })).toBeNull();
+    // An example tried from the preview adds its chip ahead of the text.
+    fireEvent.change(field, { target: { value: "deploy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Preview" })).getByRole(
+        "button",
+        { name: /during:7d/ },
+      ),
+    );
+    expect(change).toHaveBeenLastCalledWith("during:7d deploy");
+    expect(
+      screen.getByRole("button", { name: "Remove date during:7d" }),
+    ).toHaveTextContent("during:7d");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("picks an in: channel from the joined channels and an in:@ person like from:@", async () => {
   const relay = keypair(),
     viewer = keypair(),
@@ -6421,8 +6521,8 @@ it.each([
         .getAllByRole("button", { name: /^Remove (author|conversation)/ })
         .map((chip) => chip.textContent);
       expect(chips).toEqual([
-        `× ${/^in:/i.test(first) ? "in" : "from"}:@${firstName}`,
-        `× ${/^in:/i.test(second) ? "in" : "from"}:@${secondName}`,
+        `${/^in:/i.test(first) ? "in" : "from"}:@${firstName}`,
+        `${/^in:/i.test(second) ? "in" : "from"}:@${secondName}`,
       ]);
       // Backspace before the text turns the last chip back into its text.
       fireEvent.keyDown(input, { key: "Backspace" });

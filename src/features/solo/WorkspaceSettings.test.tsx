@@ -5,6 +5,7 @@ import { PublishRejected } from "../relay/outbox";
 import { readView, writeView } from "../../shared/view-state";
 import { createChannelKit } from "../channel-templates/capability";
 import { channelTemplates } from "../channel-templates/local";
+import { readyAgentChoices } from "../agents/test-fakes";
 import {
   LIVE_CANVAS_BYTES,
   LIVE_CANVAS_LIMIT,
@@ -904,15 +905,19 @@ it("closes untouched settings at once, and Cancel discards edits without asking"
   expect(h.save).not.toHaveBeenCalled();
 });
 
-function project(entries: unknown[] = []) {
+function project(
+  entries: unknown[] = [],
+  agentChoices: unknown = templateSession.agentChoices,
+) {
   const close = vi.fn();
   const group = { id: "work", name: "Work", defaultTemplateId: "" };
   const rename = vi.fn(async (_id: string, edit: { name?: string }) => {
     if (edit.name) group.name = edit.name;
   });
-  const save = vi.fn(async () => {});
+  const save = vi.fn(async (_template: unknown, ..._rest: unknown[]) => {});
   const session = {
     ...templateSession,
+    agentChoices,
     scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
@@ -1310,6 +1315,37 @@ it("asks before closing Workspace settings with a different agent lineup", async
   );
   expect(choice).toHaveTextContent("Review kit");
   expect(h.close).toHaveBeenCalledOnce();
+});
+
+it("saves a template's available agents as the workspace defaults", async () => {
+  const user = userEvent.setup();
+  const agent = "b".repeat(64);
+  channelTemplates.save({
+    name: "Review kit",
+    teams: [],
+    agents: [agent, "c".repeat(64)],
+    canvas: "Review carefully",
+  });
+  const snapshot = readyAgentChoices([{ pubkey: agent, name: "Bo" }]);
+  const h = project([], {
+    ...templateSession.agentChoices,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    ensure: () => {},
+  });
+  await instructions();
+  await user.click(
+    screen.getByRole("combobox", { name: "Start from a template" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Review kit" }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  // Only the owner's agent here is saved, with the template's Canvas.
+  expect(h.save).toHaveBeenCalledOnce();
+  expect(h.save.mock.calls[0]?.[0]).toMatchObject({
+    agents: [agent],
+    canvas: "Review carefully",
+  });
 });
 
 it("reopens Workspace settings showing the template it last applied", async () => {

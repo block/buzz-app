@@ -9,7 +9,7 @@ import {
 import {
   projectDefault,
   projectTemplateId,
-  readWorkspace,
+  shareableInstructions,
 } from "../../features/solo/workspace";
 import { Select } from "../../shared/design-system/ui/Select";
 import { useTeams } from "../../features/agents/react";
@@ -153,14 +153,8 @@ function OpenCreateChannelDialog({
           throw new Error("A team in the workspace defaults could not load.");
         return team.agents;
       });
-      // A workspace Canvas can contain managed local paths or a hand-edited
-      // workspace block. Only standalone instructions are eligible to share.
-      let canvas = "";
-      try {
-        canvas = readWorkspace(preferred.canvas).canvas;
-      } catch {
-        // A raw workspace block stays private.
-      }
+      // Only standalone instructions are eligible to share; local paths stay.
+      const canvas = shareableInstructions(preferred.canvas);
       setWorkspaceTemplate({
         id: preferred.id,
         name: "Workspace defaults",

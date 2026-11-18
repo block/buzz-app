@@ -20,11 +20,23 @@ import {
 } from "../channel-templates/model";
 import { NewWorkspace } from "./NewWorkspace";
 import { createRelaySession } from "../relay/session";
-// Template agent checks read these; no case here applies a template's agents.
+import { channelTemplates } from "../channel-templates/local";
+import { readyAgentChoices } from "../agents/test-fakes";
+// Template agent checks read these; `readyChoices` makes one agent available.
 const templateSession = (({ agentChoices, channels }) => ({
   agentChoices,
   channels,
 }))(createRelaySession(null).session);
+const agent = "b".repeat(64);
+const readyChoices = () => {
+  const snapshot = readyAgentChoices([{ pubkey: agent, name: "Bo" }]);
+  return {
+    ...templateSession.agentChoices,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    ensure: () => {},
+  };
+};
 
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 afterEach(() => {
@@ -468,3 +480,72 @@ it.each(["Escape", "Close", "Cancel"])(
     expect(screen.queryByRole("alertdialog")).toBeNull();
   },
 );
+
+it("publishes a template's available agents, and a retry keeps them after the template changes", async () => {
+  localStorage.clear();
+  const template = channelTemplates.save({
+    name: "Review kit",
+    teams: [],
+    agents: [agent, "c".repeat(64)],
+    canvas: "Review carefully",
+  });
+  let entries: KitEntry[] = [];
+  const save = vi.fn(async (value: Template) => {
+    entries = [
+      {
+        record: parseKitRecord(
+          { version: 1, community: "", deleted: false, value },
+          "",
+        ),
+        eventId: "saved",
+        createdAt: 1,
+      },
+    ];
+    throw new Error("Save not confirmed");
+  });
+  const close = vi.fn();
+  render(
+    <NewWorkspace
+      create={vi.fn(async () => {})}
+      close={close}
+      onCreated={vi.fn()}
+      session={
+        {
+          ...templateSession,
+          agentChoices: readyChoices(),
+          scope: "https://relay.example.test:viewer",
+          channelKit: {
+            refresh: async () => {},
+            snapshot: () => ({ status: "ready", entries }),
+            save,
+          },
+        } as unknown as RelaySession
+      }
+    />,
+  );
+  const user = userEvent.setup();
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Work" },
+  });
+  await user.click(
+    screen.getByRole("combobox", { name: "Start from a template" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Review kit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Save not confirmed",
+  );
+  // Only the owner's agent here is published, with the template's Canvas.
+  expect(save).toHaveBeenCalledOnce();
+  expect(save.mock.calls[0]?.[0]).toMatchObject({
+    agents: [agent],
+    canvas: "Review carefully",
+  });
+  // The retry checks the published snapshot, not the edited template.
+  act(() => {
+    channelTemplates.save({ ...template, agents: [], canvas: "Changed" });
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(save).toHaveBeenCalledOnce();
+});

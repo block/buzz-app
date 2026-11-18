@@ -18,6 +18,8 @@ export type Workspace = {
 };
 const prefix = "<!-- buzz-session-workspace:v1 ";
 const end = "<!-- /buzz-session-workspace -->";
+/** In both workspace block delimiters. */
+const marker = "buzz-session-workspace";
 const worktreeRule =
   "- Make code changes in that new worktree. A task that only reads code, or does not use a repository, usually does not need one.";
 // What earlier versions wrote instead, which Canvases saved then still hold.
@@ -109,6 +111,18 @@ export function readWorkspace(content: string): Workspace {
       "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
     );
   return value;
+}
+
+/** A workspace Canvas's instructions, safe to copy to a shared Canvas: empty
+ * when any workspace metadata remains (misplaced, nested or malformed), since
+ * it names local folders. */
+export function shareableInstructions(content: string): string {
+  try {
+    const { canvas } = readWorkspace(content);
+    return canvas.includes(marker) ? "" : canvas;
+  } catch {
+    return "";
+  }
 }
 
 /** The folders a Canvas's workspace block lets an agent work in: its project

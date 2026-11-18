@@ -1,4 +1,5 @@
 import { expect } from "@playwright/test";
+import { fixtureRelayUrl } from "../relay-config.ts";
 
 // Hold real focus outside reading surfaces while a journey establishes unread
 // state. Blur the target itself: the sidebar may still be inert while the search
@@ -61,4 +62,20 @@ export async function releasing(app, ready) {
     for (const receipt of app.pending) receipt.release();
     await ready();
   }).toPass();
+}
+
+// Before the app loads, records that this device last left a thread at its
+// latest reply, so an ordinary opening with nothing unread follows the end.
+export async function leftThreadAtEnd(page, app, channelId, rootId) {
+  await page.addInitScript(
+    ({ scope, key }) =>
+      localStorage.setItem(
+        `buzz-view.v1:${JSON.stringify([scope, "thread-places"])}`,
+        JSON.stringify({ [key]: {} }),
+      ),
+    {
+      scope: `${fixtureRelayUrl}:${app.viewer}`,
+      key: `${channelId}:${rootId}`,
+    },
+  );
 }

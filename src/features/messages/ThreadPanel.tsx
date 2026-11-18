@@ -1152,10 +1152,11 @@ function ThreadMessages({
     }
     // With nothing unread, an opening returns to where this device last left
     // the thread, or else starts at its root. Older pages load until that
-    // place's reply is shown; the root needs the whole bounded history.
+    // place's reply is shown; the root needs the whole bounded history. A
+    // place the reader already chose, as a route lands late, wins.
     const rootId = snapshot.root?.id ?? messageId;
     const place =
-      first || !boundary.opening
+      first || !boundary.opening || (positioned.current && !follow.current)
         ? undefined
         : (savedThreadPlace(scope, channelId, rootId) ?? {
             anchor: { id: rootId, top: 0, ancestors: [] },

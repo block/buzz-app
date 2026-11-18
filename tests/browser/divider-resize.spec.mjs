@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle, wheel } from "./timeline.mjs";
-import { markAllRead } from "./reading.mjs";
+import { leftThreadAtEnd, markAllRead } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -21,6 +21,7 @@ for (const name of ["Resize sidebar", "Resize main and secondary panels"]) {
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 0");
     for (let i = 0; i < 30; i++) app.reply(root.id, false, false);
+    await leftThreadAtEnd(page, app, "alpha", root.id);
     await open(page, app);
     await markAllRead(page);
     const channel = page.getByRole("region", {

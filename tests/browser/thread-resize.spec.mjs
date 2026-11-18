@@ -2,7 +2,7 @@ import { test, expect } from "./fixture.mjs";
 import { frames, open, settle, wheel } from "./timeline.mjs";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 import { animationsSettled } from "./animations.mjs";
-import { markAllRead } from "./reading.mjs";
+import { leftThreadAtEnd, markAllRead } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -118,6 +118,7 @@ test("thread preserves bottom and reading position through activity and composer
     .get("primary/alpha")
     .find((row) => row.content.startsWith("Thread root"));
   for (let i = 0; i < 30; i++) app.reply(root.id, false, false);
+  await leftThreadAtEnd(page, app, "alpha", root.id);
   await open(page, app);
   await markAllRead(page);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);

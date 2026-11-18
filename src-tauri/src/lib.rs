@@ -869,6 +869,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_join,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
+        app_agents::app_agent_activity,
         app_agents::app_agent_publish_profile,
         app_agents::app_agent_query,
         app_agents::app_agent_search_profiles,

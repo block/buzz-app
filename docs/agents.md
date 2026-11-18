@@ -2086,3 +2086,20 @@ An agent runs the installed helper by absolute path, with no inherited connectio
 ACP harnesses never receive a Buzz key: `PROTECTED_ENV` strips `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG` and `BUZZ_RELAY_URL` whatever their hooks or launch say, because a key in a harness's environment reaches every command and subprocess it runs. Instead, a Claude Code or goose process carries `BUZZ_CREDENTIAL_PROVIDER`, a token for the app's [local credential service](identity.md#local-credential-service) that acts only as the agent that process serves, so `buzz` run there signs and reaches its community as that agent. Native code sets it, and the app drops any value it was itself launched with at startup, so no other process it spawns inherits one. The token is bound when an agent takes the process, including the shared spare, and ends with the process, the agent's deletion or the owner's sign-out. Sensitive kinds are not signed through it yet. goose runs one `goose acp` per agent for this, started when the agent's first session needs it and stopped when the agent is removed. Codex and Pi run one process for all their agents, so that process never carries a token: each agent gets its own, bound to it and revoked when the shared process exits, and only that agent's tool commands receive it (Codex through the thread's `shell_environment_policy.set`, Pi through the agent's shell environment). Windows has no transport yet.
 
 Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).
+
+### Owner live progress on another device
+
+App-managed turns publish a complete, bounded `work_snapshot` alongside the
+existing typing heartbeat. Native custody signs kind 24200 telemetry and encrypts
+it with NIP-44 to the recorded agent owner; the web renderer cannot choose a
+recipient. Snapshots contain the channel, exact thread root, turn ID, start/update
+times, sequence, active flag and at most 32 compact tool labels. Tool arguments,
+paths, output and full transcripts stay local. A final inactive snapshot retires
+the turn; missing updates expire after the typing lifetime. Delivery failure does
+not fail the agent turn, and the next heartbeat retries a full snapshot.
+
+The relay must support owner-authorized HTTP observer publication. Mobile uses
+the existing authenticated observer subscription and displays only fresh active
+snapshots for the current conversation. This is owner-only progress, separate
+from activity messages explicitly posted to chat. Older hosts or relays cannot
+supply this feed.

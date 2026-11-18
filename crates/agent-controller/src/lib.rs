@@ -1,5 +1,7 @@
 //! Native agent identities, signing, credential custody and read-only legacy import.
 //! Plugin runtimes own execution; this crate does not launch agent processes.
+mod activity;
+pub use activity::ActivitySnapshot;
 mod app_agent;
 mod config;
 #[cfg(any(target_os = "macos", test))]

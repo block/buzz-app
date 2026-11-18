@@ -1,3 +1,4 @@
+import type { ActivitySnapshot } from "./work-snapshot";
 import type {
   ProtectionBinding,
   ProtectionDefaults,
@@ -188,6 +189,7 @@ export type AgentsNative = {
    * canvases and DM opens only) with its owner attestation and posts it to the
    * membership's community. */
   publish(member: Membership, event: AgentEventTemplate): Promise<RelayEvent>;
+  activity?(member: Membership, snapshot: ActivitySnapshot): Promise<void>;
   /** Reads the membership's community as the agent: one to eight filters. */
   query(member: Membership, filters: readonly object[]): Promise<RelayEvent[]>;
   effectiveEdit(
@@ -312,6 +314,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
               tags: event.tags ?? [],
             },
           }),
+        activity: ({ pubkey, relay }, snapshot) =>
+          invoke("app_agent_activity", { pubkey, relay, snapshot }),
         query: async ({ pubkey, relay }, filters) =>
           eventsDto(
             await invoke("app_agent_query", { pubkey, relay, filters }),

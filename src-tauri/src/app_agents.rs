@@ -1015,6 +1015,22 @@ pub(crate) async fn app_agent_publish(
         .map_err(|error| publish_error(&event_id, error))
 }
 
+/// Publishes bounded live progress encrypted to the native record's owner.
+#[tauri::command]
+pub(crate) async fn app_agent_activity(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+    snapshot: buzz_agent_controller::ActivitySnapshot,
+) -> Result<(), String> {
+    let (agent, key, evidence) = state.signer(pubkey, relay).await?;
+    let signed = agent.activity_event(&key, snapshot)?;
+    evidence
+        .run(true, post(&agent, &key, evidence.header(), signed))
+        .await?;
+    Ok(())
+}
+
 fn publish_error(event_id: &str, error: String) -> String {
     if error == "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying." {
         format!("Agent event {event_id} unconfirmed; it may or may not have been accepted")

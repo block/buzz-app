@@ -1627,6 +1627,10 @@ available rather than silently discarding it.
   depends on the agent type.
   For native Claude, Codex and Goose, Stop also cancels pending plugin tool calls
   that use the host signal. It cannot undo a write already sent.
+  On mobile, an expanded working indicator can show compact tool progress from
+  your own desktop-hosted agent. This requires compatible host, relay and mobile
+  versions. Progress is encrypted to you and expires when the turn stops; it is
+  separate from work messages posted into the conversation.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
   and results. The working indicator shows current activity separately.

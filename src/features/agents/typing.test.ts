@@ -175,3 +175,39 @@ it("shares one pulse among turns in a thread, until the last of them stops", asy
   expect(publish).toHaveBeenCalledTimes(3);
   expect(pulses.size).toBe(0);
 });
+
+it("shares the typing timer while delivering each turn's private progress", async () => {
+  vi.useFakeTimers();
+  const publish = vi.fn(async () => {});
+  const one = vi.fn(),
+    two = vi.fn();
+  const pulses = new Map();
+  const stopOne = pulseTyping(
+    publish,
+    threaded(),
+    mention,
+    "channel",
+    pulses,
+    one,
+  );
+  const stopTwo = pulseTyping(
+    publish,
+    threaded(),
+    mention,
+    "channel",
+    pulses,
+    two,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(one).toHaveBeenCalledWith(root);
+  expect(two).toHaveBeenCalledWith(root);
+  expect(publish).toHaveBeenCalledTimes(1);
+  stopOne();
+  const count = one.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(one).toHaveBeenCalledTimes(count);
+  expect(two).toHaveBeenCalledTimes(2);
+  stopTwo();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(two).toHaveBeenCalledTimes(2);
+});

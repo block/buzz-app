@@ -14,7 +14,14 @@ const FAILURES = 3;
 
 /** One agent's pulses by conversation, each shared by the turns typing there,
  * so a second mention in a thread adds no second pulse. */
-export type Pulses = Map<string, { turns: number; stop: () => void }>;
+export type Pulses = Map<
+  string,
+  {
+    turns: number;
+    stop: () => void;
+    observers: Set<(root: string | null) => void>;
+  }
+>;
 
 /** Pulses typing, signed as the agent, where it answers `event` until the
  * returned function is called: in the channel itself when `topLevel` settles
@@ -30,6 +37,7 @@ export function pulseTyping(
   event: Pick<EventData, "id" | "tags">,
   channelId: string,
   pulses: Pulses,
+  observer?: (root: string | null) => void,
 ): () => void {
   let stop: (() => void) | undefined;
   let stopped = false;
@@ -40,9 +48,18 @@ export function pulseTyping(
       const key = `${channelId}:${flat ? "" : root}`;
       let shared = pulses.get(key);
       if (!shared) {
-        const created = { turns: 0, stop: () => {} };
+        const created = {
+          turns: 0,
+          stop: () => {},
+          observers: new Set<(root: string | null) => void>(),
+        };
+        if (observer) created.observers.add(observer);
         created.stop = pulse(
-          publish,
+          async (template) => {
+            await publish(template);
+            for (const observe of created.observers)
+              observe(flat ? null : root);
+          },
           {
             kind: 20002,
             content: "",
@@ -66,7 +83,9 @@ export function pulseTyping(
       }
       const joined = shared;
       joined.turns++;
+      if (observer) joined.observers.add(observer);
       stop = () => {
+        if (observer) joined.observers.delete(observer);
         if (--joined.turns === 0) joined.stop();
       };
     },

@@ -194,6 +194,7 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_join",
         "app_agent_forget",
         "app_agent_publish",
+        "app_agent_activity",
         "app_agent_publish_profile",
         "app_agent_query",
         "app_agent_search_profiles",

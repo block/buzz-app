@@ -559,6 +559,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
           tags: (template.tags ?? []).map((tag) => [...tag]),
         }),
     ),
+    activity: vi.fn<NonNullable<AgentsNative["activity"]>>(async () => {}),
     publishProfile: vi.fn(async (_: Membership, _force?: boolean) => {}),
     query: vi.fn<AgentsNative["query"]>(async () => []),
     effectiveEdit: vi.fn<AgentsNative["effectiveEdit"]>(async () => {

@@ -1,3 +1,4 @@
+import { workSnapshot } from "./work-snapshot";
 import { interestPaused } from "./attention";
 import type {
   AgentSessionAssociation,
@@ -592,6 +593,7 @@ export type RunnerHost = {
         | "claim"
         | "release"
         | "publish"
+        | "activity"
         | "query"
         | "effectiveEdit"
         | "searchProfiles"
@@ -2948,8 +2950,10 @@ export class AgentRunners {
               superseded: () => job.work?.supersede(),
               interruptible: (stop: () => Promise<void>) =>
                 job.work?.interruptible(stop),
-              step: (tool: string, target?: string) =>
-                job.work?.step(tool, target),
+              step: (tool: string, target?: string) => {
+                job.work?.step(tool, target);
+                working.step(tool);
+              },
             }
           : {}),
         ...(!job.work && type.sessionAdmission
@@ -3411,6 +3415,14 @@ export class AgentRunners {
         ? trigger.event.id
         : undefined;
     if (resumable) this.mark(runner.key, resumable, channel ?? "");
+    const publishActivity = this.host.custody?.activity;
+    const snapshots =
+      channel && publishActivity
+        ? workSnapshot(
+            (snapshot) => publishActivity(runner.member, snapshot),
+            channel,
+          )
+        : undefined;
     let typing: (() => void) | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
@@ -3428,6 +3440,7 @@ export class AgentRunners {
         event,
         channel,
         runner.typing,
+        snapshots?.pulse,
       );
     };
     let holds = 1;
@@ -3447,6 +3460,7 @@ export class AgentRunners {
       runner.working--;
       this.noteWorking();
       typing?.();
+      snapshots?.stop();
       if (resumable) this.unmark(runner.key, [resumable]);
     };
     const abort = () => {
@@ -3484,6 +3498,7 @@ export class AgentRunners {
       }
     };
     return {
+      step: (tool: string) => snapshots?.step(tool),
       ok: () => outcome.ok && !outcome.stopped,
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,

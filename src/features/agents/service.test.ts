@@ -1550,7 +1550,7 @@ it("leaves the team section out for an agent on no team", () => {
   ).toBe("");
 });
 
-it("keeps handed-off activity local, and pulses typing in the thread until the turn ends", async () => {
+it("sends owner progress beside typing in the exact thread until the turn ends", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const { service, run, emit, native, activity } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -1558,7 +1558,10 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   const turn = new Promise<void>((resolve) => {
     finish = resolve;
   });
-  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  run.mockImplementationOnce(async ({ workingUntil, step }) => {
+    step?.("Read", "/private/path");
+    workingUntil(turn);
+  });
   const mention = event("m", {
     tags: [
       ["h", channel],
@@ -1583,6 +1586,17 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     });
     await vi.advanceTimersByTimeAsync(3_000);
     expect(await published(native, 20002)).toHaveLength(2);
+    expect(native.activity).toHaveBeenCalledWith(
+      member(bot),
+      expect.objectContaining({
+        channelId: channel,
+        threadRootId: mention.id,
+        steps: ["Read"],
+      }),
+    );
+    expect(JSON.stringify(native.activity.mock.calls)).not.toContain(
+      "/private/path",
+    );
     expect(await published(native, 7)).toEqual([]);
     finish();
     await vi.waitFor(() =>

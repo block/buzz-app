@@ -497,6 +497,7 @@ it("reads the authoritative legacy projection and writes only the unified coordi
     sectionOrder: [],
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { c1: "work", c2: "work" },
+    unifiedOnly: "BA", // Only c2 was filed in the unified layout.
   });
   expect(records.get("channel-sections")).toBeDefined();
   expect(

@@ -63,6 +63,7 @@ it("creates and assigns together in one compact record and keeps retry idempoten
       { id, name: "Launch", order: 1 },
     ],
     assignments: { beta: "work", alpha: id },
+    unifiedOnly: "BQ", // Sorted section and filing bits for Launch and alpha.
   });
   expect(
     prepareSidebarAssignment([created.event], intent, secret).event,

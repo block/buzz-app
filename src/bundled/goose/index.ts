@@ -143,6 +143,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     protection: true,
     conversationFolders: true,
     conversationSections: true,
+    notes: true,
     title: "Goose",
     icon: GooseLogoIcon,
     description:

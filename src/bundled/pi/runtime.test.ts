@@ -651,6 +651,50 @@ it("ends a turn's prompt with its conversation's instructions", async () => {
   expect(conversationInstructions).toHaveBeenCalledWith(channel, root.id);
 });
 
+it("gives a turn the notes plugins left for its conversation, taken at the handover", async () => {
+  let refreshed: unknown;
+  const { host, deliver, agent } = setup({
+    deliver: async (params, process) => {
+      // What Pi reads when the run starts has the notes too.
+      refreshed = (
+        await process.tool({ agent: self, request: params.request }, "prompt")
+      ).result;
+      return { submission: 1, conversation: CONVERSATION };
+    },
+  });
+  const notes = vi.fn(() => ["Build 7 is green", "Deploy is paused"]);
+  const restoreNotes = vi.fn();
+  Object.assign(agent, {
+    notes,
+    restoreNotes,
+    conversationInstructions: () => ({ plugin: "acme", text: "Review only." }),
+  });
+  await deliver(pluginWake(root.id), { accepted: vi.fn() }).run;
+  // Keyed as its session is: the wake's thread.
+  expect(notes.mock.calls).toEqual([[channel, root.id]]);
+  const [delivered] = host.requests("deliver");
+  expect(String(delivered?.params.text)).toMatch(
+    /CI failed: lint[\s\S]*\n\nBuild 7 is green\n\nDeploy is paused\n\n<owner-instructions/,
+  );
+  expect(refreshed).toMatchObject({ text: delivered?.params.text });
+  expect(restoreNotes).not.toHaveBeenCalled();
+});
+
+it("puts a turn's notes back when Pi did not take it, and leaves them when it never reached Pi", async () => {
+  const f = setup({ deliver: () => false });
+  const notes = vi.fn(() => ["CI failed: lint"]);
+  const restoreNotes = vi.fn();
+  Object.assign(f.agent, { notes, restoreNotes });
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(restoreNotes.mock.calls).toEqual([
+    [channel, ["CI failed: lint"], root.id],
+  ]);
+  // A wake that is no longer current stops before the handover.
+  await f.deliver(pluginWake(root.id), { current: () => false }).run;
+  expect(notes).toHaveBeenCalledTimes(1);
+  expect(f.host.requests("deliver")).toHaveLength(1);
+});
+
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
   const { host, deliver, session } = setup({ place: () => ({ seen: 105 }) });
   const later = (id: string, content: string, pubkey: string, at: number) => ({

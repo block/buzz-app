@@ -1054,6 +1054,8 @@ showing what the session has not seen and taking plugins' notes. Its
 `turnPrompt`, which keeps a mark for each thread of a channel conversation.
 Give `systemPrompt` the `conversation` so that a type with
 `conversationSections` gets the base prompt sections a plugin replaced there.
+A type whose turns take those notes declares `notes: true`, so that a plugin
+can tell before it leaves one.
 `reply` posts as the agent there. `tools(agent, conversation, { read })`
 answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
 declares `host.mcp`; `read` is the plugin's own file access (`host.files`),

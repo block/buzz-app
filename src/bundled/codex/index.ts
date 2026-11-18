@@ -176,6 +176,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: TYPE_ID,
     conversationFolders: true,
     conversationSections: true,
+    notes: true,
     voice: async (seat) => {
       if (typeof RTCPeerConnection !== "function")
         throw new Error("Voice is unsupported on this device");

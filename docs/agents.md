@@ -782,8 +782,9 @@ thread-scoped sessions take only notes addressed to their root. Notes are
 consumed once when the harness is ready to deliver the turn, and restored to
 the same conversation ahead of newer notes if delivery definitely never began.
 They remain in memory only, and the call returns false unless this copy runs
-the agent. Pi agents don't take notes yet: the call still returns true for one,
-but its turns never include the note.
+the agent. Claude, Codex, Goose and Pi (`notes` on the type) show notes; for
+another harness the call still returns true, but its turns never include the
+note. A Pi turn that fails while it is handed to Pi may lose its notes.
 
 A plugin with `host.files` gives one conversation of the owner's local agent
 its own working folder with

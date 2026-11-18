@@ -286,7 +286,7 @@ export type SavedConversation = Partial<ChannelLabel> & {
  * one over about 50ms after the turn ends. */
 const STOP_LINGER_MS = 1_000;
 // An acknowledged interrupt may never produce its completion notification.
-const INTERRUPTED_WAKE_COMPLETION_MS = 30_000;
+const INTERRUPTED_TURN_COMPLETION_MS = 30_000;
 const LINGER_POLL_MS = 100;
 /** The binding a run under `protection` may resume: threads never cross
  * protection state keys, protected or not. */
@@ -2621,17 +2621,19 @@ export class CodexRuntime {
     turnId: string,
   ) {
     // This turn cannot use the seat's signal: closing media aborts it.
-    const followed = follow(rpc, new AbortController().signal, {
+    const followed = follow(rpc, undefined, {
       threadId,
       turnId,
       finished: false,
     });
     try {
-      await Promise.all([
-        rpc.request("turn/interrupt", { threadId, turnId }),
+      await rpc.request("turn/interrupt", { threadId, turnId });
+      await withTimeout(
         followed.completed,
-      ]);
-      await this.terminals(rpc, threadId);
+        "Codex did not finish the rejected speech turn",
+        INTERRUPTED_TURN_COMPLETION_MS,
+      );
+      await this.terminals(rpc, threadId, STOP_LINGER_MS);
     } catch {
       await rpc.close();
     } finally {
@@ -3630,7 +3632,7 @@ export class CodexRuntime {
               await withTimeout(
                 followed.completed,
                 "Codex did not finish the interrupted wake",
-                INTERRUPTED_WAKE_COMPLETION_MS,
+                INTERRUPTED_TURN_COMPLETION_MS,
               );
           }
           await this.terminals(server.rpc, active.threadId);

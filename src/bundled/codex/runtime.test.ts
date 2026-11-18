@@ -8514,11 +8514,13 @@ it("ignores retained conversation folders for remote community admission", async
   }
 });
 
-it.each([false, true])(
-  "drains rejected Huddle speech before starting queued text (interrupt fails: %s)",
-  async (fails) => {
+it.each(["refused", "missing completion", "late terminal"] as const)(
+  "drains rejected Huddle speech before starting queued text (%s)",
+  async (mode) => {
     vi.stubGlobal("RTCPeerConnection", class {});
-    const f = fixture();
+    const late: unknown[] = [];
+    const terminating = deferred<void>();
+    const f = fixture(late, terminating.promise);
     const d = f.delivery("typed");
     const config = { ...(d.config as object), scope: "community" };
     f.huddleChannels.add("room");
@@ -8538,8 +8540,8 @@ it.each([false, true])(
     const turnId = "racing-spoken";
     f.delayedInterruptCompletions.add(turnId);
     const exiting = deferred<void>();
-    if (fails) {
-      f.failing.add("turn/interrupt");
+    if (mode === "refused") f.failing.add("turn/interrupt");
+    if (mode !== "late terminal") {
       f.process.end.mockImplementationOnce(async () => {
         await exiting.promise;
         f.exits.resolve(0);
@@ -8593,8 +8595,16 @@ it.each([false, true])(
       await vi.advanceTimersByTimeAsync(0);
       vi.useRealTimers();
       expect(f.starts()).toHaveLength(1);
+      if (mode === "missing completion") vi.useFakeTimers();
       interrupting.resolve();
-      if (fails) {
+      if (mode === "missing completion") {
+        await vi.advanceTimersByTimeAsync(29_999);
+        expect(f.process.end).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(f.process.end).toHaveBeenCalledOnce();
+        vi.useRealTimers();
+      }
+      if (mode !== "late terminal") {
         await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
         expect(f.starts()).toHaveLength(1);
         exiting.resolve();
@@ -8617,7 +8627,22 @@ it.each([false, true])(
         expect(method("thread/backgroundTerminals/clean")).toBeDefined(),
       );
       expect(f.starts()).toHaveLength(1);
+      vi.useFakeTimers();
       cleaning.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(method("thread/backgroundTerminals/list")).toBeDefined();
+      expect(f.starts()).toHaveLength(1);
+      late.push({ processId: "late-shell" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(
+        method("thread/backgroundTerminals/terminate")?.params,
+      ).toMatchObject({
+        processId: "late-shell",
+      });
+      expect(f.starts()).toHaveLength(1);
+      terminating.resolve();
+      await vi.advanceTimersByTimeAsync(900);
+      vi.useRealTimers();
       await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
       const unsubscribed = f.sent.findIndex(
         (wire) => wire.method === "thread/unsubscribe",
@@ -8636,6 +8661,8 @@ it.each([false, true])(
       interrupting.resolve();
       cleaning.resolve();
       exiting.resolve();
+      terminating.resolve();
+      vi.useRealTimers();
       f.runtime.dispose();
       await connection.close();
     }

@@ -214,7 +214,7 @@ export function PageSearch({
   );
   // The search field matches these itself: Base UI dialogs stop Up and Down
   // before they reach the window dispatcher. Registering them lists them in
-  // Settings, saves rebinds and reserves the chords; they never run here.
+  // Settings and saves rebinds; as local rows they never reserve or run.
   useEffect(() => {
     if (!services) return;
     const remove = (
@@ -232,7 +232,7 @@ export function PageSearch({
         title,
         binding,
         order: HOST_SHORTCUT_ORDER.search + 3 + index,
-        when: () => false,
+        local: true,
         run: () => {},
       }),
     );

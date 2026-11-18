@@ -47,6 +47,8 @@ type Row = Readonly<{
   order: number;
   /** Native close/quit defaults are reserved, not user-rebindable. */
   readOnly: boolean;
+  /** Matched by its own field, which accepts Control alone on Apple platforms. */
+  local: boolean;
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
@@ -100,6 +102,7 @@ const editorRows = (sendWithModEnter: boolean): readonly Row[] =>
     owner: "Message formatting",
     order,
     readOnly: true,
+    local: false,
     defaults: bindings,
     override: undefined,
     effective: bindings,
@@ -224,6 +227,7 @@ function useShortcutGroups({
       owner,
       order: shortcut.order,
       readOnly,
+      local: !!shortcut.local,
       defaults: shortcut.binding,
       override,
       effective: override ? [override] : shortcut.binding,
@@ -373,9 +377,22 @@ export function ShortcutSettings({
       return refuse(
         "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
       );
-    if (!binding.mod && !binding.ctrl && !binding.alt)
+    // Control alone stays text editing on Apple outside field-local rows.
+    if (!binding.mod && !(binding.ctrl && target.local) && !binding.alt)
       return refuse(
-        `Include ${apple ? "Command, Control or Option" : "Control or Alt"} so ordinary typing keeps working.`,
+        `Include ${apple ? (target.local ? "Command, Control or Option" : "Command or Option") : "Control or Alt"} so ordinary typing keeps working.`,
+      );
+    // The search field opens its first nine results with these, by physical digit.
+    if (
+      target.local &&
+      /^Digit[1-9]$/.test(code) &&
+      binding.mod &&
+      binding.shift &&
+      !binding.alt &&
+      !binding.ctrl
+    )
+      return refuse(
+        `${formatBinding({ key: "1", mod: true, shift: true }, apple).text} to 9 open search results. Try another.`,
       );
     // Apple's ⌥⇧⌘V browser paste types a layout-specific key, so match the physical V.
     const applePlainPaste =

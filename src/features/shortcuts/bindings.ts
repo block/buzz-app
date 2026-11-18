@@ -21,6 +21,8 @@ export type Shortcut = Readonly<{
   allowInVisit?: boolean;
   /** Held keys are consumed but run only once unless opted in. */
   repeat?: boolean;
+  /** Matched by its own field, not the dispatcher: listed in Settings, never reserved or run. */
+  local?: boolean;
   /** Lower values appear first within this owner's Settings category; defaults to zero. */
   order?: number;
 }>;
@@ -43,6 +45,7 @@ export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
       shortcut.allowInModal,
       shortcut.allowInVisit,
       shortcut.repeat,
+      shortcut.local,
     ].some((value) => value !== undefined && typeof value !== "boolean") ||
     (shortcut.order !== undefined && typeof shortcut.order !== "number")
   )

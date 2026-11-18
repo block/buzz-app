@@ -676,9 +676,9 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
     );
     const title = "Open Settings";
     await user.click(change(title));
-    fireEvent.keyDown(capture(title), { key: "a" });
+    fireEvent.keyDown(capture(title), { key: "a", ctrlKey: true });
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Include Command, Control or Option so ordinary typing keeps working.",
+      "Include Command or Option so ordinary typing keeps working.",
     );
     // ⌥⇧⌘V is the browser plain paste; Option makes the key ◊ on Apple layouts.
     fireEvent.keyDown(capture(title), {
@@ -708,14 +708,38 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
     );
     expect(fireEvent.keyDown(document.body, chord)).toBe(false);
     expect(h.runs.settings).toHaveBeenCalledOnce();
-    // Control alone is a chord there too, such as ⌃J.
-    await user.click(change(title));
-    fireEvent.keyDown(capture(title), { key: "j", ctrlKey: true });
-    expect(h.bindings.resolve("settings")).toEqual([{ key: "j", ctrl: true }]);
-    expect(fireEvent.keyDown(document.body, { key: "j", ctrlKey: true })).toBe(
-      false,
+    // A field-local row accepts Control alone, such as ⌃J, but not the
+    // search field's numbered result chords, and never reserves its chord.
+    let local = () => {};
+    act(() => {
+      local = h.shortcuts.registerHost({
+        id: "search-next-result",
+        title: "Next search result",
+        binding: { key: "ArrowDown" },
+        local: true,
+        run: () => {},
+      });
+    });
+    const next = "Next search result";
+    await user.click(change(next));
+    fireEvent.keyDown(capture(next), {
+      key: "!",
+      code: "Digit1",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "⇧⌘1 to 9 open search results. Try another.",
     );
-    expect(h.runs.settings).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(capture(next), { key: "j", ctrlKey: true });
+    expect(h.bindings.resolve("search-next-result")).toEqual([
+      { key: "j", ctrl: true },
+    ]);
+    expect(fireEvent.keyDown(document.body, { key: "j", ctrlKey: true })).toBe(
+      true,
+    );
+    expect(fireEvent.keyDown(document.body, { key: "ArrowDown" })).toBe(true);
+    act(local);
   } finally {
     await h.dispose();
   }

@@ -771,6 +771,31 @@ test.describe("links to channels the reader hasn't joined", () => {
     });
     await expect(authored).toHaveAttribute("title", /aren’t a member/);
     await virtuaIdle(page);
+    // A withheld link goes nowhere, so even under the pointer it reads as text.
+    for (const link of [locked, authored]) {
+      await link.hover();
+      const look = await link.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const text = getComputedStyle(element.parentElement);
+        const box = element.getBoundingClientRect();
+        const pointed = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2,
+        );
+        return {
+          cursor: pointed && getComputedStyle(pointed).cursor,
+          line: style.textDecorationLine,
+          background: style.backgroundColor,
+          color: style.color === text.color,
+        };
+      });
+      expect(look).toEqual({
+        cursor: "default",
+        line: "none",
+        background: "rgba(0, 0, 0, 0)",
+        color: true,
+      });
+    }
     await named.hover();
     const card = page.getByLabel("Channel preview", { exact: true });
     await expect(card).toContainText("Public channel · Not joined");

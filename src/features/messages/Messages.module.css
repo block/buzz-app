@@ -3062,7 +3062,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin: 0;
 }
 /* Links take the bubble's paired link ink; mentions keep their own tint. */
-.messageBubble .text a:not([data-solo-link]) {
+.messageBubble .text a:not([data-solo-link], [aria-disabled="true"]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;

@@ -406,12 +406,7 @@ export function AgentConfigVersionRow({
                   <span className="sr-only">· Current</span>
                 </>
               )}
-              {invalid &&
-                (settings ? (
-                  <span className="text-danger"> · Incompatible</span>
-                ) : (
-                  " · Not valid"
-                ))}
+              {invalid && !settings && " · Not valid"}
             </span>
             {event.id === head?.id && (
               <span
@@ -419,6 +414,9 @@ export function AgentConfigVersionRow({
                 title="Current version"
                 aria-hidden="true"
               />
+            )}
+            {invalid && settings && (
+              <span className="shrink-0 text-danger">Incompatible</span>
             )}
           </span>{" "}
           <time

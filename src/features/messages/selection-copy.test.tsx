@@ -816,6 +816,48 @@ describe("useMessageSelectionCopy", () => {
     });
   });
 
+  it("copies a scheme-less host as authored, in both flavors", () => {
+    const view = render(
+      <StrictMode>
+        <Surface />
+        <div data-message-id="m1">
+          <MessageMarkdown
+            row={{
+              id: "m1",
+              channelId: "general",
+              authorId: mic,
+              content: "see example.com/a & bun.sh now",
+              createdAt: 1,
+              mentions: [],
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            }}
+            media={() => undefined}
+            onOpenLink={() => false}
+          />
+        </div>
+      </StrictMode>,
+    );
+    expect(
+      view.getByRole("link", { name: "example.com/a" }).getAttribute("href"),
+    ).toBe("https://example.com/a");
+    const paragraph = query("[data-message-id] p", view.container);
+    expect(
+      copy(paragraph, paragraph, 0, paragraph, paragraph.childNodes.length),
+    ).toEqual({
+      prevented: true,
+      data: [
+        ["text/plain", "see example.com/a & bun.sh now"],
+        [
+          "text/html",
+          '<div data-buzz-copy="timeline"><p>see example.com/a &amp; bun.sh now</p></div>',
+        ],
+      ],
+    });
+  });
+
   it("acts before the emoji plugin for messages and leaves other selections to it", () => {
     document.addEventListener("copy", copyEmoji);
     try {

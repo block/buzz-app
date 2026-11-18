@@ -9,6 +9,7 @@ import { profileKey } from "../profiles/target";
 import { safeLinkUrl } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
+import { bareHostParts } from "./message-link-parts";
 
 /** `text` reads well outside the app; `markdown` keeps identity locators and
  * the block syntax the composer understands; `html` is the semantic `text/html`
@@ -217,6 +218,15 @@ function anchor(node: Element, inner: string, format: CopyFormat): string {
     return sourceTokenHtml(link("markdown", href, label || href));
   if (!label || label === href || label === node.getAttribute("href"))
     return format === "html" ? link(format, href, href) : href;
+  // A scheme-less host such as example.com is linked on display only; copy
+  // the authored text, which links again wherever it is sent.
+  const bare = bareHostParts(label);
+  if (
+    bare.length === 3 &&
+    bare[1]?.text === label &&
+    safeHref(bare[1].url ?? "") === href
+  )
+    return text(label, format);
   // Identity and channel locators read as their sigil-prefixed name alone.
   const buzz = parseBuzzLink(href);
   const plain =

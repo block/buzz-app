@@ -187,15 +187,7 @@ export function LinkLabel({
   const content = useContext(LinkContentContext);
   const privateChannel = useContext(LinkChannelPrivateContext);
   const kind = linkKind(href);
-  const skill = githubSkillLabel(href);
-  const name = useContext(LinkAccessibleNameContext);
-  useEffect(() => {
-    name?.(skill);
-    return () => name?.(undefined);
-  }, [name, skill]);
-  if (!kind) return <>{label}</>;
-  if (skill) label = skill;
-  if (label === href && contextualLabel) label = contextualLabel;
+  if (kind && label === href && contextualLabel) label = contextualLabel;
   if (label === href) {
     if (kind === "channel") label = "Channel";
     else if (kind === "message") label = "Message";
@@ -211,7 +203,20 @@ export function LinkLabel({
   // Markdown encodes Unicode in destinations while retaining it in visible text.
   const rawDestination =
     label === href ||
-    (linkKind(label) !== null && new URL(label).href === new URL(href).href);
+    (kind !== null &&
+      linkKind(label) !== null &&
+      new URL(label).href === new URL(href).href);
+  const skill =
+    rawDestination || label.trim().toLowerCase() === "skill.md"
+      ? githubSkillLabel(href)
+      : undefined;
+  const setAccessibleName = useContext(LinkAccessibleNameContext);
+  useEffect(() => {
+    setAccessibleName?.(skill);
+    return () => setAccessibleName?.(undefined);
+  }, [setAccessibleName, skill]);
+  if (!kind) return <>{label}</>;
+  if (skill) label = skill;
   const Icon = kind === "channel" && privateChannel ? LockIcon : icons[kind];
   icon ??= (
     <Icon
@@ -227,7 +232,7 @@ export function LinkLabel({
       </span>
     );
   // Shorten only raw destinations; authored labels and resolved channel names stay intact.
-  if (rawDestination) {
+  if (rawDestination && !skill) {
     const characters = Array.from(label);
     if (characters.length > 45)
       label = `${characters.slice(0, 34).join("")}…${characters.slice(-10).join("")}`;

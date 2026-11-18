@@ -53,7 +53,7 @@ it.each([
         registry={registry}
         onOpenLink={open}
       >
-        <strong>Authored label</strong>
+        <code>SKILL.md</code>
       </MessageLink>,
     );
     const link = screen.getByRole("link", {
@@ -77,6 +77,42 @@ it.each([
     expect(modified.defaultPrevented).toBe(false);
   },
 );
+
+it("preserves formatted section labels and their distinct destinations", () => {
+  const url =
+    "https://github.com/example-org/example-repo/blob/main/pr-ship/SKILL.md";
+  render(
+    <>
+      <MessageLink url={url} registry={registry} onOpenLink={() => true} />
+      <MessageLink
+        url={`${url}#install`}
+        label="Install"
+        registry={registry}
+        onOpenLink={() => true}
+      >
+        <strong>Install</strong>
+      </MessageLink>
+      <MessageLink
+        url={`${url}#rollback`}
+        label="Rollback"
+        registry={registry}
+        onOpenLink={() => true}
+      >
+        <em>Rollback</em>
+      </MessageLink>
+    </>,
+  );
+  const install = screen.getByRole("link", { name: "Install" });
+  expect(install.querySelector("strong")).toHaveTextContent("Install");
+  expect(install).toHaveAttribute("href", `${url}#install`);
+  const rollback = screen.getByRole("link", { name: "Rollback" });
+  expect(rollback.querySelector("em")).toHaveTextContent("Rollback");
+  expect(rollback).toHaveAttribute("href", `${url}#rollback`);
+  const bare = screen.getByRole("link", {
+    name: "Skill: pr-ship · example-org/example-repo",
+  });
+  expect(bare).toHaveAttribute("href", url);
+});
 
 it.each([
   "https://github.com/example-org/example-repo/blob/main/pr-ship/README.md",
@@ -114,7 +150,7 @@ it("retires the skill name when its renderer is removed", () => {
   const { rerender } = render(
     <MessageLink
       url={url}
-      label="Source"
+      label="SKILL.md"
       registry={registry}
       onOpenLink={() => true}
     />,
@@ -123,16 +159,16 @@ it("retires the skill name when its renderer is removed", () => {
     screen.getByRole("link", {
       name: "Skill: pr-ship · example-org/example-repo",
     }),
-  ).toHaveAttribute("data-link-label", "Source");
+  ).toHaveAttribute("data-link-label", "SKILL.md");
   rerender(
     <MessageLink
       url={url}
-      label="Source"
+      label="SKILL.md"
       registry={undefined}
       onOpenLink={() => true}
     />,
   );
-  expect(screen.getByRole("link", { name: "Source" })).toHaveTextContent(
-    "Source",
+  expect(screen.getByRole("link", { name: "SKILL.md" })).toHaveTextContent(
+    "SKILL.md",
   );
 });

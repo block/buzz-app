@@ -451,16 +451,15 @@ function AccessDetail({
   onOpen(trigger: HTMLButtonElement): void;
 }) {
   const Icon = accessIcons[access];
-  const { label, description } = generalAccessOptions[access];
+  const { label } = generalAccessOptions[access];
   return (
     <SettingsDetail
       label="Access"
-      value={`${label}. ${description}`}
+      value={label}
       content={
         <span className={styles.settingsAccess}>
           <Icon size={16} aria-hidden="true" />
-          <span className="text-body-sm text-primary">{label}</span>
-          <span className="text-caption">{description}</span>
+          {label}
         </span>
       }
       actionLabel="Change"

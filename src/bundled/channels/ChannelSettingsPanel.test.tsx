@@ -164,12 +164,12 @@ function detailsCapability(): ChannelDetailsCapability {
 }
 
 it.each([
-  ["public", "member", "Public. Anyone in the community can participate."],
-  ["public", "guest", "View only. Anyone in the community can read."],
-  ["private", "member", "Private. Only people you add can access."],
+  ["public", "member", "Public"],
+  ["public", "guest", "View only"],
+  ["private", "member", "Private"],
 ] as const)(
   "shows %s/%s access under Description without a way to change it",
-  (visibility, joinRole, summary) => {
+  (visibility, joinRole, label) => {
     render(
       <ChannelSettingsPanel
         scope="community:viewer"
@@ -187,10 +187,9 @@ it.each([
         Diagnostics
       </ChannelSettingsPanel>,
     );
-    const [label, description] = summary.split(". ");
     const row = screen.getByText("Access", { exact: true }).closest("div");
     assert(row);
-    expect(row).toHaveTextContent(`Access${label}${description}`);
+    expect(row).toHaveTextContent(new RegExp(`^Access${label}$`));
     expect(within(row).queryByRole("button")).not.toBeInTheDocument();
   },
 );
@@ -224,9 +223,7 @@ it("opens Members to change access for someone who can edit the channel", async 
     </ChannelSettingsPanel>,
   );
   const access = await screen.findByRole("button", { name: "Change access" });
-  expect(access).toHaveAccessibleDescription(
-    "Public. Anyone in the community can participate.",
-  );
+  expect(access).toHaveAccessibleDescription("Public");
   await user.click(access);
   expect(openMembers).toHaveBeenCalledWith(access);
 });

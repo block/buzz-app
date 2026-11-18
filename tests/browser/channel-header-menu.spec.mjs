@@ -130,7 +130,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     settings.getByRole("button", { name: "Edit details", exact: true }),
   ).toHaveCount(0);
-  const checkInlineIcon = async (action) => {
+  const checkInlineIcon = async (action, { wholeRow = false } = {}) => {
     const row = action.locator("xpath=../..");
     const icon = action.locator("svg");
     const affordance = icon.locator("..");
@@ -157,7 +157,9 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await page.keyboard.press("Tab");
     await action.focus();
     await expect(action).toBeFocused();
-    await expect(row).toHaveCSS("outline-style", "none");
+    // Whole-row actions ring the row; label actions ring only the label.
+    await expect(wholeRow ? row : action).toHaveCSS("outline-style", "solid");
+    await expect(wholeRow ? action : row).toHaveCSS("outline-style", "none");
     await row.screenshot({
       path: testInfo.outputPath("metadata-keyboard-focus.png"),
     });
@@ -204,6 +206,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
         "aria-hidden",
         "true",
       );
+      await page.keyboard.press("Tab");
+      await action.focus();
+      await expect(row).toHaveCSS("outline-style", "solid");
+      await expect(action).toHaveCSS("outline-style", "none");
     } else {
       await checkInlineIcon(action);
     }
@@ -306,7 +312,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     name: "Copy channel id",
     exact: true,
   });
-  await checkInlineIcon(copy);
+  await checkInlineIcon(copy, { wholeRow: true });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   const idRow = copy.locator("xpath=../..");
   const rowHeight = (await idRow.boundingBox()).height;

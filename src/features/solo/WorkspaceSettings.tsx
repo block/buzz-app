@@ -530,6 +530,7 @@ export function WorkspaceSettings({
             onWorkspaceChange={setWorkspace}
             raw={raw}
             onRawChange={setRaw}
+            instructionScope={target.kind === "project" ? "workspace" : "chat"}
           />
           {target.kind === "project" &&
             (lineup.agents.length > 0 || lineup.teamIds.length > 0) && (

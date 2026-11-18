@@ -223,6 +223,7 @@ export function NewWorkspace({
           value={workspace}
           onChange={setWorkspace}
           disabled={busy || submitted}
+          instructionScope="workspace"
         />
         {submitted && !busy && !conflict && (
           <p role="status">

@@ -1890,6 +1890,30 @@ it("waits for a workflow mention's community, not for its owner's", async () => 
   await expect(workflow).rejects.toThrow("Workflow request could not start");
 });
 
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  // The community is ready, so the wait ends at once; the agent is gone by then.
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored, current: () => false },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.goose()).toBeUndefined();
+});
+
 it("takes a wake with no thread only in a Solo chat", async () => {
   const ignored = vi.fn();
   const stream = setup();

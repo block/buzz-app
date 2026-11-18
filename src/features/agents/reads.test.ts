@@ -65,21 +65,31 @@ const lost =
   "Workflow request could not start: its community is no longer connected.";
 
 describe("readyOwnerReads", () => {
-  it("waits through connecting for the replacement session's channel list", async () => {
-    const c = community(connecting);
-    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    const settled = vi.fn();
-    void reads.then(settled);
-    const replacement = session([], "loading");
-    c.publish(ready(replacement, { generation: 3 }));
-    await Promise.resolve();
-    expect(settled).not.toHaveBeenCalled();
-    replacement.relist();
-    expect((await reads).connection).toBe(replacement);
-    expect((await reads).workflowAuthority()).toBe("c".repeat(64));
-    expect(replacement.listeners.size).toBe(0);
-    expect(c.listeners.size).toBe(0);
-  });
+  it.each([
+    ["connecting", connecting],
+    ["a cached snapshot", ready(session(), { cached: true })],
+  ])(
+    "waits through %s for the replacement session's channel list",
+    async (_name, first) => {
+      const c = community(first);
+      const reads = readyOwnerReads(
+        c.relay,
+        agent,
+        new AbortController().signal,
+      );
+      const settled = vi.fn();
+      void reads.then(settled);
+      const replacement = session([], "loading");
+      c.publish(ready(replacement, { generation: 3 }));
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      replacement.relist();
+      expect((await reads).connection).toBe(replacement);
+      expect((await reads).workflowAuthority()).toBe("c".repeat(64));
+      expect(replacement.listeners.size).toBe(0);
+      expect(c.listeners.size).toBe(0);
+    },
+  );
 
   it.each([
     [
@@ -129,5 +139,19 @@ describe("readyOwnerReads", () => {
     first.relist([{ id: "dm", channelType: "dm" }]);
     expect((await reads).connection).toBe(first);
     expect(first.listeners.size).toBe(0);
+  });
+
+  it("finds a destination the list lacks through the session's get", async () => {
+    const live = session();
+    const get = vi.fn(() => ({ id: "dm", channelType: "dm" }));
+    Object.assign(live.channels, { get });
+    const reads = readyOwnerReads(
+      community(ready(live)).relay,
+      agent,
+      new AbortController().signal,
+      "dm",
+    );
+    expect((await reads).connection).toBe(live);
+    expect(get).toHaveBeenCalledWith("dm");
   });
 });

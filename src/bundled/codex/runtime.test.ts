@@ -3218,6 +3218,40 @@ it("waits after a reconnect until a workflow mention's DM is typed, then answers
   await f.complete();
 });
 
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+      ],
+    }),
+  );
+  let live = true;
+  Object.assign(f.runtime, {
+    readyReads: async () => {
+      live = false;
+      return f.runtime["reads"](pubkey);
+    },
+  });
+  const ignored = vi.fn();
+  await f.runtime.run({
+    ...ask,
+    trigger: { type: "mention", event },
+    current: () => live,
+    ignored,
+  });
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.spawn).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
   async (cancelled) => {

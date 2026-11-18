@@ -6,7 +6,7 @@ import {
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { pubkeyOf } from "../../features/agents/membership";
 import { PROMPTS_PREFIX } from "../../features/agents/session-prompts";
-import { ownerReads } from "../../features/agents/reads";
+import { type AgentReads, ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
@@ -530,6 +530,45 @@ it("waits for a workflow mention's community, not for its owner's", async () => 
   expect(readyReads).toHaveBeenCalledOnce();
   await deliver({ type: "mention", event: { ...event, pubkey: alice } }).run;
   expect(readyReads).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["checks authority with the reads it waited for", true, "workflow"],
+  ["ignores it when the agent was replaced during the wait", false, undefined],
+])("a waited-for workflow mention %s", async (_name, stays, reason) => {
+  const { host, deliver, runtime } = setup();
+  const relay = keypair();
+  const waited = {
+    workflowAuthority: vi.fn(() => relay.pubkey),
+    profiles: async () => {},
+    profile: () => undefined,
+  } as unknown as AgentReads;
+  let live = true;
+  Object.assign(runtime, {
+    readyReads: async () => {
+      live = stays;
+      return waited;
+    },
+  });
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const turn = deliver({ type: "mention", event }, { current: () => live });
+  await turn.run;
+  if (reason) expect(waited.workflowAuthority).toHaveBeenCalled();
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith(
+    ...(reason ? [reason] : []),
+  );
+  expect(host.processes).toEqual([]);
 });
 
 it("ignores a mention from someone who is not the owner", async () => {

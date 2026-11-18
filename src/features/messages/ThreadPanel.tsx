@@ -647,6 +647,16 @@ function ThreadMessages({
     const current = view.snapshot();
     return current.status === "ready" ? current.root : undefined;
   }, [view]);
+  const replyCount = Math.max(
+    snapshot.root?.replyCount ?? 0,
+    snapshot.replies.length,
+  );
+  const partialReplyCount =
+    (snapshot.canLoadMore || snapshot.limited) &&
+    replyCount === snapshot.replies.length;
+  const replyCountLabel = `${replyCount}${partialReplyCount ? "+" : ""} ${
+    replyCount === 1 && !partialReplyCount ? "reply" : "replies"
+  }`;
   const tree = useMemo(
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
@@ -2210,6 +2220,12 @@ function ThreadMessages({
                 <p className={styles.empty}>Original message unavailable.</p>
               )
             ) : null}
+            {snapshot.root && snapshot.replies.length > 0 && (
+              <div className={styles.threadReplyDivider}>
+                <span aria-hidden="true">{replyCountLabel}</span>
+                <hr aria-label={replyCountLabel} />
+              </div>
+            )}
             <ol>
               {showOlderPageStatus && snapshot.error && (
                 <li className={styles.threadHistoryPageStatus}>

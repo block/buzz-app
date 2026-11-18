@@ -1114,6 +1114,21 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistoryPageStatus p {
   margin: 0;
 }
+.threadReplyDivider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block: var(--space-3);
+  color: var(--text-subtle);
+  @apply text-caption;
+}
+.threadReplyDivider > hr {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-top: 0.5px solid var(--border-standard);
+}
 .threadHistory ol {
   list-style: none;
   margin: 0;

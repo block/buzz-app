@@ -341,6 +341,78 @@ function messagesHarness(
     },
   };
 }
+it("separates the original from replies with the full thread count", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, replyCount: 23 };
+  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
+  h.snapshot.canLoadMore = true;
+  const history = h.render();
+  const divider = within(history).getByRole("separator", {
+    name: "23 replies",
+  });
+  expect(divider.parentElement).toHaveTextContent("23 replies");
+  expect(divider.parentElement?.previousElementSibling).toHaveAttribute(
+    "data-message-id",
+    row.id,
+  );
+  expect(divider.parentElement?.nextElementSibling?.tagName).toBe("OL");
+});
+it("updates the divider for empty, singular, nested and deleted replies", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, replyCount: 0 };
+  h.render();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+
+  h.snapshot.replies = [{ ...row, id: "reply", replyParentId: row.id }];
+  h.render();
+  expect(
+    screen.getByRole("separator", { name: "1 reply" }).parentElement,
+  ).toHaveTextContent("1 reply");
+
+  h.snapshot.replies = [
+    ...h.snapshot.replies,
+    { ...row, id: "nested", replyParentId: "reply" },
+  ];
+  h.render();
+  expect(
+    screen.getByRole("separator", { name: "2 replies" }).parentElement,
+  ).toHaveTextContent("2 replies");
+
+  h.snapshot.replies = [];
+  h.render();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+});
+it("does not present a partial reply window as an exact total", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, replyCount: 0 };
+  h.snapshot.replies = [
+    { ...row, id: "reply" },
+    { ...row, id: "other" },
+  ];
+  h.snapshot.canLoadMore = true;
+  h.render();
+  expect(
+    screen.getByRole("separator", { name: "2+ replies" }).parentElement,
+  ).toHaveTextContent("2+ replies");
+
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(
+    screen.getByRole("separator", { name: "2 replies" }).parentElement,
+  ).toBeInTheDocument();
+});
+it("omits the reply divider when the original is unavailable or still loading", () => {
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.root = undefined;
+  h.render();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+
+  h.snapshot.status = "ready";
+  h.snapshot.replies = [{ ...row, id: "reply" }];
+  h.render();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+});
 it("allocates only after commit and disposes distinct owned views under StrictMode", () => {
   const h = messagesHarness();
   renderToString(<ThreadPanel {...h.props} />);
@@ -1280,7 +1352,7 @@ it("a retained panel shown at a reply places a requested read time's line once i
   expect(above(later)).toBeFalsy();
   expect(h.view.retarget).not.toHaveBeenCalled();
 });
-it("renders replies after the original without a reply-count divider", () => {
+it("separates loaded replies without claiming empty history", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };
   h.snapshot.status = "loading";
@@ -1339,10 +1411,10 @@ it("renders replies after the original without a reply-count divider", () => {
   ).not.toBeInTheDocument();
   expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
 
-  // Replies follow the root without a divider, regardless of the relay total.
+  // The divider uses the relay total rather than just the loaded window.
   h.snapshot.root = { ...row, replyCount: 11 };
   h.render();
-  expect(screen.queryByText("11 replies")).not.toBeInTheDocument();
+  expect(screen.getByRole("separator", { name: "11 replies" })).toBeVisible();
   const root = screen.getByText("root");
   const reply = screen.getByText("first reply");
   expect(
@@ -1351,15 +1423,15 @@ it("renders replies after the original without a reply-count divider", () => {
 
   h.snapshot.root = { ...row, replyCount: 1 };
   h.render();
-  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByRole("separator", { name: "1 reply" })).toBeVisible();
   expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.replies = [];
   h.render();
-  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByRole("separator", { name: "1 reply" })).toBeVisible();
   expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.root = undefined;

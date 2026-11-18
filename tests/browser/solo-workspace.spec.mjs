@@ -484,7 +484,10 @@ test.describe("reading", () => {
       .locator(
         "xpath=ancestor::*[@data-channel-sidebar-row and @data-ordinary]",
       )
-      .getByText(/Alpha|Beta/, { exact: true });
+      // The visible title; its screen-reader copy repeats the name.
+      .locator("[data-solo-chat-title] > [aria-hidden]", {
+        hasText: /^(Alpha|Beta)$/,
+      });
   test("Solo chat reads a chat opened from the sidebar, so it stays unbolded after leaving", async ({
     page,
     app,

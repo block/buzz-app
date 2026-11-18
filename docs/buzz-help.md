@@ -380,6 +380,16 @@ and are asked to sign in again in Buzz.
   with that name, or a neutral smiley when there is none or its image can't load.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
+- Right-click an uploaded image to **Copy image**, **Copy image URL**, or
+  **Download image**. Videos offer **Copy video URL** and **Download video**.
+  **Open image** or **Open video** opens the preview in the fullscreen gallery.
+  With a keyboard, focus a preview or viewer control and press Shift+F10 or the
+  Menu key.
+  These actions also work in fullscreen viewers. URLs use the original media
+  address; access still depends on the recipient's community permissions.
+  Desktop menu downloads show **Starting download…**, then confirm when saved to
+  Downloads or report a failure. Browser downloads use the browser's
+  settings, and image copying requires browser clipboard support.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -392,8 +402,9 @@ and are asked to sign in again in Buzz.
   inline.
 - Right-click a message, including its timestamp, to open its More actions with
   **Reply** added; Shift+F10 or the Menu key opens it from a focused control in
-  the message. Links keep their own menu; images, media and text you already
-  selected keep the system menu. Touch long-press keeps text selection.
+  the message. Links keep their own menu; uploaded images and videos have media
+  actions. Other media and text you already selected keep the system menu.
+  Touch long-press keeps text selection.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
@@ -410,9 +421,23 @@ and are asked to sign in again in Buzz.
   not change the copy. Forwarded attribution is supplied by the sender, not
   cryptographic proof. Mentions inside the copy retain their labels but do not
   notify again. The dialog’s optional note is plain text; its mentions do not notify.
+  **Copy as forward** is available in the Forward message dialog for DMs,
+  channels and Solo chats. Paste it into a message box or thread to attach a
+  removable preview; any note typed in the dialog comes along as editable text.
+  Files added alongside the preview belong to your message, outside the copied
+  card, and are not included when re-forwarding the original. Selected mentions in the composer
+  note notify normally. Only one forward can be attached. The preview is saved
+  with your draft; loading or inaccessible sources block Send until resolved or
+  removed. The current account must still be able to read the source.
+  Pasting a forward from a DM, private channel or Solo chat into a different
+  conversation shows a quiet reminder that its recipients can read the copy.
+  Pasting back into the source conversation shows no reminder.
+  Pasting inside a code block or using plain-text paste inserts the copied text
+  without attaching a forward. Ordinary pasted links stay links; pasting outside
+  Buzz provides quoted text.
   Messages exceeding the forwarding size limit, or containing a local file
   without sharable attachment metadata (including custom emoji), show an
-  explanation before sending. Forward is disabled; **Copy link** is available
+  explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
 - Select text in a message, such as by double-clicking a word, and choose
   **Quote** (or press Q) to add it to the end of that conversation's draft as a
@@ -420,6 +445,11 @@ and are asked to sign in again in Buzz.
   thread's reply box. Quoting keeps formatting and links but does not notify
   anyone mentioned in the quoted text. The floating Quote button hides while
   a menu, picker, or dialog is open.
+- Copying or quoting a selection that takes in a message from its start, such
+  as one dragged from beside the message or across several messages, puts
+  that message's author and time on one line above its text. The time is left
+  out where message timestamps are hidden. A selection inside a message's text
+  copies that text alone.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -430,8 +460,19 @@ and are asked to sign in again in Buzz.
   the full, scrollable list of names. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
-  an agent, and send a message. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Where available, use
+  an agent, and send a message. Your agents become chat admins before the opening
+  message is delivered, including agents added by workspace defaults; you remain
+  owner. Ownership is verified from their signed profiles. Your agents added
+  later to a Solo chat you own also join as admins, whether from the composer or
+  Chat access. Other people's agents get ordinary participation; later additions
+  use Bot. Existing members keep their saved roles.
+  If admin setup is interrupted, **Retry** on the opening message attempts to
+  finish it without restoring later demotions or removals. If setup is blocked,
+  choose **Abandon admin setup** in Outbox as soon as the chat exists. This keeps
+  the chat and current roles and stops unfinished setup in other windows. Then
+  retry the opening message, or send a new one if the original has expired.
+  Solo conversations continue at the chat's top level
+  rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
   models change. If a loaded catalog no longer offers a saved choice, the
@@ -484,6 +525,14 @@ and are asked to sign in again in Buzz.
   channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
+  **Start Solo chat**, in the menu of any delivered message (and in a channel's
+  or DM's own menu), opens a private New chat draft with a link to that message
+  or conversation already in the composer. It works from channels, DMs and Solo
+  chats, including ones that are archived, read-only or not joined. The link is
+  ordinary, editable text: nothing is created until you send, and starting
+  again from the same source returns to its unsent draft. The link grants no
+  access to the source; the agent you tag, and anyone you later share the chat
+  with, can open it only if they can already read that conversation.
 - **Team** contains community channels and their threads. Choose **Reply** on a
   message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
@@ -511,6 +560,10 @@ and are asked to sign in again in Buzz.
   To rename one, open **Workspace settings** from its heading’s **…** or right-click
   menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
   starting settings stay in place.
+  **Archive inactive chats** in the same menu shows how many of the workspace's
+  chats have had no messages for 14 days and archives them after you confirm.
+  It skips the open chat and chats with agent work running or messages still
+  queued or sending. **Undo** on the result restores them.
   Retrying an instructions-only draft keeps the current workspace name. If a
   workspace name edit conflicts, copy your draft before using
   **Review saved settings** to discard it and reload.
@@ -667,6 +720,11 @@ and are asked to sign in again in Buzz.
   their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
   lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
   Muting does not mark messages or threads as read.
+- **Messaging someone**: **Message** on a profile, a profile preview or an
+  agent, **Send message** in a channel's members, and choosing a person in
+  search open your DM with them. With no DM yet, they open **New message**
+  addressed to them; the DM is created only when you send, so choosing someone
+  by mistake never shows them an empty conversation.
 - **Adding to a DM**: open the DM's access dialog and search for someone to
   add. An agent joins right away and can read the DM's earlier messages. For a
   person, choose **Include history** to add them to this DM with its earlier
@@ -707,7 +765,10 @@ and are asked to sign in again in Buzz.
   - `from:me`, `from:@name`: messages by you or someone else.
   - `in:#channel`, `in:@person`: one channel, or your DM with someone
     (`in:@me` is your own). A name that matches several conversations, or
-    none, says so instead of searching.
+    none, says so instead of searching. Searching one conversation, by `in:`
+    or ⌘F, shows the same Messages results; where the relay supports it,
+    **Sort messages** in the field orders text matches by most relevant or
+    most recent.
   - `after:`, `before:`, `on:` a date (`YYYY-MM-DD`, `today`, `yesterday`), and
     `during:` a day, month (`2026-10`, `october`), or year, in local time, or a
     rolling period ending today (`7d`, `4w`, `3m`, `1y`). `after:` includes its
@@ -1030,6 +1091,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Custom Team sections** can have an optional Unicode or community emoji.
+  Choose it beside the name when creating a section, or use the section's
+  menu → **Rename section** to change its name or emoji, then **Rename**.
+  Open the emoji picker and choose **Remove emoji** to clear only the emoji;
+  the name and channels stay unchanged. These controls require
+  writable saved sidebar preferences.
 - **Dragging channels and DMs between sections**: drag a channel or DM row onto
   **Starred** or a saved group to move it there, or back to its home section:
   channels to **Channels** and DMs to **Direct messages**. **Channels** does not
@@ -1136,6 +1203,13 @@ available rather than silently discarding it.
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Where offered, **Create agent** also lets people choose Thinking
   before the first config is saved; **Default** follows the provider's setting.
+  Claude and Codex list the explicit model separately even when it matches
+  **Default**. Choose the named model to pin that choice when defaults change;
+  choose **Default** to follow defaults again. It appears first, with the
+  current model or the settings it follows shown as supporting text. The closed
+  picker keeps a known model visible with a **Default** suffix; an unknown model
+  reads **Default** instead. Selecting a named
+  model's thinking level in the family menu also pins that model.
   Do not assume someone can edit another person's agent.
 - In the agent avatar picker, drag the avatar strip with a mouse or scroll it
   to browse more choices. Click an avatar to select it; keyboard users can Tab
@@ -1503,7 +1577,9 @@ available rather than silently discarding it.
   since the proposal.
   Agent reads also show saved model and thinking choices for supported local
   harnesses. They distinguish explicit choices, harness defaults, Recommended
-  policy and unavailable settings. They do not report an active turn's model.
+  policy and unavailable settings. For Codex and Claude, they also include
+  current defaults when Buzz can resolve them, with the source or a reason
+  they are unknown. They do not prove an active session's model.
 - Your agents can search messages (`search`) by words, person, channel or DM,
   and date, and link each message they cite. They search with their own access:
   channels they're in and open channels. They don't find messages in your
@@ -1523,7 +1599,9 @@ available rather than silently discarding it.
   once that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
-  These wakes have no message link of their own.
+  These wakes have no message link of their own. A plugin can cancel a pending
+  guarded wake when its work is no longer current. It cannot retract input
+  already handed to the agent.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. While the activity under your
@@ -1590,6 +1668,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 
 ## Optional features and limits
 
+- Desktop packages include a `buzz` command line client. On macOS, use
+  `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
+  old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
+  running the command. Update scripts or PATH links to use the bundled CLI.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

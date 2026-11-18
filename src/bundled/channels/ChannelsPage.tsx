@@ -37,6 +37,7 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   matchesConversation,
+  newMessage,
   openEmptyChannels,
   soloDraft,
   soloDraftTarget,
@@ -381,9 +382,11 @@ function ChannelWorkspace({
   archive?: ArchiveShortcut | undefined;
   read?: ReadShortcut | undefined;
 }) {
-  const composingMessage =
-    navigation?.target.kind === "page" &&
-    navigation.target.route?.params === "new-message";
+  const messageDraft =
+    navigation?.target.kind === "page"
+      ? newMessage(navigation.target.route?.params)
+      : undefined;
+  const composingMessage = messageDraft !== undefined;
   const draftTarget = navigation?.target;
   const draft = useMemo(
     () =>
@@ -2498,11 +2501,7 @@ function ChannelWorkspace({
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
           onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
-          onOpenConversation={
-            navigator && viewer
-              ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
-              : undefined
-          }
+          onOpenMessage={navigator && viewer ? openLink : undefined}
         />
       )}
       <Panel
@@ -2538,6 +2537,7 @@ function ChannelWorkspace({
         >
           {composingMessage ? (
             <LiveNewMessage
+              intent={messageDraft?.intent}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -2698,7 +2698,7 @@ function ChannelWorkspace({
                           startChat={
                             navigator &&
                             current &&
-                            canStartLinkedChat(queries, current.id) ? (
+                            canStartLinkedChat(queries) ? (
                               <StartLinkedChat
                                 session={queries}
                                 navigation={navigator}

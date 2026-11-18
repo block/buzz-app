@@ -26,6 +26,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { PairingPrompt } from "../features/credential-pairing/PairingPrompt";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { UpdateAction } from "../features/updates/UpdateAction";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
@@ -799,11 +800,14 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           pluginRecommendations={pluginRecommendations}
           searchServices={services}
           launchers={
-            <PanelLaunchers
-              panels={launcher.available}
-              selected={selectedPanel}
-              launch={launcher.launch}
-            />
+            <>
+              <UpdateAction updates={services.updates} />
+              <PanelLaunchers
+                panels={launcher.available}
+                selected={selectedPanel}
+                launch={launcher.launch}
+              />
+            </>
           }
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
           companion={pageOwnsCompanion ? undefined : companion}

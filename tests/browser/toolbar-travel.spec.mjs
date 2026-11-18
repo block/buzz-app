@@ -18,10 +18,15 @@ for (const density of ["default", "compact"])
       });
       await server.listen();
       try {
+        // Travel is continuous input; CI scheduling must not create a 150ms idle.
+        await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+        await page.clock.pauseAt(new Date("2026-01-01T00:01:00Z"));
         await page.goto(
           `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/toolbar-travel.html`,
         );
-        await page.waitForFunction(() => !!window.toolbarFixture);
+        await expect
+          .poll(() => page.evaluate(() => !!window.toolbarFixture))
+          .toBe(true);
         for (const own of [true, false])
           for (const direction of ["ltr", "rtl"]) {
             await page.setViewportSize({
@@ -50,12 +55,21 @@ for (const density of ["default", "compact"])
               },
               { density, layout, own, direction },
             );
-            await page.waitForFunction(
-              (expected) =>
-                document.querySelector("main").dataset.scenario ===
-                JSON.stringify(expected),
-              { layout, own, grouped: layout !== "thread", content: "text" },
-            );
+            await expect
+              .poll(() =>
+                page.evaluate(
+                  (expected) =>
+                    document.querySelector("main").dataset.scenario ===
+                    JSON.stringify(expected),
+                  {
+                    layout,
+                    own,
+                    grouped: layout !== "thread",
+                    content: "text",
+                  },
+                ),
+              )
+              .toBe(true);
             await page.evaluate(() => document.fonts.ready);
             const row = page.locator('[data-message-id="b"]'),
               bubble = row.locator("[data-message-action-anchor]");
@@ -72,6 +86,7 @@ for (const density of ["default", "compact"])
             const bar = row.locator("[data-message-actions]");
             for (const label of ["Add reaction", "More message actions"]) {
               await page.mouse.move(start.x, start.y);
+              await page.clock.runFor(16);
               await expect
                 .poll(() => bar.evaluate((n) => n.matches(":popover-open")))
                 .toBe(true);
@@ -88,6 +103,7 @@ for (const density of ["default", "compact"])
                 button.y + button.height / 2,
                 { steps: 30 },
               );
+              await page.clock.runFor(16);
               await expect
                 .poll(() => bar.evaluate((n) => n.matches(":popover-open")))
                 .toBe(true);
@@ -123,6 +139,7 @@ for (const density of ["default", "compact"])
               type: "touchEnd",
               touchPoints: [],
             });
+            await page.clock.runFor(16);
             await expect(page.getByRole("menu")).toBeVisible();
           } finally {
             await cdp.detach();

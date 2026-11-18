@@ -1310,6 +1310,7 @@ it.each([
           input={createRef()}
           pages={[]}
           openConversation={() => {}}
+          openNewMessage={() => {}}
         />,
       );
       const relevance = await request();
@@ -1386,6 +1387,7 @@ it.each([
           input={createRef()}
           pages={[]}
           openConversation={() => {}}
+          openNewMessage={() => {}}
           offline={offline}
         />,
       );

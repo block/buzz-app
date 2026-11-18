@@ -2110,7 +2110,11 @@ instructions** names the plugins that are on and declare a section, and warns
 that the owner's own choice for a section also applies in those plugins' chats.
 `ctx.pluginOwner.agentPromptSections` holds the plugin's declared IDs, empty
 when it declares none. Hosts that do not support this field reject manifests
-that declare it.
+that declare it. The plugin registry also records the field, even for a plugin
+that is off, so an older host rejects that profile's whole plugin catalog and
+may offer settings recovery. Before you open the profile in an older build,
+remove the declaring plugin, or roll it back to a version without the field,
+in the newer build.
 
 A plugin that needs a long-lived program, such as an agent CLI that speaks a
 JSON protocol on stdin and stdout, declares it under `host.processes`:

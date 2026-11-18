@@ -74,7 +74,24 @@ import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
 import { isBundledOwner } from "../../plugins/provenance";
-import { awaitRecommendation, type RecommendedCandidate } from "./recommended";
+import {
+  awaitRecommendation,
+  candidatesFor,
+  offRecommended,
+  onRecommended,
+  recommendationFinal,
+  recommendationReady,
+  type RecommendedCandidate,
+  withRecommended,
+} from "./recommended";
+import {
+  checkNote,
+  noteId,
+  noteOf,
+  notesOf,
+  type PluginNote,
+  withNote,
+} from "./plugin-notes";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -1455,6 +1472,17 @@ export type NewAgent = Readonly<{
 /** A plugin's recommended agent setup for this launch,
  * `{recommendedBy?, description?, candidates}`; see `Agents.recommend`. */
 export type RecommendedSource = (signal: AbortSignal) => unknown;
+export type { PluginNote } from "./plugin-notes";
+/** An agent's own model settings, as `switchToAutomatic` found them. */
+export type ModelSettings = Readonly<{
+  model?: string;
+  provider?: string;
+  effort?: string;
+}>;
+/** The calling plugin's note to save in the same revision: `null` removes
+ * it, and leaving it out keeps it. */
+export type NoteChange = Readonly<{ note?: PluginNote | null }>;
+const MODEL_FIELDS = ["model", "provider", "effort"] as const;
 export type Agents = {
   registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
@@ -1531,6 +1559,48 @@ export type Agents = {
    * answer, a failure, an invalid or late setup keeps the build's. `signal` aborts when the wait ends. Only the first
    * plugin to call it in a launch is asked; later calls are ignored. */
   recommend(source: RecommendedSource): void;
+  // Bundled plugins only, like `recommend`: the building blocks for a plugin
+  // that moves agents onto Automatic (plugin-architecture.md).
+  /** Whether plugin start-up is over (each plugin started, or failed), the
+   * agent list is loaded and the recommended setup is final for the launch.
+   * `subscribe` hears when it changes. */
+  isReady(): boolean;
+  /** Resolves the first time `isReady()` is true; rejects if `signal` aborts
+   * first. Don't await it in `apply`: start-up isn't over until it returns. */
+  whenReady(signal?: AbortSignal): Promise<void>;
+  /** Whether the agent could run on Automatic on this device: not hosted nor
+   * on another execution target, of
+   * a type registered here and not remote, whose harness the recommended
+   * setup has a candidate for. An agent of a type this device doesn't know
+   * isn't. Ignores its preset, notes, computer and sync state. */
+  switchable(agent: Agent): boolean;
+  /** The person's switchable agents: in the selected community and running
+   * here, one per pubkey. */
+  switchableAgents(): readonly Agent[];
+  /** Puts the agent on Automatic, through `save` from its `configBase`, so a
+   * save from a stale copy is refused, and gives the model settings it had.
+   * `note` is saved in the same revision. Rejects unless it is switchable,
+   * set up on this computer, its synced settings have arrived and it isn't
+   * on Automatic already. */
+  switchToAutomatic(
+    agent: Agent,
+    options?: NoteChange,
+  ): Promise<Readonly<{ previous: ModelSettings }>>;
+  /** Undoes a switch: off Automatic, with `previous` back, saved the same
+   * way. */
+  restoreSettings(
+    agent: Agent,
+    previous: ModelSettings,
+    options?: NoteChange,
+  ): Promise<void>;
+  /** The calling plugin's note on the agent, from its synced settings: only
+   * known once they have arrived (`configBase.settings` is a string). Other
+   * saves keep notes as they are. */
+  readNote(agent: Agent): PluginNote | undefined;
+  /** Saves the calling plugin's note, or removes it with `null`, the same
+   * way: JSON `data` of at most 1 KB and an optional `tag`, which each
+   * settings revision carries as ["note", pluginId, tag]. */
+  setNote(agent: Agent, note: PluginNote | null): Promise<void>;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -2340,6 +2410,19 @@ export class AgentsService extends Service implements Agents {
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     void awaitRecommendation((signal) => this.recommendedAnswer(signal));
+    // So `ready` readers hear when start-up ends and the setup is final.
+    const status = ctx.pluginStatus as Context["pluginStatus"] | undefined;
+    if (status) {
+      let started = this.pluginsStarted();
+      ctx.effect(() =>
+        status.subscribe(() => {
+          if (this.pluginsStarted() === started) return;
+          started = !started;
+          this.notify();
+        }),
+      );
+    }
+    void recommendationReady().then(() => this.notify());
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -3205,6 +3288,151 @@ export class AgentsService extends Service implements Agents {
     }
     this.recommendSource = { plugin, source };
     this.recommendCalled();
+  }
+  /** The calling plugin's id; throws unless it is bundled. */
+  private bundledCaller(what: string) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isBundledOwner(owner))
+      throw new Error(`${what} is available only to bundled plugins`);
+    return owner.id;
+  }
+  private pluginsStarted = () =>
+    (
+      this.ctx.pluginStatus as Context["pluginStatus"] | undefined
+    )?.settled?.() ?? true;
+  private readyNow = () =>
+    this.pluginsStarted() &&
+    this.snapshot().status === "ready" &&
+    recommendationFinal();
+  isReady() {
+    this.bundledCaller("isReady");
+    return this.readyNow();
+  }
+  async whenReady(signal?: AbortSignal) {
+    this.bundledCaller("whenReady");
+    return new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      let off = () => {};
+      const abort = () => {
+        off();
+        reject(signal?.reason);
+      };
+      const check = () => {
+        if (!this.readyNow()) return;
+        off();
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      off = this.subscribe(check);
+      check();
+    });
+  }
+  private canSwitch = (agent: Agent) => {
+    // Hosted, or run on another execution target, it runs on that one's
+    // own settings, not Automatic.
+    if (agent.place === "hosted" || agent.executionBinding) return false;
+    const type = this.types().find((item) => item.key === agent.type);
+    return (
+      !!type &&
+      !type.remote &&
+      typeof type.recommends === "function" &&
+      candidatesFor(type.id).length > 0
+    );
+  };
+  switchable(agent: Agent) {
+    this.bundledCaller("switchable");
+    return this.canSwitch(agent);
+  }
+  switchableAgents() {
+    this.bundledCaller("switchableAgents");
+    const mine = new Map<string, Agent>();
+    const { agents, running } = this.snapshot();
+    for (const agent of [...agents, ...running])
+      if (!mine.has(agent.pubkey) && this.canSwitch(agent))
+        mine.set(agent.pubkey, agent);
+    return [...mine.values()];
+  }
+  /** Saves a plugin's change to the agent's config from the copy it read, so
+   * a stale one is refused, with its note when it gives one. */
+  private savePlugin(
+    agent: Agent,
+    config: object,
+    plugin: string,
+    { note }: NoteChange,
+  ) {
+    if (note !== undefined) checkNote(note);
+    if (note !== undefined && !noteId(plugin))
+      throw new Error(`Plugin ${plugin}'s id can't hold a note`);
+    if (
+      agent.place !== "here" ||
+      agent.unfinished ||
+      agent.deleting ||
+      agent.configProblem ||
+      typeof agent.configBase?.settings !== "string"
+    )
+      throw new Error("This agent's settings can't be changed here now");
+    // From the copy as it is now: one changed since it was read, here or by
+    // sync, is refused before anything is saved.
+    const now = this.liveAgent(agent.key);
+    if (
+      !now ||
+      JSON.stringify(now.configBase) !== JSON.stringify(agent.configBase) ||
+      JSON.stringify(now.config) !== JSON.stringify(agent.config)
+    )
+      throw new Error("This agent changed since it was read; read it again");
+    return this.saveAs(agent.key, {
+      config: note === undefined ? config : withNote(config, plugin, note),
+      // Only the settings change, so only they are saved and checked.
+      base: { settings: agent.configBase.settings },
+    });
+  }
+  async switchToAutomatic(agent: Agent, options: NoteChange = {}) {
+    const plugin = this.bundledCaller("switchToAutomatic");
+    const config = (agent.config ?? {}) as Record<string, unknown>;
+    if (!this.canSwitch(agent) || onRecommended(config))
+      throw new Error("This agent can't be switched to Automatic");
+    const previous: ModelSettings = Object.fromEntries(
+      MODEL_FIELDS.flatMap((name) =>
+        typeof config[name] === "string" && config[name]
+          ? [[name, config[name]]]
+          : [],
+      ),
+    );
+    await this.savePlugin(agent, withRecommended(config), plugin, options);
+    return { previous };
+  }
+  async restoreSettings(
+    agent: Agent,
+    previous: ModelSettings,
+    options: NoteChange = {},
+  ) {
+    const plugin = this.bundledCaller("restoreSettings");
+    // Not over a model the person picked since.
+    if (!onRecommended(agent.config))
+      throw new Error("This agent isn't on Automatic");
+    const kept = Object.fromEntries(
+      MODEL_FIELDS.flatMap((name) =>
+        typeof previous?.[name] === "string" ? [[name, previous[name]]] : [],
+      ),
+    );
+    const config = (agent.config ?? {}) as object;
+    await this.savePlugin(
+      agent,
+      { ...offRecommended(config), ...kept },
+      plugin,
+      options,
+    );
+  }
+  readNote(agent: Agent) {
+    const plugin = this.bundledCaller("readNote");
+    return noteOf(agent.config, plugin);
+  }
+  async setNote(agent: Agent, note: PluginNote | null) {
+    const plugin = this.bundledCaller("setNote");
+    await this.savePlugin(agent, (agent.config ?? {}) as object, plugin, {
+      note,
+    });
   }
   /** This launch's answer from the plugin that calls `recommend`, asked as
    * soon as it calls; nothing once plugins have started with none calling. */
@@ -4969,7 +5197,25 @@ export class AgentsService extends Service implements Agents {
       },
     };
   };
-  async save(key: AgentKey, change: AgentChange) {
+  /** A plugin's notes change only through `setNote` and its kin: any other
+   * save keeps the agent's current ones. */
+  save(key: AgentKey, change: AgentChange) {
+    if (!change.config || typeof change.config !== "object")
+      return this.saveAs(key, change);
+    const { pluginNotes: _, ...config } = change.config as {
+      pluginNotes?: unknown;
+    };
+    const notes = notesOf(this.liveAgent(key)?.config);
+    return this.saveAs(key, {
+      ...change,
+      config: notes ? { ...config, pluginNotes: notes } : config,
+    });
+  }
+  private liveAgent(key: AgentKey) {
+    const { agents, running } = this.snapshot();
+    return [...agents, ...running].find((item) => item.key === key);
+  }
+  private async saveAs(key: AgentKey, change: AgentChange) {
     const identity = this.liveMember(key);
     // A hosted agent's key is its pubkey.
     if (!identity)

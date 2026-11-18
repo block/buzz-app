@@ -1117,6 +1117,42 @@ plugin to call it in a launch is asked; later calls only log. Views that read
 the setup before it is final, such as whether a harness offers Automatic, see
 the build's. Turning the plugin off stops it answering from the next launch.
 
+Bundled plugins also get the building blocks to move agents onto
+Automatic themselves, with their own rules and wording. Each throws for any
+other plugin:
+
+- `ctx.agents.isReady()` is true once plugin start-up is over, the agent list
+  has loaded and the recommended setup is final; `subscribe` hears when it
+  changes, and `whenReady(signal?)` resolves the first time it is. Don't
+  await it in `apply`: start-up isn't over until `apply` returns.
+- `switchable(agent)` says whether an agent could run on Automatic here: not
+  hosted nor bound to another execution target, of a type registered on this device and not remote, whose harness
+  the setup has a candidate for. An agent of a type this device doesn't know
+  isn't. `switchableAgents()` lists the person's, one per agent.
+- `switchToAutomatic(agent, {note?})` puts it on Automatic and resolves with
+  the `model`, `provider` and `effort` it had; `restoreSettings(agent,
+  previous, {note?})` undoes that while the agent is still on Automatic. Both
+  save its settings from the copy passed in, so a copy that changed since it
+  was read, here or by sync, is refused, and only for an agent set up on
+  this computer whose synced settings have arrived. Where a community can't
+  sync agent settings, they always refuse.
+- `readNote(agent)` and `setNote(agent, note | null)` keep a small note per
+  plugin in the agent's synced settings (`pluginNotes`, by plugin id), so it
+  follows the agent to every device and settings history never reverts it:
+  `{data, tag?}`, with JSON `data` of at most 1 KB. A note is known only once
+  the agent's synced settings have arrived (`configBase.settings` is a
+  string). Any other save, such as from a settings form, keeps notes as they
+  are. Each settings revision
+  carries a tagged note as `["note", pluginId, tag]` beside the `preset`
+  tag. `switchToAutomatic` and `restoreSettings` take the note too, to save
+  it in the same revision.
+- `ctx.pages.registerOverlay({id, component})` mounts a component once in
+  the app shell, beside the app's own notices, while the plugin is on, such
+  as a notice or a dialog; it places itself. It renders inside the app's
+  toast host, so the design system's toasts work there.
+  For focus and visibility, read `document.hasFocus()` and
+  `document.visibilityState`.
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a

@@ -254,7 +254,9 @@ With it set:
 
 On a config channel, the mark syncs with the agent's settings: its
 `buzz.agent.settings` revision (kind 45010) carries `"preset": "recommended"`
-beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. Versions without
+beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. A bundled plugin's
+note on the agent (`pluginNotes`, see plugin-architecture.md) sits beside it
+too, and a tagged note adds a `["note", pluginId, tag]` tag. Versions without
 this feature ignore it there and keep it when they edit (NIP-AP "Editing"), so
 their strict settings check never rejects it. The synced revision decides on
 every device: one without the mark takes the agent off Recommended, and one

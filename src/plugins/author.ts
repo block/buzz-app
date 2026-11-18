@@ -24,6 +24,7 @@ export type {
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
 export type {
+  AppOverlay,
   Page,
   PagePreviewProps,
   PageSidebarProps,
@@ -181,6 +182,9 @@ export type {
   AgentSession,
   AgentSessions,
   Delivery,
+  ModelSettings,
+  NoteChange,
+  PluginNote,
   RecommendedSource,
   StandaloneTurn,
   TurnResult,

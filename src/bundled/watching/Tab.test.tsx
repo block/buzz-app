@@ -1678,7 +1678,12 @@ it("shows a fired timer's wake as activity", () => {
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Details for release" }));
+  // A timer's button names its schedule, so timers under one Interest differ.
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: /^Details for release, Every 1h · next /,
+    }),
+  );
   const activity = screen.getByLabelText("Show activity for release");
   expect(activity.querySelector(".attention-detail-preview")?.textContent).toBe(
     "1 event",

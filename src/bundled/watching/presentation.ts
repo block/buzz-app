@@ -55,20 +55,32 @@ export function describe(
           : `${watch.interval_secs}s`;
     const runs =
       watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`;
+    // `watch_rearm` accepts times past what Date can hold, which cannot be
+    // formatted; such a run never comes.
     const when = (at: number) =>
-      formatItemTimestamp(at, { withTime: true, nowSeconds: now });
+      Number.isNaN(new Date(at * 1000).getTime())
+        ? undefined
+        : formatItemTimestamp(at, { withTime: true, nowSeconds: now });
     // A paused timer, or a run due at or after the deadline, never starts.
-    const next =
+    const runnable =
       watch.enabled &&
       !paused &&
       !spent &&
-      (watch.expires_at === null || state.nextDue < watch.expires_at)
-        ? ` · next ${when(state.nextDue)}`
-        : "";
+      (watch.expires_at === null || state.nextDue < watch.expires_at);
+    // The runner keeps a missed run's deadline while its Interest is busy or
+    // its channel is not joined, so a past deadline reads as overdue.
+    const nextAt = when(state.nextDue);
+    const overdue = runnable && state.nextDue <= now;
+    const next = nextAt && (overdue ? `overdue since ${nextAt}` : nextAt);
+    // A one-shot shows the runner's deadline until it runs, since an interval
+    // edit keeps that deadline, then its configured time as a record.
+    const once = spent ? when(watch.armed_at + watch.interval_secs) : next;
     const schedule =
       watch.max_occurrences === 1
-        ? `Once · ${when(watch.armed_at + watch.interval_secs)}`
-        : `Every ${interval}${runs}${next}`;
+        ? `Once · ${once ?? "date out of range"}`
+        : `Every ${interval}${runs}${
+            runnable && next ? ` · ${overdue ? next : `next ${next}`}` : ""
+          }`;
     return { title: schedule, spent };
   }
   if (watch.type === "source")

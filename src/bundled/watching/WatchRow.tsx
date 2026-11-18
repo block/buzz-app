@@ -189,7 +189,13 @@ export function createWatchComponents({
           <button
             className="attention-heading"
             type="button"
-            aria-label={`Details for ${label.text}`}
+            aria-label={
+              // Timers under one Interest share its name; their schedules
+              // tell them apart.
+              watch.type === "timer"
+                ? `Details for ${label.text}, ${description.title}`
+                : `Details for ${label.text}`
+            }
             aria-expanded={open}
             aria-controls={detailsId}
             onClick={() => setOpen(!open)}

@@ -36,15 +36,17 @@ it("tells timers on one interval apart by when each runs next", () => {
 
 it("counts the next run from the runner's state", () => {
   // Weekly, first run Sun Nov 1 at 5:00 PM. Until the runner uses the Nov 8
-  // run, that run is still the next one, overdue.
+  // run (its Interest busy, or its channel not joined), that run is overdue.
   const weekly = timer(at(10, 1, 17) - 7 * DAY, 7 * DAY);
   expect(describe(weekly, NOW).title).toBe(
     "Every 168h · next Sun, Nov 15 at 5:00 PM",
   );
   const saved = { armedAt: weekly.armed_at, nextDue: at(10, 8, 17), used: 1 };
   expect(describe(weekly, NOW, saved).title).toBe(
-    "Every 168h · next Sunday at 5:00 PM",
+    "Every 168h · overdue since Sunday at 5:00 PM",
   );
+  // Paused, it is not waiting to run.
+  expect(describe(weekly, NOW, saved, true).title).toBe("Every 168h");
   expect(
     describe(timer(at(10, 13, 9), 3_600, { max_occurrences: 5 }), NOW).title,
   ).toBe("Every 1h · 5 runs · next 1:00 PM");
@@ -99,6 +101,33 @@ it("does not infer a one-shot's run time across an interval edit", () => {
   expect(describe({ ...once, interval_secs: 7_200 }, NOW, ran).title).toBe(
     "Once · 10:00 AM",
   );
+});
+
+it("shows the runner's deadline for a one-shot that has not run", () => {
+  // Armed at 8:00 with one hour, then edited to two hours before it fired:
+  // the edit keeps the 9:00 deadline, and the runner fires then.
+  const once = timer(at(10, 13, 8), 7_200, { max_occurrences: 1 });
+  const armed = { armedAt: at(10, 13, 8), nextDue: at(10, 13, 9), used: 0 };
+  expect(describe(once, at(10, 13, 8, 30), armed)).toEqual({
+    title: "Once · 9:00 AM",
+    spent: false,
+  });
+  // Past its deadline and still waiting, it is overdue.
+  expect(describe(once, NOW, armed)).toEqual({
+    title: "Once · overdue since 9:00 AM",
+    spent: false,
+  });
+  // Paused, it shows its deadline without calling it overdue.
+  expect(describe(once, NOW, armed, true).title).toBe("Once · 9:00 AM");
+});
+
+it("renders timers dated past what Date can hold", () => {
+  const far = Number.MAX_SAFE_INTEGER - DAY;
+  expect(describe(timer(far, DAY), NOW).title).toBe("Every 24h");
+  expect(describe(timer(far, 60, { max_occurrences: 1 }), NOW)).toEqual({
+    title: "Once · date out of range",
+    spent: false,
+  });
 });
 
 it("promises no run at or after the timer expires", () => {

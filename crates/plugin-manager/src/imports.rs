@@ -152,7 +152,25 @@ impl PreparedImport {
             .artifacts
             .get(path)
             .ok_or("Choose a listed plugin folder")?;
-        let source = self
+        manager.install_artifact(release, self.source(path)?)
+    }
+    /// Installs the plugin at `path` only if `check` allows it under the registry
+    /// lock; see `Manager::install_artifact_if`.
+    pub(crate) fn install_if(
+        &self,
+        manager: &Manager,
+        path: &str,
+        check: impl FnOnce(&crate::Registry) -> Result<Option<bool>>,
+        committed: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
+        let release = self
+            .artifacts
+            .get(path)
+            .ok_or("Choose a listed plugin folder")?;
+        manager.install_artifact_if(release, self.source(path)?, check, committed)
+    }
+    fn source(&self, path: &str) -> Result<Option<InstallSource>> {
+        Ok(self
             .folder_root
             .clone()
             .map(|root| ReloadSource::folder(root, path.to_owned()).map(InstallSource::Folder))
@@ -163,8 +181,7 @@ impl PreparedImport {
                     InstallSource::Git(source)
                 })
             })
-            .or_else(|| self.url_source.clone().map(InstallSource::Url));
-        manager.install_artifact(release, source)
+            .or_else(|| self.url_source.clone().map(InstallSource::Url)))
     }
 }
 

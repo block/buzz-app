@@ -1035,3 +1035,31 @@ it("disables Retry and waits to retry while plugin storage is busy", () => {
   expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
   expect(manager.refreshManaged).not.toHaveBeenCalled();
 });
+
+it("offers a manual URL entry's Git-to-URL move as a review in place", async () => {
+  const { manager } = harness();
+  Object.assign(manager.imports, {
+    url: vi.fn(async () =>
+      preview({
+        commit: null,
+        candidates: [{ path: ".", revision: artifact.sha256, manifest }],
+      }),
+    ),
+  });
+  show(
+    manager,
+    ready([{ ...artifact, state: "outdated", install: "manual" }]),
+    [fromGit],
+  );
+  expect(screen.queryByText(/Installed from a different source/)).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review update example.managed" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    await within(dialog).findByText(
+      /switches this plugin from Git to a packaged download/,
+    ),
+  ).toBeVisible();
+  expect(manager.change).not.toHaveBeenCalled();
+});

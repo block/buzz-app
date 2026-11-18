@@ -8,8 +8,9 @@ writes the file.
 A version 1 file only recommends. It never installs, enables, updates or removes
 anything. Each plugin still goes through the Git or URL import and its access review,
 and the person using Buzz confirms every change. A [version 2](#version-2-automatic-installs-and-updates)
-file can also ask Buzz to install a listed plugin, or keep it at its pin, without a
-review, within the limits that section describes. The desktop app reads the file; the browser build
+file [signed](#signed-policies) by the key the build names can also ask Buzz to install
+a listed plugin, or keep it at its pin, without a review, within the limits that section
+describes. The desktop app reads the file; the browser build
 has no native plugin storage, so the feature is absent there.
 
 ## File location
@@ -76,7 +77,13 @@ Buzz uses the packaged policy only when no file exists at the resolved location,
 never when `BUZZ_MANAGED_PLUGINS` names a file. A file written by a machine manager
 therefore replaces it completely; the two are not merged. "Sign out and erase local
 data" deletes the stored copy, and the next fetch restores it. It behaves exactly like
-the file, including version 2 automatic entries.
+the file, including version 2 automatic entries, which take effect only when the policy
+is [signed](#signed-policies).
+
+With each fetch Buzz also requests the policy's signature at the same URL with `.sig`
+appended to its path (a query string stays after it). A `404` means the policy is
+unsigned. Any other failure fails the refresh, and Buzz keeps the last good copy with its
+signature, stored as `packaged-managed-plugins-<hash>.json.sig`.
 
 ### Writing the file safely
 
@@ -203,18 +210,67 @@ artifact or commit through the same import Buzz uses for a review, then:
   a refused update does not retry in a loop. A failure is logged and the entry keeps
   its version 1 offer. A new pin, or a restart, tries again.
 
+Automatic entries apply only to a [signed](#signed-policies) policy. In an unsigned
+policy, from any source, `install: "automatic"` is read as `"recommend"` and
+`update: "automatic"` as `"review"`, so every change goes through the person's review.
+
 Settings shows **Managed by *source* · updates automatically** for an installed plugin
-whose entry updates automatically. A notice names each plugin installed or updated
+whose entry updates automatically under a signed policy. A notice names each plugin installed or updated
 during the run, once.
 
 **Trust.** Automatic entries remove the person's review for the plugins they name. The
-pins still protect against a changed artifact or commit, but whoever can write the
-policy, or the packaged policy URL, decides what is installed. A packaged policy is
-fetched over HTTPS but is not signed. Protected agent workers cannot write the policy
-file or the packaged policy's stored copy, but any other process running as the user
-can. Use version 2 only from a source you trust as much as the build itself, and keep
-`install: "recommend"` and `update: "review"` for plugins whose access the person
-should see first.
+pins still protect against a changed artifact or commit, and the signature means only
+the holder of the build's signing key decides what is installed without a review.
+Protected agent workers cannot write the policy file, its signature or the packaged
+policy's stored copy. Keep `install: "recommend"` and `update: "review"` for plugins
+whose access the person should see first.
+
+### Signed policies
+
+A build that should honor automatic entries names the public key allowed to sign its
+policy:
+
+```sh
+BUZZ_BUILD_MANAGED_PLUGINS_SIGNER=<64 hexadecimal digits> bin/pnpm tauri build
+```
+
+The value is the signer's x-only secp256k1 public key, as `buzzodz plugin sign-policy`
+prints it, read from the build environment or `.env.local`. The build fails on any other
+value. A build without it treats every policy as unsigned. Nothing at runtime can change
+the key.
+
+The signature is a separate file beside the policy, `<policy>.sig`: for the file,
+`managed-plugins.json.sig` next to `managed-plugins.json`; for a packaged policy, the
+URL described [above](#packaged-policy). It holds one JSON Nostr event (NIP-01),
+Schnorr-signed with the signing key, at most 16 KiB:
+
+| Field | Value |
+| --- | --- |
+| `kind` | `1064` |
+| `content` | `""` |
+| `tags` | exactly one `["x", <SHA-256 of the policy file's exact bytes, lowercase hex>]` and one `["t", "buzz-managed-plugins-v2"]` |
+| `pubkey` | the key named by `BUZZ_BUILD_MANAGED_PLUGINS_SIGNER` |
+
+The signature covers the bytes as written, so any change to the policy, including
+whitespace, needs a new signature. A missing, malformed or mismatched signature, or one
+by another key, leaves the policy usable but unsigned. `buzzodz plugin managed` prints
+whether the policy is signed.
+
+To sign, with the key as `nsec` or 64 hexadecimal digits:
+
+```sh
+BUZZ_MANAGED_PLUGINS_SIGNING_KEY=<key> buzzodz plugin sign-policy managed-plugins.json
+```
+
+The command checks that the file is a usable policy, writes `managed-plugins.json.sig`
+beside it and prints `{"signature": "...", "signer": "<public key>"}`. Publish the
+`.sig` next to the policy, and the policy before or with the signature, so a reader
+never pairs a new signature with an old policy (that pair reads as unsigned until both
+arrive).
+
+A signature does not expire. Anyone who can serve or write an older signed policy with
+its signature can return Buzz to that policy's pins, but cannot pin anything the key
+never signed.
 
 ### What makes a file or entry invalid
 

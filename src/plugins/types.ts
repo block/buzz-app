@@ -70,6 +70,8 @@ export type ManagedPlugins =
       source: string;
       plugins: ManagedEntry[];
       problems: string[];
+      /** The build's policy signer signed it; only then do automatic modes apply. */
+      signed?: true;
       /** What Buzz installed or updated on its own while the app has run. */
       automatic?: ManagedChange[];
     };

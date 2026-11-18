@@ -1,13 +1,15 @@
 //! Applies version 2 managed entries that ask for `install` or `update` to be
-//! automatic. Only content-pinned versions install: a URL entry's SHA-256 or a Git
-//! entry's full commit. An update that changes host access or publisher is left for the
-//! person's review, and a plugin Buzz installed or the person removed is never
-//! installed automatically again.
+//! automatic. They take effect only in a policy signed by the build's signer; an
+//! unsigned policy's entries arrive here already reduced to recommendations. Only
+//! content-pinned versions install: a URL entry's SHA-256 or a Git entry's full
+//! commit. An update that changes host access or publisher is left for the person's
+//! review, and a plugin Buzz installed or the person removed is never installed
+//! automatically again.
 use crate::{
     atomic_write, effective_grants, err,
     imports::{self, PreparedImport, RequiredCommit},
     managed::{state, Install, Managed, ManagedPlugin, ManagedSource, ManagedState, Update},
-    Catalog, InstallSource, Manager, PluginInfo, Result,
+    Catalog, InstallSource, Manager, PluginInfo, Registry, Result,
 };
 use serde::Serialize;
 use std::{
@@ -48,27 +50,16 @@ impl Session {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Plan {
     Install,
     Update,
 }
 
-fn plan(plugin: &ManagedPlugin, installed: Option<&PluginInfo>, catalog: &Catalog) -> Option<Plan> {
+fn plan(plugin: &ManagedPlugin, catalog: &Catalog) -> Option<Plan> {
     match state(plugin, catalog) {
         ManagedState::Missing if plugin.install == Install::Automatic => Some(Plan::Install),
         ManagedState::Outdated if plugin.update == Update::Automatic => Some(Plan::Update),
-        // A URL entry may replace a Git install of the same plugin, as a reviewed
-        // URL update can. Folder and bundled installs are never replaced.
-        ManagedState::Other
-            if plugin.update == Update::Automatic
-                && matches!(plugin.source, ManagedSource::Url { .. })
-                && installed.is_some_and(|p| {
-                    p.source == "external" && matches!(p.update_source, Some(InstallSource::Git(_)))
-                }) =>
-        {
-            Some(Plan::Update)
-        }
         _ => None,
     }
 }
@@ -90,12 +81,7 @@ pub(crate) fn due(session: &Session, managed: &Managed, catalog: &Catalog) -> bo
         return false;
     };
     plugins.iter().any(|entry| {
-        let installed = catalog
-            .plugins
-            .iter()
-            .find(|p| p.manifest.id == entry.plugin.id);
-        plan(&entry.plugin, installed, catalog).is_some()
-            && !attempted.contains(&pin(&entry.plugin))
+        plan(&entry.plugin, catalog).is_some() && !attempted.contains(&pin(&entry.plugin))
     })
 }
 
@@ -138,17 +124,20 @@ pub(crate) fn apply(
     let Managed::Ready { plugins, .. } = manager.managed(&catalog) else {
         return Ok(vec![]);
     };
+    if let Err(reason) = record_installed(manager, &plugins, &catalog) {
+        eprintln!("Could not record automatically managed plugins: {reason}");
+    }
     let mut changes = vec![];
     for entry in plugins {
         let plugin = entry.plugin;
-        let installed = catalog.plugins.iter().find(|p| p.manifest.id == plugin.id);
-        let Some(plan) = plan(&plugin, installed, &catalog) else {
+        let Some(plan) = plan(&plugin, &catalog) else {
             continue;
         };
         if !session.attempted.lock().map_err(err)?.insert(pin(&plugin)) {
             continue;
         }
-        match apply_one(manager, &plugin, installed, &plan, fetch) {
+        let installed = catalog.plugins.iter().find(|p| p.manifest.id == plugin.id);
+        match apply_one(manager, &plugin, installed, plan, fetch) {
             Ok(Some(change)) => changes.push(change),
             Ok(None) => {}
             Err(reason) => eprintln!("Could not apply managed plugin {}: {reason}", plugin.id),
@@ -160,15 +149,46 @@ pub(crate) fn apply(
     Ok(changes)
 }
 
-/// `None` when the pinned version must go to the person's review instead.
+/// Records every installed plugin that an automatic entry names, so an install whose
+/// record failed to save is still never repeated once the person removes it.
+fn record_installed(
+    manager: &Manager,
+    plugins: &[crate::managed::ManagedEntry],
+    catalog: &Catalog,
+) -> Result<()> {
+    let ids = plugins
+        .iter()
+        .filter(|entry| entry.plugin.install == Install::Automatic)
+        .filter(|entry| {
+            catalog
+                .plugins
+                .iter()
+                .any(|p| p.manifest.id == entry.plugin.id)
+        })
+        .map(|entry| entry.plugin.id.as_str())
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let _lock = manager.lock()?;
+    let mut receipt = read_receipt(manager)?;
+    if ids.iter().all(|id| receipt.contains(*id)) {
+        return Ok(());
+    }
+    receipt.extend(ids.into_iter().map(str::to_owned));
+    write_receipt(manager, &receipt)
+}
+
+/// `None` when the pinned version must go to the person's review instead, or the
+/// plugin or the policy changed while it was being fetched.
 fn apply_one(
     manager: &Manager,
     plugin: &ManagedPlugin,
     installed: Option<&PluginInfo>,
-    plan: &Plan,
+    plan: Plan,
     fetch: &dyn Fn(&Manager, &ManagedPlugin) -> Result<PreparedImport>,
 ) -> Result<Option<Change>> {
-    if *plan == Plan::Install && read_receipt(manager)?.contains(&plugin.id) {
+    if plan == Plan::Install && read_receipt(manager)?.contains(&plugin.id) {
         return Ok(None);
     }
     let prepared = fetch(manager, plugin)?;
@@ -182,21 +202,18 @@ fn apply_one(
         .iter()
         .find(|c| c.path == path && c.manifest.id == plugin.id)
         .ok_or("The pinned version is not this plugin")?;
-    if let (Plan::Update, Some(installed)) = (plan, installed) {
-        let unchanged = effective_grants(candidate.manifest.host.clone().unwrap_or_default())
-            == effective_grants(installed.manifest.host.clone().unwrap_or_default());
-        if !unchanged || candidate.publisher != installed.publisher {
-            return Ok(None);
+    let expected = match (plan, installed) {
+        (Plan::Update, Some(installed)) => {
+            let unchanged = effective_grants(candidate.manifest.host.clone().unwrap_or_default())
+                == effective_grants(installed.manifest.host.clone().unwrap_or_default());
+            if !unchanged || candidate.publisher != installed.publisher {
+                return Ok(None);
+            }
+            Some((installed.revision.clone(), installed.update_source.clone()))
         }
-    }
-    // A fetch can take a minute; leave the plugin alone if the person changed it meanwhile.
-    let now = manager.catalog()?;
-    let current = now.plugins.iter().find(|p| p.manifest.id == plugin.id);
-    if current.map(|p| &p.revision) != installed.map(|p| &p.revision)
-        || (*plan == Plan::Install && read_receipt(manager)?.contains(&plugin.id))
-    {
-        return Ok(None);
-    }
+        (Plan::Update, None) => return Ok(None),
+        (Plan::Install, _) => None,
+    };
     let change = Change {
         id: plugin.id.clone(),
         name: candidate.manifest.name.clone(),
@@ -206,20 +223,35 @@ fn apply_one(
             Plan::Update => Action::Updated,
         },
     };
-    prepared.install(manager, &prepared.preview.token, path)?;
-    if *plan == Plan::Install {
-        {
-            let _lock = manager.lock()?;
-            remember(manager, &plugin.id)?;
+    // A fetch can take a minute. Under the registry lock, recheck that the policy
+    // still authorizes exactly this operation and that the plugin is as it was.
+    let check = |registry: &Registry| -> Result<Option<bool>> {
+        if manager.managed_entry(&plugin.id).as_ref() != Some(plugin) {
+            return Ok(None);
         }
-        if let Err(reason) = manager.change("enable", &plugin.id) {
-            eprintln!(
-                "Installed managed plugin {}, but could not enable it: {reason}",
-                plugin.id
-            );
-        }
-    }
-    Ok(Some(change))
+        let current = registry.installed.get(&plugin.id);
+        Ok(match (&expected, current) {
+            (None, None) if !read_receipt(manager)?.contains(&plugin.id) => Some(true),
+            (Some((revision, source)), Some(current))
+                if current.current == *revision
+                    && current.current_source == *source
+                    && matches!(
+                        current.current_source,
+                        Some(InstallSource::Git(_) | InstallSource::Url(_))
+                    ) =>
+            {
+                Some(false)
+            }
+            _ => None,
+        })
+    };
+    let record = || match plan {
+        Plan::Install => remember(manager, &plugin.id),
+        Plan::Update => Ok(()),
+    };
+    Ok(prepared
+        .install_if(manager, path, check, record)?
+        .then_some(change))
 }
 
 fn read_receipt(manager: &Manager) -> Result<BTreeSet<String>> {
@@ -230,26 +262,62 @@ fn read_receipt(manager: &Manager) -> Result<BTreeSet<String>> {
     }
 }
 
-/// Records that `id` must not be installed automatically again in this profile: Buzz
-/// installed it, or the person removed it. The caller holds the registry lock.
-pub(crate) fn remember(manager: &Manager, id: &str) -> Result<()> {
-    let mut ids = read_receipt(manager)?;
-    if !ids.insert(id.to_owned()) {
-        return Ok(());
-    }
+fn write_receipt(manager: &Manager, ids: &BTreeSet<String>) -> Result<()> {
     atomic_write(
         &manager.root.join(RECEIPT),
-        &serde_json::to_vec(&ids).map_err(err)?,
+        &serde_json::to_vec(ids).map_err(err)?,
     )
+}
+
+/// Records that `id` must not be installed automatically again in this profile. The
+/// caller holds the registry lock.
+fn remember(manager: &Manager, id: &str) -> Result<()> {
+    let mut ids = read_receipt(manager)?;
+    if ids.insert(id.to_owned()) {
+        write_receipt(manager, &ids)?;
+    }
+    Ok(())
+}
+
+/// [`remember`] for a removal, before the registry drops the plugin. A record that
+/// cannot be parsed already stops every automatic install, so the removal goes ahead
+/// without it; any other failure stops the removal.
+pub(crate) fn remember_removal(manager: &Manager, id: &str) -> Result<()> {
+    let bytes = match fs::read(manager.root.join(RECEIPT)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => b"[]".to_vec(),
+        Err(error) => return Err(format!("Could not record the removal: {error}")),
+    };
+    let Ok(mut ids) = serde_json::from_slice::<BTreeSet<String>>(&bytes) else {
+        return Ok(());
+    };
+    if ids.insert(id.to_owned()) {
+        write_receipt(manager, &ids)
+            .map_err(|reason| format!("Could not record the removal: {reason}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{hash, imports::prepare_unsigned_artifact, managed::FILE_NAME, GitSource};
+    use crate::{
+        hash,
+        imports::prepare_unsigned_artifact,
+        managed::{signature_path, FILE_NAME},
+        GitSource,
+    };
     use std::{cell::RefCell, collections::HashMap, path::Path};
 
     const BASE: &str = "https://plugins.example.org/";
+    const KEY: &str = "0202020202020202020202020202020202020202020202020202020202020202";
+    const OTHER_KEY: &str = "0303030303030303030303030303030303030303030303030303030303030303";
+
+    fn signer() -> String {
+        nostr::key::Keys::new(nostr::key::SecretKey::parse(KEY).unwrap())
+            .public_key()
+            .to_hex()
+    }
 
     struct Fixture {
         home: tempfile::TempDir,
@@ -267,7 +335,10 @@ mod tests {
             }
         }
         fn manager(&self) -> Manager {
-            Manager::open(Some(self.home.path().to_path_buf()), "default", false).unwrap()
+            let mut manager =
+                Manager::open(Some(self.home.path().to_path_buf()), "default", false).unwrap();
+            manager.policy_signer = Some(signer());
+            manager
         }
         /// Packs a plugin and serves it; returns its URL entry fields.
         fn artifact(&self, id: &str, code: &str, host: &str) -> (String, String) {
@@ -285,7 +356,11 @@ mod tests {
             self.artifacts.borrow_mut().insert(url.clone(), bytes);
             (url, sha256)
         }
-        fn policy(&self, entries: &[(&str, &(String, String), &str)]) {
+        fn policy_path(&self) -> std::path::PathBuf {
+            self.home.path().join(FILE_NAME)
+        }
+        /// Writes the policy unsigned; see [`Self::policy`].
+        fn unsigned_policy(&self, entries: &[(&str, &(String, String), &str)]) {
             let plugins = entries
                 .iter()
                 .map(|(id, (url, sha256), modes)| {
@@ -294,10 +369,16 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",");
             fs::write(
-                self.home.path().join(FILE_NAME),
+                self.policy_path(),
                 format!(r#"{{"version":2,"source":"Example Org","plugins":[{plugins}]}}"#),
             )
             .unwrap();
+            let _ = fs::remove_file(signature_path(&self.policy_path()));
+        }
+        /// Writes the policy signed by the managers' signer.
+        fn policy(&self, entries: &[(&str, &(String, String), &str)]) {
+            self.unsigned_policy(entries);
+            crate::sign_policy(&self.policy_path(), KEY).unwrap();
         }
         fn apply(&self, manager: &Manager) -> Vec<Change> {
             let fetch = |_: &Manager, plugin: &ManagedPlugin| {
@@ -550,7 +631,7 @@ mod tests {
                 location: String::new(),
                 plugins: vec![plugin],
             };
-            assert_eq!(plan(&url, catalog.plugins.first(), &catalog), expected);
+            assert_eq!(plan(&url, &catalog), expected);
         }
         let review = ManagedPlugin {
             update: Update::Review,
@@ -568,6 +649,190 @@ mod tests {
                 })),
             )],
         };
-        assert_eq!(plan(&review, catalog.plugins.first(), &catalog), None);
+        assert_eq!(plan(&review, &catalog), None);
+    }
+
+    fn modes(manager: &Manager) -> (bool, Vec<(Install, Update)>) {
+        let Managed::Ready {
+            signed, plugins, ..
+        } = manager.managed(&manager.catalog().unwrap())
+        else {
+            panic!("expected a usable policy");
+        };
+        (
+            signed,
+            plugins
+                .iter()
+                .map(|entry| (entry.plugin.install, entry.plugin.update))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn only_a_policy_the_build_signer_signed_installs_or_updates() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        let manual = r#","install":"manual","update":"automatic""#;
+        let entries = [("example.one", &one, AUTO), ("example.two", &one, manual)];
+        let advisory = (
+            false,
+            vec![
+                (Install::Recommend, Update::Review),
+                (Install::Manual, Update::Review),
+            ],
+        );
+        let manager = fixture.manager();
+
+        fixture.unsigned_policy(&entries);
+        assert_eq!(modes(&manager), advisory);
+        assert!(fixture.apply(&manager).is_empty());
+
+        fixture.unsigned_policy(&entries);
+        crate::sign_policy(&fixture.policy_path(), OTHER_KEY).unwrap();
+        assert_eq!(modes(&manager), advisory, "another key");
+        assert!(fixture.apply(&fixture.manager()).is_empty());
+
+        fixture.policy(&entries);
+        let signed = fs::read_to_string(fixture.policy_path()).unwrap();
+        fs::write(fixture.policy_path(), format!("{signed} ")).unwrap();
+        assert_eq!(modes(&manager), advisory, "bytes changed after signing");
+
+        let mut unconfigured = fixture.manager();
+        unconfigured.policy_signer = None;
+        fixture.policy(&entries);
+        assert_eq!(modes(&unconfigured), advisory, "no signer in the build");
+        assert!(fixture.apply(&unconfigured).is_empty());
+        assert!(fixture.fetched.borrow().is_empty());
+
+        let (signed, _) = modes(&manager);
+        assert!(signed);
+        let manager = fixture.manager();
+        assert_eq!(fixture.apply(&manager).len(), 1);
+        assert!(info(&manager, "example.one").is_some());
+    }
+
+    #[test]
+    fn a_policy_that_changes_during_the_fetch_must_still_authorize_the_install() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {} // 1", "");
+        let two = fixture.artifact("example.one", "export function apply() {} // 2", "");
+        let bytes = fixture.artifacts.borrow()[&one.0].clone();
+        let changes: [&dyn Fn(); 4] = [
+            &|| fixture.policy(&[("example.one", &one, r#","update":"automatic""#)]),
+            &|| fixture.policy(&[("example.one", &two, AUTO)]),
+            &|| fixture.policy(&[]),
+            &|| fixture.unsigned_policy(&[("example.one", &one, AUTO)]),
+        ];
+        for (index, change) in changes.iter().enumerate() {
+            fixture.policy(&[("example.one", &one, AUTO)]);
+            let manager = fixture.manager();
+            let fetch = |_: &Manager, _: &ManagedPlugin| {
+                change();
+                imports::prepare_url(&one.0, &one.1, bytes.clone())
+            };
+            assert!(
+                apply(&manager, &fetch).unwrap().is_empty(),
+                "change {index}"
+            );
+            assert!(info(&manager, "example.one").is_none(), "change {index}");
+        }
+    }
+
+    #[test]
+    fn an_update_needs_the_same_source_not_just_the_same_bytes() {
+        let fixture = Fixture::new();
+        let v1 = fixture.artifact("example.one", "export function apply() {} // 1", "");
+        fixture.policy(&[("example.one", &v1, AUTO)]);
+        fixture.apply(&fixture.manager());
+        let v2 = fixture.artifact("example.one", "export function apply() {} // 2", "");
+        fixture.policy(&[("example.one", &v2, AUTO)]);
+        let manager = fixture.manager();
+        let folder = fixture
+            .sources
+            .path()
+            .join(hash(b"export function apply() {} // 1"));
+        let bytes = fixture.artifacts.borrow()[&v2.0].clone();
+        let fetch = |manager: &Manager, _: &ManagedPlugin| {
+            manager.install(&folder)?;
+            imports::prepare_url(&v2.0, &v2.1, bytes.clone())
+        };
+        assert!(apply(&manager, &fetch).unwrap().is_empty());
+        let kept = info(&manager, "example.one").unwrap();
+        assert_eq!(kept.revision, v1.1, "the same bytes, now from a folder");
+        assert!(matches!(kept.update_source, Some(InstallSource::Folder(_))));
+    }
+
+    #[test]
+    fn an_install_waits_for_a_removal_recorded_during_the_fetch() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        fixture.policy(&[("example.one", &one, AUTO)]);
+        let manager = fixture.manager();
+        let bytes = fixture.artifacts.borrow()[&one.0].clone();
+        let fetch = |manager: &Manager, _: &ManagedPlugin| {
+            let prepared = imports::prepare_url(&one.0, &one.1, bytes.clone())?;
+            prepared.install(manager, &prepared.preview.token, ".")?;
+            manager.change("remove", "example.one")?;
+            imports::prepare_url(&one.0, &one.1, bytes.clone())
+        };
+        assert!(apply(&manager, &fetch).unwrap().is_empty());
+        assert!(info(&manager, "example.one").is_none());
+    }
+
+    #[test]
+    fn an_installed_plugin_an_automatic_entry_names_is_recorded() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        fixture.policy(&[("example.one", &one, AUTO)]);
+        let manager = fixture.manager();
+        let bytes = fixture.artifacts.borrow()[&one.0].clone();
+        let prepared = imports::prepare_url(&one.0, &one.1, bytes).unwrap();
+        prepared
+            .install(&manager, &prepared.preview.token, ".")
+            .unwrap();
+        assert!(fixture.apply(&manager).is_empty());
+        assert!(read_receipt(&manager).unwrap().contains("example.one"));
+    }
+
+    #[test]
+    fn a_removal_is_recorded_before_it_is_committed() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        fixture.policy(&[("example.one", &one, AUTO)]);
+        let manager = fixture.manager();
+        fixture.apply(&manager);
+        let receipt = manager.root.join(RECEIPT);
+        fs::remove_file(&receipt).unwrap();
+        fs::create_dir(&receipt).unwrap();
+        let Err(error) = manager.change("remove", "example.one") else {
+            panic!("expected the removal to fail");
+        };
+        assert!(error.contains("Could not record the removal"), "{error}");
+        assert!(
+            info(&manager, "example.one").is_some(),
+            "nothing was removed"
+        );
+
+        fs::remove_dir(&receipt).unwrap();
+        fs::write(&receipt, "{").unwrap();
+        manager.change("remove", "example.one").unwrap();
+        assert!(info(&manager, "example.one").is_none());
+        assert!(
+            fixture.apply(&fixture.manager()).is_empty(),
+            "an unreadable record stops installs"
+        );
+    }
+
+    #[test]
+    fn an_automatic_install_is_enabled_and_recorded_with_its_install() {
+        let fixture = Fixture::new();
+        let one = fixture.artifact("example.one", "export function apply() {}", "");
+        fixture.policy(&[("example.one", &one, AUTO)]);
+        let manager = fixture.manager();
+        fixture.apply(&manager);
+        let registry: serde_json::Value =
+            serde_json::from_slice(&fs::read(manager.root.join("registry.json")).unwrap()).unwrap();
+        assert_eq!(registry["installed"]["example.one"]["enabled"], true);
+        assert!(read_receipt(&manager).unwrap().contains("example.one"));
     }
 }

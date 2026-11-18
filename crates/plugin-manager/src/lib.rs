@@ -744,13 +744,16 @@ fn publisher(bytes: &[u8], signature: &Event) -> Result<String> {
     publisher_for_hash(&hash(bytes), signature)
 }
 fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
+    signer_for_hash(digest, signature, RELEASE_MARKER)
+}
+fn signer_for_hash(digest: &str, signature: &Event, marker: &str) -> Result<String> {
     signature
         .verify()
         .map_err(|_| "Invalid plugin release event ID or signature")?;
     if signature.kind != RELEASE_KIND || !signature.content.is_empty() {
         return Err("Plugin release must be a NIP-PS event with empty content".into());
     }
-    for (key, expected) in [("x", digest.to_string()), ("t", RELEASE_MARKER.into())] {
+    for (key, expected) in [("x", digest.to_string()), ("t", marker.into())] {
         let values: Vec<&str> = signature
             .tags
             .iter()
@@ -786,6 +789,42 @@ pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
         &serde_json::to_vec_pretty(&event).map_err(err)?,
     )?;
     Ok(publisher)
+}
+
+const POLICY_MARKER: &str = "buzz-managed-plugins-v2";
+
+/// The hex public key that signed the managed plugin policy `bytes`, given its
+/// detached signature: a signed kind 1064 event with empty content whose `x` tag is
+/// the policy's SHA-256 and whose `t` tag is `buzz-managed-plugins-v2`.
+pub fn policy_signer(bytes: &[u8], signature: &str) -> Result<String> {
+    let event: Event = serde_json::from_str(signature)
+        .map_err(|_| "Managed plugin policy signature is not a signed event")?;
+    signer_for_hash(&hash(bytes), &event, POLICY_MARKER)
+}
+
+/// Signs the managed plugin policy at `policy` with `key_text` (nsec or hex), writing
+/// its detached signature beside it. Returns the signer's hex public key, which a
+/// build names as `BUZZ_BUILD_MANAGED_PLUGINS_SIGNER`.
+pub fn sign_policy(policy: &Path, key_text: &str) -> Result<String> {
+    let bytes = fs::read(policy).map_err(err)?;
+    if bytes.len() as u64 > managed::MAX_BYTES {
+        return Err("Managed plugin policy exceeds 256 KiB".into());
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| "Managed plugin policy must be UTF-8".to_owned())?;
+    managed::parse(text)?;
+    let secret = SecretKey::parse(key_text.trim()).map_err(|_| "Invalid signing key")?;
+    let event = EventBuilder::new(RELEASE_KIND, "")
+        .tags([
+            Tag::custom("x", [hash(&bytes).as_str()]),
+            Tag::custom("t", [POLICY_MARKER]),
+        ])
+        .finalize(&Keys::new(secret))
+        .map_err(err)?;
+    let json = serde_json::to_vec(&event).map_err(err)?;
+    let signer = policy_signer(&bytes, std::str::from_utf8(&json).map_err(err)?)?;
+    atomic_write(&managed::signature_path(policy), &json)?;
+    Ok(signer)
 }
 
 /// Sign with the desktop human identity without creating or exporting a credential.
@@ -905,6 +944,7 @@ pub struct Manager {
     existing_profile: bool,
     packaged_fetch: std::sync::Arc<std::sync::Mutex<managed::PackagedFetch>>,
     automatic: automatic::Session,
+    policy_signer: Option<String>,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -932,6 +972,8 @@ impl Manager {
             existing_profile,
             packaged_fetch: Default::default(),
             automatic: Default::default(),
+            policy_signer: (!managed::PACKAGED_SIGNER.is_empty())
+                .then(|| managed::PACKAGED_SIGNER.to_owned()),
         })
     }
     /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
@@ -952,12 +994,28 @@ impl Manager {
             &self.home,
             std::env::var_os(managed::PATH_ENV),
             (!managed::PACKAGED_URL.is_empty()).then_some((managed::PACKAGED_URL, &fetch)),
+            self.policy_signer.as_deref(),
             catalog,
         );
         if let managed::Managed::Ready { automatic, .. } = &mut managed {
             *automatic = self.automatic.changes();
         }
         managed
+    }
+    /// The entry the policy has for `id` right now, read afresh.
+    fn managed_entry(&self, id: &str) -> Option<managed::ManagedPlugin> {
+        let empty = Catalog {
+            profile: self.profile.clone(),
+            location: String::new(),
+            plugins: vec![],
+        };
+        match self.managed(&empty) {
+            managed::Managed::Ready { plugins, .. } => plugins
+                .into_iter()
+                .map(|entry| entry.plugin)
+                .find(|plugin| plugin.id == id),
+            _ => None,
+        }
     }
     /// Installs and updates the policy's automatic entries that this run has not tried.
     /// Blocks on downloads and Git; another apply in progress makes this a no-op.
@@ -969,27 +1027,32 @@ impl Manager {
         !self.external_plugins_paused() && automatic::due(&self.automatic, managed, catalog)
     }
     /// Files that decide what Buzz installs without review, which protected workers
-    /// must not write: the policy file and the packaged policy's stored copy.
+    /// must not write: the policy file and the packaged policy's stored copy, each
+    /// with its signature. The profile's own record lives under [`Self::storage_root`].
     pub fn managed_policy_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> =
+        let mut policies: Vec<PathBuf> =
             managed::path(&self.home, std::env::var_os(managed::PATH_ENV))
                 .into_iter()
                 .collect();
         if !managed::PACKAGED_URL.is_empty() {
-            paths.push(
+            policies.push(
                 self.home
                     .join(managed::packaged_file_name(managed::PACKAGED_URL)),
             );
         }
-        paths
+        policies
+            .into_iter()
+            .flat_map(|path| [managed::signature_path(&path), path])
+            .collect()
     }
     /// Repository access rules for Git imports, from the file beside the profile folders.
     pub fn repository_access(&self) -> access::AccessRules {
         access::load(&self.home, std::env::var_os(access::PATH_ENV))
     }
-    /// Keeps a policy fetched from [`managed::PACKAGED_URL`] if Buzz can use it.
-    pub fn store_packaged_policy(&self, bytes: &[u8]) -> Result<bool> {
-        let stored = managed::store_packaged(&self.home, managed::PACKAGED_URL, bytes);
+    /// Keeps a policy fetched from [`managed::PACKAGED_URL`], with the signature
+    /// fetched beside it if any, when Buzz can use it.
+    pub fn store_packaged_policy(&self, bytes: &[u8], signature: Option<&[u8]>) -> Result<bool> {
+        let stored = managed::store_packaged(&self.home, managed::PACKAGED_URL, bytes, signature);
         self.record_packaged_fetch(stored.as_ref().map(|_| ()).map_err(Clone::clone));
         stored
     }
@@ -1182,6 +1245,20 @@ impl Manager {
         release: &Release,
         source: Option<InstallSource>,
     ) -> Result<Catalog> {
+        self.install_artifact_if(release, source, |_| Ok(Some(false)), || Ok(()))?;
+        self.catalog()
+    }
+    /// Installs `release` only if `check` allows it given the registry as it is under
+    /// the lock: `None` refuses, `Some(true)` also turns the plugin on in the same
+    /// write. `committed` runs after the registry is saved, still under the lock.
+    /// Returns whether it installed.
+    fn install_artifact_if(
+        &self,
+        release: &Release,
+        source: Option<InstallSource>,
+        check: impl FnOnce(&Registry) -> Result<Option<bool>>,
+        committed: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
         let manifest = artifact.manifest.clone();
@@ -1189,55 +1266,57 @@ impl Manager {
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
         let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         let revision = hash(bytes);
-        {
-            let _lock = self.lock()?;
-            let mut registry = self.read()?;
-            let old = registry.installed.get(&manifest.id);
-            if let Some(old) = old {
-                if let Some(previous) = &old.current_signature {
-                    let previous_publisher = publisher_for_hash(&old.current, previous)?;
-                    if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
-                        return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
-                    }
+        let _lock = self.lock()?;
+        let mut registry = self.read()?;
+        let Some(enable) = check(&registry)? else {
+            return Ok(false);
+        };
+        let old = registry.installed.get(&manifest.id);
+        if let Some(old) = old {
+            if let Some(previous) = &old.current_signature {
+                let previous_publisher = publisher_for_hash(&old.current, previous)?;
+                if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
+                    return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
                 }
             }
-            let (previous, previous_source) = old.map_or((None, None), |p| {
-                if p.current == revision {
-                    (p.previous.clone(), p.previous_source.clone())
-                } else {
-                    (Some(p.current.clone()), p.current_source.clone())
-                }
-            });
-            let enabled = old.is_some_and(|p| p.enabled);
-            let update_checks = old.and_then(|p| p.update_checks);
-            let previous_signature = old.and_then(|p| {
-                if p.current == revision {
-                    p.previous_signature.clone()
-                } else {
-                    p.current_signature.clone()
-                }
-            });
-            atomic_write(&self.artifact_path(&manifest.id, &revision), bytes)?;
-            registry.installed.insert(
-                manifest.id.clone(),
-                Installed {
-                    manifest,
-                    current: revision,
-                    current_signature: release.signature.clone(),
-                    current_source: source,
-                    previous,
-                    previous_signature,
-                    previous_source,
-                    enabled,
-                    update_checks,
-                    readme_revision,
-                    icon_png_revision,
-                    icon_jpg_revision,
-                },
-            );
-            self.save(&registry)?;
         }
-        self.catalog()
+        let (previous, previous_source) = old.map_or((None, None), |p| {
+            if p.current == revision {
+                (p.previous.clone(), p.previous_source.clone())
+            } else {
+                (Some(p.current.clone()), p.current_source.clone())
+            }
+        });
+        let enabled = enable || old.is_some_and(|p| p.enabled);
+        let update_checks = old.and_then(|p| p.update_checks);
+        let previous_signature = old.and_then(|p| {
+            if p.current == revision {
+                p.previous_signature.clone()
+            } else {
+                p.current_signature.clone()
+            }
+        });
+        atomic_write(&self.artifact_path(&manifest.id, &revision), bytes)?;
+        registry.installed.insert(
+            manifest.id.clone(),
+            Installed {
+                manifest,
+                current: revision,
+                current_signature: release.signature.clone(),
+                current_source: source,
+                previous,
+                previous_signature,
+                previous_source,
+                enabled,
+                update_checks,
+                readme_revision,
+                icon_png_revision,
+                icon_jpg_revision,
+            },
+        );
+        self.save(&registry)?;
+        committed()?;
+        Ok(true)
     }
     pub fn change(&self, action: &str, id: &str) -> Result<Catalog> {
         valid_id(id)?;
@@ -1302,11 +1381,13 @@ impl Manager {
                     _ => return Err("Unknown management action".into()),
                 }
             }
+            if action == "remove" {
+                // Recorded first, so a removal Buzz kept is never undone by a later
+                // automatic install.
+                automatic::remember_removal(self, id)?;
+            }
             self.save(&registry)?;
             if action == "remove" {
-                if let Err(reason) = automatic::remember(self, id) {
-                    eprintln!("Could not record the removal of {id}: {reason}");
-                }
                 // Commit removal first. A cleanup failure cannot re-enable the plugin.
                 let path = self.root.join("artifacts").join(id);
                 if path.exists() {

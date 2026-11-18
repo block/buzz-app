@@ -1,8 +1,8 @@
 use buzzodz_plugins::{
     automatic::Action,
     managed::{Install, Managed, ManagedSource, ManagedState, Update},
-    pack_release, release_manifest, sign_release_saved, valid_id, Catalog, Manager, Manifest,
-    Result,
+    pack_release, release_manifest, sign_policy, sign_release_saved, valid_id, Catalog, Manager,
+    Manifest, Result,
 };
 use serde_json::json;
 use std::{
@@ -17,6 +17,8 @@ Commands:
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   pack DIST_DIRECTORY FILE  Write the single-file artifact a URL source serves; prints its SHA-256
+  sign-policy FILE         Sign a managed plugin policy with the key in
+                           BUZZ_MANAGED_PLUGINS_SIGNING_KEY; writes FILE.sig
   install DIRECTORY        Install a plugin (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
@@ -102,6 +104,17 @@ fn run() -> Result<()> {
             return Ok(());
         }
         ("pack", _) => return Err("Usage: buzzodz plugin pack DIST_DIRECTORY FILE".into()),
+        ("sign-policy", [file]) => {
+            let key = std::env::var("BUZZ_MANAGED_PLUGINS_SIGNING_KEY")
+                .map_err(|_| "Set BUZZ_MANAGED_PLUGINS_SIGNING_KEY to the signing key")?;
+            let signer = sign_policy(Path::new(file), &key)?;
+            println!(
+                "{}",
+                json!({"signature": format!("{file}.sig"), "signer": signer})
+            );
+            return Ok(());
+        }
+        ("sign-policy", _) => return Err("Usage: buzzodz plugin sign-policy FILE".into()),
         _ => {}
     }
     let manager = Manager::open(home, &profile, false)?;
@@ -235,9 +248,15 @@ fn print_managed(managed: &Managed) {
             source,
             plugins,
             problems,
+            signed,
             automatic,
         } => {
-            println!("Policy: {path}\nManaged by: {source}\n");
+            println!("Policy: {path}\nManaged by: {source}");
+            if *signed {
+                println!("Signed by the build's policy signer: automatic entries apply\n");
+            } else {
+                println!("Not signed by the build's policy signer: entries are recommendations\n");
+            }
             for change in automatic {
                 let action = match change.action {
                     Action::Installed => "Installed",

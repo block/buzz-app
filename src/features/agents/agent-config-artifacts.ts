@@ -5,6 +5,7 @@
 import { PublishRejected } from "../relay/outbox";
 import type { RelayWriter } from "../relay/transport";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
+import type { Priority } from "../relay/reader";
 
 export const ARTIFACT_KIND = 45010;
 export type ArtifactType =
@@ -211,7 +212,7 @@ export const signedEventBytes = (event: RelayEvent) =>
  * stand in for it. */
 export type SnapshotRead = (
   filters: readonly ReadFilter[],
-  options: { signal?: AbortSignal | undefined },
+  options: { signal?: AbortSignal | undefined; priority?: Priority },
 ) => Promise<readonly RelayEvent[]>;
 
 /** The explicit current-heads query. The relay's artifact parser takes only

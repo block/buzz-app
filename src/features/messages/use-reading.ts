@@ -17,6 +17,16 @@ type Reading = {
   session: RelaySession;
   channelId: string;
   latestMessageId?: string | undefined;
+  /** The row at the list's end when it is not the latest, as under an
+   * arrangement: dwelling on it at the bottom catches up through
+   * `latestMessageId`. */
+  endMessageId?: string | undefined;
+  /** True while the list leaves unread rows out of what it shows: it reads
+   * only the rows shown, and never catches up. */
+  partial?: boolean | undefined;
+  /** The list's reader bar: using its controls is reading the list, as
+   * typing in its composer is. */
+  controls?: RefObject<HTMLElement | null> | undefined;
   /** The thread this list shows: its bottom catches up that thread, and its
    * DM reads stop before unread messages it does not show. */
   rootId?: string | undefined;
@@ -43,6 +53,9 @@ export function useReading({
   session,
   channelId,
   latestMessageId,
+  endMessageId,
+  partial = false,
+  controls,
   rootId,
   scroller,
   settled,
@@ -53,6 +66,7 @@ export function useReading({
   // Read at measurement time: a new latest message mutates the list, which
   // already remeasures in the next frame, so it must not restart observation.
   const latestId = useEffectEvent(() => latestMessageId);
+  const endId = useEffectEvent(() => endMessageId ?? latestMessageId);
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -91,7 +105,8 @@ export function useReading({
           ?.closest("[data-panel-workspace]")
           ?.closest("[data-reading-thread]")
           ?.contains(node) ||
-        !!composer?.current?.contains(node));
+        !!composer?.current?.contains(node) ||
+        !!controls?.current?.contains(node));
     // Everything but geometry, so an event can check it without a layout.
     const ready = () =>
       !stopped &&
@@ -159,6 +174,7 @@ export function useReading({
     };
     function bottomId() {
       const latest = latestId();
+      const end = endId();
       if (
         !latest ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
@@ -167,7 +183,7 @@ export function useReading({
       const viewport = element.getBoundingClientRect();
       const row = [
         ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ].find((row) => row.dataset.messageId === latest);
+      ].find((row) => row.dataset.messageId === end);
       const bounds = row?.getBoundingClientRect();
       return bounds &&
         bounds.height > 0 &&
@@ -213,7 +229,7 @@ export function useReading({
     }
     function acquire() {
       try {
-        return session.unread.reading(channelId, rootId);
+        return session.unread.reading(channelId, rootId, partial);
       } catch {
         return undefined; // Membership may disappear between commit and observation.
       }
@@ -265,7 +281,7 @@ export function useReading({
           // A view-only lease keeps that evidence until the next cancellation.
           observed.view([], () => false);
           try {
-            handle = session.unread.reading(channelId, rootId);
+            handle = session.unread.reading(channelId, rootId, partial);
             handle.view([...visible], viewing);
           } catch {
             handle = undefined;
@@ -335,6 +351,8 @@ export function useReading({
     settled,
     restoring,
     composer,
+    controls,
+    partial,
     enabled,
   ]);
 }

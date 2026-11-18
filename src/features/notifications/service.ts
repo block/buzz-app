@@ -258,6 +258,9 @@ export class NotificationsService extends Service implements Notifications {
         .catch(report)
         .finally(() => {
           this.permissionRequest = undefined;
+          // A read sent while the prompt was up says denied whatever the
+          // answer. Supersede it, so its alert follows the published status.
+          this.permissionGeneration++;
           this.publish({ requesting: false });
           // Allow is answered with Buzz in front, and the Dock dot otherwise
           // re-reads its permission only at the next window focus.

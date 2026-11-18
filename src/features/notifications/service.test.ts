@@ -448,6 +448,49 @@ it.each<[string, NotificationPermissionState | undefined, number]>([
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   },
 );
+it.each<[string, NotificationPermissionState, number]>([
+  ["is shown after Allow", "granted", 1],
+  ["is dropped after Don't Allow", "denied", 0],
+])(
+  "an alert whose permission read straddles the answer %s",
+  async (_name, answer, shown) => {
+    const t = firstRun();
+    const request = t.holdRequest();
+    const probe = deferred<NotificationPermissionState>();
+    try {
+      t.service.requestOnEntry();
+      await flush();
+      expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+      vi.mocked(t.platform.permission).mockImplementationOnce(
+        () => probe.promise,
+      );
+      await t.submit();
+      await flush();
+      // The construction read, the entry read and the alert's own probe, which
+      // is sent while the prompt is up and not yet answered.
+      expect(t.platform.permission).toHaveBeenCalledTimes(3);
+      request.answer(answer);
+      await flush();
+      // The request has settled before the probe's reply lands.
+      expect(t.service.snapshot()).toMatchObject({
+        requesting: false,
+        permission: answer,
+      });
+      expect(t.platform.show).not.toHaveBeenCalled();
+    } finally {
+      // What macOS said when the probe was sent: an unanswered prompt.
+      probe.resolve("denied");
+      await flush();
+    }
+    expect(t.platform.show).toHaveBeenCalledTimes(shown);
+    // Settled: a permission granted later brings nothing back.
+    t.permission("granted");
+    await t.service.refreshPermission();
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(shown);
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  },
+);
 it("the Dock indicator re-reads its permission when a request settles", async () => {
   const t = setup({ permission: "default" });
   const refresh = vi.spyOn(t.service.indicator, "refresh");

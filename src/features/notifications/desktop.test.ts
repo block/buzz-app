@@ -75,6 +75,18 @@ function setup(storage?: Window, present?: () => boolean) {
     );
   return { service, submit, navigation, ctx };
 }
+/** A host whose storage works, so the once-per-device record can be claimed. */
+function storage() {
+  const values = new Map<string, string>();
+  return {
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as Window;
+}
 async function flush() {
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }
@@ -151,18 +163,7 @@ it("entering the app on a macOS first run asks the system once; an arriving aler
     sdk.bannerPermission.mockResolvedValue("granted");
     return "granted";
   });
-  const values = new Map<string, string>();
-  const { service, submit } = setup(
-    {
-      localStorage: {
-        getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => void values.set(key, value),
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    } as unknown as Window,
-    () => true,
-  );
+  const { service, submit } = setup(storage(), () => true);
   await submit("first");
   await flush();
   expect(sdk.bannerRequest).not.toHaveBeenCalled();
@@ -412,7 +413,9 @@ it.each(["Win32", "Linux x86_64"])(
   "%s has no Dock IPC or Settings and keeps existing banners",
   async (platform) => {
     vi.stubGlobal("navigator", { platform });
-    const { service, submit, ctx } = setup();
+    // What the macOS bridge would answer on a first run, were it consulted.
+    sdk.bannerPermission.mockResolvedValue("default");
+    const { service, submit, ctx } = setup(storage(), () => true);
     await service.indicator.refresh();
     expect(service.indicator.available).toBe(false);
     expect(
@@ -424,9 +427,14 @@ it.each(["Win32", "Linux x86_64"])(
     await flush();
     await service.indicator.request();
     expect(sdk.permission).not.toHaveBeenCalled();
+    // Entry with a usable device record and a focused window sends nothing.
+    service.requestOnEntry();
+    await flush();
+    expect(sdk.bannerRequest).not.toHaveBeenCalled();
     await submit("banner");
     await flush();
     expect(sdk.show).toHaveBeenCalledOnce();
+    expect(sdk.bannerPermission).not.toHaveBeenCalled();
     expect(sdk.bannerRequest).not.toHaveBeenCalled();
     await ctx.fiber.dispose();
     expect(sdk.indicator).not.toHaveBeenCalled();

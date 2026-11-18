@@ -316,7 +316,9 @@ export class CodexProvider {
    * on its thinking level. Rejects when its check failed some other way, so
    * that answer is unsure rather than no. */
   async recommends(candidate: RecommendedCandidate) {
-    if (this.state.readiness !== "ready") await this.check();
+    // A refresh under way keeps the last readiness meanwhile: wait for it.
+    if (this.state.checking || this.state.readiness !== "ready")
+      await this.check();
     const { readiness, data, error } = this.state;
     if (readiness === "ready" && data) return offers(data, candidate);
     if (error === NOT_INSTALLED || error === SIGN_IN_ERROR) return false;

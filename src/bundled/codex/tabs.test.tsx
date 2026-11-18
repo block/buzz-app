@@ -2957,6 +2957,47 @@ describe("Recommended", () => {
     }
   });
 
+  it("waits for a refresh under way instead of answering from the last check", async () => {
+    const { provider } = fixture();
+    let finish = () => {};
+    // As a refresh that finds Codex signed out, while the last check said ready.
+    vi.spyOn(provider, "check").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            Object.assign(provider, {
+              state: {
+                ...provider.snapshot(),
+                readiness: "attention",
+                checking: false,
+                data: undefined,
+                error: "Codex needs you to sign in.",
+              },
+            });
+            resolve();
+          };
+        }),
+    );
+    Object.assign(provider, {
+      state: {
+        ...provider.snapshot(),
+        readiness: "ready",
+        checking: true,
+        data: { models: [] },
+      },
+    });
+    let answered: boolean | undefined;
+    const asked = provider.recommends(candidate).then((value) => {
+      answered = value;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(answered).toBeUndefined();
+    finish();
+    await asked;
+    expect(answered).toBe(false);
+  });
+
   it("is unsure, rejecting, when its check failed some other way", async () => {
     const { provider } = fixture();
     // As after a check whose catalog read failed.

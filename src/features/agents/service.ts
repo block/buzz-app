@@ -583,8 +583,8 @@ export type AgentHandle = Readonly<{
   owner: string;
   /** Waits while its community reloads in place, until ready again; at once
    * otherwise. Resolves when the reload fails too, so the call fails as on
-   * any reconnect. */
-  settle?(signal: AbortSignal): Promise<void>;
+   * any reconnect. Says whether it waited for a reload. */
+  settle?(signal: AbortSignal): Promise<boolean>;
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
@@ -2592,13 +2592,14 @@ export class AgentsService extends Service implements Agents {
       ready: (key) => this.ready(key),
       reloading: (key) => this.reloading(key),
       settle: async (agent, signal) => {
-        if (!this.reloading(agent.key)) return;
+        if (!this.reloading(agent.key)) return false;
         await readyOwnerReads(
           this.relay(agent.key),
           agent,
           AbortSignal.any([signal, AbortSignal.timeout(RELOAD_WAIT_MS)]),
         ).catch(() => {});
         signal.throwIfAborted();
+        return true;
       },
       agent: (key) => this.agent(key),
       savedAttention: (key) => this.records[key]?.attention ?? EMPTY,

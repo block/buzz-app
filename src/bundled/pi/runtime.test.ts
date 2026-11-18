@@ -4251,7 +4251,10 @@ it("admits a model request made during a reload once its community and the new a
   let route = pending;
   const reloaded = deferred<void>();
   const probed = deferred<void>();
-  const settle = vi.fn(async () => reloaded.promise);
+  const settle = vi.fn(async () => {
+    await reloaded.promise;
+    return true;
+  });
   const routeForTurn = vi.fn(async () => {
     await probed.promise;
     return route;
@@ -4287,6 +4290,40 @@ it("admits a model request made during a reload once its community and the new a
   await expect(admit).resolves.toMatchObject({
     result: { ok: true, revision: 2 },
   });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
+});
+
+it("refuses a model request on a pending route at once outside a reload", async () => {
+  const r = routes(eligible);
+  const pending = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  const routeForTurn = vi.fn(async () => pending);
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => pending,
+    routeForTurn,
+    bindingAdmits: () => ({
+      ok: false,
+      reason: "binding_changed",
+      message: "Checking the model gateway",
+      revision: 1,
+    }),
+  });
+  Object.assign(f.agent, { settle: vi.fn(async () => false) });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  await expect(
+    process?.tool({ op: "admit", agent: self, binding: { v: 1 } }, "gateway"),
+  ).resolves.toMatchObject({
+    result: { ok: false, message: "Checking the model gateway" },
+  });
+  expect(routeForTurn).not.toHaveBeenCalled();
   answered.resolve({ status: "done", answer: 1, text: "" });
   await f.settled(turn);
 });

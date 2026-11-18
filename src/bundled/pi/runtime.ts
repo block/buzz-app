@@ -300,14 +300,15 @@ export class PiRuntime {
           if (call.op === "admit" && this.seam) {
             const handle =
               this.agents.get(call.agent)?.handle ?? this.handle(call.agent);
-            await handle?.settle?.(signal);
-            await this.seam.routeForTurn(
-              call.agent,
-              AbortSignal.any([
-                signal,
-                AbortSignal.timeout(TURN_READINESS_WAIT_MS),
-              ]),
-            );
+            // Outside a reload, a pending route refuses at once.
+            if (await handle?.settle?.(signal))
+              await this.seam.routeForTurn(
+                call.agent,
+                AbortSignal.any([
+                  signal,
+                  AbortSignal.timeout(TURN_READINESS_WAIT_MS),
+                ]),
+              );
             signal.throwIfAborted();
           }
           return answerGateway(this.seam, call);

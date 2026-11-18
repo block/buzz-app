@@ -74,9 +74,9 @@ export function appClient(
     ...(signal ? { signal } : {}),
     ...(agent.settle
       ? {
-          settle: () =>
-            agent.settle?.(signal ?? new AbortController().signal) ??
-            Promise.resolve(),
+          settle: async () => {
+            await agent.settle?.(signal ?? new AbortController().signal);
+          },
         }
       : {}),
     ...(agent.protection

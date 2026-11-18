@@ -463,13 +463,15 @@ export class Pi {
     params: unknown,
   ) {
     let message: Message;
-    // A stopped run or a lost host cancels the Buzz tool it called.
+    // A stopped run or a lost host cancels the Buzz tool or gateway check it
+    // called.
     const controller = new AbortController();
     const signal = AbortSignal.any([
       controller.signal,
       connection.lifetime.signal,
     ]);
-    if (method === "tool") connection.checks.set(id, controller);
+    if (method === "tool" || method === "gateway")
+      connection.checks.set(id, controller);
     try {
       message = {
         id,

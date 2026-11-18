@@ -16,6 +16,8 @@ export function policyRelay({
   acceptPublication,
   latencyMs = 0,
   holdOlder = true,
+  // Release each held older page after this delay instead of on demand.
+  olderPageDelayMs = null,
 }) {
   const sockets = [];
   // A page can close between sending a publication and its acceptance. The
@@ -584,7 +586,7 @@ export function policyRelay({
           return new Promise((resolve, reject) => {
             const abort = () => reject(init.signal.reason);
             init.signal.addEventListener("abort", abort, { once: true });
-            pending.push({
+            const receipt = {
               community,
               channel,
               filter,
@@ -593,7 +595,10 @@ export function policyRelay({
                 init.signal.removeEventListener("abort", abort);
                 resolve(Response.json(result));
               },
-            });
+            };
+            pending.push(receipt);
+            if (olderPageDelayMs !== null)
+              setTimeout(() => receipt.release(), olderPageDelayMs);
           });
         return Response.json(result);
       } catch (error) {

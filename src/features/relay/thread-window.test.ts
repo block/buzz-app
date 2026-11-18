@@ -225,6 +225,55 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,
   ).toBe(oldest.content);
 });
+it("pages older to a read frontier in one read, revalidating the root once", async () => {
+  const newest = Array.from({ length: 303 }, (_, n) => reply(n)).sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const h = await setup((f) => {
+    if (f.ids) return [root];
+    const eligible = newest.filter(
+      (e) =>
+        f.until === undefined ||
+        e.created_at < f.until ||
+        (e.created_at === f.until && e.id > (f.before_id ?? "")),
+    );
+    const page = eligible.slice(0, f.limit);
+    const last = page.at(-1);
+    assert.exists(last);
+    return [
+      ...page,
+      bounds(
+        f,
+        eligible.length > page.length
+          ? { created_at: last.created_at, id: last.id }
+          : null,
+      ),
+    ];
+  });
+  await h.view.refresh();
+  const before = h.requests.length;
+  await h.view.loadMore(50);
+  const read = h.requests.slice(before);
+  expect(read[0]).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
+  expect(read.slice(1).map(([f]) => f?.limit)).toEqual([50, 50, 50, 50]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+  });
+  expect(h.view.snapshot().replies[0]?.createdAt).toBeLessThanOrEqual(50);
+
+  // Requested during a refresh, the load keeps its frontier.
+  const queued = h.requests.length;
+  const refreshing = h.view.refresh();
+  void h.view.loadMore(12);
+  await refreshing;
+  await vi.waitFor(() => {
+    expect(h.view.snapshot().replies[0]?.createdAt).toBeLessThanOrEqual(12);
+    expect(h.view.snapshot().status).toBe("ready");
+  });
+  // One root read for the refresh, one for the queued load.
+  expect(h.requests.slice(queued).filter(([f]) => f?.ids)).toHaveLength(2);
+});
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

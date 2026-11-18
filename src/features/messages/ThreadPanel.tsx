@@ -1081,16 +1081,17 @@ function ThreadMessages({
       (row) => row && session.unread.attention(channelId, row.id).unread,
     ).length;
     const unreadOlder = (threadUnread?.observedCount ?? 0) > loadedUnread;
+    const readThrough =
+      since ?? session.unread.threadReadThrough(channelId, messageId);
     if (
       known &&
       snapshot.direction === "older" &&
       (snapshot.canLoadMore || snapshot.limited) &&
       oldest &&
-      (unreadOlder ||
-        oldest.createdAt >
-          (since ?? session.unread.threadReadThrough(channelId, messageId)))
+      (unreadOlder || oldest.createdAt > readThrough)
     ) {
-      if (snapshot.canLoadMore) void view.loadMore();
+      // Page to the frontier in one read, not one page per decision.
+      if (snapshot.canLoadMore) void view.loadMore(readThrough);
       // Past the page limit the first unread reply stays unknown.
       else setBoundary({ ...boundary, id: null });
       return;

@@ -95,7 +95,9 @@ export type ThreadView = {
   snapshot(): ThreadSnapshot;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
-  loadMore(): Promise<void>;
+  /** Reads older replies; with `through`, keeps paging in this one read until
+   * a reply at or before that time is loaded. */
+  loadMore(through?: number): Promise<void>;
   /** Change exact selection only when verified ancestry belongs to this thread. */
   retarget(messageId: string, signal: AbortSignal): Promise<ThreadRetarget>;
   dispose(): void;
@@ -237,8 +239,9 @@ export function createThreadView({
   let controller: AbortController | undefined;
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
-  /** An older page requested during a background repair, which stays ready. */
-  let older = false;
+  /** An older load requested during a background repair, which stays ready:
+   * the earliest read frontier asked for, or Infinity for one page. */
+  let older: false | number = false;
   /** Resumed rows shown beside the evidence until the first refresh settles.
    * That refresh reads as a fresh view would, in the background. */
   let shown: ThreadResume | undefined;
@@ -667,12 +670,16 @@ export function createThreadView({
     }
   }
 
-  async function run(replace: boolean, established = false) {
+  async function run(replace: boolean, established = false, through?: number) {
     if (disposed) return;
     if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
-      else older = true;
+      else
+        older = Math.min(
+          older === false ? Infinity : older,
+          through ?? Infinity,
+        );
       return;
     }
     if (!canAccess()) {
@@ -813,10 +820,12 @@ export function createThreadView({
       // Where the loop passed the range the reader had, so a fill that never
       // reaches a pre-refresh reply can settle back on it.
       let range: { cursor: ThreadCursor | undefined } | undefined;
+      let oldest = Infinity;
       for (
         let page = 0;
         page < targetPages ||
-        (mode === "older" && !reached && page < MAX_PAGES);
+        (mode === "older" && !reached && page < MAX_PAGES) ||
+        (through !== undefined && oldest > through && nextPages < MAX_PAGES);
         page++
       ) {
         let response: readonly RelayEvent[];
@@ -892,6 +901,8 @@ export function createThreadView({
         // other content kinds, and appended auxiliaries do not consume its page limit.
         const replies = events.filter(isReply).sort(compare);
         reached ||= replies.some((event) => kept.has(event.id));
+        for (const event of replies)
+          oldest = Math.min(oldest, event.created_at);
         if (
           !bounds &&
           replies.some((event) => nextCursor && compare(event, nextCursor) <= 0)
@@ -976,9 +987,10 @@ export function createThreadView({
           const established = again === "established";
           again = false;
           void run(true, established);
-        } else if (older && !disposed) {
+        } else if (older !== false && !disposed) {
+          const through = older;
           older = false;
-          void run(false);
+          void run(false, false, through);
         }
       }
     }
@@ -1073,7 +1085,7 @@ export function createThreadView({
       },
       retarget,
       refresh: () => run(true),
-      loadMore: () => run(false),
+      loadMore: (through?: number) => run(false, false, through),
       dispose() {
         listeners.clear();
         purge(true);

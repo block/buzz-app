@@ -489,12 +489,13 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     let claude_hooks = runs_protected_claude(&plugin, &declared.id, protected);
     let mut command = if let Some(protection) = protection {
         let mut protection = protection.at_home()?;
-        // A managed policy can install plugins without review. A missing file is
-        // protected by name; one in a missing folder is left to the env that named it.
+        // A signed managed policy can install plugins without review. A missing file,
+        // even in missing folders, is protected by name. Only a path whose folders are
+        // all missing up to `/` can't be, and a worker can't sign a policy there.
         protection.read_only_paths.extend(
             policies
                 .into_iter()
-                .filter(|path| path.parent().is_some_and(std::path::Path::is_dir)),
+                .filter(|path| protection::protectable(path)),
         );
         let controls = controls.ok_or("Agent controls are unavailable")?;
         std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;

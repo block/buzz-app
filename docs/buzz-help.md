@@ -1621,6 +1621,21 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   why and stops. In a community that advertises no archive authority, Delete
   skips the archive. **Forget** drops an agent that can't reach its community
   from this device only; it may stay in that community's channels.
+- **Settings → Agent setup → Base instructions** shows what Buzz tells every
+  agent on this device before the agent's own instructions, one section per
+  topic. For Publishing, Progress, Etiquette, Agent Memory, Engineering
+  Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
+  **Custom** with your own text of up to 4 KiB, then **Save**. The other
+  sections are always on, or Buzz sets them for the conversation; **All
+  sections** shows the default text of each. A choice applies to all your
+  agents on this device, not on your other devices, and each agent gets it
+  from its next turn. After the first choice that is not Default, older Codex
+  conversations start over once. Agents that run outside the app, in the
+  standalone agent host, get a change when that host next starts. Mesh agents
+  do not get the base instructions. When a later
+  Buzz version changes the default of a section you turned off or replaced,
+  your choice stays, and the section says **Default changed** until you choose
+  **Keep mine** or **Reset to default**.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

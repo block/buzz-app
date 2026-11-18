@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
+import { BaseInstructions } from "../features/agents/BaseInstructions";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
@@ -120,6 +121,7 @@ export function AgentSettings({
           )}
         </SettingsGroup>
       </div>
+      {agents && <BaseInstructions store={agents.storage} />}
       {active && mentionError && (
         <ToastNotice
           title="Agent preference wasn’t saved"

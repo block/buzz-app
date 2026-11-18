@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import type { Components, ExtraProps } from "react-markdown";
@@ -30,18 +31,17 @@ import {
 import {
   attachmentFor,
   attachmentMetadata,
+  authoredWidth,
   bodyUrl,
   inertHtml,
   signedUrl,
 } from "./attachments";
 import styles from "./GitHub.module.css";
 
-function containsImage(node: NonNullable<ExtraProps["node"]>): boolean {
-  return (
-    node.tagName === "img" ||
-    node.children.some(
-      (child) => child.type === "element" && containsImage(child),
-    )
+function images(node: NonNullable<ExtraProps["node"]>): unknown[] {
+  if (node.tagName === "img") return [node.properties.src];
+  return node.children.flatMap((child) =>
+    child.type === "element" ? images(child) : [],
   );
 }
 
@@ -189,6 +189,7 @@ function EmbeddedAttachment({
   children,
   fallback,
   caption,
+  width,
   onMedia,
 }: {
   source: string;
@@ -197,6 +198,8 @@ function EmbeddedAttachment({
   children(src: string): ReactNode;
   fallback: ReactNode;
   caption: ReactNode;
+  /** The authored width, which bounds the frame before the media loads. */
+  width?: number | undefined;
   /** The signed link `src` loaded, or failed. */
   onMedia?: ((loaded: boolean, src: string) => void) | undefined;
 }) {
@@ -218,6 +221,11 @@ function EmbeddedAttachment({
   return (
     <div
       className={styles.attachment}
+      style={
+        width
+          ? ({ "--attachment-width": `${width}px` } as CSSProperties)
+          : undefined
+      }
       onLoadCapture={() => show(true)}
       onLoadedDataCapture={() => show(true)}
       // A video player reloads after a network failure (code 2) on its own,
@@ -264,13 +272,17 @@ const components: Components = {
   a: function MarkdownLink({ href, children, node }) {
     const media = useContext(MediaContext);
     if (!href) return <>{children}</>;
-    if (node && containsImage(node))
+    const linked = node ? images(node) : [];
+    if (linked.length)
       return (
         <div>
           {children}
-          <a href={href} target="_blank" rel="noreferrer">
-            {href}
-          </a>
+          {/* GitHub links an uploaded image to itself; the preview opens it. */}
+          {!linked.every((src) => src === href) && (
+            <a href={href} target="_blank" rel="noreferrer">
+              {href}
+            </a>
+          )}
         </div>
       );
     return media(href, children, false, plainText(children) || undefined);
@@ -394,6 +406,7 @@ export const GitHubBody = memo(function GitHubBody({
   const media: Media = (source, label, image = false, description) => {
     const attachment = attachmentFor(source, metadata, image);
     const signed = signedUrl(source, metadata);
+    const width = authoredWidth(source, metadata);
     const link = (
       <a href={source} target="_blank" rel="noreferrer">
         {label || attachment?.name || "Open attachment"}
@@ -409,6 +422,7 @@ export const GitHubBody = memo(function GitHubBody({
           onMedia: (loaded: boolean, link: string) =>
             renew(source, loaded, link),
         })}
+        width={width}
         fallback={link}
         caption={
           !image && Children.toArray(label).some((part) => part !== source)

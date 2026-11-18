@@ -871,6 +871,36 @@ it.each([`![Linked image](${image})`, `**![Linked image](${image})**`])(
   },
 );
 
+it("omits the link GitHub adds from an uploaded image to itself", () => {
+  render(
+    <GitHubBody
+      url={url}
+      body={`<a href="${image}"><img src="${image}" alt="Self-linked"></a>`}
+    />,
+  );
+  fireEvent.load(screen.getByAltText("Self-linked"));
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+});
+
+it("bounds an image's frame by its authored width before it loads", () => {
+  const { container } = render(
+    <GitHubBody
+      url={url}
+      body={`![Narrow](${image})\n\n![Unsized](${before})`}
+      bodyHtml={`<img src="${image}" width="340"><img src="${before}">`}
+    />,
+  );
+  const [narrow, unsized] = container.querySelectorAll<HTMLElement>(
+    "[data-media-preview]",
+  );
+  expect(
+    narrow?.parentElement?.style.getPropertyValue("--attachment-width"),
+  ).toBe("340px");
+  expect(
+    unsized?.parentElement?.style.getPropertyValue("--attachment-width"),
+  ).toBe("");
+});
+
 it("preserves linked HTML images and media fallback destinations without nested links", () => {
   const { container } = render(
     <GitHubBody

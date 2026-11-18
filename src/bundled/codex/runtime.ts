@@ -1934,7 +1934,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey), { owner: request.agent.owner, names: this.reads(request.agent.key)?.authorNames })}`,
                 ),
               });
               active.reply = request;
@@ -2351,6 +2351,7 @@ export class CodexRuntime {
         starting ? Promise.resolve([]) : reads.read(filters, signal),
       reads,
       reads.workflowAuthority(),
+      request.agent.owner,
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -3036,7 +3037,7 @@ export class CodexRuntime {
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,
             input: input(
-              `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+              `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey), { owner: request.agent.owner, names: this.reads(request.agent.key)?.authorNames })}`,
             ),
             model,
             effort,

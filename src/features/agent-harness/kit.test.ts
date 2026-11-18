@@ -254,6 +254,39 @@ describe("harnessKit.conversation", () => {
 });
 
 describe("harnessKit.turnPrompt", () => {
+  it("keeps owner-relayed attribution in the event and its later history", async () => {
+    const root = message("1", "Kick off");
+    const event = reply("2", "1", "Worker result");
+    event.tags.push(["relayed-from", self]);
+    const { kit, delivery } = setup({ thread: [root, event] });
+    const d = delivery({ type: "mention", event });
+    const conversation = await kit.conversation(d, "thread");
+    if (!conversation) throw new Error("not admitted");
+    const { text } = await kit.turnPrompt(d, conversation);
+    const record = JSON.parse(
+      text.match(/<buzz-event>\n([^\n]*)/)?.[1] ?? "{}",
+    );
+    expect(record.relayed_from).toEqual({ pubkey: self });
+    const later = reply("3", "1", "Continue");
+    const followupDelivery = delivery({ type: "mention", event: later });
+    const followupConversation = await kit.conversation(
+      followupDelivery,
+      "thread",
+    );
+    if (!followupConversation) throw new Error("not admitted");
+    const { text: followup } = await kit.turnPrompt(
+      followupDelivery,
+      followupConversation,
+    );
+    const history = JSON.parse(
+      followup.match(/<thread-context>\n([^\n]*)/)?.[1] ?? "{}",
+    );
+    expect(
+      history.messages.find((item: { id: string }) => item.id === event.id)
+        .relayed_from,
+    ).toEqual(record.relayed_from);
+  });
+
   it("shows what the session has not seen, takes notes and restores them", async () => {
     const root = message("1", "Kick off");
     const earlier = reply("2", "1", "Some context");

@@ -17,6 +17,25 @@ export type AuthorNames = Readonly<{
   display_name?: string;
 }>;
 
+/** Metadata for text another agent wrote, relayed through the owner's account.
+ * The signer stays the event's pubkey; this tag never grants owner authority. */
+export function relayedMetadata(
+  event:
+    | Readonly<{ pubkey: string; tags: readonly (readonly string[])[] }>
+    | undefined,
+  owner?: string,
+  names?: (pubkey: string) => AuthorNames | undefined,
+) {
+  const pubkey =
+    owner && event?.pubkey === owner
+      ? event.tags?.find(
+          ([tag, value]) =>
+            tag === "relayed-from" && /^[a-f0-9]{64}$/.test(value ?? ""),
+        )?.[1]
+      : undefined;
+  return pubkey ? { relayed_from: { pubkey, ...names?.(pubkey) } } : {};
+}
+
 /** A message with its author's names beside its pubkey. A protection plugin
  * checks them with the rest of the text; they are not part of the signed
  * event. */
@@ -41,7 +60,12 @@ export const eventBody = (
   event: EventData,
   request: string,
   names?: AuthorNames,
-) => `${quoted(withNames(event, names))}\nRequest: ${quoted(request)}`;
+  provenance?: Readonly<{
+    owner?: string | undefined;
+    names?: ((pubkey: string) => AuthorNames | undefined) | undefined;
+  }>,
+) =>
+  `${quoted({ ...withNames(event, names), ...relayedMetadata(event, provenance?.owner, provenance?.names) })}\nRequest: ${quoted(request)}`;
 
 /** Who sent the event in an `eventBody`, and its request; undefined for any
  * other text. */

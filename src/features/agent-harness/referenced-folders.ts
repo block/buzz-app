@@ -1,7 +1,7 @@
 // Folders and skills an owner's message references with `!` and `/` chips,
 // handed to the agent for that turn. Anyone in a chat can sign a chip, so only
-// the owner's own chips count: a folder only when their repositories folder on
-// this device lists it now, a skill only when it names this agent.
+// the owner's own, non-relayed chips count: a folder only when their repositories
+// folder on this device lists it now, a skill only when it names this agent.
 import { invoke } from "@tauri-apps/api/core";
 import {
   repositoryFolders,
@@ -9,6 +9,7 @@ import {
 } from "../communities/repositories";
 import { readMessageTokens } from "../messages/message-tokens";
 import type { EventData } from "../relay/events";
+import { relayedMetadata } from "./turn-records";
 
 export type ReferencedFolders = Readonly<{
   /** The prompt section; empty when there are none. */
@@ -37,7 +38,13 @@ export async function referencedFolders(
   list = (path: string) =>
     invoke<readonly RepositoryFolder[]>("repositories_folder_list", { path }),
 ): Promise<ReferencedFolders> {
-  if (!owner || !scope || event.pubkey !== owner) return NONE;
+  if (
+    !owner ||
+    !scope ||
+    event.pubkey !== owner ||
+    relayedMetadata(event, owner).relayed_from
+  )
+    return NONE;
   let ids: string[];
   try {
     ids = readMessageTokens(event.tags)
@@ -77,7 +84,12 @@ export function referencedSkills(
   owner: string | undefined,
   agent: string,
 ) {
-  if (!owner || event.pubkey !== owner) return "";
+  if (
+    !owner ||
+    event.pubkey !== owner ||
+    relayedMetadata(event, owner).relayed_from
+  )
+    return "";
   let paths: string[];
   try {
     paths = readMessageTokens(event.tags)

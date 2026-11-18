@@ -1,5 +1,9 @@
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { quoted, withNames } from "../../features/agent-harness/turn-records";
+import {
+  quoted,
+  relayedMetadata,
+  withNames,
+} from "../../features/agent-harness/turn-records";
 import { attestedOwner } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import { hasEventProof } from "../../features/relay/events";
@@ -19,6 +23,7 @@ export async function conversationHistory(
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
   profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
   signingAuthority?: string,
+  owner?: string,
 ) {
   const { channelId, root } = conversation;
   const filter = {
@@ -60,16 +65,27 @@ export async function conversationHistory(
       ])
     : [];
   const owners = new Map<string, { owner: string; profile: RelayEvent }>();
+  const source = relayedMetadata(event, owner).relayed_from?.pubkey;
   const authors = [
-    ...new Set(found.map((item) => messageAuthor(item, signingAuthority))),
+    ...new Set(
+      found.flatMap((item) => {
+        const source = relayedMetadata(item, owner).relayed_from?.pubkey;
+        return [
+          messageAuthor(item, signingAuthority),
+          ...(source ? [source] : []),
+        ];
+      }),
+    ),
   ];
   if (profiles && found.length)
     // The event's author too, so the turn can name them beside its pubkey.
     await profiles
-      .profiles([...new Set([event.pubkey, ...authors])])
+      .profiles([
+        ...new Set([event.pubkey, ...(source ? [source] : []), ...authors]),
+      ])
       .catch(() => {});
   // With no history, only the name is wanted, which a slow read can skip.
-  else await readAuthorNames(profiles, [event]);
+  else await readAuthorNames(profiles, [event], signingAuthority, owner);
   if (profiles && found.length) {
     await Promise.all(
       authors.map(async (author) => {
@@ -81,6 +97,7 @@ export async function conversationHistory(
       }),
     );
   }
+  const originals = new Map(earlier.map((item) => [item.id, item]));
   const messages = foldMessages(channelId, "", [...earlier, ...changes], {
     includeReplies: true,
     signingAuthority,
@@ -101,6 +118,11 @@ export async function conversationHistory(
         {
           id: message.id,
           pubkey: message.authorId,
+          ...relayedMetadata(
+            originals.get(message.id),
+            owner,
+            profiles?.authorNames?.bind(profiles),
+          ),
           created_at: message.createdAt,
           content: (message.sourceContent ?? message.content).slice(0, 4000),
         },

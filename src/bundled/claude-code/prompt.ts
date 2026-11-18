@@ -20,6 +20,7 @@ import {
   type AuthorNames,
   eventBody,
   quoted,
+  relayedMetadata,
   withNames,
 } from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
@@ -112,6 +113,8 @@ export type TurnInput = Readonly<{
   /** The relay key that posts messages for others, whose context records show
    * the person they are for, as Codex history does. */
   signingAuthority?: string;
+  /** The agent’s owner, for owner-signed relay attribution only. */
+  owner?: string | undefined;
 }>;
 
 /** One turn: unseen thread context, routing context, then the event. Each
@@ -187,6 +190,7 @@ export function turnPrompt(input: TurnInput) {
               {
                 id: message.id,
                 pubkey,
+                ...relayedMetadata(message, input.owner, input.names),
                 created_at: message.created_at,
                 content: message.content.slice(0, CONTENT_LIMIT),
               },
@@ -214,7 +218,7 @@ export function turnPrompt(input: TurnInput) {
           ),
           section(
             EVENT,
-            eventBody(event, event.content, input.names?.(event.pubkey)),
+            eventBody(event, event.content, input.names?.(event.pubkey), input),
           ),
         ]),
   );

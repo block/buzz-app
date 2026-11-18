@@ -2,7 +2,7 @@
 import type { AgentReads } from "../agents/reads";
 import type { EventData } from "../relay/events";
 import { messageAuthor } from "../relay/fold";
-import type { AuthorNames } from "./turn-records";
+import { type AuthorNames, relayedMetadata } from "./turn-records";
 
 /** How long a turn waits for profiles before naming whom it can. */
 export const AUTHOR_NAMES_TIMEOUT_MS = 2_000;
@@ -15,12 +15,19 @@ export async function readAuthorNames(
   reads: Pick<AgentReads, "profiles" | "authorNames"> | undefined,
   messages: readonly EventData[],
   signingAuthority?: string,
+  owner?: string,
 ): Promise<(pubkey: string) => AuthorNames | undefined> {
   const names = reads?.authorNames?.bind(reads);
   if (!reads || !names) return () => undefined;
   const pubkeys = [
     ...new Set(
-      messages.map((message) => messageAuthor(message, signingAuthority)),
+      messages.flatMap((message) => {
+        const source = relayedMetadata(message, owner).relayed_from?.pubkey;
+        return [
+          messageAuthor(message, signingAuthority),
+          ...(source ? [source] : []),
+        ];
+      }),
     ),
   ];
   if (pubkeys.length) {

@@ -46,6 +46,15 @@ it("grants only folders the owner referenced that their repositories folder list
   expect(other).toEqual({ section: "", directories: [] });
   expect(list).not.toHaveBeenCalled();
 
+  // The owner signs forwarded text, but the source agent cannot choose folders.
+  const relayed = event(owner, listed.path);
+  relayed.tags.push(["relayed-from", "b".repeat(64)]);
+  expect(await referencedFolders(relayed, owner, scope, list)).toEqual({
+    section: "",
+    directories: [],
+  });
+  expect(list).not.toHaveBeenCalled();
+
   // A folder the listing no longer has is never granted.
   list.mockResolvedValueOnce([]);
   expect(
@@ -159,6 +168,10 @@ it("names only skills the owner chose for this agent, quoted", () => {
   expect(
     referencedSkills(signed("b".repeat(64), skill(agent)), owner, agent),
   ).toBe("");
+  // Forwarding another agent's chip does not invoke a skill as the owner.
+  const relayed = signed(owner, skill(agent));
+  relayed.tags.push(["relayed-from", "b".repeat(64)]);
+  expect(referencedSkills(relayed, owner, agent)).toBe("");
   // A chip for another agent, a folder, no owner or a malformed tag name nothing.
   expect(
     referencedSkills(signed(owner, skill("d".repeat(64))), owner, agent),

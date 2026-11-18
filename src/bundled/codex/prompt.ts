@@ -109,11 +109,15 @@ export function turnInput(
   wake?: ConversationWake,
   /** The names shown beside the event author's pubkey, when known. */
   names?: AuthorNames,
+  /** Owner and profile lookup for owner-signed relay attribution. */
+  provenance?: Parameters<typeof eventBody>[3],
 ) {
   const section = steering
     ? "new-message-arrived-while-you-were-working"
     : "buzz-event";
-  const body = wake ? wakeSection(wake) : eventBody(event, text, names);
+  const body = wake
+    ? wakeSection(wake)
+    : eventBody(event, text, names, provenance);
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };

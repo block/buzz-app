@@ -3370,8 +3370,10 @@ it("gives a fresh wake the thread's earlier messages of its same second, and non
 });
 it("names each message's author beside their pubkey", async () => {
   const f = fixture();
+  const source = "e".repeat(64);
   f.snapshot.session.profiles.snapshot.mockReturnValue(
     new Map([
+      [source, { name: "Worker" } as Profile],
       [
         owner,
         {
@@ -3384,6 +3386,7 @@ it("names each message's author beside their pubkey", async () => {
   const delivery = f.delivery("@Codex look");
   if (!("event" in delivery.trigger)) throw new Error("Expected a mention");
   const trigger = delivery.trigger.event as EventData;
+  trigger.tags.push(["relayed-from", source]);
   f.read.mockResolvedValueOnce([
     {
       ...trigger,
@@ -3407,11 +3410,19 @@ it("names each message's author beside their pubkey", async () => {
       username: "sal",
       display_name: "Sal M",
       content: "EARLIER",
+      relayed_from: { pubkey: source, display_name: "Worker" },
     },
   ]);
   expect(text.match(/<buzz-event[^>]*>\n([^\n]*)/)?.[1] ?? "").toContain(
     `"pubkey":"${owner}","username":"sal","display_name":"Sal M"`,
   );
+  const current = JSON.parse(
+    text.match(/<buzz-event[^>]*>\n([^\n]*)/)?.[1] ?? "{}",
+  );
+  expect(current.relayed_from).toEqual({
+    pubkey: source,
+    display_name: "Worker",
+  });
 });
 it("sets no deadline of its own on a turn", async () => {
   // Any deadline Buzz set would already have passed.

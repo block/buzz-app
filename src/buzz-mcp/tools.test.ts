@@ -1015,6 +1015,37 @@ it("searches one author's messages since a time across channels, before the limi
   );
 });
 
+it("preserves owner-relayed attribution in read history and ignores other signers' tags", async () => {
+  const { client } = fake([
+    profile(alice, "Alice"),
+    profile(me, "Worker"),
+    event({
+      id: root,
+      content: "relayed result",
+      tags: [
+        ["h", "chan"],
+        ["relayed-from", me],
+      ],
+    }),
+    event({
+      id: nested,
+      pubkey: bob,
+      content: "other result",
+      tags: [
+        ["h", "chan"],
+        ["relayed-from", me],
+      ],
+    }),
+  ]);
+  const answer = await read({ ...client, owner: alice }, { channel: "chan" });
+  expect(answer).toContain(
+    `from ${alice} "Alice" relayed_from: {"pubkey":"${me}","display_name":"Worker"}`,
+  );
+  expect(
+    answer.split("\n").find((line) => line.startsWith(nested)),
+  ).not.toContain("relayed_from");
+});
+
 it("tells apart people with the same name, and where each message is", async () => {
   const { client } = fake([
     profile(alice, "Sam"),

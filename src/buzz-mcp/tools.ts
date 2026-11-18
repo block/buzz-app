@@ -1,3 +1,7 @@
+import {
+  quoted,
+  relayedMetadata,
+} from "../features/agent-harness/turn-records";
 import { messageAuthor } from "../features/relay/fold";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
@@ -2437,10 +2441,23 @@ class Tools {
       ? await this.client.query([{ kinds: [40003], "#e": ids, limit: 500 }])
       : [];
     const messages = edited([...events, ...edits]);
-    const names = await this.names(messages.map((event) => event.pubkey));
-    return messages.map((event) =>
-      messageLine(event, names.get(event.pubkey), scope),
+    const names = await this.names(
+      messages.flatMap((event) => {
+        const source = relayedMetadata(event, this.client.owner).relayed_from
+          ?.pubkey;
+        return [event.pubkey, ...(source ? [source] : [])];
+      }),
     );
+    return messages.map((event) => {
+      const source = relayedMetadata(event, this.client.owner).relayed_from;
+      const name = source && names.get(source.pubkey);
+      return messageLine(
+        event,
+        names.get(event.pubkey),
+        scope,
+        source && { ...source, ...(name ? { display_name: name } : {}) },
+      );
+    });
   }
 
   /** NIP-30 tags for the community emoji `content` uses, as the composer
@@ -2528,6 +2545,7 @@ function messageLine(
   event: BuzzEvent,
   name: string | undefined,
   scope: Readonly<{ channel?: string; root?: string }>,
+  relayed?: { pubkey: string; display_name?: string },
 ) {
   const channel = tag(event, "h");
   const owner = tag(event, "auth");
@@ -2537,6 +2555,7 @@ function messageLine(
     event.id,
     `from ${event.pubkey}`,
     name && JSON.stringify(name),
+    relayed && `relayed_from: ${quoted(relayed)}`,
     owner && `claimed owner ${owner}`,
     channel && channel !== scope.channel && `in ${channel}`,
     thread && thread !== scope.root && `re ${thread}`,

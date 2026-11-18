@@ -34,6 +34,7 @@ import type {
   MessageRenderer,
   IdentityMark,
   MessageAction,
+  SendTransform,
   ContributionReader,
   PageTabsProps,
   ConversationWorkspaceProps,
@@ -86,6 +87,9 @@ export type Conversation = {
   annotators: ContributionReader<ComposerAnnotator>;
   /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
   registerAnnotator(annotator: ComposerAnnotator): void;
+  sendTransforms: ContributionReader<SendTransform>;
+  /** Rewrites, consumes or blocks new composer messages before they are sent. */
+  registerSendTransform(transform: SendTransform): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -190,6 +194,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly completionEntries;
   readonly annotators;
   private readonly annotatorEntries;
+  readonly sendTransforms;
+  private readonly sendTransformEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -242,6 +248,12 @@ export class ConversationService extends Service implements Conversation {
     this.annotators = {
       snapshot: annotators.snapshot,
       subscribe: annotators.subscribe,
+    };
+    const sendTransforms = createContributions<SendTransform>(ctx);
+    this.sendTransformEntries = sendTransforms;
+    this.sendTransforms = {
+      snapshot: sendTransforms.snapshot,
+      subscribe: sendTransforms.subscribe,
     };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
@@ -414,6 +426,23 @@ export class ConversationService extends Service implements Conversation {
   registerAnnotator(value: ComposerAnnotator) {
     validate(value);
     this.annotatorEntries.register(this.ctx, value);
+  }
+  registerSendTransform(value: SendTransform) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      typeof value.matches !== "function" ||
+      typeof value.transform !== "function" ||
+      (value.order !== undefined &&
+        typeof value.order !== "number" &&
+        typeof value.order !== "function")
+    )
+      throw new Error(
+        "A send transform needs an id, title, matcher and transform",
+      );
+    this.sendTransformEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

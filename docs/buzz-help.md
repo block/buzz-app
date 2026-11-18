@@ -892,6 +892,11 @@ and are asked to sign in again in Buzz.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
+- A plugin can rewrite or take over a new message when you press Send, for example
+  to format it, edit your previous message, or react to one instead of posting
+  text. If it fails, nothing is sent and your draft stays with the error under the
+  message box. Attachments, GIFs and forwards skip it, as do edits and agent
+  messages.
 - **Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
   makes plain Up Arrow edit your most recent editable message when the channel
   or thread composer is empty, instead of selecting messages. This device-local

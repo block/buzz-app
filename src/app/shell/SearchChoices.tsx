@@ -443,7 +443,9 @@ export function SearchChoices({
   const place = views?.place;
   const keys = destinations.map(({ key }) => key);
   const highlight = useSearchHighlight({
-    query,
+    // A view over the results has a highlight of its own, so an Enter
+    // waiting for results never runs one of its rows.
+    query: onBack ? `\u0000${query}` : query,
     keys,
     onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
     open,

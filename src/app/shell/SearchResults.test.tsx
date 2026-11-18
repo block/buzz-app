@@ -6375,6 +6375,92 @@ it("opens a filter guide from Filters or ?, adds a filter for its picker, and cl
   }
 });
 
+it("keeps the filter guide to itself: a waiting Enter, Settings rows and a restored from:me", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(wire.transport);
+  const change = vi.fn();
+  const openSetting = vi.fn();
+  function Harness({
+    initial,
+    inlineSettings,
+  }: {
+    initial: string;
+    inlineSettings?: SearchGroup[];
+  }) {
+    const [query, setQuery] = useState(initial);
+    return (
+      <SearchResults
+        session={owner.session}
+        query={query}
+        onQueryChange={(next) => {
+          change(next);
+          setQuery(next);
+        }}
+        input={createRef<HTMLInputElement>()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={() => {}}
+        inlineSettings={inlineSettings}
+      />
+    );
+  }
+  try {
+    // Enter while the search is still out waits for its first row; opening
+    // the guide drops that wait rather than running the guide's first row.
+    render(<Harness initial="deploy" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByRole("group", { name: "Filters" })).toBeVisible();
+    expect(change).not.toHaveBeenCalled();
+    cleanup();
+    // Settings that match the text stay out of the guide.
+    render(
+      <Harness
+        initial="appearance"
+        inlineSettings={[
+          {
+            label: "Settings",
+            destinations: [
+              {
+                key: "appearance-setting",
+                label: "Appearance",
+                icon: ChatCircleIcon,
+                run: openSetting,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("option", { name: /Appearance/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.queryByRole("option", { name: /Appearance/ })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(openSetting).not.toHaveBeenCalled();
+    cleanup();
+    // A remembered from:me comes back as its chip.
+    render(<Harness initial="from:me deploy" />);
+    expect(
+      screen.getByRole("button", { name: "Remove author me" }),
+    ).toHaveTextContent("from:me");
+    expect(screen.getByRole("combobox", { name: "Search Buzz" })).toHaveValue(
+      "deploy",
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("picks an in: channel from the joined channels and an in:@ person like from:@", async () => {
   const relay = keypair(),
     viewer = keypair(),

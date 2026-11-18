@@ -303,7 +303,14 @@ export function SearchResults({
         kind === "in" && !person
           ? list.channels.find(({ id }) => id === value)
           : undefined;
-      if (person) {
+      if (kind === "from" && isViewerHandle(value))
+        restored.push({
+          operand,
+          text: operand,
+          edit: operand,
+          label: "Remove author me",
+        });
+      else if (person) {
         const name = resolveName(
           pubkey,
           profiles.get(pubkey)?.name ?? pubkey.slice(0, 10),
@@ -1926,15 +1933,8 @@ export function SearchResults({
   };
   /** A guide example as the chip choosing it would make, when it is one. */
   const exampleChip = (example: string): SearchChip | undefined => {
-    const date = restoreChips(example).chips[0];
-    if (date) return date;
-    if (/^from:@?me$/i.test(example))
-      return {
-        operand: example,
-        text: example,
-        edit: example,
-        label: "Remove author me",
-      };
+    const restored = restoreChips(example).chips[0];
+    if (restored) return restored;
     const channel = /^in:#(.+)$/.exec(example)?.[1];
     const found = channel
       ? channels.find(({ name }) => name === channel)
@@ -2401,7 +2401,8 @@ export function SearchResults({
             ),
           );
         }}
-        inlineSettings={inlineSettings}
+        // The guide is the only list while it shows.
+        inlineSettings={guideOpen ? undefined : inlineSettings}
         query={query}
         onQueryChange={onQueryChange}
         views={views}

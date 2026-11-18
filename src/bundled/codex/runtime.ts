@@ -59,16 +59,21 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
 import {
   referencedFolders,
   referencedSkills,
 } from "../../features/agent-harness/referenced-folders";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
-import { MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  abortable as readUntilAborted,
+  MemoryReads,
+} from "../../features/agent-harness/core-memory";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
   SessionPlace,
@@ -94,7 +99,10 @@ import {
   validWorkspace,
   type Config,
 } from "./config";
-import { unsupportedSynced } from "../../features/agents/agent-config";
+import {
+  unsupportedSynced,
+  unverifiedSynced,
+} from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
 import { buzzHome } from "./setup";
 import {
@@ -108,6 +116,7 @@ import {
 import {
   AppServer,
   listModels,
+  listVoices,
   Refused,
   type Spawn,
   type ToolCall,
@@ -1759,6 +1768,26 @@ export class CodexRuntime {
         await entry.after;
         signal.throwIfAborted();
         const rpc = await server.opening;
+        const voice = settings.voice;
+        if (voice) {
+          signal.throwIfAborted();
+          const voices = await readUntilAborted(
+            listVoices(rpc).catch(() => undefined),
+            signal,
+          );
+          if (!voices)
+            throw new Error(
+              seat.synced?.voice
+                ? unverifiedSynced("voice", voice, "this Codex")
+                : `Couldn't check the selected Codex voice "${voice}". Try again, or change it in Settings.`,
+            );
+          if (!voices.includes(voice))
+            throw new Error(
+              seat.synced?.voice
+                ? unsupportedSynced("voice", voice, "this Codex")
+                : `The selected Codex voice "${voice}" is unavailable. Choose an available voice in Settings.`,
+            );
+        }
         const memory = await this.core(agent.key, signal);
         const policy = () =>
           settings.scope === "community"
@@ -1911,6 +1940,7 @@ export class CodexRuntime {
             realtimeThinking = active;
             thinking();
           },
+          settings.voice,
         );
         signal.throwIfAborted();
         if (settings.scope === "community")
@@ -2867,17 +2897,27 @@ export class CodexRuntime {
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
     if (request.unaddressed) return "";
-    // A chat its owner is still creating has nothing earlier to read.
-    const starting = (await reads.channel(request.conversation.channelId))
-      ?.starting;
-    return conversationHistory(
-      request.event,
-      request.conversation,
-      (filters) =>
-        starting ? Promise.resolve([]) : reads.read(filters, signal),
-      reads,
-      reads.workflowAuthority(),
-    );
+    try {
+      // A chat its owner is still creating has nothing earlier to read.
+      const starting = (await reads.channel(request.conversation.channelId))
+        ?.starting;
+      return await conversationHistory(
+        request.event,
+        request.conversation,
+        (filters) =>
+          starting ? Promise.resolve([]) : reads.read(filters, signal),
+        reads,
+        reads.workflowAuthority(),
+      );
+    } catch (error) {
+      // The relay session already retried; a slow relay costs the turn its
+      // earlier messages, not the turn itself.
+      if (signal.aborted || !isRetryableRead(error)) throw error;
+      console.warn("Codex could not read the conversation", error);
+      // Without history, the turn still names who asked.
+      await readAuthorNames(reads, [request.event]);
+      return "";
+    }
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.

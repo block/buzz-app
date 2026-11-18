@@ -66,6 +66,7 @@ import {
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
+  composerCodeBlockExit,
   composerCodeFence,
   composerFenceDelimiters,
   composerPrefixDelimiters,
@@ -176,6 +177,15 @@ const CARET_KEYS = new Map<string | number, string>([
   [39, "ArrowRight"],
   [40, "ArrowDown"],
 ]);
+/** The visual direction each arrow key moves the caret. */
+const arrowDirections: Partial<
+  Record<string, "left" | "right" | "up" | "down">
+> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 /** The key a keydown names, restoring a caret key the host reported as a control
  * character (Right Arrow arrives as U+001D) from its code. */
 function keyboardKey(
@@ -410,6 +420,8 @@ export type EditableInputProps = Omit<
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
+  /** Handle semantic clipboard content only when prose paste permits it. */
+  onSemanticPaste?(data: DataTransfer): boolean;
   /** Vet a pasted identity link as a notification recipient: the recipient under
    * its current name, or null to keep the display-only chip. */
   acceptRecipient?(pubkey: string): MentionRecipient | null;
@@ -431,6 +443,7 @@ export function EditableInput({
   onFormatsChange,
   onEditLink,
   onPasteTooLong,
+  onSemanticPaste,
   acceptRecipient,
   onAnnotationMenu,
   ...events
@@ -449,6 +462,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -463,6 +477,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -2172,6 +2187,24 @@ export function EditableInput({
             )
               return true;
           }
+          // A code block that no textblock follows or precedes has nowhere for
+          // the native caret to go past its edge: open a paragraph there.
+          const direction = arrowDirections[named];
+          const exit =
+            direction &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            editable() &&
+            composerCodeBlockExit(
+              editor.state,
+              direction === "right" || direction === "down",
+            );
+          if (exit && editor.endOfTextblock(direction)) {
+            editor.dispatch(closeHistory(exit).scrollIntoView());
+            return true;
+          }
           // A caret key reported as a control character would be typed as that
           // character by the native path. Move the caret here instead.
           if (named !== event.key) return moveCaret(named, event);
@@ -2344,6 +2377,12 @@ export function EditableInput({
               return true;
             }
             const code = editor.state.selection.$from.parent.type.spec.code;
+            if (
+              !code &&
+              event.clipboardData &&
+              current.current.onSemanticPaste?.(event.clipboardData)
+            )
+              return true;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =

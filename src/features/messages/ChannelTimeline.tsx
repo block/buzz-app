@@ -1810,7 +1810,10 @@ function Timeline({
       }
       settled.current = true;
       readingPositioned(scroller.current);
-      if (scroller.current) updateJumpToLatest(scroller.current);
+      // Virtua may apply the scroll just requested after this frame, so a
+      // reader following the latest message is still at its bottom.
+      if (follow.current) setShowJumpToLatest(false);
+      else if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
       cancelAnimationFrame(frame);
@@ -2300,6 +2303,22 @@ function Timeline({
           })}
         </Virtualizer>
       )}
+      {!rows.length &&
+        !shownIntro &&
+        !window.hasMore &&
+        window.status === "ready" &&
+        !window.error &&
+        !window.loadingOlder && (
+          <div className={styles.emptyConversation}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No messages yet."
+              description={
+                composerless ? undefined : "Start the conversation below."
+              }
+            />
+          </div>
+        )}
       <div ref={activityTail}>
         <AgentConnectionSetup
           key={channelId}
@@ -2322,22 +2341,6 @@ function Timeline({
         />
         <div className={styles.timelineEnd} aria-hidden="true" />
       </div>
-      {!rows.length &&
-        !shownIntro &&
-        !window.hasMore &&
-        window.status === "ready" &&
-        !window.error &&
-        !window.loadingOlder && (
-          <div className={styles.emptyConversation}>
-            <EmptyState
-              icon={<ChatCircleIcon />}
-              title="No messages yet."
-              description={
-                composerless ? undefined : "Start the conversation below."
-              }
-            />
-          </div>
-        )}
       <SelectionQuote list={scroller} />
     </section>
   );

@@ -50,6 +50,7 @@ import {
   describe,
   expect,
   it,
+  type MockInstance,
   onTestFinished,
   vi,
 } from "vitest";
@@ -90,7 +91,7 @@ import {
 } from "../decisions/service";
 import { TypeSafeKey } from "../../bundled/typesafe/key";
 import { typesafeProvider } from "../../bundled/typesafe";
-import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
+import { CATCH_UP_PREFIX, MENTIONS, readCheckpoints } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
@@ -107,6 +108,13 @@ import {
   type DeviceSettings,
   type SettingValue,
 } from "../../shared/device-settings";
+import {
+  type EligibleRoute,
+  GatewayRoutes,
+  gatewayRoutes,
+  TURN_READINESS_WAIT_MS,
+} from "./gateway/route";
+import { VECTOR_PROFILE } from "./gateway/vectors";
 import {
   bot,
   channel,
@@ -389,6 +397,7 @@ async function setup({
     emit: fake.emit,
     confirm: fake.confirm,
     connect: fake.connect,
+    readsCommunity: fake.readsCommunity,
     signIn: fake.signIn,
     fail: fake.fail,
     relay: fake.relay,
@@ -5272,6 +5281,30 @@ describe("an agent in several communities", () => {
     });
   });
 
+  it("catches up its mentions in each community by its pubkey, kept under that community's key", async () => {
+    vi.useFakeTimers({ now: 1_000_000_000 });
+    try {
+      const { second, run } = await joined();
+      // Past the second its mention checkpoint starts at.
+      await vi.advanceTimersByTimeAsync(2_000);
+      // Lost by the live subscription in the community it was added to.
+      second.history.push(
+        eventDto(
+          message(author, channel, "lost there", nowSeconds(), [["p", bot]]),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+      expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
+      expect(heard(run)).toEqual(["lost there"]);
+      expect(mentionReads(second.session).at(-1)).toMatchObject({
+        "#p": [bot],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
     const { service, native, second, agent, plugin } = await joined();
     await service.save(agent.key, {
@@ -8766,12 +8799,23 @@ const turns = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? `catch-up ${trigger.slug} ${trigger.events.length}${trigger.skipped ? " skipped" : ""}`
       : trigger.type;
   });
+/** Watch catch-up's reads; `mentionReads` are the mention stream's. */
 const catchUpReads = (session: RelaySession) =>
   vi
-    .mocked(session.read)
+    .mocked(session.readRemote)
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
-    .filter((filter) => filter.kinds?.includes(9));
+    .filter((filter) => filter.kinds?.includes(9) && !filter["#p"]);
+const mentionReads = (session: RelaySession) =>
+  vi
+    .mocked(session.readRemote)
+    .mock.calls.map(([filters]) => filters[0] as ReadFilter)
+    .filter((filter) => filter["#p"]);
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+/** The saved checkpoints of watch streams, without the mention streams'. */
+const watchCheckpoints = (storage: Parameters<typeof readCheckpoints>[0]) =>
+  Object.entries(readCheckpoints(storage))
+    .filter(([key]) => (JSON.parse(key) as unknown[])[1] !== MENTIONS)
+    .map(([, checkpoint]) => checkpoint);
 
 it.each([false, true])(
   "flushes earlier catch-up events before a later event with a held destination (at capacity: %s)",
@@ -9467,14 +9511,15 @@ it("takes the next page's cursor from the relay's events, not a local one older 
     // Missed while the socket was down.
     vi.setSystemTime((now + 200) * 1000);
     for (let i = 0; i < 20; i++) history.push(posted(`m${i}`, now + 100 + i));
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
     let first = true;
     read.mockImplementation(async (filters, options) => {
       const events = await original(filters, options);
-      if (!filters[0]?.kinds?.includes(9) || !first) return events;
+      if (!filters[0]?.kinds?.includes(9) || filters[0]["#p"] || !first)
+        return events;
       first = false;
       // The owner's message not yet sent, from before the relay's oldest.
       return [...events, { ...posted("unsent", now + 50) }];
@@ -9507,13 +9552,13 @@ it("holds a watch's live events while it catches up, then hears them oldest firs
       unblock = resolve;
     });
     run.mockImplementation(() => blocked);
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
     let first = true;
     read.mockImplementation(async (filters, options) => {
-      if (filters[0]?.kinds?.includes(9) && first) {
+      if (filters[0]?.kinds?.includes(9) && !filters[0]["#p"] && first) {
         first = false;
         // Live traffic arrives while the page is on its way, newest first.
         emit({
@@ -9564,7 +9609,7 @@ it("starts catch-up again when its watch is edited while a page is being read", 
       eventDto(message(other, channel, "before", now + 10)),
       posted("deploy", now + 20),
     );
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
@@ -9574,7 +9619,7 @@ it("starts catch-up again when its watch is edited while a page is being read", 
     });
     let first = true;
     read.mockImplementation(async (filters, options) => {
-      if (filters[0]?.kinds?.includes(9) && first) {
+      if (filters[0]?.kinds?.includes(9) && !filters[0]["#p"] && first) {
         first = false;
         await held;
       }
@@ -9719,6 +9764,95 @@ it("does not catch up after a restart on a message it already heard live", async
   }
 });
 
+it.each([
+  { label: "every message matches", rate: 5, matching: 5, only: false },
+  { label: "one in ten matches", rate: 10, matching: 1, only: true },
+])(
+  "does not give a busy watch's messages again after a restart: $label",
+  async ({ rate, matching, only }) => {
+    vi.useFakeTimers({ now: 1_000_000_000 });
+    try {
+      const storage = memoryStorage();
+      const stranger = keypair();
+      const first = await setup({ storage, identities: [echo] });
+      await first.service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/chat": {
+            ...chat["watch/chat"],
+            ...(only && { authors: [author.pubkey] }),
+          },
+          "watch/channel": null,
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // A minute of traffic: more than the last read's lag holds at once.
+      const sent: ReturnType<typeof posted>[] = [];
+      for (let index = 0; index < 60 * rate; index++) {
+        const busy = eventDto(
+          message(
+            index % rate < matching ? author : stranger,
+            channel,
+            `message ${index}`,
+            nowSeconds(),
+          ),
+        );
+        first.history.push(busy);
+        sent.push(busy);
+        first.emit({ events: [busy] });
+        await vi.advanceTimersByTimeAsync(1_000 / rate);
+      }
+      // Past its lane's rate, the rest are dropped, but heard all the same.
+      expect(heard(first.run)).toHaveLength(60);
+      first.connect(false);
+      const second = await setup({
+        storage,
+        identities: [echo],
+        history: sent,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(heard(second.run)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("does not wake a watch widened since for a message it heard before a restart", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const storage = memoryStorage();
+    const stranger = keypair();
+    const first = await setup({ storage, identities: [echo] });
+    const watch = (authors: string[]) => ({
+      attentionEnabled: true,
+      attention: {
+        "watch/chat": { ...chat["watch/chat"], authors },
+        "watch/channel": null,
+      },
+    });
+    await first.service.save(bot, watch([author.pubkey]));
+    // Past the second the watch's checkpoint starts at.
+    await vi.advanceTimersByTimeAsync(2_000);
+    const sent = [
+      posted("foo live", nowSeconds()),
+      eventDto(message(stranger, channel, "bar live", nowSeconds())),
+    ];
+    first.history.push(...sent);
+    first.emit({ events: sent });
+    await vi.waitFor(() => expect(heard(first.run)).toEqual(["foo live"]));
+    await first.service.save(bot, watch([author.pubkey, stranger.pubkey]));
+    await vi.advanceTimersByTimeAsync(0);
+    // Restarted before a read moves the checkpoint past them.
+    first.connect(false);
+    const second = await setup({ storage, identities: [echo], history: sent });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heard(second.run)).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes a watch added since for nothing older, though an overlapping watch catches up on it", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -9804,7 +9938,7 @@ it("catches up a watch of other kinds, or of every kind, on what it missed", asy
     // Each reads its watch's own kinds; one of every kind, those live hears,
     // as a read must name its kinds.
     const reads = vi
-      .mocked(session.read)
+      .mocked(session.readRemote)
       .mock.calls.map(([filters]) => filters[0] as ReadFilter)
       .filter((filter) => filter.until !== undefined);
     expect(reads.map((filter) => filter.kinds)).toEqual(
@@ -9857,9 +9991,7 @@ it.each([
       await settle();
       // Ticks do not pass over it: it is read up to the connect, no further.
       expect(
-        Object.values(readCheckpoints(storage)).map(
-          ({ read, through }) => read ?? through,
-        ),
+        watchCheckpoints(storage).map(({ read, through }) => read ?? through),
       ).toEqual([now + 1]);
       expect(heard(run)).toEqual([]);
       // A read a little behind now gives it, with no reconnect.
@@ -9973,7 +10105,7 @@ it("finds an event the relay stores late with an older time, after a read passed
     await settle();
     expect(
       vi
-        .mocked(second.session.read)
+        .mocked(second.session.readRemote)
         .mock.calls.some(([filters]) => filters[0]?.kinds?.includes(40007)),
     ).toBe(true);
     expect(heard(second.run)).toEqual([]);
@@ -10150,7 +10282,7 @@ it("reads what a route missed while it was down, though it comes back between re
     vi.setSystemTime(now * 1000);
     // When each read of a kind live does not hear reads up to, and when.
     const notes: { until?: number | undefined; at: number }[] = [];
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation();
     read.mockImplementation((filters, options) => {
       if (filters[0]?.kinds?.includes(30023))
@@ -10233,7 +10365,7 @@ describe("catch-up lane capacity", () => {
       recover();
       // Nine turns are handed on, the last at the end of its 576th event.
       const progress = () =>
-        Object.values(readCheckpoints(storage)).map(
+        watchCheckpoints(storage).map(
           ({ through, after }) => after?.created_at ?? through,
         )[0] ?? 0;
       await vi.waitFor(() =>
@@ -10485,6 +10617,242 @@ it("answers a mention catch-up reads from while it listened, not one from before
     expect(run.mock.calls[0]?.[0]).toMatchObject({
       trigger: { type: "mention" },
     });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("finds mentions the live subscription lost while it stayed connected", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history, emit, session } = await setup({
+      identities: [echo],
+    });
+    const start = nowSeconds();
+    const mention = (content: string, created_at: number) =>
+      eventDto(message(author, "other", content, created_at, [["p", bot]]));
+    // Mentions need no attention; the watch reads its channel.
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(0);
+    const heardLive = mention("heard live", start + 10);
+    history.push(heardLive, mention("lost mention", start + 20));
+    emit({ events: [heardLive], channelId: "other" });
+    await vi.waitFor(() => expect(heard(run)).toEqual(["heard live"]));
+    // Connected throughout: nothing but time says these were lost.
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(heard(run)).toEqual(["heard live", "lost mention"]);
+    expect(turns(run)).toEqual(["mention", "mention"]);
+    expect(mentionReads(session)[0]).toMatchObject({
+      kinds: [9, 40003, 40007, 46010],
+      "#p": [bot],
+    });
+    // With attention off, mentions are still found.
+    await service.save(bot, { attentionEnabled: false });
+    await vi.advanceTimersByTimeAsync(0);
+    history.push(mention("lost while off", nowSeconds()));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(heard(run).at(-1)).toBe("lost while off");
+    // One sent late, stamped before the last read, is still found.
+    history.push(mention("sent late", nowSeconds() - 240));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    expect(heard(run).at(-1)).toBe("sent late");
+    // Later reads cover the same minutes again, and wake nothing.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(run).toHaveBeenCalledTimes(4);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps finding lost mentions while its watches are edited more often than it polls", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history, session } = await setup({
+      identities: [echo],
+    });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    // Each edit restarts the watches' catch-up, more often than it polls;
+    // the mention poll goes on.
+    for (let edit = 0; edit < 30; edit++) {
+      await service.save(bot, {
+        attention: {
+          "watch/chat": {
+            ...chat["watch/chat"],
+            exclude_authors: [keypair().pubkey],
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(20_000);
+    }
+    expect(heard(run)).toEqual(["lost mention"]);
+    // An edit does not read mentions again: only the poll does.
+    const reads = mentionReads(session).length;
+    for (let edit = 0; edit < 10; edit++) {
+      await service.save(bot, {
+        attention: {
+          "watch/chat": {
+            ...chat["watch/chat"],
+            exclude_authors: [keypair().pubkey],
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(mentionReads(session).length - reads).toBeLessThanOrEqual(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not answer a mention again after other traffic pushed it out of what it saw", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { run, history, emit, session } = await setup({
+      identities: [echo],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const mention = eventDto(
+      message(author, "other", "answered once", nowSeconds(), [["p", bot]]),
+    );
+    history.push(mention);
+    emit({ events: [mention], channelId: "other" });
+    await vi.waitFor(() => expect(heard(run)).toEqual(["answered once"]));
+    // More traffic, in its channel too, than the agent keeps as seen.
+    const noise = (round: number) =>
+      emit({
+        events: Array.from({ length: 2100 }, (_, index) =>
+          event(`${round}noise${String(index).padStart(4, "0")}`, {
+            created_at: nowSeconds(),
+            tags: [["h", "other"]],
+          }),
+        ),
+        channelId: "other",
+      });
+    noise(1);
+    await vi.advanceTimersByTimeAsync(0);
+    // Neither a live copy sent again nor a catch-up read covering it again
+    // answers it.
+    emit({ events: [mention], channelId: "other" });
+    await vi.advanceTimersByTimeAsync(0);
+    let reads = mentionReads(session).length;
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    expect(mentionReads(session).length).toBeGreaterThan(reads);
+    expect(heard(run)).toEqual(["answered once"]);
+    // One that only catch-up found is remembered the same way.
+    history.push(
+      eventDto(
+        message(author, "other", "found once", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() =>
+      expect(heard(run)).toEqual(["answered once", "found once"]),
+    );
+    noise(2);
+    await vi.advanceTimersByTimeAsync(0);
+    reads = mentionReads(session).length;
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    expect(mentionReads(session).length).toBeGreaterThan(reads);
+    expect(heard(run)).toEqual(["answered once", "found once"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not answer a mention again that a waiting catch-up read before live gave it", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { run, history, emit, session } = await setup({
+      identities: [echo],
+      timeoutMs: 30 * 60_000,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Each turn waits until it is let go, so the mention queue stays full.
+    const turnsWaiting: (() => void)[] = [];
+    run.mockImplementation(
+      () => new Promise<void>((resolve) => turnsWaiting.push(resolve)),
+    );
+    const mention = (content: string) =>
+      eventDto(message(author, "other", content, nowSeconds(), [["p", bot]]));
+    const fill = (round: number) =>
+      emit({
+        events: Array.from({ length: 33 }, (_, index) =>
+          mention(`queued ${round}.${index}`),
+        ),
+        channelId: "other",
+      });
+    fill(1);
+    await vi.advanceTimersByTimeAsync(0);
+    // The first turn starting freed a place.
+    fill(2);
+    await vi.advanceTimersByTimeAsync(0);
+    // Catch-up reads one the live subscription lost, and waits for room.
+    const late = mention("late");
+    history.push(late);
+    const reads = mentionReads(session).length;
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(mentionReads(session).length).toBeGreaterThan(reads);
+    // Live gives it the room one finished turn frees, then other traffic
+    // pushes it out of what the agent saw.
+    turnsWaiting.shift()?.();
+    await vi.advanceTimersByTimeAsync(0);
+    emit({ events: [late], channelId: "other" });
+    await vi.advanceTimersByTimeAsync(0);
+    emit({
+      events: Array.from({ length: 2100 }, (_, index) =>
+        event(`noise${String(index).padStart(4, "0")}`, {
+          created_at: nowSeconds(),
+          tags: [["h", "other"]],
+        }),
+      ),
+      channelId: "other",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Every turn finishes; catch-up goes on with what it read.
+    run.mockImplementation(async () => {});
+    for (const finish of turnsWaiting.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(heard(run).filter((content) => content === "late")).toEqual([
+      "late",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps reading mentions while a watch's catch-up is stuck", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history, session } = await setup({
+      identities: [echo],
+    });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(0);
+    // Every watch read from here on never comes back.
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    read.mockImplementation((filters, options) =>
+      filters[0]?.["#h"] ? new Promise(() => {}) : original(filters, options),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "still heard", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(heard(run)).toEqual(["still heard"]));
   } finally {
     vi.useRealTimers();
   }
@@ -10792,11 +11160,23 @@ it.each([
         identities: [echo],
       });
       if (learnedSince) {
-        // The owner's own lookup finds it right after the read asks.
+        // The owner's own lookup finds it right after the watch's read asks;
+        // the mention read before it leaves it to the watches.
+        let read = false;
+        const readRemote = vi.mocked(session.readRemote);
+        const original = readRemote.getMockImplementation() as NonNullable<
+          ReturnType<typeof readRemote.getMockImplementation>
+        >;
+        readRemote.mockImplementation(async (filters, options) => {
+          const events = await original(filters, options);
+          // The read of every channel, which finds it for the watch.
+          if (!filters[0]?.["#p"] && !filters[0]?.["#h"]) read = true;
+          return events;
+        });
         const unattended = session.unattended.bind(session);
         vi.spyOn(session, "unattended").mockImplementation((id, live) => {
           const result = unattended(id, live);
-          if (id === plaza && !live) learned.delete(plaza);
+          if (read && id === plaza && !live) learned.delete(plaza);
           return result;
         });
       }
@@ -10822,6 +11202,77 @@ it.each([
     }
   },
 );
+
+it("keeps reading mentions while a full Interest waits for a mention only its watches hear", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const watched: string[] = [];
+    const { service, run, history, emit, learned } = await setup({
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        if (trigger.type === "watch" || trigger.type === "catch-up") {
+          watched.push(
+            ...(trigger.type === "watch"
+              ? [trigger.event.content]
+              : trigger.events.map(({ event }) => event.content)),
+          );
+          if (watched.length === 1) await blocked;
+        }
+        return { ok: true };
+      },
+    });
+    const mentions = () =>
+      run.mock.calls.flatMap(([input]) =>
+        input.trigger.type === "mention" ? [input.trigger.event.content] : [],
+      );
+    // Ten watches of one Interest, of every channel.
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: Object.fromEntries(
+        Array.from({ length: 10 }, (_, i) => [
+          `watch/all${i}`,
+          { ...chat["watch/chat"], channels: "all" },
+        ]),
+      ),
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // One of them runs and holds its lane; the rest fill the Interest.
+    emit({ events: [message(author, channel, "fills", nowSeconds())] });
+    await vi.waitFor(() => expect(watched).toEqual(["fills"]));
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Live loses one that names the agent in a public channel only agents'
+    // lookups know, which only the watches hear, and then an ordinary
+    // mention.
+    learned.add(plaza);
+    history.push(
+      eventDto(message(author, plaza, "watched", nowSeconds(), [["p", bot]])),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    // The mention is answered while the Interest is still full.
+    await vi.waitFor(() => expect(mentions()).toEqual(["lost mention"]));
+    expect(watched).toEqual(["fills"]);
+    // Room opens, and the watches' own pass gives them the one only they hear.
+    release();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() =>
+      expect([...watched, ...heard(run)]).toContain("watched"),
+    );
+    expect(mentions()).toEqual(["lost mention"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("wakes nothing from the time no plugin showed its attention", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -11068,9 +11519,9 @@ it("holds a public channel's catch-up until its metadata is known, and hears it 
     await vi.advanceTimersByTimeAsync(10_000);
     await settle();
     expect(heard(run)).toEqual([]);
-    expect(
-      Object.values(readCheckpoints(storage)).map(({ through }) => through),
-    ).toEqual([now]);
+    expect(watchCheckpoints(storage).map(({ through }) => through)).toEqual([
+      now,
+    ]);
     pending.delete(plaza);
     await vi.advanceTimersByTimeAsync(5_000);
     await settle();
@@ -11094,7 +11545,7 @@ it("holds a public channel's catch-up until its metadata is known, and hears it 
     // Its read asks the session to resolve the channels it finds.
     expect(
       vi
-        .mocked(session.read)
+        .mocked(session.readRemote)
         .mock.calls.filter(([filters]) => filters[0]?.until !== undefined)
         .map(([filters, options]) => [
           !!filters[0]?.["#h"],
@@ -20199,6 +20650,736 @@ it("tells a transcript only of an agent's new or changed steps", async () => {
   stop();
   two.step("Read", "c.txt");
   expect(listener).toHaveBeenCalledTimes(3);
+});
+
+describe("gateway routing", () => {
+  const COMMUNITY = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const route = (key: string) => gatewayRoutes.routeFor(key as never);
+  let configured: MockInstance<() => boolean>;
+  let set: MockInstance<typeof gatewayRoutes.setMembership>;
+  let removed: MockInstance<typeof gatewayRoutes.removeMembership>;
+  /** What was fed for `key`, in order. */
+  const fed = (key: string = bot) =>
+    set.mock.calls.map(([member]) => member).filter((m) => m.key === key);
+  beforeEach(() => {
+    configured = vi
+      .spyOn(gatewayRoutes, "configured", "get")
+      .mockReturnValue(true);
+    set = vi.spyOn(gatewayRoutes, "setMembership");
+    removed = vi.spyOn(gatewayRoutes, "removeMembership");
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    set.mockRestore();
+    removed.mockRestore();
+    // Routing state is a singleton; leave no membership behind.
+    gatewayRoutes.removeMembership(bot as never);
+  });
+
+  it("feeds a local agent with the live session and the community ID it read", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    expect(fed().at(-1)).toMatchObject({
+      key: bot,
+      origin: "https://relay.example.test",
+      owner: viewer,
+      pubkey: bot,
+    });
+    expect(fed().at(-1)?.community?.session).toBe(f.relay.snapshot().session);
+  });
+
+  it("keeps the same membership and revision across a live socket reconnect and later updates", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const before = fed().at(-1);
+    const revision = route(bot).revision;
+    // The socket drops and returns inside the session, as live.ts does, and
+    // the service updates for unrelated reasons.
+    f.recover();
+    await f.service.save(bot, { config: { reply: "hi" } });
+    await f.service.refresh();
+    await settle();
+    for (const member of fed()) {
+      expect(member.community).toBeDefined();
+      expect(member.community?.id).toBe(COMMUNITY);
+      expect(member.community?.session).toBe(before?.community?.session);
+    }
+    expect(route(bot).revision).toBe(revision);
+  });
+
+  it("feeds a replaced session, and no community while that session is not ready", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const old = fed().at(-1)?.community?.session;
+    const revision = route(bot).revision;
+    // The relay is reconnecting: the old session's ID must not stand in.
+    f.reconnecting();
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+    expect(route(bot).revision).toBeGreaterThan(revision);
+    const pending = route(bot).revision;
+    // A new session with the same ID is new evidence.
+    f.connect(true);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeDefined());
+    const next = fed().at(-1)?.community;
+    expect(next?.id).toBe(COMMUNITY);
+    expect(next?.session).toBe(f.relay.snapshot().session);
+    expect(next?.session).not.toBe(old);
+    expect(route(bot).revision).toBeGreaterThan(pending);
+    // Dropping the connection outright feeds none either.
+    f.connect(false);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+  });
+
+  it("feeds no ID when the replaced session has none, never the old one", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    // The next connection's transport read no NIP-11 community ID.
+    f.readsCommunity(undefined);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      const community = fed().at(-1)?.community;
+      expect(community).toBeDefined();
+      expect(community?.session).toBe(f.relay.snapshot().session);
+    });
+    expect(fed().at(-1)?.community?.id).toBeUndefined();
+    // Only the old session ever carried the old ID.
+    const carried = fed().filter((m) => m.community?.id === COMMUNITY);
+    expect(carried.length).toBeGreaterThan(0);
+    for (const member of carried)
+      expect(member.community?.session).not.toBe(
+        fed().at(-1)?.community?.session,
+      );
+  });
+
+  it("feeds nothing for hosted agents, and nothing at all when the build has no gateway configuration", async () => {
+    const f = await setup();
+    const { type } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed(bot)).not.toHaveLength(0));
+    expect(fed(hostedKey)).toEqual([]);
+    expect(set.mock.calls.map(([m]) => m.pubkey)).not.toContain(hostedKey);
+    set.mockClear();
+    configured.mockReturnValue(false);
+    f.connect(false);
+    f.connect(true);
+    await settle();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("removes the membership of an agent being deleted, and never feeds one that arrives deleting", async () => {
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed()).not.toHaveLength(0));
+    expect(removed).not.toHaveBeenCalled();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    leaveChannels.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.service.remove(bot)).rejects.toThrow(UNFINISHED);
+    warn.mockRestore();
+    expect(f.service.find(bot)?.deleting).toBe(true);
+    await vi.waitFor(() => expect(removed).toHaveBeenCalledWith(bot));
+    // After a relaunch the unfinished Delete is listed but not routed.
+    set.mockClear();
+    removed.mockClear();
+    const identities = await f.native.list();
+    const again = await setup({ storage: f.storage, identities });
+    expect(again.service.find(bot)?.deleting).toBe(true);
+    await settle();
+    expect(set.mock.calls.filter(([m]) => m.key === bot)).toEqual([]);
+  });
+});
+
+describe("agent gateway gate", () => {
+  const GATEWAY_BLOCKED =
+    "Buzz couldn't reach the agent gateway. Check your network connection, then try again.";
+  const eligible: EligibleRoute = Object.freeze({
+    kind: "eligible",
+    revision: 3,
+    gatewayOrigin: "https://gateway.example.test",
+    identity: Object.freeze({
+      community_id: "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      human_pubkey: viewer,
+      agent_pubkey: bot,
+    }),
+    profile: VECTOR_PROFILE,
+    harnesses: Object.freeze(["relay"]),
+  });
+  const blockedRoute = Object.freeze({
+    kind: "blocked",
+    revision: 4,
+    gatewayOrigin: "https://gateway.example.test",
+    reason: "network",
+    message: GATEWAY_BLOCKED,
+  } as const);
+  const external = Object.freeze({ kind: "external", revision: 1 } as const);
+  const mention = event("a1", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  let configured: MockInstance<() => boolean>;
+  let ready: MockInstance<typeof gatewayRoutes.routeForTurn>;
+  let upstream: MockInstance<typeof gatewayRoutes.upstream>;
+  const RELAY_UPSTREAM = Object.freeze({ base: "/upstream/relay" });
+  beforeEach(() => {
+    configured = vi
+      .spyOn(gatewayRoutes, "configured", "get")
+      .mockReturnValue(true);
+    ready = vi.spyOn(gatewayRoutes, "routeForTurn");
+    upstream = vi
+      .spyOn(gatewayRoutes, "upstream")
+      .mockImplementation((harness) =>
+        harness === "relay" ? RELAY_UPSTREAM : undefined,
+      );
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    ready.mockRestore();
+    upstream.mockRestore();
+    gatewayRoutes.removeMembership(bot as never);
+  });
+
+  /** An agent of `gateway`-capable (or not) type, mentioned once. */
+  async function mentioned(
+    capable: boolean,
+    asked = mention,
+    channelId = channel,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) {
+    const f = await setup();
+    prepare?.(f);
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    const models = vi.fn(async () => ({
+      current: "deep",
+      models: [{ id: "deep", label: "Deep", efforts: [] }],
+    }));
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      models,
+      ...(capable ? { gateway: { harness: "relay" } } : {}),
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    f.emit({ events: [asked], channelId });
+    return { ...f, run, models };
+  }
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+
+  it("runs a blocked membership's harness with its own configuration and notes that on the turn", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(ready).toHaveBeenCalledWith(bot, expect.any(AbortSignal));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    expect(Object.isFrozen(delivery?.gatewayFallback)).toBe(true);
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      messageId: mention.id,
+      notice: NOTICE,
+    });
+  });
+
+  /** Live routes for `bot`, probing through a request the test answers. */
+  function liveRoutes() {
+    const id = "22222222-2222-4222-8222-222222222222";
+    const routes = new GatewayRoutes(() => ({
+      version: 2,
+      gateway: "https://gateway.example.test",
+      communities: [{ id, origin: "wss://relay.example.test" }],
+      access_path: "/v9/access",
+      ...VECTOR_PROFILE,
+      upstreams: { pi: { base: "/upstream/pi" } },
+    }));
+    const answers: ((response: { status: number; body: string }) => void)[] =
+      [];
+    const request = vi.fn(
+      () =>
+        new Promise<{
+          status: number;
+          headers: Record<string, string>;
+          body: string;
+        }>((resolve) =>
+          answers.push(({ status, body }) =>
+            resolve({ status, headers: {}, body }),
+          ),
+        ),
+    );
+    routes.bindRequest(request);
+    routes.setMembership({
+      key: bot as never,
+      origin: "wss://relay.example.test",
+      owner: viewer,
+      pubkey: bot,
+      community: { id, session: {} },
+    });
+    ready.mockImplementation((key, wait) => routes.routeForTurn(key, wait));
+    const answer = (status: number, body = "") => {
+      const next = answers.shift();
+      if (!next) throw new Error("No request pending");
+      next({ status, body });
+    };
+    return { routes, request, answer };
+  }
+  /** Ends the turn's readiness wait at once, as its cap would. */
+  function capReached() {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    return vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) =>
+        ms === TURN_READINESS_WAIT_MS
+          ? AbortSignal.abort(new Error("cap"))
+          : timeout(ms),
+      );
+  }
+  const AUTH =
+    "The agent gateway didn't accept your sign-in or denied this agent. Sign in again, then retry.";
+
+  const PENDING =
+    "Buzz is still checking this agent's gateway access. Try again in a moment.";
+
+  it("fails a turn whose access check outlasts the wait, before any type code runs, so a late 403 finds nothing dispatched", async () => {
+    const cap = capReached();
+    try {
+      const { routes, request, answer } = liveRoutes();
+      expect(request).toHaveBeenCalledTimes(1);
+      const f = await mentioned(true);
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          error: PENDING,
+        }),
+      );
+      expect(cap).toHaveBeenCalledWith(TURN_READINESS_WAIT_MS);
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run).not.toHaveBeenCalled();
+      answer(403);
+      await vi.waitFor(() =>
+        expect(routes.routeFor(bot as never)).toMatchObject({
+          reason: "auth",
+        }),
+      );
+      expect(f.run).not.toHaveBeenCalled();
+    } finally {
+      cap.mockRestore();
+    }
+  });
+
+  /** Live routes for `bot` whose first check failed twice with a 503. */
+  async function failedRoutes() {
+    const live = liveRoutes();
+    live.answer(503);
+    await vi.waitFor(() => expect(live.request).toHaveBeenCalledTimes(2));
+    live.answer(503);
+    await vi.waitFor(() =>
+      expect(live.routes.routeFor(bot as never)).toMatchObject({
+        reason: "gateway_error",
+      }),
+    );
+    return live;
+  }
+
+  it("waits for a turn's recheck after a cached gateway error instead of falling back on it, and fails on its 403", async () => {
+    const { request, answer } = await failedRoutes();
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    expect(f.run).not.toHaveBeenCalled();
+    answer(403);
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: AUTH,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("falls back on a recheck that fails again inside the wait, with its own notice", async () => {
+    const { request, answer } = await failedRoutes();
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    expect(f.run).not.toHaveBeenCalled();
+    answer(503);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(4));
+    answer(502);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "gateway_error",
+      notice:
+        "Ran without the agent gateway: the gateway couldn't confirm model access.",
+    });
+  });
+
+  it("routes a turn through the gateway once a probe in flight settles inside the wait", async () => {
+    const { answer } = liveRoutes();
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.models).not.toHaveBeenCalled();
+    answer(200, '{"harnesses":["relay"]}');
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.gateway?.route).toMatchObject({
+      kind: "eligible",
+      harnesses: ["relay"],
+    });
+    expect(delivery).not.toHaveProperty("gatewayFallback");
+  });
+
+  it("fails a turn on a 401 or 403, before any type code runs, with no fallback", async () => {
+    for (const status of [401, 403]) {
+      const { answer } = liveRoutes();
+      answer(status);
+      const f = await mentioned(
+        true,
+        event(`auth-${status}`, {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["model", bot, "deep"],
+          ],
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          error: AUTH,
+        }),
+      );
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run).not.toHaveBeenCalled();
+      expect(f.models).not.toHaveBeenCalled();
+      gatewayRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("fails the next turn when a 403 from inference re-probes as 403, instead of falling back while pending", async () => {
+    const { routes, answer, request } = liveRoutes();
+    answer(200, '{"harnesses":["relay"]}');
+    await vi.waitFor(() =>
+      expect(routes.routeFor(bot as never).kind).toBe("eligible"),
+    );
+    // Inference got a 403: the route stays auth-blocked while it re-probes.
+    routes.invalidate(bot as never);
+    expect(request).toHaveBeenCalledTimes(2);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    answer(403);
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: AUTH,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403, "inference"] as const)(
+    "keeps consecutive turns out of type code after %s while a recheck exceeds the wait cap",
+    async (denial) => {
+      const cap = capReached();
+      try {
+        const { routes, answer, request } = liveRoutes();
+        if (denial === "inference") {
+          answer(200, '{"harnesses":["relay"]}');
+          await vi.waitFor(() =>
+            expect(routes.routeFor(bot as never).kind).toBe("eligible"),
+          );
+          routes.invalidate(bot as never);
+        } else {
+          answer(denial);
+          await vi.waitFor(() =>
+            expect(routes.routeFor(bot as never)).toMatchObject({
+              reason: "auth",
+            }),
+          );
+        }
+        for (let turn = 0; turn < 2; turn++) {
+          const f = await mentioned(
+            true,
+            event(`denied-${denial}-${turn}`, {
+              pubkey: viewer,
+              tags: [
+                ["h", channel],
+                ["p", bot],
+                ["model", bot, "deep"],
+              ],
+            }),
+          );
+          await vi.waitFor(() =>
+            expect(f.activity.reader.work()[0]).toMatchObject({
+              state: "error",
+              error: AUTH,
+            }),
+          );
+          expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+          expect(f.run).not.toHaveBeenCalled();
+          expect(f.models).not.toHaveBeenCalled();
+        }
+        expect(request).toHaveBeenCalledTimes(2);
+      } finally {
+        cap.mockRestore();
+      }
+    },
+  );
+
+  it("hands a blocked watch turn the fallback, keeping its one signed event", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await setup();
+    f.plugin.agents.register({
+      ...f.type,
+      id: "watcher",
+      gateway: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/watcher", name: "Watcher" });
+    await f.service.save(bot, {
+      attentionEnabled: true,
+      attention: everything,
+    });
+    const watched = event("fallback-watch", { created_at: nowSeconds() });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    // No request row: the type shows the notice in its own turn activity.
+    expect(f.activity.reader.work()).toEqual([]);
+  });
+
+  it("hands a blocked timer turn the fallback without inventing a message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      ready.mockResolvedValue(blockedRoute);
+      const f = await setup();
+      f.plugin.agents.register({
+        ...f.type,
+        id: "timed",
+        gateway: { harness: "relay" },
+      });
+      await f.service.create({ type: "example/timed", name: "Timed" });
+      await f.service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/t": {
+            type: "timer",
+            interest_id: "default",
+            prompt: "tick",
+            enabled: true,
+            interval_secs: 60,
+            armed_at: 1_000,
+            max_occurrences: 1,
+            expires_at: null,
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.run).toHaveBeenCalledTimes(1);
+      const delivery = f.run.mock.calls[0]?.[0];
+      expect(delivery?.trigger.type).toBe("timer");
+      expect(delivery).not.toHaveProperty("gateway");
+      expect(delivery).not.toHaveProperty("channelId");
+      expect(delivery?.gatewayFallback).toEqual({
+        reason: "network",
+        notice: NOTICE,
+      });
+      expect(f.activity.reader.work()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks a blocked membership's type for its own models for a model request", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned(
+      true,
+      event("a2", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "deep"],
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.models).toHaveBeenCalled();
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.activity.reader.work()[0]?.notice).toBe(NOTICE);
+  });
+
+  it("notes nothing on a turn that routes through the gateway or keeps its behavior", async () => {
+    for (const route of [eligible, external, { ...eligible, harnesses: [] }]) {
+      ready.mockResolvedValue(route);
+      const f = await mentioned(true);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+      gatewayRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("runs a type that names no harness unchanged, without waiting on the gateway", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned(false);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness this build gives no upstream unchanged, without a notice or asking for a route", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    upstream.mockReturnValue(undefined);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(upstream).toHaveBeenCalledWith("relay");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness the gateway doesn't enable for the membership unchanged", async () => {
+    ready.mockResolvedValue({ ...eligible, harnesses: ["pi"] });
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+  });
+
+  it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.gateway?.route).toBe(eligible);
+    expect(delivery?.gateway?.upstream).toBe(RELAY_UPSTREAM);
+    expect(delivery?.gateway?.turn).toEqual({
+      channel_id: channel,
+      message_id: mention.id,
+      thread_id: mention.id,
+    });
+    expect(Object.isFrozen(delivery)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
+  });
+
+  /** The turn context of the one run `asked` started in `channelId`. */
+  const turnOf = async (
+    asked: RelayEvent,
+    channelId: string,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned(true, asked, channelId, prepare);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    return f.run.mock.calls[0]?.[0].gateway?.turn;
+  };
+  const root = "e".repeat(64);
+  const reply = (id: string, h: string) =>
+    event(id, {
+      tags: [
+        ["h", h],
+        ["e", root, "", "root"],
+        ["e", "f".repeat(64), "", "reply"],
+        ["p", bot],
+      ],
+    });
+
+  it("gives an ordinary channel's reply its actual thread root", async () => {
+    expect(await turnOf(reply("b1", channel), channel)).toEqual({
+      channel_id: channel,
+      message_id: event("b1").id,
+      thread_id: root,
+    });
+  });
+
+  it("gives a group DM mention no thread, though only a two-person DM auto-wakes", async () => {
+    const asked = event("b2", {
+      tags: [
+        ["h", groupDm],
+        ["p", bot],
+      ],
+    });
+    expect(await turnOf(asked, groupDm)).toEqual({
+      channel_id: null,
+      message_id: asked.id,
+      thread_id: null,
+    });
+  });
+
+  it("gives a Solo chat mention no thread, even when it names a root", async () => {
+    const solo = "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const turn = await turnOf(reply("b3", solo), solo, ({ session }) => {
+      const list = session.channels.list();
+      vi.spyOn(session.channels, "list").mockReturnValue({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            ...list.channels[0],
+            id: solo,
+            name: "Solo",
+            channelType: "solo",
+            members: [viewer, bot],
+          },
+        ],
+      });
+    });
+    expect(turn).toEqual({
+      channel_id: solo,
+      message_id: event("b3").id,
+      thread_id: null,
+    });
+  });
+
+  it("adds no gateway field and asks for no route when the build has no configuration", async () => {
+    configured.mockReturnValue(false);
+    upstream.mockReturnValue(undefined);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("adds no gateway field for an external membership, even for a harness", async () => {
+    ready.mockResolvedValue(external);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
 });
 
 it("checks a provider operation and admits one exact proposal from a consumer tool", async () => {

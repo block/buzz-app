@@ -1,6 +1,9 @@
 import { TeamSidebarSections, TeamSidebarSection } from "./TeamSidebarSource";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
-import { openEmptyChannels } from "../../features/channel-navigation/routes";
+import {
+  newMessage,
+  openEmptyChannels,
+} from "../../features/channel-navigation/routes";
 import {
   useCallback,
   useEffect,
@@ -19,7 +22,7 @@ import { inTeamInventory } from "../../features/channel-navigation/team-inventor
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList } from "../../features/relay/react";
+import { useChannelRoster } from "../../features/relay/react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type {
@@ -200,11 +203,36 @@ export function ChannelInventory({
     contributedRows?.settled ?? noPendingPlugins,
     contributedRows?.settled ?? noPendingPlugins,
   );
-  const list = useChannelList(queries.channels);
+  const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const sectionSort = useCallback(
+    (key: string): SidebarSortMode => {
+      const saved =
+        preferences.data?.sort?.[
+          key.startsWith("group:") ? `section:${key.slice(6)}` : key
+        ];
+      return saved &&
+        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
+        ? saved
+        : "alpha";
+    },
+    [preferences.data, rowSortModes],
+  );
+  const appliedSorts = Object.keys(preferences.data?.sort ?? {}).map(
+    sectionSort,
+  );
+  const pluginSorted = appliedSorts.some(
+    (mode) => mode !== "alpha" && mode !== "recent",
+  );
+  const list = useChannelRoster(queries.channels, {
+    activity:
+      pluginSorted ||
+      appliedSorts.includes("recent") ||
+      Object.values(preferences.data?.filters ?? {}).includes("active"),
+    preview: pluginSorted,
+  });
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );
-  const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const sortModesReady =
     pluginsSettled ||
     Object.values(preferences.data?.sort ?? {}).every(
@@ -309,7 +337,7 @@ export function ChannelInventory({
   const composingMessage =
     target.kind === "page" &&
     target.pluginId === "buzz.channels" &&
-    target.route?.params === "new-message";
+    newMessage(target.route?.params) !== undefined;
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = useMemo(
     () =>
@@ -583,19 +611,6 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
-  const sectionSort = useCallback(
-    (key: string): SidebarSortMode => {
-      const saved =
-        preferences.data?.sort?.[
-          key.startsWith("group:") ? `section:${key.slice(6)}` : key
-        ];
-      return saved &&
-        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
-        ? saved
-        : "alpha";
-    },
-    [preferences.data, rowSortModes],
-  );
   const rowUnread = useSidebarRowUnread(
     queries.unread,
     JSON.stringify(
@@ -1502,10 +1517,10 @@ export function ChannelInventory({
                       onRename={
                         preferences.sectionRenameWritable &&
                         section.key.startsWith("group:")
-                          ? async (name) => {
+                          ? async (edit) => {
                               await preferences.renameSection(
                                 section.key.slice(6),
-                                name,
+                                edit,
                               );
                             }
                           : undefined
@@ -1916,6 +1931,8 @@ export function ChannelInventory({
       <>
         {creatingSection && (
           <CreateSidebarSection
+            session={queries}
+            scope={queries.scope}
             writable={preferences.sectionCreationWritable}
             refreshing={preferences.status === "loading"}
             retry={preferences.reload}
@@ -1933,6 +1950,8 @@ export function ChannelInventory({
         )}
         {creatingFor && !creatingFor.surface?.signal?.aborted && (
           <CreateSidebarSection
+            session={queries}
+            scope={queries.scope}
             channelName={creatingFor.channel.name}
             writable={preferences.sectionCreationWritable}
             refreshing={preferences.status === "loading"}

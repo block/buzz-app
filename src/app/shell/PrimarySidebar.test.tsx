@@ -92,6 +92,8 @@ it("double-clicks a Solo row to edit its selected name, retaining a failed save 
     base,
     expect.objectContaining({ name: "New plan", labels: [SOLO_LABEL] }),
     expect.any(AbortSignal),
+    undefined,
+    f.session.channels,
   );
   await user.dblClick(screen.getByRole("button", { name: /^Planning/ }));
   await screen.findByRole("textbox", { name: "Chat name" });

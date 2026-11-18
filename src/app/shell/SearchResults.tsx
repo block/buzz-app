@@ -125,6 +125,10 @@ import {
   verifiedLabel,
 } from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  directMessageWith,
+  messagePerson,
+} from "../../features/direct-messages/message-person";
 
 function conversationName(
   channel: ChannelSummary,
@@ -218,6 +222,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  openNewMessage,
   openAgentSession,
   usageScope,
   sidebarScope,
@@ -241,6 +246,8 @@ export function SearchResults({
     messageId?: string,
     threadRootId?: string,
   ) => void;
+  /** Open a New message draft to someone the viewer has no DM with. */
+  openNewMessage: (pubkey: string) => void;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -678,6 +685,8 @@ export function SearchResults({
   // Search unmounts as it closes, so each opening reads previews afresh.
   const [previews] = useState<PreviewCache>(() => new Map());
   const [sort, setSort] = useState<SearchSort>("relevance");
+  // The chip or a single resolved `in:` limits results to one conversation.
+  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -691,10 +700,18 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
-    // Only scoped search offers the choice, so global search keeps relevance.
-    scopedChannelId ? sort : "relevance",
+    // Only one conversation's results offer the choice; across
+    // conversations, search keeps relevance.
+    effectiveChannelId ? sort : "relevance",
   );
-  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
+  // Offline or asking, nothing is searched, so there is no order to choose.
+  const sortable =
+    !offline &&
+    !asking &&
+    !!effectiveChannelId &&
+    session.searchSort &&
+    !!parsed.text;
+  const order = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -750,7 +767,6 @@ export function SearchResults({
       agent,
     ]),
   );
-  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   // The notice is a new element each render; the lookup below reruns only
   // when search goes offline or back.
   const savedOnly = !!offline;
@@ -1396,7 +1412,7 @@ export function SearchResults({
         }
       : destination;
   };
-  // Choosing a person opens your DM with them, starting it when needed.
+  // Choosing a person opens your DM with them, or a draft until the first send.
   const [personOpen, setPersonOpen] = useState<{
     name: string;
     error?: string;
@@ -1419,15 +1435,10 @@ export function SearchResults({
   }, [open]);
   const openPerson = async (pubkey: string, name: string, agent: boolean) => {
     if (personAttempt.current) return;
-    const existing = session.channels
-      .list()
-      .channels.find(
-        (channel) =>
-          channel.channelType === "dm" &&
-          !channel.archived &&
-          channel.participants?.length === 1 &&
-          channel.participants[0] === pubkey,
-      );
+    const existing = directMessageWith(
+      session.channels.list().channels,
+      pubkey,
+    );
     // Opening a DM hidden on this device goes through the confirmed open,
     // which restores its sidebar row. So does any DM opened while the relay's
     // hidden set is not ready, since it may be hidden: before the first load,
@@ -1461,13 +1472,15 @@ export function SearchResults({
     personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
-      const channelId = await session.directMessages.open(
-        [pubkey],
+      const destination = await messagePerson(
+        session,
+        pubkey,
         controller.signal,
       );
       if (controller.signal.aborted) return;
       setPersonOpen(undefined);
-      openConversation(channelId);
+      if ("channelId" in destination) openConversation(destination.channelId);
+      else openNewMessage(destination.draftTo);
     } catch (reason) {
       if (!controller.signal.aborted)
         setPersonOpen({
@@ -1491,13 +1504,7 @@ export function SearchResults({
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
-    const dm = list.channels.some(
-      (channel) =>
-        channel.channelType === "dm" &&
-        !channel.archived &&
-        channel.participants?.length === 1 &&
-        channel.participants[0] === person.pubkey,
-    );
+    const dm = !!directMessageWith(list.channels, person.pubkey);
     return {
       key,
       label: person.label,
@@ -1765,9 +1772,8 @@ export function SearchResults({
   // none of their lookups.
   const resultsShown =
     !showAuthorPicker && !showDateChoices && !showChannelPicker;
-  /** Results with a preview beside them: not a question, a conversation's
-   * own search or a picker. */
-  const previewed = !asking && !scopedChannelId && resultsShown;
+  /** Results with a preview beside them: not a question or a picker. */
+  const previewed = !asking && resultsShown;
   const searchAnnouncement = useSearchAnnouncement(
     resultsShown && slowChannels,
     slowPeople,
@@ -2034,12 +2040,14 @@ export function SearchResults({
           : scopedChannelId || hasOperator
             ? [
                 {
-                  label: scopedChannelId ? messageOrder : "Messages",
+                  label: "Messages",
                   rank: Infinity,
                   icon: ChatCircleIcon,
-                  why: scopedChannelId
-                    ? undefined
-                    : "Filters apply to messages",
+                  why: sortable
+                    ? order
+                    : hasOperator
+                      ? "Filters apply to messages"
+                      : undefined,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,
@@ -2195,15 +2203,16 @@ export function SearchResults({
         onDisplayQueryChange={updateDisplayQuery}
         input={input}
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-        scopeAction={
-          scopedChannelId && session.searchSort && parsed.text ? (
+        fieldAction={
+          sortable ? (
             <MenuRoot>
               <MenuTrigger
                 render={(props) => (
                   <IconButton
                     {...props}
                     variant="ghost"
-                    aria-label="Sort messages"
+                    // The heading's order is visual only; name it here.
+                    aria-label={`Sort messages: ${order}`}
                     title="Sort messages"
                     icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
                   />
@@ -2268,9 +2277,10 @@ export function SearchResults({
         isAction={isSearchAction}
         footer={offline}
         peek={{
-          // A filter asks for messages only, so they aren't ranked with
-          // other results, but each still previews.
-          ranked: previewed && !hasOperator,
+          // A filter or a conversation's own search asks for messages
+          // only, so they aren't ranked with other results, but each still
+          // previews.
+          ranked: previewed && !scopedChannelId && !hasOperator,
           hints,
           busy: !!query.trim() && (messagesPending || directoryPending),
           unsearched:

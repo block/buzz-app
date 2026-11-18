@@ -9,8 +9,11 @@ import { npubEncode } from "nostr-tools/nip19";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { copyEmoji } from "../../bundled/emoji/copy-emoji";
+import { setClockPreference } from "../../shared/clock-preference";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { profileTarget } from "../profiles/target";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageRow } from "./MessageRow";
 import {
   type CopyFormat,
   copyDocument,
@@ -33,6 +36,15 @@ const anchor = (href: string, label: string, visible = label) =>
   `<a href="${href}" data-link-label="${label}"><span data-link-kind="web"><span class="lead"><svg aria-hidden="true"></svg>${visible}</span></span></a>`;
 const row = (html: string, id = "m1") =>
   `<div data-message-id="${id}">${html}</div>`;
+// MessageRow's shape: toolbar chrome, the byline, then the payload and its
+// accessible date. A grouped row keeps its byline out of sight and selections.
+const createdAt = 1_789_290_300;
+const time = formatItemTimestamp(createdAt, { withTime: true });
+const authored = (name: string, body: string, id = "m1") =>
+  row(
+    `<div><div style="user-select: none"><span>${time}</span></div><div style="user-select: none" data-copy-author="${name}" data-copy-time="${createdAt}"><strong>${name}</strong></div></div><div>${body}<time style="user-select: none">Tuesday</time></div>`,
+    id,
+  );
 
 function mount(html: string) {
   document.body.innerHTML = html;
@@ -645,6 +657,87 @@ describe("serializeNode", () => {
     });
   });
 
+  it("copies each byline a selection holds as one line above its message", () => {
+    const body = mount(
+      authored("Robin", "<p>first</p>") +
+        authored("Mic", "<p>sure</p>\n<p>later</p>", "m2"),
+    );
+    const { range } = select(
+      body,
+      0,
+      lastText(query("[data-message-id='m2'] p:last-of-type", body)),
+      5,
+    );
+    const html = `<p><strong>Robin</strong> ${time}<br>first</p><p><strong>Mic</strong> ${time}<br>sure</p><p>later</p>`;
+    expect(each(body, range)).toEqual({
+      text: `Robin ${time}\nfirst\nMic ${time}\nsure\n\nlater`,
+      markdown: `**Robin** ${time}\nfirst\n**Mic** ${time}\nsure\nlater`,
+      html,
+    });
+    // Pasted into the composer, messages keep the blank line between them.
+    const copied = document.createElement("template");
+    copied.innerHTML = `<div data-buzz-copy="timeline">${html}</div>`;
+    expect(serializeNode(query("div", copied.content), "markdown")).toBe(
+      `**Robin** ${time}\nfirst\n\n**Mic** ${time}\nsure\n\nlater`,
+    );
+  });
+
+  it("keeps a byline its own paragraph before another block, as the name alone when the row hides its time", () => {
+    const body = mount(
+      row(
+        '<div data-copy-author="R&amp;D <ops>"><strong>R&amp;D &lt;ops&gt;</strong></div><ul><li>one</li></ul>',
+      ) +
+        row(
+          '<div data-copy-author="Mic" data-copy-time=""><strong>Mic</strong><span>Away</span></div>',
+          "m2",
+        ),
+    );
+    expect(each(body)).toEqual({
+      text: "R&D <ops>\none\nMic",
+      markdown: "**R\\&D <ops>**\n\n- one\n\n**Mic**",
+      html: "<p><strong>R&amp;D &lt;ops&gt;</strong></p><ul><li>one</li></ul><p><strong>Mic</strong></p>",
+    });
+  });
+
+  it("copies part of a byline as its text, and none of one outside the selection", () => {
+    const body = mount(
+      row(
+        `<div data-copy-author="Morgan" data-copy-time="${createdAt}"><strong>Morgan</strong><time>10:31</time></div><p>text</p>`,
+      ) + authored("Mic", "<p>next</p>", "m2"),
+    );
+    const name = lastText(query("strong", body));
+    const paragraph = lastText(query("p", body));
+    expect(each(body, select(name, 2, paragraph, 4).range)).toEqual({
+      text: "rgan10:31\ntext",
+      markdown: "**rgan**10:31\ntext",
+      html: "<p><strong>rgan</strong>10:31</p><p>text</p>",
+    });
+    // A triple-click ends at the next row's start, short of its byline.
+    expect(
+      each(
+        body,
+        select(paragraph, 0, query("[data-message-id='m2'] div", body), 0)
+          .range,
+      ),
+    ).toEqual({ text: "text", markdown: "text", html: "<p>text</p>" });
+  });
+
+  it("leaves out chrome that only the prefixed user-select hides", () => {
+    // The macOS system webview has no unprefixed property.
+    const body = mount(authored("Robin", "<p>first</p>"));
+    const styles = vi.spyOn(window, "getComputedStyle").mockImplementation(
+      (element) =>
+        ({
+          webkitUserSelect: (element as HTMLElement).style.userSelect,
+        }) as CSSStyleDeclaration,
+    );
+    try {
+      expect(serializeNode(body, "text")).toBe(`Robin ${time}\nfirst`);
+    } finally {
+      styles.mockRestore();
+    }
+  });
+
   it("numbers a list from its first item a selection holds, keeping a whole empty item", () => {
     const body = mount(
       row('<ol start="3">\n<li>one</li>\n<li></li>\n<li>three</li>\n</ol>'),
@@ -815,6 +908,78 @@ describe("useMessageSelectionCopy", () => {
       data: [],
     });
   });
+
+  it.each([
+    ["grouped", true],
+    ["shown", false],
+  ])(
+    "copies a rendered row's %s byline as one line above its text",
+    (_, stackPrevious) => {
+      const rendered = () =>
+        render(
+          <StrictMode>
+            <Surface />
+            <MessageRow
+              row={{
+                id: "m1",
+                channelId: "general",
+                authorId: mic,
+                content: "What next?",
+                createdAt,
+                mentions: [],
+                participants: [],
+                attachments: [],
+                reactions: [],
+                replyCount: 0,
+              }}
+              profile={{ name: "Mic" }}
+              media={() => undefined}
+              onOpenLink={() => false}
+              day={false}
+              retry={undefined}
+              stackPrevious={stackPrevious}
+            />
+          </StrictMode>,
+        );
+      // From the byline's start, as a drag from beside the message selects.
+      const held = (container: HTMLElement) => {
+        const byline = query("[data-copy-author]", container);
+        const header = byline.parentElement as HTMLElement;
+        const paragraph = query("[data-message-id] p", container);
+        return copy(
+          paragraph,
+          header,
+          [...header.childNodes].indexOf(byline),
+          paragraph,
+          paragraph.childNodes.length,
+        ).data;
+      };
+      const view = rendered();
+      expect(held(view.container)).toEqual([
+        ["text/plain", `Mic ${time}\nWhat next?`],
+        [
+          "text/html",
+          `<div data-buzz-copy="timeline"><p><strong>Mic</strong> ${time}<br>What next?</p></div>`,
+        ],
+      ]);
+      // The message's own text alone still copies without it.
+      const paragraph = query("[data-message-id] p", view.container);
+      expect(
+        copy(paragraph, paragraph, 0, paragraph, paragraph.childNodes.length)
+          .data[0],
+      ).toEqual(["text/plain", "What next?"]);
+      view.unmount();
+      setClockPreference({ messageTimestamps: "hide" });
+      try {
+        expect(held(rendered().container)[0]).toEqual([
+          "text/plain",
+          "Mic\nWhat next?",
+        ]);
+      } finally {
+        setClockPreference({ messageTimestamps: "show" });
+      }
+    },
+  );
 
   it("acts before the emoji plugin for messages and leaves other selections to it", () => {
     document.addEventListener("copy", copyEmoji);

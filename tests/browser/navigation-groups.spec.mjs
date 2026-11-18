@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, selectCommunity } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -1005,9 +1005,12 @@ scrollTest(
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    await expect(
-      sidebar.locator("summary", { hasText: /^Work$/ }),
-    ).toBeVisible();
+    const workGroup = sidebar.locator("summary", { hasText: /^Work$/ });
+    // Open Secondary explicitly so its deferred startup cannot race the trap.
+    await selectCommunity(page, "Secondary");
+    await expect(workGroup).toBeVisible();
+    await selectCommunity(page, "Primary");
+    await expect(workGroup).toBeVisible();
     await expect(
       sidebar.locator("summary", { hasText: /Starred$/ }),
     ).toBeVisible();

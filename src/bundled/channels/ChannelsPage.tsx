@@ -2474,7 +2474,7 @@ function ChannelWorkspace({
             workspace={
               filed && fresh
                 ? {
-                    preferences: queries.soloPreferences,
+                    preferences: queries.sidebarPreferences,
                     choose: (id) =>
                       void filed
                         .file(id || undefined)

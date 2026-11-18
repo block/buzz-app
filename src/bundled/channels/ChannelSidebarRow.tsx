@@ -100,6 +100,9 @@ export function ChannelSidebarRow({
       ref={selectRef}
       type="button"
       data-channel-id={channel.id}
+      data-solo-destination-id={
+        channel.channelType === "solo" ? channel.id : undefined
+      }
       data-working={working || undefined}
       aria-current={selected === channel.id ? "page" : undefined}
       aria-describedby={presenceDescription ? presenceId : undefined}

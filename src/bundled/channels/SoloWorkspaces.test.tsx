@@ -140,7 +140,7 @@ function fixture(projectName = "Work") {
         {
           ...owner.session,
           channelDetails: details,
-          soloPreferences: preferences,
+          sidebarPreferences: preferences,
           unread,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
@@ -1094,7 +1094,7 @@ it("rejects a late personal move through the same owner used by menu selections 
   });
   try {
     await preferences.queries.ensure();
-    Object.assign(h.session, { soloPreferences: preferences.queries });
+    Object.assign(h.session, { sidebarPreferences: preferences.queries });
     const channel = h.session.channels
       .list()
       .channels.find((item) => item.id === "owned");

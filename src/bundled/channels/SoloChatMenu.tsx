@@ -70,7 +70,7 @@ export function SoloChatMenuItems({
 }) {
   const handoff = useChannelNavigation();
   const regions = useSoloNavigation(session);
-  const preferences = session.soloPreferences;
+  const preferences = session.sidebarPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,

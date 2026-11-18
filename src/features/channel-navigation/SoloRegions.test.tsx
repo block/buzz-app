@@ -791,8 +791,8 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
   const snapshot = { status: "ready" as const, data };
   const assign = vi.fn(async () => {});
   Object.assign(h.session, {
-    soloPreferences: {
-      ...h.session.soloPreferences,
+    sidebarPreferences: {
+      ...h.session.sidebarPreferences,
       snapshot: () => snapshot,
       assign,
     },
@@ -1391,8 +1391,8 @@ it.each([
     };
     const preferences = { status: "ready" as const, data: saved };
     Object.assign(h.session, {
-      soloPreferences: {
-        ...h.session.soloPreferences,
+      sidebarPreferences: {
+        ...h.session.sidebarPreferences,
         snapshot: () => preferences,
         subscribe: () => () => {},
       },

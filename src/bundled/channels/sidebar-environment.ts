@@ -15,8 +15,6 @@ export type MessagesSidebarState = Readonly<{
   navigator: Navigation;
   target: OpenTarget;
   sidebar: ReturnType<typeof useSidebarView>;
-  filter: "all" | "solo" | "team";
-  soloTitle: string;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarRows?: SidebarRows | undefined;

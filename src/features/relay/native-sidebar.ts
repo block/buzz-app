@@ -1,4 +1,7 @@
-import { projectSidebarRecord } from "./sidebar-registers";
+import {
+  importWorkspaceFallback,
+  projectSidebarRecord,
+} from "./sidebar-registers";
 import {
   editSidebarAssignment,
   editSidebarSectionOrder,
@@ -19,6 +22,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
 import {
   projectSidebarPreferences,
+  projectWorkspacePreferences,
+  projectWorkspaceGroups,
+  WORKSPACE_COORDINATE,
+  workspaceBaseRecord,
+  workspaceRecordForWrite,
   type SidebarAssignmentIntent,
   type SidebarGroups,
   type SidebarSectionEdit,
@@ -29,6 +37,7 @@ import type { ReadTransport } from "./transport";
 
 const coordinates = [
   "channel-sections",
+  WORKSPACE_COORDINATE,
   "channel-stars",
   "channel-mutes",
   "channel-sort",
@@ -67,12 +76,32 @@ export function nativeSidebar(transport: ReadTransport) {
   const writer = transport.writer;
   // Session store serializes its writers. A separate session or device can still race
   // this whole-record read/replace; readback verifies the requested intent only.
-  async function decode(events: readonly RelayEvent[], signal: AbortSignal) {
+  async function decode(
+    events: readonly RelayEvent[],
+    signal: AbortSignal,
+    legacy?: SidebarGroups,
+  ) {
     cancelled(signal);
     const raw = await invoke<Record<string, unknown>>("relay_decode_sidebar", {
       events,
     });
     cancelled(signal);
+    if (raw[WORKSPACE_COORDINATE] !== undefined) {
+      const workspaces = importWorkspaceFallback(
+        projectSidebarRecord(
+          "channel-sections",
+          raw[WORKSPACE_COORDINATE] as Record<string, unknown>,
+        ),
+        legacy,
+      );
+      return projectWorkspacePreferences(
+        workspaces,
+        raw["channel-stars"],
+        raw["channel-mutes"],
+        raw["channel-sort"],
+        raw["channel-filter"],
+      );
+    }
     return projectSidebarPreferences(
       raw["channel-sections"],
       raw["channel-stars"],
@@ -114,11 +143,13 @@ export function nativeSidebar(transport: ReadTransport) {
     else project(coordinate, value);
     return {
       payload:
-        coordinate === "channel-sections" ||
-        coordinate === "channel-sort" ||
-        coordinate === "channel-filter"
-          ? projectSidebarRecord(coordinate, value)
-          : value,
+        coordinate === WORKSPACE_COORDINATE
+          ? projectSidebarRecord("channel-sections", value)
+          : coordinate === "channel-sections" ||
+              coordinate === "channel-sort" ||
+              coordinate === "channel-filter"
+            ? projectSidebarRecord(coordinate, value)
+            : value,
       createdAt: events[0]?.created_at ?? 0,
     };
   }
@@ -127,6 +158,8 @@ export function nativeSidebar(transport: ReadTransport) {
     value: unknown,
     sectionIds?: readonly string[],
   ) {
+    if (coordinate === WORKSPACE_COORDINATE)
+      return projectWorkspacePreferences(value);
     return projectSidebarPreferences(
       coordinate === "channel-sections" ? value : undefined,
       coordinate === "channel-stars" ? value : undefined,
@@ -151,25 +184,34 @@ export function nativeSidebar(transport: ReadTransport) {
     },
     confirms: (current: Record<string, unknown>) => boolean,
     conflict: string,
+    legacy?: SidebarGroups,
   ): Promise<T> {
     const current = await head(coordinate, signal);
-    const draft = prepare(current.payload, current.createdAt);
+    const withLegacy = (head: Head) => {
+      if (coordinate !== WORKSPACE_COORDINATE) return head.payload;
+      if (head.createdAt) return importWorkspaceFallback(head.payload, legacy);
+      if (!legacy)
+        throw new Error("Saved workspaces are unavailable. Try again.");
+      return workspaceBaseRecord(legacy);
+    };
+    const payload = withLegacy(current);
+    const draft = prepare(payload, current.createdAt);
     const unchanged =
-      same(current.payload, draft.next) &&
-      (current.createdAt > 0 || !draft.record);
+      same(payload, draft.next) && (current.createdAt > 0 || !draft.record);
     if (unchanged) return draft.result;
     // Reject unsupported/over-budget writes at the existing projection boundary.
     if (coordinate === "main-agent") mainAgent(draft.next);
     else project(coordinate, draft.next);
-    if (
-      new TextEncoder().encode(JSON.stringify(draft.next)).length >
-      128 * 1024
-    )
+    const next =
+      coordinate === WORKSPACE_COORDINATE
+        ? workspaceRecordForWrite(draft.next, legacy)
+        : draft.next;
+    if (new TextEncoder().encode(JSON.stringify(next)).length > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");
     const event = eventDto(
       await invoke<unknown>("relay_sign_sidebar", {
         coordinate,
-        payload: draft.next,
+        payload: next,
         createdAt: Math.max(
           Math.floor(Date.now() / 1000),
           current.createdAt + 1,
@@ -180,11 +222,13 @@ export function nativeSidebar(transport: ReadTransport) {
     if (!writer) throw new Error("Native relay writer is unavailable");
     await writer.publish(event, signal);
     const confirmed = await head(coordinate, signal);
-    if (!confirms(confirmed.payload)) throw new Error(conflict);
-    return prepare(confirmed.payload, confirmed.createdAt).result;
+    const value = withLegacy(confirmed);
+    if (!confirms(value)) throw new Error(conflict);
+    return prepare(value, confirmed.createdAt).result;
   }
   return {
     decodeSidebarPreferences: decode,
+    workspaceMigration: true as const,
     async readMainAgent(signal: AbortSignal) {
       const current = await head("main-agent", signal);
       // A record of none reads as null, apart from no record at all.
@@ -228,36 +272,42 @@ export function nativeSidebar(transport: ReadTransport) {
     async removeSidebarSection(
       sectionId: string,
       signal: AbortSignal,
+      legacy?: SidebarGroups,
     ): Promise<SidebarGroups> {
       if (!validSidebarSectionRemoval(sectionId))
         throw new Error("Invalid sidebar section removal intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const next = editSidebarSectionRemoval(current, createdAt, sectionId);
-        const { sections, assignments } = project("channel-sections", next);
-        return { next, result: { sections, assignments } };
+        return { next, result: projectWorkspaceGroups(next) };
       };
       return mutate(
-        "channel-sections",
+        WORKSPACE_COORDINATE,
         signal,
         prepare,
         (value) => {
-          const { sections, assignments } = project("channel-sections", value);
+          const { sections, assignments } = project(
+            WORKSPACE_COORDINATE,
+            value,
+          );
           return (
             !sections.some(({ id }) => id === sectionId) &&
             !Object.values(assignments).includes(sectionId)
           );
         },
         "Sidebar groups changed on another device; reload and try again",
+        legacy,
       );
     },
     async renameSidebarSection(
-      intent: SidebarSectionEdit & Readonly<{ sectionId: string }>,
+      intent: SidebarSectionEdit &
+        Readonly<{ sectionId: string; expectedName?: string }>,
       signal: AbortSignal,
+      legacy?: SidebarGroups,
     ): Promise<SidebarGroups> {
       const { sectionId, name, icon } = intent;
       if (!validSidebarSectionRename(sectionId, name, icon))
         throw new Error("Invalid sidebar section edit intent");
-      const edit = { name, icon };
+      const edit = intent;
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const next = editSidebarSectionRename(
           current,
@@ -265,40 +315,42 @@ export function nativeSidebar(transport: ReadTransport) {
           sectionId,
           edit,
         );
-        const { sections, assignments } = project("channel-sections", next);
-        return { next, result: { sections, assignments } };
+        return { next, result: projectWorkspaceGroups(next) };
       };
       return mutate(
-        "channel-sections",
+        WORKSPACE_COORDINATE,
         signal,
         prepare,
         (value) =>
           same(value, editSidebarSectionRename(value, 0, sectionId, edit)),
         "Sidebar groups changed on another device; reload and try again",
+        legacy,
       );
     },
     async writeSidebarSectionOrder(
       sectionIds: readonly string[],
       signal: AbortSignal,
+      legacy?: SidebarGroups,
     ): Promise<SidebarGroups> {
       if (!validSidebarSectionOrder(sectionIds))
         throw new Error("Invalid sidebar section order intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const next = editSidebarSectionOrder(current, createdAt, sectionIds);
-        const { sections, assignments } = project("channel-sections", next);
-        return { next, result: { sections, assignments } };
+        return { next, result: projectWorkspaceGroups(next) };
       };
       return mutate(
-        "channel-sections",
+        WORKSPACE_COORDINATE,
         signal,
         prepare,
         (value) => same(value, editSidebarSectionOrder(value, 0, sectionIds)),
         "Sidebar groups changed on another device; reload and try again",
+        legacy,
       );
     },
     async writeSidebarAssignment(
       intent: SidebarAssignmentIntent,
       signal: AbortSignal,
+      legacy?: SidebarGroups,
     ): Promise<SidebarGroups> {
       const { channelId, sectionId, createSection } = intent;
       if (!validSidebarAssignment(intent))
@@ -306,14 +358,10 @@ export function nativeSidebar(transport: ReadTransport) {
       const section = createSection?.id ?? sectionId;
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const next = editSidebarAssignment(current, createdAt, intent);
-        const { sections: projected, assignments: mapped } = project(
-          "channel-sections",
-          next,
-        );
-        return { next, result: { sections: projected, assignments: mapped } };
+        return { next, result: projectWorkspaceGroups(next) };
       };
       return mutate(
-        "channel-sections",
+        WORKSPACE_COORDINATE,
         signal,
         prepare,
         (value) => {
@@ -331,6 +379,7 @@ export function nativeSidebar(transport: ReadTransport) {
           );
         },
         "Sidebar groups changed on another device; reload and try again",
+        legacy,
       );
     },
     async writeSidebarStar(

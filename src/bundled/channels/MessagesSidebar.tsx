@@ -1,29 +1,19 @@
 import { teamSidebarSlotsReady } from "./TeamSidebarSource";
 import { SidebarSectionSlotView } from "../../features/channel-navigation/SidebarSectionSources";
-import {
-  MessagesSidebarEnvironment,
-  type MessagesSidebarState,
-} from "./sidebar-environment";
+import { MessagesSidebarEnvironment } from "./sidebar-environment";
 import type { SidebarContextProps } from "../../features/sidebar/contracts";
-import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useCallback,
-  useEffect,
-  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import {
-  sidebarTarget,
-  soloDraft,
-} from "../../features/channel-navigation/routes";
+import { sidebarTarget } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
-import { ChannelInventory, sidebarEntryLocation } from "./ChannelInventory";
+import { ChannelInventory } from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
-import { SidebarSection } from "./SidebarSection";
 import { SidebarUnread } from "./SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
@@ -31,7 +21,6 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import type {
   RegisteredSidebarRestriction,
@@ -40,10 +29,7 @@ import type {
 import styles from "./MessagesSidebar.module.css";
 
 import { useRelayConnection } from "../../features/relay/react";
-import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
-import { readView, writeView } from "../../shared/view-state";
-import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
@@ -82,13 +68,6 @@ function destinationAttempt(navigator: Navigation) {
     return shown;
   };
 }
-
-type Filter = "all" | "solo" | "team";
-const filters = [
-  { value: "all", label: "All", panelId: "sidebar-all" },
-  { value: "solo", label: "Solo", panelId: "sidebar-solo" },
-  { value: "team", label: "Team", panelId: "sidebar-team" },
-] as const;
 
 export type MessagesSidebarProps = Pick<
   SidebarContextProps,
@@ -141,118 +120,13 @@ function ScopedSidebar({
     props.navigator.subscribe,
     attemptView,
   );
-  const attempt = shownAttempt.id;
   const preserveSidebar = shownAttempt.sidebar === "preserve";
-  const [observedAttempt, setObservedAttempt] = useState(attempt);
-  const [view, setView] = useState(() => {
-    const saved = readView<{ filter?: unknown; location?: unknown } | null>(
-      scope,
-      "navigation-scope",
-      null,
-    );
-    return {
-      filter:
-        saved?.filter === "solo"
-          ? "solo"
-          : saved?.filter === "team"
-            ? "team"
-            : ("all" as Filter),
-      location:
-        typeof saved?.location === "string" ? saved.location : undefined,
-    };
-  });
-  const sidebarScope = props.sidebarScope;
-  useEffect(
-    () =>
-      soloNavigationFor(connection.session)?.subscribeReveal(
-        (_id, explicit) =>
-          explicit &&
-          // A restriction already shows Solo; keep the saved filter for after.
-          !sidebarScope?.snapshot().length &&
-          setView((current) =>
-            current.filter === "team"
-              ? { ...current, filter: "solo" }
-              : current,
-          ),
-      ),
-    [connection.session, sidebarScope],
-  );
-  const soloNavigation = soloNavigationFor(connection.session);
-  // Select the title, not the snapshot: Solo regions are rebuilt on every message.
-  const soloTitle = useSyncExternalStore(
-    soloNavigation?.subscribe ?? noSubscription,
-    () =>
-      soloNavigation
-        ?.snapshot()
-        .regions.find((region) => region.source && !region.hidden)?.title ??
-      "Solo",
-  );
-  const target = props.target;
-  const local =
-    "scope" in target &&
-    target.scope &&
-    relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope;
-  // The conversation's own Solo label, not the opening page, says which
-  // inventory owns it; an unlisted conversation waits until it is known.
-  const channels = connection.session?.channels;
-  const conversation = target.kind === "conversation" ? target.channelId : "";
-  // Only the destination: the list is replaced on every message preview.
-  const listedDestination = useSyncExternalStore(
-    channels?.subscribeList ?? noSubscription,
-    () => conversationDestination(channels?.list(), conversation),
-  );
-  const preferences = connection.session?.soloPreferences;
-  const soloPreferences = useSyncExternalStore(
-    preferences?.subscribe ?? noSubscription,
-    () => preferences?.snapshot(),
-  );
-  // The community refused this account: one notice on every page says what
-  // fixes it, so the sidebar keeps no notice or Try again of its own.
   const refused =
     connection.status === "error" && connection.denied && !connection.retrying;
-  // A cached startup session has no Solo capabilities yet; its unavailable
-  // placeholders still change height when the live inventories arrive.
-  const soloReady =
-    (connection.status === "ready" || connection.status === "error") &&
-    soloPreferences?.status !== "idle" &&
-    soloPreferences?.status !== "loading";
-  const destination = local
-    ? target.kind === "conversation"
-      ? listedDestination
-      : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? soloDraft(target.route?.params)
-          ? "solo"
-          : "team"
-        : undefined
-    : undefined;
-  const location = destination ? targetKey(target) : undefined;
-  const sidebarLocation = destination
-    ? sidebarEntryLocation(target)
-    : undefined;
   const restriction = useSyncExternalStore(
     props.sidebarScope?.subscribe ?? noSubscription,
     () => props.sidebarScope?.snapshot()[0],
   );
-  // A deliberate filter change leaves the pane alone; only a new destination reveals its inventory.
-  if (attempt !== observedAttempt) setObservedAttempt(attempt);
-  if (
-    destination &&
-    location &&
-    (view.location !== location || attempt !== observedAttempt)
-  ) {
-    // A restriction keeps the saved filter for when it ends.
-    setView({
-      filter:
-        view.filter === "all" || restriction || preserveSidebar
-          ? view.filter
-          : destination,
-      location,
-    });
-  }
-  useEffect(() => {
-    writeView(scope, "navigation-scope", view);
-  }, [scope, view]);
-  const filter = restriction ? "solo" : view.filter;
   const session = connection.session;
   const [committedSlots, setCommittedSlots] = useState<{
     generation: string;
@@ -271,37 +145,17 @@ function ScopedSidebar({
       ),
     [slotGeneration],
   );
-  const setFilter = (filter: Filter) => setView({ filter, location });
-  // Without the tabs there is no tab to label the panel.
-  const panelId = restriction ? undefined : `sidebar-${filter}`;
   const header = (
     <>
       <div className={styles.sidebarControls}>
-        <div className={styles.sidebarScope}>
-          {restriction && props.sidebarScope ? (
+        {restriction && props.sidebarScope && (
+          <div className={styles.sidebarScope}>
             <RestrictionBanner
               entry={restriction}
               registry={props.sidebarScope}
             />
-          ) : (
-            <Tabs
-              label="Navigation scope"
-              variant="segmented"
-              size="sm"
-              value={filter}
-              items={
-                soloTitle === "Solo"
-                  ? filters
-                  : [
-                      filters[0],
-                      filters[2],
-                      { ...filters[1], label: soloTitle },
-                    ]
-              }
-              onValueChange={setFilter}
-            />
-          )}
-        </div>
+          </div>
+        )}
         {props.creationAction}
       </div>
       {props.children && !restriction && (
@@ -310,11 +164,7 @@ function ScopedSidebar({
     </>
   );
   return (
-    <SidebarBoundary
-      key={`${scope}:${connection.generation}`}
-      header={header}
-      panelId={panelId}
-    >
+    <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
       {session && (connection.status === "ready" || connection.cached) ? (
         <ChannelInventory
           relay={props.relay}
@@ -327,10 +177,8 @@ function ScopedSidebar({
           sidebarSections={props.sidebarSections}
           sidebarRows={props.sidebarRows}
           cached={!!connection.cached}
-          layoutReady={
-            (filter === "team" || soloReady) &&
-            committedSlots?.generation === slotGeneration
-          }
+          chatsOnly={!!restriction}
+          layoutReady={committedSlots?.generation === slotGeneration}
           slotsReady={(ids) =>
             teamSidebarSlotsReady(props.sidebarSections, committedSlots, ids)
           }
@@ -353,8 +201,6 @@ function ScopedSidebar({
                 navigator: props.navigator,
                 target: props.target,
                 sidebar,
-                filter,
-                soloTitle,
                 active: () => true,
                 chatIcons: props.chatIcons,
                 chatMenus: props.chatMenus,
@@ -384,7 +230,6 @@ function ScopedSidebar({
                         resizable
                         label="Sidebar"
                         header={header}
-                        panelId={panelId}
                         {...frame}
                         launchPending={
                           committedSlots?.generation === slotGeneration
@@ -414,40 +259,15 @@ function ScopedSidebar({
                           listRef={sidebar.list}
                           dmPreviews={dmPreviews}
                         >
-                          <section
-                            aria-label={soloTitle}
-                            className={styles.sidebarGroup}
-                            hidden={filter === "team"}
-                          >
-                            {slots
-                              .filter((slot) => slot.scope === "solo")
-                              .map((slot) => (
-                                <SidebarSectionSlotView
-                                  key={slot.key}
-                                  slot={slot}
-                                />
-                              ))}
-                          </section>
-                          <div
-                            className={styles.sidebarGroup}
-                            hidden={filter === "solo"}
-                          >
-                            {filter === "all" ? (
-                              <InventoryGroup
-                                sidebar={sidebar}
-                                sectionKey="scope:team"
-                                title="Team"
-                                ownsCurrent={
-                                  destination === "team" && !preserveSidebar
-                                }
-                                location={sidebarLocation}
-                              >
-                                {teamContent}
-                              </InventoryGroup>
-                            ) : (
-                              teamContent
-                            )}
-                          </div>
+                          {teamContent}
+                          {slots
+                            .filter((slot) => slot.scope === "solo")
+                            .map((slot) => (
+                              <SidebarSectionSlotView
+                                key={slot.key}
+                                slot={slot}
+                              />
+                            ))}
                         </SidebarUnread>
                         {after}
                       </props.Frame>
@@ -463,7 +283,6 @@ function ScopedSidebar({
         <props.Frame
           label="Sidebar"
           header={header}
-          panelId={panelId}
           launchPending={
             connection.status === "connecting" ? "required" : undefined
           }
@@ -525,52 +344,6 @@ function communityIdentity(
   return (origin && identity?.forCommunity?.(origin)) || identity;
 }
 
-function InventoryGroup({
-  sidebar,
-  sectionKey,
-  title,
-  ownsCurrent,
-  location,
-  children,
-}: {
-  sidebar: MessagesSidebarState["sidebar"];
-  sectionKey: string;
-  title: string;
-  ownsCurrent: boolean;
-  location: string | undefined;
-  children: ReactNode;
-}) {
-  const open = !sidebar.collapsed.includes(sectionKey);
-  useLayoutEffect(
-    () =>
-      sidebar.beforeReveal((next) => {
-        if (!ownsCurrent || next !== location || open) return true;
-        sidebar.toggle(sectionKey, true);
-        return false;
-      }),
-    [
-      location,
-      open,
-      ownsCurrent,
-      sectionKey,
-      sidebar.beforeReveal,
-      sidebar.toggle,
-    ],
-  );
-  return (
-    <SidebarSection
-      sectionKey={sectionKey}
-      title={title}
-      open={open}
-      onToggle={(next) => sidebar.toggle(sectionKey, next)}
-      hideMoreActions
-      persistentChevron
-    >
-      {children}
-    </SidebarSection>
-  );
-}
-
 /** A protected community can refuse after its channel list is shown: native
  * discovery hands back the transport before NIP-FI admission, so the refusal
  * arrives on the live socket. Its recovery reconnects only that socket; a
@@ -608,13 +381,6 @@ function LiveSignIn({
       {asksAgain && <Button onClick={tryAgain}>Try again</Button>}
     </>
   );
-}
-
-/** Unknown until the channel list can say; a channel outside it is Team's. */
-function conversationDestination(list: ChannelList | undefined, id: string) {
-  const channel = list?.channels.find((item) => item.id === id);
-  if (!channel && list?.status !== "ready") return undefined;
-  return channel?.channelType === "solo" ? "solo" : "team";
 }
 
 /** A plugin's banner, isolated so its failure keeps the sidebar working. */

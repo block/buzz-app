@@ -271,7 +271,7 @@ it("reconciles unknown removal from the fresh selected record without replaying 
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([
     9002, 30078,
   ]);
-  expect(f.session.soloPreferences.snapshot().data?.assignments[id]).toBe(
+  expect(f.session.sidebarPreferences.snapshot().data?.assignments[id]).toBe(
     undefined,
   );
 });

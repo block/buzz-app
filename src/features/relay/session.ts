@@ -1,6 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
-import { createSoloPreferences, soloGroups } from "./solo-preferences";
+import { mergeLegacyWorkspaces } from "./workspace-migration";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import {
@@ -16,7 +16,10 @@ import {
   deletingAgent,
   templateAgentChoices,
 } from "../agents/choices";
-import { parseLineup } from "../channel-templates/model";
+import {
+  legacyWorkspaceRecipeCoordinate,
+  parseLineup,
+} from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
@@ -91,7 +94,11 @@ import type {
 import { createChannelActivity } from "./channel-activity";
 import {
   readSidebarPreferences,
+  workspaceBaseRecord,
+  projectWorkspaceGroups,
   SIDEBAR_COORDINATES,
+  WORKSPACE_COORDINATE,
+  type SidebarGroups,
 } from "./sidebar-preferences";
 import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
@@ -1893,24 +1900,6 @@ export function createRelaySession(
     canRead: (id) => !closed && channels.canParticipate(id),
     delivered: channelWrites.delivered,
   });
-  const soloPreferences = createSoloPreferences(
-    channelKit.capability,
-    lifetime.signal,
-    (chats) => {
-      // Only a verified, uncapped roster proves a missing chat was deleted.
-      const list = channels.queries.list();
-      if (
-        channels.roster().state !== "verified" ||
-        list.status !== "ready" ||
-        list.coverage
-      )
-        return [];
-      const live = new Set(
-        list.channels.filter((c) => !c.archived).map((c) => c.id),
-      );
-      return chats.filter((chat) => !live.has(chat));
-    },
-  );
   const reminders =
     transport?.reminders && writer
       ? createReminders({
@@ -1951,6 +1940,45 @@ export function createRelaySession(
         })
       : undefined;
   })();
+  let legacyWorkspaceRevision = 0;
+  let legacyWorkspaceCache:
+    | { revision: number; groups: SidebarGroups }
+    | undefined;
+  const legacyWorkspaceCoordinates = [
+    "channel-sections",
+    legacyWorkspaceRecipeCoordinate(transport?.scope ?? ""),
+  ];
+  async function readLegacyWorkspaces(signal: AbortSignal, fresh = false) {
+    const decode = transport?.decodeSidebarPreferences;
+    if (!transport?.workspaceMigration || !decode) return undefined;
+    const revision = legacyWorkspaceRevision;
+    if (!fresh && legacyWorkspaceCache?.revision === revision)
+      return legacyWorkspaceCache.groups;
+    const active = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+    const [teamEvents, solo] = await Promise.all([
+      preferenceReader.read(
+        [
+          {
+            kinds: [30078],
+            authors: [transport.viewer],
+            "#d": ["channel-sections"],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        { signal: active, fresh: true, priority: "foreground" },
+      ),
+      channelKit.readLegacyGroups(active),
+    ]);
+    const groups = mergeLegacyWorkspaces(
+      await decode(teamEvents, active),
+      solo,
+    );
+    active.throwIfAborted();
+    if (legacyWorkspaceRevision === revision)
+      legacyWorkspaceCache = { groups, revision };
+    return groups;
+  }
   const readPreferences = async (
     signal?: AbortSignal,
     consistency?: "strong",
@@ -1963,32 +1991,64 @@ export function createRelaySession(
       AbortSignal.timeout(10_000),
       ...(signal ? [signal] : []),
     ]);
-    return readSidebarPreferences(
+    if (!transport.workspaceMigration)
+      return readSidebarPreferences(
+        preferenceReader,
+        transport.viewer,
+        decode,
+        combined,
+        consistency,
+      );
+    let legacy: SidebarGroups | undefined;
+    let legacyError: unknown;
+    try {
+      legacy = await readLegacyWorkspaces(combined);
+    } catch (error) {
+      legacyError = error;
+    }
+    const current = await readSidebarPreferences(
       preferenceReader,
       transport.viewer,
       decode,
       combined,
       consistency,
+      legacy,
+      transport.workspaceMigration,
     );
+    if (current.sectionOrder || !transport.workspaceMigration) return current;
+    if (!legacy)
+      throw legacyError ?? new Error("Saved workspaces are unavailable.");
+    return {
+      ...current,
+      ...projectWorkspaceGroups(workspaceBaseRecord(legacy)),
+    };
   };
+  function workspaceWrite<T>(
+    write:
+      | ((
+          intent: T,
+          signal: AbortSignal,
+          legacy?: SidebarGroups,
+        ) => Promise<SidebarGroups>)
+      | undefined,
+  ) {
+    if (!write) return undefined;
+    return async (intent: T, signal: AbortSignal) => {
+      const active = AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(20_000),
+        signal,
+      ]);
+      if (!transport?.workspaceMigration) return write(intent, active);
+      const legacy = await readLegacyWorkspaces(active, true);
+      return write(intent, active, legacy);
+    };
+  }
   const sidebarPreferences = createSidebarPreferencesStore({
     read: readPreferences,
     readAfterWrite: (signal) => readPreferences(signal, "strong"),
     available: !!transport?.decodeSidebarPreferences,
-    write: (() => {
-      const write = transport?.writeSidebarAssignment;
-      return write
-        ? (intent, signal) =>
-            write(
-              intent,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
+    write: workspaceWrite(transport?.writeSidebarAssignment),
     writeStar: (() => {
       const write = transport?.writeSidebarStar;
       return write
@@ -2035,48 +2095,9 @@ export function createRelaySession(
         : undefined;
     })(),
     persistence: options.persistence,
-    removeSection: (() => {
-      const write = transport?.removeSidebarSection;
-      return write
-        ? (sectionId, signal) =>
-            write(
-              sectionId,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
-    renameSection: (() => {
-      const write = transport?.renameSidebarSection;
-      return write
-        ? (intent, signal) =>
-            write(
-              intent,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
-    writeOrder: (() => {
-      const write = transport?.writeSidebarSectionOrder;
-      return write
-        ? (sectionIds, signal) =>
-            write(
-              sectionIds,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
+    removeSection: workspaceWrite(transport?.removeSidebarSection),
+    renameSection: workspaceWrite(transport?.renameSidebarSection),
+    writeOrder: workspaceWrite(transport?.writeSidebarSectionOrder),
     writeFilter: (() => {
       const write = transport?.writeSidebarFilter;
       return write
@@ -2094,16 +2115,6 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-  });
-  let soloHead: string | undefined;
-  const stopSoloGroups = channelKit.capability.subscribe(() => {
-    const state = channelKit.capability.snapshot();
-    if (state.status !== "ready") return;
-    const nextSolo = soloGroups(state.entries)?.eventId;
-    if (nextSolo !== soloHead) {
-      soloHead = nextSolo;
-      void soloPreferences.queries.refresh();
-    }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
   let setupNotices: readonly SetupNotice[] = [];
@@ -2454,11 +2465,6 @@ export function createRelaySession(
           () => void channelKit.capability.refresh({ after: true }),
         ),
         recoverable(
-          soloPreferences.queries.subscribe,
-          () => loadState(soloPreferences.queries.snapshot()),
-          () => void soloPreferences.queries.refresh(),
-        ),
-        recoverable(
           sidebarPreferences.queries.subscribe,
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
@@ -2684,7 +2690,6 @@ export function createRelaySession(
     sidebarPreferences: sidebarPreferences.queries,
     /** The account's saved main agent, shared by every install. */
     mainAgent,
-    soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
     live,
     /** Wake, network and focus hint that the live socket, which may still look
@@ -3508,7 +3513,7 @@ export function createRelaySession(
     if (prefs.status === "idle" || prefs.status === "loading") return;
     channels.queries.warm?.(prefs.data?.starred ?? []);
   };
-  // Only five replaceable heads; live payloads are hints, never decoded authority.
+  // Live heads invalidate reads. Their payloads never supply migration data.
   const sidebarHeads = new Map<string, Pick<RelayEvent, "id" | "created_at">>();
   const receiveSidebar = (events: readonly RelayEvent[]) => {
     if (!transport?.decodeSidebarPreferences || cacheClearing) return;
@@ -3516,10 +3521,14 @@ export function createRelaySession(
       if (event.kind !== 30078 || event.pubkey !== transport.viewer) continue;
       const coordinates = event.tags.filter(([name]) => name === "d");
       const coordinate = coordinates[0]?.[1];
+      const legacy =
+        !!coordinate && legacyWorkspaceCoordinates.includes(coordinate);
       if (
         coordinates.length !== 1 ||
         !coordinate ||
-        !SIDEBAR_COORDINATES.some((value) => value === coordinate)
+        (!legacy &&
+          coordinate !== WORKSPACE_COORDINATE &&
+          !SIDEBAR_COORDINATES.some((value) => value === coordinate))
       )
         continue;
       const head = sidebarHeads.get(coordinate);
@@ -3533,6 +3542,7 @@ export function createRelaySession(
         id: event.id,
         created_at: event.created_at,
       });
+      if (legacy) legacyWorkspaceRevision++;
       sidebarPreferences.invalidate();
     }
   };
@@ -3626,6 +3636,7 @@ export function createRelaySession(
         }
         return;
       }
+      if (!continuous) legacyWorkspaceRevision++;
       sidebarPreferences.reconnect(continuous);
       repairUnread(continuous);
       // Only while this same connection is still up.
@@ -4092,8 +4103,9 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarHeads.clear();
+        legacyWorkspaceCache = undefined;
+        legacyWorkspaceRevision++;
         sidebarPreferences.clear();
-        soloPreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -4125,7 +4137,6 @@ export function createRelaySession(
       }
     },
     dispose() {
-      stopSoloGroups();
       closed = true;
       resumes.clear();
       stopLiveRecovery();
@@ -4141,7 +4152,6 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarHeads.clear();
       sidebarPreferences.dispose();
-      soloPreferences.dispose();
       // Before requests.dispose(): lifecycle rereads retired shared reads
       // until its own controllers abort.
       lifecycle.dispose();

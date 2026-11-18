@@ -500,7 +500,8 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
     };
     match coordinate {
-        "channel-sections" => {
+        "channel-sections" | "channel-workspaces" => {
+            let workspaces = coordinate == "channel-workspaces";
             let sections = data
                 .get("sections")
                 .and_then(|v| v.as_array())
@@ -509,8 +510,75 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 .get("assignments")
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
-            if sections.len() > 100 || assignments.len() > 1000 {
+            let (section_limit, assignment_limit) =
+                if workspaces { (200, 2000) } else { (100, 1000) };
+            if sections.len() > section_limit || assignments.len() > assignment_limit {
                 return Err(invalid());
+            }
+            if workspaces {
+                if data.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "version"
+                            | "sections"
+                            | "assignments"
+                            | "sectionOrder"
+                            | "legacyTemplates"
+                            | "removedSections"
+                            | "unfiled"
+                    )
+                }) {
+                    return Err(invalid());
+                }
+                let order = data
+                    .get("sectionOrder")
+                    .and_then(|order| order.as_array())
+                    .ok_or_else(invalid)?;
+                let mut keys = std::collections::HashSet::new();
+                if order.len() > section_limit + 5
+                    || order.iter().any(|key| {
+                        let Some(key) = key.as_str() else {
+                            return true;
+                        };
+                        !keys.insert(key)
+                            || (!matches!(key, "starred" | "solo" | "channels" | "forums" | "dms")
+                                && !key.strip_prefix("group:").is_some_and(|id| {
+                                    !id.trim().is_empty() && id.encode_utf16().count() <= 256
+                                }))
+                    })
+                {
+                    return Err(invalid());
+                }
+                for key in ["removedSections", "unfiled"] {
+                    if let Some(value) = data.get(key) {
+                        let list = value.as_array().ok_or_else(invalid)?;
+                        let mut unique = std::collections::HashSet::new();
+                        if list.iter().any(|id| {
+                            !text(id, 256) || id == "__proto__" || !unique.insert(id.as_str())
+                        }) {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                if let Some(templates) = data.get("legacyTemplates") {
+                    let templates = templates.as_object().ok_or_else(invalid)?;
+                    if templates.len() > section_limit
+                        || templates.iter().any(|(id, template)| {
+                            id.trim().is_empty()
+                                || id.encode_utf16().count() > 256
+                                || !template.as_str().is_some_and(|template| {
+                                    !template.is_empty()
+                                        && template.len() <= 128
+                                        && template.bytes().all(|byte| {
+                                            byte.is_ascii_alphanumeric()
+                                                || matches!(byte, b'_' | b'-')
+                                        })
+                                })
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                }
             }
             let mut ids = std::collections::HashSet::new();
             for section in sections {
@@ -573,7 +641,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             if coordinate == "channel-filter" {
                 if let Some(windows) = data.get("activeWindowSeconds") {
                     let windows = windows.as_object().ok_or_else(invalid)?;
-                    if windows.len() > 104
+                    if windows.len() > 205
                         || windows.iter().any(|(group, value)| {
                             group.trim().is_empty()
                                 || group.encode_utf16().count() > 264
@@ -586,7 +654,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     }
                 }
             }
-            if groups.len() > 104
+            if groups.len() > 205
                 || groups.iter().any(|(group, mode)| {
                     group.encode_utf16().count() > 264
                         || !mode.is_string()
@@ -634,7 +702,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             if !choices
                 .get("g")
                 .and_then(|v| v.as_object())
-                .is_some_and(|g| g.len() <= 104)
+                .is_some_and(|g| g.len() <= 205)
             {
                 return Err(invalid());
             }
@@ -798,6 +866,7 @@ pub(crate) fn sidebar_coordinate(value: &str) -> bool {
     matches!(
         value,
         "channel-sections"
+            | "channel-workspaces"
             | "channel-stars"
             | "channel-mutes"
             | "channel-sort"

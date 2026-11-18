@@ -99,7 +99,7 @@ async function page(
   navigator?: Navigation,
   routed = false,
   appComponent?: RegisteredPanel["component"],
-  soloPreferences?: RelaySession["soloPreferences"],
+  sidebarPreferences?: RelaySession["sidebarPreferences"],
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -161,12 +161,12 @@ async function page(
     scope,
     viewer: viewer.pubkey,
     // The real session and its stores are frozen; a test may replace one.
-    session: soloPreferences
+    session: sidebarPreferences
       ? (Object.defineProperty(
           Object.create(owner.session),
-          "soloPreferences",
+          "sidebarPreferences",
           {
-            value: soloPreferences,
+            value: sidebarPreferences,
           },
         ) as typeof owner.session)
       : owner.session,
@@ -1103,7 +1103,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
       starred: [],
       muted: [],
     },
-  } as unknown as ReturnType<RelaySession["soloPreferences"]["snapshot"]>;
+  } as unknown as ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>;
   let current = base;
   const listeners = new Set<() => void>();
   const publish = (next: typeof current) => {
@@ -1144,7 +1144,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
         throw new Error("Relay unavailable");
       }),
       retryMove,
-    } as unknown as RelaySession["soloPreferences"],
+    } as unknown as RelaySession["sidebarPreferences"],
   );
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
@@ -1191,7 +1191,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
       starred: [],
       muted: [],
     },
-  } as unknown as ReturnType<RelaySession["soloPreferences"]["snapshot"]>;
+  } as unknown as ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>;
   let current = base;
   const listeners = new Set<() => void>();
   const publish = (next: typeof current) => {
@@ -1237,7 +1237,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
       },
       assign,
       retryMove: vi.fn(() => new Promise<never>(() => {})),
-    } as unknown as RelaySession["soloPreferences"],
+    } as unknown as RelaySession["sidebarPreferences"],
   );
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>

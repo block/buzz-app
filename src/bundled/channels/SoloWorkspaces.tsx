@@ -142,7 +142,7 @@ export function SoloWorkspaces({
         pluginHiddenRows.current.delete(id);
     };
   }, []);
-  const preferences = session.soloPreferences;
+  const preferences = session.sidebarPreferences;
   const rowHosts = useRef(new Map<string, WorkspaceRowsHost>());
   const collapsedKey = "solo:collapsed-projects";
   const expandedKey = "solo:expanded-projects";

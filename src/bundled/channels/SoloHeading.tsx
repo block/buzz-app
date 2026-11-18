@@ -125,7 +125,7 @@ export function SoloToolbar({
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const owner = useSoloOwner(session, channel);
   const [readError, setReadError] = useState<string>();
-  const preferences = session.soloPreferences;
+  const preferences = session.sidebarPreferences;
   const canOpenActions =
     !channel.cached && (!channel.readOnly || channel.viewerRole === "guest");
   return (
@@ -278,7 +278,7 @@ export function SoloToolbar({
  * the store keeps a move record for it, pending or failed, and until its
  * failure is dismissed. */
 export function useSoloMoveRecovery(session: RelaySession) {
-  const preferences = session.soloPreferences;
+  const preferences = session.sidebarPreferences;
   const placement = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,

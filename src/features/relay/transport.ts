@@ -35,6 +35,7 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  projectWorkspaceGroups,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
@@ -46,6 +47,7 @@ import {
   type SidebarDecoder,
   type SidebarMuteMutator,
   type SidebarPreferences,
+  type SidebarGroups,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
@@ -154,6 +156,7 @@ export interface ReadTransport {
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
+  readonly workspaceMigration?: true;
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
@@ -549,6 +552,7 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarWorkspaceMigration?: boolean;
     sidebarSortWrites?: boolean;
     sidebarFilterWrites?: boolean;
     channelActivity?: boolean;
@@ -894,12 +898,13 @@ export async function connectBrokerTransport(
           async decodeSidebarPreferences(
             events: readonly RelayEvent[],
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ): Promise<SidebarPreferences> {
             const result = await fetch(`${endpoint}/sidebar-preferences`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(events),
+              body: JSON.stringify(legacy ? { events, legacy } : events),
               signal,
             });
             if (!result.ok)
@@ -915,6 +920,9 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
+      : {}),
+    ...(session.sidebarWorkspaceMigration
+      ? { workspaceMigration: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
@@ -1150,29 +1158,29 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.sidebarSectionRemoval
       ? {
-          async removeSidebarSection(sectionId: string, signal: AbortSignal) {
+          async removeSidebarSection(
+            sectionId: string,
+            signal: AbortSignal,
+            legacy?: SidebarGroups,
+          ) {
             const response = await fetch(
               `${endpoint}/sidebar-section-removal`,
               {
                 method: "POST",
                 credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ sectionId }),
+                body: JSON.stringify(
+                  legacy ? { intent: { sectionId }, legacy } : { sectionId },
+                ),
                 signal,
               },
             );
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
@@ -1181,26 +1189,21 @@ export async function connectBrokerTransport(
           async renameSidebarSection(
             intent: SidebarSectionEdit & Readonly<{ sectionId: string }>,
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-rename`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(intent),
+              body: JSON.stringify(legacy ? { intent, legacy } : intent),
               signal,
             });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
@@ -1209,56 +1212,44 @@ export async function connectBrokerTransport(
           async writeSidebarSectionOrder(
             sectionIds: readonly string[],
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-order`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sectionIds }),
+              body: JSON.stringify(
+                legacy ? { intent: { sectionIds }, legacy } : { sectionIds },
+              ),
               signal,
             });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
     ...(session.sidebarPreferenceWrites
       ? {
-          async writeSidebarAssignment(intent, signal) {
+          async writeSidebarAssignment(intent, signal, legacy) {
             const result = await fetch(`${endpoint}/sidebar-assignment`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(intent),
+              body: JSON.stringify(legacy ? { intent, legacy } : intent),
               signal,
             });
             if (!result.ok) {
               const failure = await readApiFailure(result);
               throw new Error(failure.error);
             }
-            const value = (await result.json()) as SidebarPreferences;
-            const groups = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return {
-              sections: groups.sections,
-              assignments: groups.assignments,
-            };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await result.json()),
+            });
           },
         }
       : {}),

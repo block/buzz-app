@@ -549,46 +549,21 @@ and are asked to sign in again in Buzz.
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
-- **Workspaces** group Solo chats and provide starting folders and instructions.
-  Drag a workspace header onto another workspace to reorder it, or use **Move up**
-  and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
-  the workspaces. A failed save restores the previous order and offers **Retry move**.
-  If a failed refresh disables **Retry move**, use **Retry workspaces** first.
-  Plugins can also group tasks under joined channels. On supported hosts, each
-  channel group keeps the native channel actions and details. New task appears
-  only when the channel permits starting a chat.
-  To rename one, open **Workspace settings** from its heading’s **…** or right-click
-  menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
-  starting settings stay in place.
-  **Archive inactive chats** in the same menu shows how many of the workspace's
-  chats have had no messages for 14 days and archives them after you confirm.
-  It skips the open chat and chats with agent work running or messages still
-  queued or sending. **Undo** on the result restores them.
-  Retrying an instructions-only draft keeps the current workspace name. If a
-  workspace name edit conflicts, copy your draft before using
-  **Review saved settings** to discard it and reload.
-  Plugins can show ordinary chats in a plain list without workspace headings.
-  Their saved workspace assignments stay in place.
-  With Nexus enabled, each workspace also contains its tasks and can have a Lead
-  task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.
-  Creating a workspace selects it so you can start a conversation with its Lead.
-  The title or blank row area opens the workspace's Lead, or a task composer if
-  it has none; sending from that composer makes the new task its Lead. Only the
-  chevron expands or collapses
-  the workspace. Hover Solo or a workspace and use **New task**, beside **…**, for another task. The button also appears with keyboard focus. **New task** is also in the workspace's **…** menu, the only place it shows when the header is too narrow, for example with enlarged text. Chat creation
-  is available only in **Chats**. The workspace itself stays selected while its Lead
-  conversation is open; the Lead has no separate task row. New task's agent picker
-  lists agents eligible to run the task on this device.
-  Without Nexus, chat creation remains available in the global **+** menu,
-  Solo and each workspace; creating a workspace opens a chat draft filed there.
-  Folders are optional unless **Work in a new worktree** is on. In that mode,
-  add at least one project folder; the form shows a message beside Folders
-  until you add one or turn worktree mode off. In **New chat**, typing **#**
-  lists your workspaces above channels; choosing one sets the composer's
-  workspace control and leaves no text in the message. A plugin's chat, such as
-  a Nexus task, shows the workspace control when its plugin files it; until
-  that chat's first message, **#** offers its workspaces too, and choosing one
-  files the chat right away.
+- **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to**
+  in a conversation’s menu or drag the row to a workspace. Unfiled items appear
+  in **Solo**, **Team**, **Forums**, or **Direct messages**. Reorder any section,
+  including **Starred**, by dragging its heading or using **Move up** and
+  **Move down** in its **…** menu. Escape cancels a drag.
+  Open **Workspace settings** from the heading’s **…** menu to change the name,
+  emoji, folders, worktree, Canvas, or default agents. Use **New channel** from a
+  workspace to start with its destination and template selected. You can change
+  either before creating.
+  **Archive inactive chats** shows how many chats have had no messages for
+  14 days. It skips the open chat, running agent work and queued or sending
+  messages. **Undo** restores the archived chats.
+  Plugins can add tasks, Lead conversations and workspace actions.
+  When starting a chat, type **#** to choose a workspace and load its settings.
+  Folders are optional unless **Work in a new worktree** is on.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**.
@@ -1020,8 +995,8 @@ and are asked to sign in again in Buzz.
   followed by Messages and the other apps. Activity is the first row of the
   Messages sidebar. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
-  Messages has All / Solo / Team sidebar filters; other apps use their main
-  view unless they provide their own sidebar. Pages listed in the Messages
+  Messages shows your workspaces, Starred and unfiled conversations together.
+  Other apps can provide their own sidebar. Pages listed in the Messages
   sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
   Messages sidebar stays open unless the page provides its own sidebar, which
   replaces it.
@@ -1029,8 +1004,9 @@ and are asked to sign in again in Buzz.
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your
   configured avatar.
-  The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
-  the current app has a creation sidebar.
+  The split **New** button repeats the last choice on this device for the
+  current account and community. Its arrow offers **New chat**, **New channel**,
+  **New DM** and **New workspace**. **Cmd/Ctrl+N** opens the menu in Messages.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.

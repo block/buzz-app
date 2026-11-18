@@ -4,7 +4,12 @@ import type { Agents } from "../../features/agents/service";
 import {
   templateAgents,
   useChannelTemplates,
+  type ChannelTemplate,
 } from "../../features/channel-templates/local";
+import {
+  projectDefault,
+  projectTemplateId,
+} from "../../features/solo/workspace";
 import { Select } from "../../shared/design-system/ui/Select";
 import { useTeams } from "../../features/agents/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
@@ -122,11 +127,75 @@ function OpenCreateChannelDialog({
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
   const [starred, setStarred] = useState(false);
-  const templates = useChannelTemplates();
+  const channelTemplates = useChannelTemplates();
+  const [workspaceTemplate, setWorkspaceTemplate] = useState<ChannelTemplate>();
+  const [loadingDefaults, setLoadingDefaults] = useState(!!initialGroup);
+  const [defaultsError, setDefaultsError] = useState("");
+  const [defaultsAttempt, setDefaultsAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the same workspace.
+  useEffect(() => {
+    if (!initialGroup) return;
+    let active = true;
+    setLoadingDefaults(true);
+    setDefaultsError("");
+    void (async () => {
+      await session.channelKit.refresh();
+      const kit = session.channelKit.snapshot();
+      if (kit.status !== "ready")
+        throw new Error(kit.error ?? "Workspace defaults could not load.");
+      const preferred = projectDefault(
+        kit.entries,
+        await projectTemplateId(initialGroup),
+        session.sidebarPreferences.snapshot().data?.legacyTemplates?.[
+          initialGroup
+        ],
+        true,
+      );
+      if (!active || !preferred) return;
+      const teamAgents = preferred.teamIds.flatMap((id) => {
+        const team = kit.entries.find(
+          ({ record }) =>
+            !record.deleted &&
+            record.value.type === "team" &&
+            record.value.id === id,
+        )?.record.value;
+        if (team?.type !== "team")
+          throw new Error("A team in the workspace defaults could not load.");
+        return team.agents;
+      });
+      setWorkspaceTemplate({
+        id: preferred.id,
+        name: "Workspace defaults",
+        teams: [],
+        agents: [...new Set([...preferred.agents, ...teamAgents])],
+        canvas: preferred.canvas,
+      });
+    })()
+      .catch((reason: unknown) => {
+        if (active)
+          setDefaultsError(
+            reason instanceof Error ? reason.message : String(reason),
+          );
+      })
+      .finally(() => {
+        if (active) setLoadingDefaults(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [defaultsAttempt, initialGroup, session]);
+  const templates = workspaceTemplate
+    ? [
+        workspaceTemplate,
+        ...channelTemplates.filter(({ id }) => id !== workspaceTemplate.id),
+      ]
+    : channelTemplates;
   const teams = useTeams(agents);
-  const [chosenTemplate, setTemplateId] = useState("");
+  const [chosenTemplate, setTemplateId] = useState<string>();
   // A template deleted meanwhile, here or in another window, is no choice.
-  const template = templates.find((item) => item.id === chosenTemplate);
+  const template = templates.find(
+    (item) => item.id === (chosenTemplate ?? workspaceTemplate?.id),
+  );
   const templateId = template?.id ?? "";
   // A template names agents and teams' members; which are the owner's agents in
   // this community is the shared selection's call, under the policy session
@@ -216,7 +285,7 @@ function OpenCreateChannelDialog({
     setError("");
     setGroupId(initialGroup);
     setStarred(initialStarred);
-    setTemplateId("");
+    setTemplateId(undefined);
   }, [open, initialGroup, initialStarred]);
 
   const normalizedName = canonicalDetailsName(name);
@@ -225,14 +294,18 @@ function OpenCreateChannelDialog({
     description,
     visibility: privateChannel ? "private" : "public",
   });
-  const invalid = Object.values(errors).some(Boolean) || unresolved;
+  const invalid =
+    Object.values(errors).some(Boolean) ||
+    unresolved ||
+    (chosenTemplate === undefined && (loadingDefaults || !!defaultsError));
 
   const dirty =
     name !== "" ||
     description !== "" ||
     privateChannel ||
     lifetime !== "ongoing" ||
-    templateId !== "";
+    (chosenTemplate !== undefined &&
+      chosenTemplate !== (workspaceTemplate?.id ?? ""));
   const requestClose = () => {
     if (busy) return;
     if (privacyChoice) setPrivacyChoice(undefined);
@@ -460,16 +533,32 @@ function OpenCreateChannelDialog({
               setError("");
             }}
           />
-          {templates.length > 0 && (
+          {defaultsError && chosenTemplate === undefined && (
+            <p role="alert">
+              {defaultsError}{" "}
+              <Button
+                size="xs"
+                onClick={() => setDefaultsAttempt(defaultsAttempt + 1)}
+              >
+                Retry
+              </Button>{" "}
+              <Button size="xs" onClick={() => setTemplateId("")}>
+                Use no template
+              </Button>
+            </p>
+          )}
+          {(templates.length > 0 || loadingDefaults) && (
             <div ref={templateField} style={{ display: "contents" }}>
               <Select
                 label="Template"
                 variant="field"
                 value={templateId}
                 description={
-                  checkingAgents
-                    ? "Checking which of its agents are in this community…"
-                    : templateNote
+                  loadingDefaults && chosenTemplate === undefined
+                    ? "Loading workspace defaults…"
+                    : checkingAgents
+                      ? "Checking which of its agents are in this community…"
+                      : templateNote
                 }
                 error={
                   (unresolved && !checkingAgents) ||

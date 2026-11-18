@@ -910,7 +910,7 @@ function project(entries: unknown[] = []) {
       }),
       save,
     },
-    soloPreferences: { sectionRenameWritable: true, renameSection: rename },
+    sidebarPreferences: { sectionRenameWritable: true, renameSection: rename },
   } as unknown as RelaySession;
   const view = () => (
     <WorkspaceSettings

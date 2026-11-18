@@ -597,7 +597,7 @@ it.each([["New", "New workspace"]])(
       finish = resolve;
     });
     const create = vi
-      .spyOn(f.session.soloPreferences, "createSection")
+      .spyOn(f.session.sidebarPreferences, "createSection")
       .mockResolvedValueOnce(undefined)
       .mockReturnValue(pending);
     await user.click(screen.getByRole("button", { name: triggerName }));
@@ -857,7 +857,7 @@ it.each(["empty", "chats", "projects", "both"])(
     const user = userEvent.setup();
     const f = fixture(true, true);
     const channels = f.session.channels.list();
-    const preferences = f.session.soloPreferences.snapshot();
+    const preferences = f.session.sidebarPreferences.snapshot();
     vi.spyOn(f.session.channels, "list").mockReturnValue({
       ...channels,
       channels:
@@ -865,7 +865,7 @@ it.each(["empty", "chats", "projects", "both"])(
           ? []
           : channels.channels,
     });
-    vi.spyOn(f.session.soloPreferences, "snapshot").mockReturnValue({
+    vi.spyOn(f.session.sidebarPreferences, "snapshot").mockReturnValue({
       ...preferences,
       data: {
         sections:
@@ -1252,7 +1252,7 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   });
   await preferences.queries.ensure();
   Object.assign(h.session, {
-    soloPreferences: preferences.queries,
+    sidebarPreferences: preferences.queries,
   });
   h.roster(
     h.session.channels
@@ -1358,7 +1358,7 @@ it.each(["New"])(
     });
     await preferences.queries.ensure();
     Object.assign(h.session, {
-      soloPreferences: preferences.queries,
+      sidebarPreferences: preferences.queries,
     });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -1443,7 +1443,7 @@ it.each(["neighbor", "heading", "moved"])(
       }),
     });
     await preferences.queries.ensure();
-    Object.assign(h.session, { soloPreferences: preferences.queries });
+    Object.assign(h.session, { sidebarPreferences: preferences.queries });
     h.roster([
       { id: "chat", name: "Chat", channelType: "solo", creator: viewer },
       { id: "other", name: "Other", channelType: "solo", creator: viewer },
@@ -1525,7 +1525,7 @@ it("keeps an ordinary chat editor and pending save through layout changes and ta
     throw new Error("Couldn’t save the name. Try again.");
   });
   Object.assign(h.session, {
-    soloPreferences: preferences.queries,
+    sidebarPreferences: preferences.queries,
     channelDetails: {
       ...h.session.channelDetails,
       available: true,

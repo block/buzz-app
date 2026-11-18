@@ -14053,7 +14053,7 @@ it("binds run-only Solo placement to the owner, community and just-created confi
   ]);
   Object.assign(f.session, {
     channelKit: { refresh: vi.fn(async () => {}) },
-    soloPreferences: preferences,
+    sidebarPreferences: preferences,
     relayAuthor: authority,
     snapshotRead: read,
   });
@@ -14161,7 +14161,7 @@ it.each([
     channelKit: { refresh: vi.fn(async () => {}) },
     relayAuthor: authority,
     snapshotRead: vi.fn(async () => [metadata, roster]),
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {},
       writable: failure !== "read-only preferences",
       snapshot: () => ({
@@ -14221,7 +14221,7 @@ it("fences workspace discovery when its community binding changes during the rea
     channelKit: { refresh: vi.fn(async () => {}) },
     relayAuthor: "f".repeat(64),
     snapshotRead: vi.fn(),
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {
         started.resolve();
         await gate.promise;
@@ -14257,7 +14257,7 @@ it("keeps overlapping prepared creates independently fileable through the run", 
   Object.assign(f.session, {
     channelKit: { refresh: async () => {} },
     relayAuthor: authority,
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {},
       writable: true,
       snapshot: () => ({
@@ -14350,7 +14350,7 @@ it.each(["authority", "assignment"])(
     Object.assign(f.session, {
       channelKit: { refresh: async () => {} },
       relayAuthor: authority,
-      soloPreferences: {
+      sidebarPreferences: {
         refresh: async () => {},
         writable: true,
         snapshot: () => ({
@@ -14475,7 +14475,7 @@ it.each(["filed", "deleted", "retired"])(
     const authority = "f".repeat(64);
     Object.assign(f.session, {
       channelKit: kit,
-      soloPreferences: preferences.queries,
+      sidebarPreferences: preferences.queries,
       relayAuthor: authority,
       snapshotRead: async () => [
         event("meta", {

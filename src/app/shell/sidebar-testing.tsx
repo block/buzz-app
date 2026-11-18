@@ -150,12 +150,6 @@ export function fixture(
       snapshot: () => preferences,
       ensure: async () => {},
     },
-    soloPreferences: {
-      ...base.soloPreferences,
-      sectionCreationWritable: canCreate,
-      snapshot: () => preferences,
-      ensure: async () => {},
-    },
     typing: { ...base.typing, snapshot: () => typing, subscribe },
     agentActivity: {
       ...base.agentActivity,

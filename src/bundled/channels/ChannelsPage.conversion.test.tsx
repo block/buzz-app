@@ -135,8 +135,8 @@ function fixture() {
   const session = {
     ...owner.session,
     channelDetails: { ...owner.session.channelDetails, save },
-    soloPreferences: {
-      ...owner.session.soloPreferences,
+    sidebarPreferences: {
+      ...owner.session.sidebarPreferences,
       snapshot: () => (filed ? filedProjects : unfiledProjects),
       refresh: async () => {},
       assign: unfile,

@@ -8,11 +8,19 @@ import {
   validSidebarSectionRename,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
-import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
+import {
+  importWorkspaceFallback,
+  projectSidebarRecord,
+} from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
+  projectWorkspacePreferences,
+  projectWorkspaceGroups,
   SIDEBAR_COORDINATES,
+  WORKSPACE_COORDINATE,
+  workspaceBaseRecord,
+  workspaceRecordForWrite,
 } from "../src/features/relay/sidebar-preferences.ts";
 
 export const SIDEBAR_REQUEST_BYTES = 960 * 1024; // Five bounded encrypted coordinates.
@@ -20,7 +28,11 @@ export const SIDEBAR_HEAD_BYTES = 192 * 1024 + 4096; // One signed coordinate pl
 export const SIDEBAR_UPLOAD_SLOTS = 2;
 export const SIDEBAR_UPLOAD_MS = 10_000;
 /** Local host decoder, deliberately not an arbitrary NIP-44 decrypt capability. */
-export function decodeSidebarPreferences(events, secret) {
+export function decodeSidebarPreferences(input, secret) {
+  const { events, legacy } = Array.isArray(input)
+    ? { events: input }
+    : (input ?? {});
+  if (legacy !== undefined) workspaceBaseRecord(legacy);
   if (
     !Array.isArray(events) ||
     events.length > SIDEBAR_COORDINATES.length ||
@@ -38,7 +50,8 @@ export function decodeSidebarPreferences(events, secret) {
       event?.kind !== 30078 ||
       event.pubkey !== viewer ||
       tags?.length !== 1 ||
-      !SIDEBAR_COORDINATES.includes(coordinate) ||
+      (coordinate !== WORKSPACE_COORDINATE &&
+        !SIDEBAR_COORDINATES.includes(coordinate)) ||
       coordinates.has(coordinate) ||
       typeof event.content !== "string" ||
       !verifyEvent(event)
@@ -58,6 +71,20 @@ export function decodeSidebarPreferences(events, secret) {
         JSON.parse(plaintext),
       );
     }
+    if (decoded.has(WORKSPACE_COORDINATE))
+      return projectWorkspacePreferences(
+        importWorkspaceFallback(
+          projectSidebarRecord(
+            "channel-sections",
+            decoded.get(WORKSPACE_COORDINATE),
+          ),
+          legacy,
+        ),
+        decoded.get("channel-stars"),
+        decoded.get("channel-mutes"),
+        decoded.get("channel-sort"),
+        decoded.get("channel-filter"),
+      );
     return projectSidebarPreferences(
       decoded.get("channel-sections"),
       decoded.get("channel-stars"),
@@ -71,7 +98,6 @@ export function decodeSidebarPreferences(events, secret) {
   }
 }
 
-const SECTION_COORDINATE = "channel-sections";
 function validAssignmentIntent(intent) {
   return (
     intent &&
@@ -100,18 +126,18 @@ export function assertSidebarAssignmentIntent(intent) {
   if (!validAssignmentIntent(intent))
     throw new Error("Invalid sidebar assignment intent");
 }
-function parseSectionsEvent(events, secret) {
+function parseSectionsEvent(events, secret, legacy) {
   if (
     !Array.isArray(events) ||
     events.length > 1 ||
     Buffer.byteLength(JSON.stringify(events)) > SIDEBAR_REQUEST_BYTES
   )
     throw new Error("Invalid sidebar group head");
-  if (!events.length)
-    return {
-      blob: { version: 1, sections: [], assignments: {} },
-      createdAt: 0,
-    };
+  if (!events.length) {
+    if (!legacy)
+      throw new Error("Saved workspaces are unavailable. Try again.");
+    return { blob: workspaceBaseRecord(legacy), createdAt: 0 };
+  }
   const [event] = events;
   const viewer = getPublicKey(secret);
   const tags = event?.tags?.filter?.(
@@ -121,7 +147,7 @@ function parseSectionsEvent(events, secret) {
     event?.kind !== 30078 ||
     event.pubkey !== viewer ||
     tags?.length !== 1 ||
-    tags[0]?.[1] !== SECTION_COORDINATE ||
+    tags[0]?.[1] !== WORKSPACE_COORDINATE ||
     typeof event.content !== "string" ||
     !verifyEvent(event)
   )
@@ -132,9 +158,12 @@ function parseSectionsEvent(events, secret) {
     if (Buffer.byteLength(plaintext) > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");
     const blob = JSON.parse(plaintext);
-    projectSidebarPreferences(blob, undefined);
+    projectWorkspaceGroups(blob);
     return {
-      blob: projectSidebarRecord("channel-sections", blob),
+      blob: importWorkspaceFallback(
+        projectSidebarRecord("channel-sections", blob),
+        legacy,
+      ),
       createdAt: event.created_at,
     };
   } finally {
@@ -147,9 +176,10 @@ export function prepareSidebarAssignment(
   intent,
   secret,
   now = Date.now(),
+  legacy,
 ) {
   assertSidebarAssignmentIntent(intent);
-  return prepareSections(events, secret, now, (current) =>
+  return prepareSections(events, secret, now, legacy, (current) =>
     editSidebarAssignment(current.blob, current.createdAt, intent, now),
   );
 }
@@ -169,9 +199,10 @@ export function prepareSidebarSectionRemoval(
   intent,
   secret,
   now = Date.now(),
+  legacy,
 ) {
   assertSidebarSectionRemovalIntent(intent);
-  return prepareSections(events, secret, now, (current) =>
+  return prepareSections(events, secret, now, legacy, (current) =>
     editSidebarSectionRemoval(
       current.blob,
       current.createdAt,
@@ -190,9 +221,11 @@ export function assertSidebarSectionRenameIntent(intent) {
     (intent.icon !== undefined &&
       intent.icon !== null &&
       typeof intent.icon !== "string") ||
+    (intent.expectedName !== undefined &&
+      typeof intent.expectedName !== "string") ||
     !validSidebarSectionRename(intent.sectionId, intent.name, intent.icon) ||
     Object.keys(intent).some(
-      (key) => key !== "sectionId" && key !== "name" && key !== "icon",
+      (key) => !["sectionId", "name", "icon", "expectedName"].includes(key),
     )
   )
     throw new Error("Invalid sidebar section rename intent");
@@ -202,14 +235,15 @@ export function prepareSidebarSectionRename(
   intent,
   secret,
   now = Date.now(),
+  legacy,
 ) {
   assertSidebarSectionRenameIntent(intent);
-  return prepareSections(events, secret, now, (current) =>
+  return prepareSections(events, secret, now, legacy, (current) =>
     editSidebarSectionRename(
       current.blob,
       current.createdAt,
       intent.sectionId,
-      { name: intent.name, icon: intent.icon },
+      intent,
       now,
     ),
   );
@@ -231,9 +265,10 @@ export function prepareSidebarSectionOrder(
   intent,
   secret,
   now = Date.now(),
+  legacy,
 ) {
   assertSidebarSectionOrderIntent(intent);
-  return prepareSections(events, secret, now, (current) =>
+  return prepareSections(events, secret, now, legacy, (current) =>
     editSidebarSectionOrder(
       current.blob,
       current.createdAt,
@@ -242,36 +277,43 @@ export function prepareSidebarSectionOrder(
     ),
   );
 }
-function prepareSections(events, secret, now, edit) {
-  const viewer = getPublicKey(secret);
-  const current = parseSectionsEvent(events, secret);
+function prepareSections(events, secret, now, legacy, edit) {
+  const current = parseSectionsEvent(events, secret, legacy);
   const blob = edit(current);
-  const groups = projectSidebarPreferences(blob, undefined);
+  const groups = projectWorkspaceGroups(blob);
+  if (blob === current.blob) return { groups };
+  return {
+    groups,
+    event: signWorkspace(
+      workspaceRecordForWrite(blob, legacy),
+      secret,
+      Math.max(Math.floor(now / 1000), current.createdAt + 1),
+    ),
+  };
+}
+
+function signWorkspace(blob, secret, createdAt) {
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
-  if (blob === current.blob) return { groups };
-  const key = nip44.v2.utils.getConversationKey(secret, viewer);
+  const key = nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
   let content;
   try {
     content = nip44.v2.encrypt(JSON.stringify(blob), key);
   } finally {
     key.fill(0);
   }
-  return {
-    groups,
-    event: finalizeEvent(
-      {
-        kind: 30078,
-        content,
-        created_at: Math.max(Math.floor(now / 1000), current.createdAt + 1),
-        tags: [
-          ["d", SECTION_COORDINATE],
-          ["t", SECTION_COORDINATE],
-        ],
-      },
-      secret,
-    ),
-  };
+  return finalizeEvent(
+    {
+      kind: 30078,
+      content,
+      created_at: createdAt,
+      tags: [
+        ["d", WORKSPACE_COORDINATE],
+        ["t", WORKSPACE_COORDINATE],
+      ],
+    },
+    secret,
+  );
 }
 
 /** Publish one assignment, then re-read the coordinate before reporting saved state. */
@@ -280,6 +322,7 @@ export async function mutateSidebarAssignment(
   secret,
   readHead,
   publish,
+  legacy,
 ) {
   assertSidebarAssignmentIntent(intent);
   return mutateSections(
@@ -288,6 +331,7 @@ export async function mutateSidebarAssignment(
     secret,
     readHead,
     publish,
+    legacy,
   );
 }
 export async function mutateSidebarSectionRemoval(
@@ -295,6 +339,7 @@ export async function mutateSidebarSectionRemoval(
   secret,
   readHead,
   publish,
+  legacy,
 ) {
   assertSidebarSectionRemovalIntent(intent);
   return mutateSections(
@@ -303,6 +348,7 @@ export async function mutateSidebarSectionRemoval(
     secret,
     readHead,
     publish,
+    legacy,
   );
 }
 export async function mutateSidebarSectionRename(
@@ -310,6 +356,7 @@ export async function mutateSidebarSectionRename(
   secret,
   readHead,
   publish,
+  legacy,
 ) {
   assertSidebarSectionRenameIntent(intent);
   return mutateSections(
@@ -318,6 +365,7 @@ export async function mutateSidebarSectionRename(
     secret,
     readHead,
     publish,
+    legacy,
   );
 }
 export async function mutateSidebarSectionOrder(
@@ -325,6 +373,7 @@ export async function mutateSidebarSectionOrder(
   secret,
   readHead,
   publish,
+  legacy,
 ) {
   assertSidebarSectionOrderIntent(intent);
   return mutateSections(
@@ -333,13 +382,27 @@ export async function mutateSidebarSectionOrder(
     secret,
     readHead,
     publish,
+    legacy,
   );
 }
-async function mutateSections(prepare, intent, secret, readHead, publish) {
-  const draft = prepare(await readHead(), intent, secret);
+async function mutateSections(
+  prepare,
+  intent,
+  secret,
+  readHead,
+  publish,
+  legacy,
+) {
+  const draft = prepare(await readHead(), intent, secret, Date.now(), legacy);
   if (!draft.event) return draft.groups;
   await publish(draft.event);
-  const confirmation = prepare(await readHead(), intent, secret);
+  const confirmation = prepare(
+    await readHead(),
+    intent,
+    secret,
+    Date.now(),
+    legacy,
+  );
   if (confirmation.event)
     throw new Error(
       "Sidebar groups changed on another device; reload and try again",

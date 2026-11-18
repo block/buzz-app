@@ -118,8 +118,8 @@ export function SoloInventory({
     undefined,
   );
   const preferences = useSyncExternalStore(
-    session.soloPreferences.subscribe,
-    session.soloPreferences.snapshot,
+    session.sidebarPreferences.subscribe,
+    session.sidebarPreferences.snapshot,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -311,7 +311,7 @@ export function SoloInventory({
     <>
       {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
       <MenuItem
-        disabled={!session.soloPreferences.sectionCreationWritable}
+        disabled={!session.sidebarPreferences.sectionCreationWritable}
         onClick={() => {
           if (current()) setCreatingProject(true);
         }}
@@ -389,7 +389,9 @@ export function SoloInventory({
       {creatingProject && (
         <NewWorkspace
           session={session}
-          create={(section) => session.soloPreferences.createSection(section)}
+          create={(section) =>
+            session.sidebarPreferences.createSection(section)
+          }
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
           onCreated={async (id) => {

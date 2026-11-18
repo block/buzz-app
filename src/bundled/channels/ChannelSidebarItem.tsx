@@ -38,6 +38,7 @@ import {
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
+import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
 
 type ItemProps = {
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
@@ -68,6 +69,7 @@ type ItemProps = {
     | ComponentType<{
         channelId: string;
         sectionKey: string;
+        rowKind: SidebarRowKind;
         children: ReactNode;
       }>
     | undefined;
@@ -298,7 +300,11 @@ function ChannelSidebarItemCore({
           activity
         );
         return SelectFrame && sectionKey ? (
-          <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
+          <SelectFrame
+            channelId={channel.id}
+            sectionKey={sectionKey}
+            rowKind={sidebarRowKind(channel)}
+          >
             {select}
           </SelectFrame>
         ) : (

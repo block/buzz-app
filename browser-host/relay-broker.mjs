@@ -1,4 +1,8 @@
-import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
+import {
+  isSidebarPreferencesBatch,
+  projectWorkspaceGroups,
+  WORKSPACE_COORDINATE,
+} from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -1406,22 +1410,22 @@ export function relayBrokerPlugin({
           ) {
             const [coordinate, assertIntent, mutate] = {
               "/api/relay/sidebar-section-removal": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
               ],
               "/api/relay/sidebar-section-rename": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionRenameIntent,
                 mutateSidebarSectionRename,
               ],
               "/api/relay/sidebar-section-order": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionOrderIntent,
                 mutateSidebarSectionOrder,
               ],
               "/api/relay/sidebar-assignment": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarAssignmentIntent,
                 mutateSidebarAssignment,
               ],
@@ -1452,19 +1456,26 @@ export function relayBrokerPlugin({
             // Sort and order intents carry up to 100 section IDs.
             const listing =
               sorting || route === "/api/relay/sidebar-section-order";
+            const workspace = coordinate === WORKSPACE_COORDINATE;
+            const limit = workspace ? 192 * 1024 : listing ? 64 * 1024 : 2048;
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
               bytes += part.length;
-              if (bytes > (listing ? 32 * 1024 : 2048))
+              if (bytes > limit)
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
               chunks.push(part);
             }
             let intent;
+            let legacy;
             try {
               intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              if (workspace && intent && Object.hasOwn(intent, "legacy")) {
+                ({ intent, legacy } = intent);
+                legacy = projectWorkspaceGroups({ ...legacy, version: 1 });
+              }
               assertIntent(intent);
             } catch {
               return json(res, 400, {
@@ -1575,6 +1586,7 @@ export function relayBrokerPlugin({
                   key,
                   readHead,
                   publishEvent,
+                  legacy,
                 );
                 return coordinate === "channel-filter"
                   ? {
@@ -1698,6 +1710,7 @@ export function relayBrokerPlugin({
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
+              sidebarWorkspaceMigration: true,
               sidebarSortWrites: true,
               sidebarFilterWrites: true,
               channelActivity: true,

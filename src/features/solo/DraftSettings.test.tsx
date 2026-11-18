@@ -174,7 +174,7 @@ it("closes at once while settings load and after their load fails", async () => 
   const close = vi.fn();
   render(
     <DraftSettings
-      session={{ soloPreferences: { refresh } } as unknown as RelaySession}
+      session={{ sidebarPreferences: { refresh } } as unknown as RelaySession}
       projectId="work"
       close={close}
       save={vi.fn()}

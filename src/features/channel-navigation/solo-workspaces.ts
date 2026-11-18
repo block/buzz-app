@@ -5,7 +5,7 @@ import type {
   SoloWorkspaces,
 } from "./solo-navigation-contract";
 
-type Preferences = RelaySession["soloPreferences"];
+type Preferences = RelaySession["sidebarPreferences"];
 const ended: SoloWorkspaceSnapshot = Object.freeze({
   status: "unavailable",
   workspaces: [],

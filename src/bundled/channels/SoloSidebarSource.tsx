@@ -1,4 +1,5 @@
 import { useContext } from "react";
+import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
 import {
   MessagesSidebarEnvironment,
   type MessagesSidebarState,
@@ -8,6 +9,8 @@ import { SoloInventory } from "./SoloInventory";
 import { SoloRegions } from "./SoloRegions";
 
 function SoloSidebarContents(props: MessagesSidebarState) {
+  const { regions } = useSoloNavigation(props.session);
+  if (!regions.length) return null;
   return (
     <SoloInventory
       session={props.session}
@@ -17,7 +20,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
       chatIcons={props.chatIcons}
       chatMenus={props.chatMenus}
       sidebarRows={props.sidebarRows}
-      renderContents={(ordinary, header, pendingClick, composeOrdinary) => (
+      renderContents={(ordinary, _header, pendingClick, composeOrdinary) => (
         <SoloRegions
           session={props.session}
           scope={props.scope}
@@ -27,23 +30,6 @@ function SoloSidebarContents(props: MessagesSidebarState) {
           ordinary={ordinary}
           composeOrdinary={composeOrdinary}
           pendingClick={pendingClick}
-          groupDisclosure={
-            props.filter === "all"
-              ? {
-                  sectionKey: "scope:solo",
-                  title: props.soloTitle,
-                  open: !props.sidebar.collapsed.includes("scope:solo"),
-                  onToggle: (open) => props.sidebar.toggle("scope:solo", open),
-                }
-              : undefined
-          }
-          hidePrimaryHeading={props.filter === "solo"}
-          fallback={
-            <>
-              {header}
-              {ordinary}
-            </>
-          }
         />
       )}
     />
@@ -51,7 +37,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
 }
 export const soloSidebarSource: SidebarSectionSource = {
   version: 2,
-  id: "solo",
+  id: "solo-regions",
   context: "buzz.channels/messages",
   scope: "solo",
   component: function SoloSidebarSource({ render }) {
@@ -60,7 +46,7 @@ export const soloSidebarSource: SidebarSectionSource = {
       throw new Error("Solo navigation requires its Messages context");
     return render([
       {
-        id: "solo",
+        id: "solo-regions",
         defaultPosition: 0,
         element: <SoloSidebarContents {...environment} />,
       },

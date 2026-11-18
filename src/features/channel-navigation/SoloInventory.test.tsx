@@ -327,7 +327,7 @@ it("reports the saved Solo workspace id rather than its drag target key", async 
     undefined,
     { sidebarRows: plugin.rows },
   );
-  const preferences = f.session.soloPreferences.snapshot();
+  const preferences = f.session.sidebarPreferences.snapshot();
   Object.assign(preferences, {
     data: {
       ...preferences.data,
@@ -716,8 +716,8 @@ it.each([false, true])(
   async (combined) => {
     const f = fixture(combined);
     const user = userEvent.setup();
-    const before = f.session.soloPreferences.snapshot();
-    vi.spyOn(f.session.soloPreferences, "snapshot").mockReturnValue({
+    const before = f.session.sidebarPreferences.snapshot();
+    vi.spyOn(f.session.sidebarPreferences, "snapshot").mockReturnValue({
       ...before,
       data: {
         sections: [{ id: "work", name: "Work", order: 0 }],

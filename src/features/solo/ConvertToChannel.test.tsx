@@ -104,8 +104,8 @@ function setup(
   const session = {
     ...owner.session,
     channelDetails: details.capability,
-    soloPreferences: {
-      ...owner.session.soloPreferences,
+    sidebarPreferences: {
+      ...owner.session.sidebarPreferences,
       snapshot: () => (filed ? filedProjects : unfiledProjects),
       refresh: projectsRefresh,
       assign: unfile,

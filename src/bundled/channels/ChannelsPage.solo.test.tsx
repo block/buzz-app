@@ -365,8 +365,8 @@ function fixture({
           ? removal.preview
           : owner.session.channels.get?.(channelId),
     },
-    soloPreferences: {
-      ...owner.session.soloPreferences,
+    sidebarPreferences: {
+      ...owner.session.sidebarPreferences,
       snapshot: () => projects,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -1756,7 +1756,7 @@ it("offers the header's chat actions from the sidebar row, plus inline Rename", 
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {
   const f = fixture();
   const assign = vi.fn(async () => {});
-  Object.assign(f.session.soloPreferences, { writable: true, assign });
+  Object.assign(f.session.sidebarPreferences, { writable: true, assign });
   f.mount();
   const user = userEvent.setup();
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
@@ -1778,8 +1778,8 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
 
 it("reports a failed header move beside the header and retries it", async () => {
   const f = fixture();
-  const base = f.session.soloPreferences.snapshot();
-  let current: ReturnType<typeof f.session.soloPreferences.snapshot> = base;
+  const base = f.session.sidebarPreferences.snapshot();
+  let current: ReturnType<typeof f.session.sidebarPreferences.snapshot> = base;
   const listeners = new Set<() => void>();
   const publish = (next: typeof current) => {
     current = next;
@@ -1798,7 +1798,7 @@ it("reports a failed header move beside the header and retries it", async () => 
     ],
   } as unknown as typeof current;
   const retryMove = vi.fn(async () => {});
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     writable: true,
     snapshot: () => current,
     subscribe: (listener: () => void) => {

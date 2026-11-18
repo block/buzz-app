@@ -214,19 +214,12 @@ export function templateEntry(entries: readonly KitEntry[], id: string) {
 }
 export function projectDefault(
   entries: readonly KitEntry[],
-  projectId: string,
   overrideId: string,
+  defaultId?: string,
   requireDefault = false,
 ) {
   const override = templateEntry(entries, overrideId);
   if (override?.record.value.type === "template") return override.record.value;
-  const groups = entries.find(
-    (entry) => !entry.record.deleted && entry.record.value.type === "groups",
-  )?.record.value;
-  const defaultId =
-    groups?.type === "groups"
-      ? groups.groups.find((group) => group.id === projectId)?.defaultTemplateId
-      : undefined;
   const fallback = defaultId
     ? templateEntry(entries, defaultId)?.record.value
     : undefined;
@@ -270,7 +263,7 @@ export async function loadChatSetup(
   session: RelaySession,
   projectId: string,
 ): Promise<ChatSetup & { revision: string }> {
-  const store = session.soloPreferences;
+  const store = session.sidebarPreferences;
   await store.refresh();
   const preferences = store.snapshot();
   if (
@@ -290,8 +283,8 @@ export async function loadChatSetup(
   const revision = defaultsRevision(kit);
   const template = projectDefault(
     kit.entries,
-    projectId,
     await projectTemplateId(projectId),
+    preferences.data.legacyTemplates?.[projectId],
     true,
   );
   if (!template) return { projectId, canvas: "", agents: [], revision };

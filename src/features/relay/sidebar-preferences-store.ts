@@ -188,7 +188,7 @@ export function createSidebarPreferencesStore({
         else delete assignments[channelId];
       }
     }
-    if (pendingOrder) {
+    if (pendingOrder && !data.sectionOrder) {
       const ids = pendingOrder.sectionIds;
       const rank = (id: string) =>
         ids.includes(id) ? ids.indexOf(id) : ids.length;
@@ -196,7 +196,15 @@ export function createSidebarPreferencesStore({
         .sort((a, b) => rank(a.id) - rank(b.id))
         .map((section, order) => ({ ...section, order }));
     }
-    return { ...data, sections, assignments, starred: [...starred] };
+    return {
+      ...data,
+      sections,
+      assignments,
+      starred: [...starred],
+      ...(pendingOrder && data.sectionOrder
+        ? { sectionOrder: pendingOrder.sectionIds }
+        : {}),
+    };
   };
   let generation = 0;
   let nextSortMutation = 0;
@@ -502,9 +510,7 @@ export function createSidebarPreferencesStore({
             throw new Error("Sidebar group moves are unavailable");
           confirmed = {
             ...confirmed,
-            ...(groups
-              ? { sections: groups.sections, assignments: groups.assignments }
-              : {}),
+            ...groups,
             starred: stars,
           };
           return retained(confirmed);
@@ -648,7 +654,13 @@ export function createSidebarPreferencesStore({
         ),
       });
       const parsed = projectSidebarPreferences(
-        { version: 1, sections: data.sections, assignments: data.assignments },
+        {
+          version: 1,
+          sections: data.sections,
+          assignments: data.assignments,
+          sectionOrder: data.sectionOrder,
+          legacyTemplates: data.legacyTemplates,
+        },
         rows(data.starred, "starred"),
         rows(data.muted, "muted"),
         { version: 1, groups: data.sort ?? {} },
@@ -660,6 +672,7 @@ export function createSidebarPreferencesStore({
               groups: data.filters ?? {},
               activeWindowSeconds: data.activeWindowSeconds,
             },
+        data.sectionOrder !== undefined,
       );
       // Display-only: do not initialize the confirmed mutation base from disk.
       publish({
@@ -799,11 +812,7 @@ export function createSidebarPreferencesStore({
               const groups = await save(intent.sectionIds, signal);
               if (closed || generation !== writeGeneration || !confirmed)
                 throw new Error("Sidebar section order is unavailable");
-              confirmed = {
-                ...confirmed,
-                sections: groups.sections,
-                assignments: groups.assignments,
-              };
+              confirmed = { ...confirmed, ...groups };
               return retained(confirmed);
             } catch (error) {
               if (

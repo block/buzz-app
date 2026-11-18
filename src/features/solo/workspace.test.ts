@@ -140,7 +140,7 @@ it("preserves ordinary Canvas and refuses malformed or manually changed workspac
 function fixture() {
   const kit = { status: "ready", entries: [] as unknown[] };
   const session = {
-    soloPreferences: {
+    sidebarPreferences: {
       writable: true,
       refresh: vi.fn(async () => {}),
       snapshot: () => ({

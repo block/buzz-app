@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
-import { soloGroups, WorkspaceNameConflict } from "../relay/solo-preferences";
+import { WorkspaceNameConflict } from "../relay/sidebar-edits";
 import type { KitEntry, Lineup } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -25,9 +25,10 @@ import {
   instructionsCanvas,
 } from "./ChatSettingsDialog";
 import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
+import { SidebarSectionEmojiInput } from "../../bundled/channels/SidebarSectionEmojiInput";
 
 type Target =
-  | { kind: "project"; id: string; name: string }
+  | { kind: "project"; id: string; name: string; icon?: string | undefined }
   | { kind: "chat"; id: string; name: string };
 class CanvasSettingsError extends Error {}
 
@@ -65,9 +66,15 @@ export function WorkspaceSettings({
   const confirmedName = useRef(target.name);
   const renamedName = useRef<string | undefined>(undefined);
   const keptName = useRef(target.name);
+  const initialIcon = target.kind === "project" ? (target.icon ?? "") : "";
+  const [icon, setIcon] = useState(initialIcon);
+  const confirmedIcon = useRef(initialIcon);
+  const keptIcon = useRef(initialIcon);
   const nextName = projectName.trim();
   const nameChanged =
     target.kind === "project" && nextName !== confirmedName.current;
+  const iconChanged =
+    target.kind === "project" && icon !== confirmedIcon.current;
   const nameError =
     target.kind === "project" && (!nextName || nextName.length > 120)
       ? "Use a workspace name of 1–120 characters."
@@ -118,15 +125,14 @@ export function WorkspaceSettings({
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Workspace defaults are unavailable.");
-        const groups = soloGroups(kit.entries);
-        if (
-          groups &&
-          !groups.record.deleted &&
-          groups.record.value.type === "groups"
-        )
-          confirmedName.current =
-            groups.record.value.groups.find((group) => group.id === target.id)
-              ?.name ?? confirmedName.current;
+        await session.sidebarPreferences.refresh();
+        if (!active()) return;
+        const groups = session.sidebarPreferences.snapshot().data;
+        const group = groups?.sections.find(({ id }) => id === target.id);
+        if (group) {
+          confirmedName.current = group.name;
+          confirmedIcon.current = group.icon ?? "";
+        }
         const id = await projectTemplateId(target.id);
         if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
@@ -135,7 +141,11 @@ export function WorkspaceSettings({
             entry.record.value.type === "template" &&
             entry.record.value.id === id,
         );
-        const template = projectDefault(kit.entries, target.id, id);
+        const template = projectDefault(
+          kit.entries,
+          id,
+          groups?.legacyTemplates?.[target.id],
+        );
         setRecipeId(id);
         setEntries(kit.entries);
         defaults = template ?? emptyLineup();
@@ -152,6 +162,8 @@ export function WorkspaceSettings({
       if (target.kind === "project") {
         setProjectName(confirmedName.current);
         keptName.current = confirmedName.current;
+        setIcon(confirmedIcon.current);
+        keptIcon.current = confirmedIcon.current;
         setNameConflict(false);
       }
       const saved = replace ? null : readView<unknown>(scope, key, null);
@@ -167,6 +179,16 @@ export function WorkspaceSettings({
         if (target.kind === "project" && "lineup" in saved) {
           defaults = parseLineup(saved.lineup);
           setLineup(defaults);
+        }
+        if (
+          target.kind === "project" &&
+          "icon" in saved &&
+          typeof saved.icon === "string" &&
+          "iconBase" in saved &&
+          saved.icon !== saved.iconBase
+        ) {
+          setIcon(saved.icon);
+          keptIcon.current = saved.icon;
         }
         if (
           target.kind === "project" &&
@@ -287,7 +309,12 @@ export function WorkspaceSettings({
             base: base ?? null,
             lineup,
             ...(target.kind === "project"
-              ? { name: projectName, nameBase: confirmedName.current }
+              ? {
+                  name: projectName,
+                  nameBase: confirmedName.current,
+                  icon,
+                  iconBase: confirmedIcon.current,
+                }
               : {}),
           })
         )
@@ -295,16 +322,25 @@ export function WorkspaceSettings({
             "Your draft couldn’t be saved on this device. No new changes were sent.",
           );
         if (canvas !== undefined) kept.current = snapshot(canvas, lineup);
-        if (target.kind === "project") keptName.current = projectName;
-        if (nameChanged) {
-          await session.soloPreferences.renameSection(
+        if (target.kind === "project") {
+          keptName.current = projectName;
+          keptIcon.current = icon;
+        }
+        if (nameChanged || iconChanged) {
+          await session.sidebarPreferences.renameSection(
             target.id,
-            nextName,
-            confirmedName.current,
+            {
+              ...(nameChanged ? { name: nextName } : {}),
+              ...(iconChanged ? { icon: icon || null } : {}),
+            },
+            nameChanged ? confirmedName.current : undefined,
           );
           confirmedName.current = nextName;
-          renamedName.current = nextName;
-          nameConfirmed = true;
+          confirmedIcon.current = icon;
+          if (nameChanged) {
+            renamedName.current = nextName;
+            nameConfirmed = true;
+          }
           if (
             !writeView(scope, key, {
               canvas,
@@ -312,6 +348,8 @@ export function WorkspaceSettings({
               lineup,
               name: nextName,
               nameBase: nextName,
+              icon,
+              iconBase: icon,
             })
           )
             throw new CanvasSettingsError(
@@ -395,7 +433,8 @@ export function WorkspaceSettings({
       dirty={
         // An uncertain details save stays with its owner and reopens to be checked.
         (lifetime.changed && !lifetime.checkOnly) ||
-        (target.kind === "project" && projectName !== keptName.current) ||
+        (target.kind === "project" &&
+          (projectName !== keptName.current || icon !== keptIcon.current)) ||
         (loaded &&
           snapshot(instructionsCanvas(workspace, raw), lineup) !== kept.current)
       }
@@ -409,7 +448,8 @@ export function WorkspaceSettings({
         (!loaded && !lifetime.eligible) ||
         !!nameError ||
         nameConflict ||
-        (nameChanged && !session.soloPreferences?.sectionRenameWritable) ||
+        ((nameChanged || iconChanged) &&
+          !session.sidebarPreferences.sectionRenameWritable) ||
         (lifetime.available &&
           !lifetime.checkOnly &&
           (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
@@ -419,14 +459,28 @@ export function WorkspaceSettings({
     >
       {target.kind === "project" && (
         <Field label="Workspace name" error={nameError}>
-          <Input
-            value={projectName}
-            maxLength={120}
+          <SidebarSectionEmojiInput
+            session={session}
+            scope={scope}
+            icon={icon}
+            onIconChange={setIcon}
             disabled={
-              busy || !loaded || !session.soloPreferences?.sectionRenameWritable
+              busy ||
+              !loaded ||
+              !session.sidebarPreferences.sectionRenameWritable
             }
-            onChange={(event) => setProjectName(event.target.value)}
-          />
+          >
+            <Input
+              value={projectName}
+              maxLength={120}
+              disabled={
+                busy ||
+                !loaded ||
+                !session.sidebarPreferences.sectionRenameWritable
+              }
+              onChange={(event) => setProjectName(event.target.value)}
+            />
+          </SidebarSectionEmojiInput>
         </Field>
       )}
       {lifetime.available && lifetime.base && (

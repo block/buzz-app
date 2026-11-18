@@ -61,8 +61,6 @@ mod claude_key;
 #[cfg(unix)]
 mod cli_link;
 mod clipboard;
-#[cfg(any(target_os = "macos", test))]
-mod gpu_reaper;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -78,6 +76,8 @@ mod microphone;
 mod mouse_nav;
 #[cfg(target_os = "macos")]
 mod reshow;
+#[cfg(any(target_os = "macos", test))]
+mod webkit_reaper;
 
 mod notifications;
 mod os_idle;
@@ -589,8 +589,19 @@ async fn plugin_import_install(
 }
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
+    let managed = manager.managed(&catalog);
+    // Every catalog read can start it, so a new or changed policy applies without a
+    // restart; each pinned version is tried once per run, and one apply runs at a time.
+    if manager.automatic_due(&managed, &catalog) {
+        let manager = manager.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = manager.apply_automatic() {
+                eprintln!("Could not apply the managed plugin policy: {error}");
+            }
+        });
+    }
     InstallationResult::Ready {
-        managed: manager.managed(&catalog),
+        managed,
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -1051,7 +1062,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             #[cfg(target_os = "macos")]
-            gpu_reaper::install(app.handle());
+            webkit_reaper::install(app.handle());
             #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {

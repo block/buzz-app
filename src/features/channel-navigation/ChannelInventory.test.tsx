@@ -924,10 +924,19 @@ it("rebuilds only the changed row on a list publish", async () => {
   render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
   rowRender.mockClear();
-  h.publish("beta", { preview: "hello" });
+  h.publish("beta", { name: "beta renamed" });
   expect(rowRender.mock.calls.map(([props]) => props.channel.id)).toEqual([
     "beta",
   ]);
+});
+
+it("rebuilds no host row when only a message preview changes", async () => {
+  const h = fixture();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  rowRender.mockClear();
+  h.publish("beta", { preview: "hello", lastActivityAt: 99 });
+  expect(rowRender).not.toHaveBeenCalled();
 });
 
 it("closes a removed DM's menu and focuses its neighbor before the exit ends", async () => {
@@ -4161,6 +4170,96 @@ it("keeps create-and-move focus pending until the new group slot commits", async
     expect(saved.sections).toEqual([]);
   } finally {
     await act(async () => finish());
+    preferences.dispose();
+  }
+});
+
+it("keeps a decorated DM's resolved name when its live activity changes", async () => {
+  const registry = rowRegistry({
+    version: 1,
+    id: "details",
+    render: (row, Default) => (
+      <div data-decoration={row.id}>
+        {Default}
+        <span>
+          {row.label} / {row.channel.name} / {row.channel.lastActivityAt}
+        </span>
+      </div>
+    ),
+  });
+  const h = fixture(
+    undefined,
+    "ready",
+    [
+      { id: "alpha", name: "alpha", channelType: "stream" },
+      {
+        id: "self",
+        name: "self-metadata",
+        channelType: "dm",
+        visibility: "private",
+        participants: [],
+        lastActivityAt: 12,
+      },
+    ],
+    undefined,
+    registry,
+  );
+  render(h.view("alpha"));
+  expect(
+    await screen.findByText("Notes to self / Notes to self / 12"),
+  ).toBeVisible();
+  h.publish("self", { lastActivityAt: 24, preview: "hello" });
+  expect(
+    await screen.findByText("Notes to self / Notes to self / 24"),
+  ).toBeVisible();
+  expect(screen.queryByText(/self-metadata/)).toBeNull();
+});
+
+it("re-sorts a plugin order that compares previews on a preview-only publish", async () => {
+  const registry = rowRegistry({
+    version: 1,
+    id: "order",
+    sortModes: [
+      {
+        id: "preview",
+        label: "Preview",
+        compare: (a, b) =>
+          (a.channel.preview ?? "").localeCompare(b.channel.preview ?? ""),
+      },
+    ],
+  });
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      sort: { channels: "plugin:fixture0/order/preview" },
+    }),
+  });
+  await preferences.queries.ensure();
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    [
+      { id: "alpha", name: "alpha", channelType: "stream", preview: "b" },
+      { id: "beta", name: "beta", channelType: "stream", preview: "c" },
+      { id: "gamma", name: "gamma", channelType: "stream", preview: "a" },
+    ],
+    undefined,
+    registry,
+  );
+  const order = () =>
+    [...document.querySelectorAll("[data-channel-id]")].map((row) =>
+      row.getAttribute("data-channel-id"),
+    );
+  try {
+    render(h.view("alpha"));
+    await waitFor(() => expect(order()).toEqual(["gamma", "alpha", "beta"]));
+    h.publish("beta", { preview: "0" });
+    await waitFor(() => expect(order()).toEqual(["beta", "gamma", "alpha"]));
+  } finally {
     preferences.dispose();
   }
 });

@@ -8113,6 +8113,35 @@ it("uses the default local flow without opening or claiming execution", async ()
   await f.complete();
 });
 
+function scoped(
+  d: Pick<Delivery, "config" | "agent">,
+  scope: "channel" | "community" = "community",
+) {
+  const config = { ...(d.config as object), scope };
+  return { config, agent: { ...d.agent, config } as unknown as Agent };
+}
+
+function join(
+  f: ReturnType<typeof fixture>,
+  d: Pick<Delivery, "config" | "agent">,
+  seat: Partial<AgentVoiceSeat> = {},
+) {
+  const config = seat.config ?? scoped(d).config;
+  return f.runtime.voice(
+    {
+      config,
+      agent: { ...d.agent, config } as unknown as Agent,
+      conversation: { channelId: "room" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+      ...seat,
+    },
+    d.agent,
+  );
+}
+
 it.each(["conversation", "standalone", "community wake", "preview"])(
   "does not revive disposed local work after %s inspection",
   async (mode) => {
@@ -8138,7 +8167,7 @@ it.each(["conversation", "standalone", "community wake", "preview"])(
       mode === "community wake"
         ? {
             ...base,
-            config: { ...(base.config as object), scope: "community" },
+            config: scoped(base).config,
           }
         : base;
     const result =
@@ -8476,7 +8505,7 @@ it("shares a community session across channels and Solo chats while retaining ea
     const base = f.delivery(text);
     const delivery: Delivery = {
       ...base,
-      config: { ...(base.config as object), scope: "community" },
+      config: scoped(base).config,
       channelId: channel,
     };
     if (delivery.trigger.type === "mention")
@@ -8525,7 +8554,7 @@ it("steers a working community thread with a Solo message and replies to both re
   const f = fixture();
   const thread = f.delivery("Work in the channel");
   const solo = f.delivery("Quick question in Solo", "e".repeat(64));
-  const config = { ...(thread.config as object), scope: "community" };
+  const { config } = scoped(thread);
   f.soloChannels.add("channel");
   await f.runtime.run({ ...thread, channelId: "other", config });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -8568,7 +8597,7 @@ it("steers a working community thread with a Solo message and replies to both re
 it("steers community follow-ups received while Codex starts the first turn", async () => {
   const f = fixture();
   const first = f.delivery("Start the channel task");
-  const config = { ...(first.config as object), scope: "community" };
+  const { config } = scoped(first);
   const starting = deferred<void>();
   f.held.set("turn/start", starting.promise);
   f.soloChannels.add("channel");
@@ -8616,88 +8645,76 @@ it("steers community follow-ups received while Codex starts the first turn", asy
 it("steers community follow-ups into an earlier queued human turn", async () => {
   const f = fixture();
   const first = f.delivery("First task");
-  const config = { ...(first.config as object), scope: "community" };
+  const { config } = scoped(first);
   const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
-  try {
-    await f.runtime.run({ ...first, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.runtime.run({
-      ...f.delivery("Next task", "e".repeat(64)),
-      config,
-      model: "deep-model",
-    });
-    const admitted = deferred<void>();
-    const followUp = f.runtime.run({
-      ...f.delivery("Follow-up to the next task", "f".repeat(64)),
-      config,
-      prepareSession: async () => {
-        admitted.resolve();
-        return undefined;
-      },
-    });
-    await admitted.promise;
-    expect(steers()).toHaveLength(0);
-    await f.complete(0, "FIRST");
-    await followUp;
-    await vi.waitFor(() => expect(steers()).toHaveLength(1));
-    expect(inputText(f.starts()[1])).toContain("Next task");
-    expect(inputText(steers()[0])).toContain("Follow-up to the next task");
-    expect(steers()[0]?.params).toMatchObject({ expectedTurnId: "turn-2" });
-    expect(f.starts()).toHaveLength(2);
-    await f.complete(1, "SECOND");
-  } finally {
-    f.runtime.dispose();
-  }
+  await f.runtime.run({ ...first, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("Next task", "e".repeat(64)),
+    config,
+    model: "deep-model",
+  });
+  const admitted = deferred<void>();
+  const followUp = f.runtime.run({
+    ...f.delivery("Follow-up to the next task", "f".repeat(64)),
+    config,
+    prepareSession: async () => {
+      admitted.resolve();
+      return undefined;
+    },
+  });
+  await admitted.promise;
+  expect(steers()).toHaveLength(0);
+  await f.complete(0, "FIRST");
+  await followUp;
+  await vi.waitFor(() => expect(steers()).toHaveLength(1));
+  expect(inputText(f.starts()[1])).toContain("Next task");
+  expect(inputText(steers()[0])).toContain("Follow-up to the next task");
+  expect(steers()[0]?.params).toMatchObject({ expectedTurnId: "turn-2" });
+  expect(f.starts()).toHaveLength(2);
+  await f.complete(1, "SECOND");
 });
 
 it("steers owner follow-ups and plugin wakes in the same community conversation", async () => {
   const f = fixture();
   const first = pluginWake(f);
-  const config = { ...(first.config as object), scope: "community" };
+  const { config } = scoped(first);
   f.soloChannels.add("channel");
-  try {
-    await f.runtime.run({ ...first, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...first, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
 
-    const followUp = f.delivery("Final transcript", "e".repeat(64));
-    await f.runtime.run({ ...followUp, config });
-    const second = pluginWake(f);
-    if (second.trigger.type !== "plugin")
-      throw new Error("Expected plugin wake");
-    await f.runtime.run({
-      ...second,
-      config,
-      trigger: { ...second.trigger, id: "9".repeat(64), text: "New preview" },
-    });
-    await f.runtime.run({
-      ...f.delivery("Next question", "f".repeat(64)),
-      config,
-    });
+  const followUp = f.delivery("Final transcript", "e".repeat(64));
+  await f.runtime.run({ ...followUp, config });
+  const second = pluginWake(f);
+  if (second.trigger.type !== "plugin") throw new Error("Expected plugin wake");
+  await f.runtime.run({
+    ...second,
+    config,
+    trigger: { ...second.trigger, id: "9".repeat(64), text: "New preview" },
+  });
+  await f.runtime.run({
+    ...f.delivery("Next question", "f".repeat(64)),
+    config,
+  });
 
-    const steers = f.sent.filter((wire) => wire.method === "turn/steer");
-    expect(steers.map(inputText)).toEqual([
-      expect.stringContaining("Final transcript"),
-      expect.stringContaining("New preview"),
-      expect.stringContaining("Next question"),
-    ]);
-    expect(f.starts()).toHaveLength(1);
-    if (followUp.trigger.type !== "mention")
-      throw new Error("Expected mention");
-    await f.tool("send", {
-      audience: "everyone",
-      channel: "channel",
-      request: followUp.trigger.event.id,
-      text: "ANSWER",
-    });
-    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-      tags: expect.arrayContaining([
-        ["buzz:request", followUp.trigger.event.id],
-      ]),
-    });
-    await f.complete(0);
-  } finally {
-    f.runtime.dispose();
-  }
+  const steers = f.sent.filter((wire) => wire.method === "turn/steer");
+  expect(steers.map(inputText)).toEqual([
+    expect.stringContaining("Final transcript"),
+    expect.stringContaining("New preview"),
+    expect.stringContaining("Next question"),
+  ]);
+  expect(f.starts()).toHaveLength(1);
+  if (followUp.trigger.type !== "mention") throw new Error("Expected mention");
+  await f.tool("send", {
+    audience: "everyone",
+    channel: "channel",
+    request: followUp.trigger.event.id,
+    text: "ANSWER",
+  });
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([["buzz:request", followUp.trigger.event.id]]),
+  });
+  await f.complete(0);
 });
 
 it.each(["attention", "plugin"] as const)(
@@ -8705,61 +8722,57 @@ it.each(["attention", "plugin"] as const)(
   async (type) => {
     const f = fixture();
     const first = f.delivery("Work in another channel");
-    const config = { ...(first.config as object), scope: "community" };
+    const { config } = scoped(first);
     f.soloChannels.add("channel");
     const wake = pluginWake(f);
     if (wake.trigger.type !== "plugin" || first.trigger.type !== "mention")
       throw new Error("Expected plugin wake and mention");
-    try {
-      await f.runtime.run({ ...first, channelId: "other", config });
-      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-      await f.runtime.run({
-        ...wake,
-        config,
-        trigger: {
-          ...wake.trigger,
-          ...(type === "attention" ? { type } : { type, plugin: "github" }),
-          text: "Check the build",
-        },
-      });
-      await f.tool("send", {
-        request: first.trigger.event.id,
-        audience: "everyone",
-        text: "Original answer",
-      });
-      await f.runtime.run({
-        ...f.delivery("Follow-up in the original channel", "e".repeat(64)),
-        channelId: "other",
-        config,
-      });
+    await f.runtime.run({ ...first, channelId: "other", config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...wake,
+      config,
+      trigger: {
+        ...wake.trigger,
+        ...(type === "attention" ? { type } : { type, plugin: "github" }),
+        text: "Check the build",
+      },
+    });
+    await f.tool("send", {
+      request: first.trigger.event.id,
+      audience: "everyone",
+      text: "Original answer",
+    });
+    await f.runtime.run({
+      ...f.delivery("Follow-up in the original channel", "e".repeat(64)),
+      channelId: "other",
+      config,
+    });
 
-      const steers = f.sent.filter((wire) => wire.method === "turn/steer");
-      expect(steers.map(inputText)).toEqual([
-        expect.stringContaining("Check the build"),
-        expect.stringContaining("Follow-up in the original channel"),
-      ]);
-      expect(f.starts()).toHaveLength(1);
-      await f.tool("send", {
-        channel: "channel",
-        audience: "everyone",
-        text: "Build update",
-        final: true,
-      });
-      expect(f.publish.mock.calls.map(([post]) => post)).toEqual([
-        expect.objectContaining({
-          tags: expect.arrayContaining([
-            ["h", "other"],
-            ["buzz:request", first.trigger.event.id],
-          ]),
-        }),
-        expect.objectContaining({
-          tags: expect.arrayContaining([["h", "channel"]]),
-        }),
-      ]);
-      await f.complete(0);
-    } finally {
-      f.runtime.dispose();
-    }
+    const steers = f.sent.filter((wire) => wire.method === "turn/steer");
+    expect(steers.map(inputText)).toEqual([
+      expect.stringContaining("Check the build"),
+      expect.stringContaining("Follow-up in the original channel"),
+    ]);
+    expect(f.starts()).toHaveLength(1);
+    await f.tool("send", {
+      channel: "channel",
+      audience: "everyone",
+      text: "Build update",
+      final: true,
+    });
+    expect(f.publish.mock.calls.map(([post]) => post)).toEqual([
+      expect.objectContaining({
+        tags: expect.arrayContaining([
+          ["h", "other"],
+          ["buzz:request", first.trigger.event.id],
+        ]),
+      }),
+      expect.objectContaining({
+        tags: expect.arrayContaining([["h", "channel"]]),
+      }),
+    ]);
+    await f.complete(0);
   },
 );
 
@@ -8768,7 +8781,7 @@ it("keeps community sessions apart for memberships of the same identity", async 
   const base = f.delivery("here");
   const here = {
     ...base,
-    config: { ...(base.config as object), scope: "community" },
+    config: scoped(base).config,
   };
   const there = {
     ...f.delivery("there"),
@@ -8791,8 +8804,7 @@ it.each([false, true])(
   async (cancelled) => {
     const f = fixture();
     const base = f.delivery("seed");
-    const config = { ...(base.config as object), scope: "community" };
-    const agent = { ...base.agent, config } as unknown as Agent;
+    const { config, agent } = scoped(base);
     const abort = new AbortController();
     const once = f.runtime.runOnce({
       delivery: { ...base, config },
@@ -8834,8 +8846,7 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
   async (cancel) => {
     const f = fixture();
     const base = f.delivery("seed");
-    const config = { ...(base.config as object), scope: "community" };
-    const agent = { ...base.agent, config } as unknown as Agent;
+    const { config, agent } = scoped(base);
     const abort = new AbortController();
     const outer = cancel === "delegated deadline" ? fixture() : f;
     if (outer !== f)
@@ -8892,7 +8903,7 @@ it("waits for native completion after a community wake deadline", async () => {
   const terminating = deferred<void>();
   const f = fixture(late, terminating.promise);
   const base = f.delivery("seed");
-  const config = { ...(base.config as object), scope: "community" };
+  const { config } = scoped(base);
   const abort = new AbortController();
   const cleaned = deferred<void>();
   f.delayedInterruptCompletions.add("turn-1");
@@ -8963,7 +8974,7 @@ it("waits for native completion after a community wake deadline", async () => {
 it("retires a cancelled community wake whose interrupt never completes", async () => {
   const f = fixture();
   const base = f.delivery("seed");
-  const config = { ...(base.config as object), scope: "community" };
+  const { config } = scoped(base);
   const abort = new AbortController();
   f.delayedInterruptCompletions.add("turn-1");
   f.process.end.mockResolvedValue(undefined);
@@ -9004,7 +9015,7 @@ it("retires a cancelled community wake whose interrupt never completes", async (
 it("holds sibling retirement after a cancelled wake closes the shared connection", async () => {
   const f = fixture();
   const base = f.delivery("wake");
-  const config = { ...(base.config as object), scope: "community" };
+  const { config } = scoped(base);
   const abort = new AbortController();
   const sibling = "f".repeat(64);
   const siblingDelivery = {
@@ -9063,7 +9074,7 @@ it("runs an unaddressed wake in the community session without inheriting a posti
   const base = f.delivery("first");
   const delivery = {
     ...base,
-    config: { ...(base.config as object), scope: "community" },
+    config: scoped(base).config,
   };
   await f.runtime.run(delivery);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -9102,7 +9113,7 @@ it("runs an unaddressed wake in the community session without inheriting a posti
 it("restores the saved community session from a different channel", async () => {
   const first = fixture();
   const base = first.delivery("first");
-  const config = { ...(base.config as object), scope: "community" };
+  const { config } = scoped(base);
   await first.runtime.run({ ...base, config });
   await vi.waitFor(() => expect(first.starts()).toHaveLength(1));
   await first.complete();
@@ -9142,7 +9153,7 @@ it("reserves community mentions before later unaddressed wakes during startup", 
   const base = f.delivery("first");
   const delivery = {
     ...base,
-    config: { ...(base.config as object), scope: "community" },
+    config: scoped(base).config,
   };
   try {
     await f.runtime.run(delivery);
@@ -9193,7 +9204,7 @@ it("clears owner instructions on addressed and unaddressed community source chan
   const delivery = {
     ...base,
     agent,
-    config: { ...(base.config as object), scope: "community" },
+    config: scoped(base).config,
   };
   await f.runtime.run(delivery);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -9229,7 +9240,7 @@ it("releases cancelled Codex community wakes before earlier work finishes", asyn
   const base = f.delivery("first");
   const delivery = {
     ...base,
-    config: { ...(base.config as object), scope: "community" },
+    config: scoped(base).config,
   };
   await f.runtime.run(delivery);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -9258,23 +9269,12 @@ it("replaces community source policies on voice startup and adopted speech", asy
   f.snapshot.session.canvas.available = true;
   f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("SOURCE_CANVAS"));
   const d = f.delivery("typed Solo");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   await f.runtime.run({ ...d, config });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   await f.complete(0);
   f.huddleChannels.add("room");
-  const connection = await f.runtime.voice(
-    {
-      config,
-      agent: { ...d.agent, config } as unknown as Agent,
-      conversation: { channelId: "room" },
-      signal: new AbortController().signal,
-      async output() {},
-      async transcript() {},
-      ended() {},
-    },
-    d.agent,
-  );
+  const connection = await join(f, d);
   try {
     const injected = () =>
       f.sent.filter((w) => w.method === "thread/inject_items");
@@ -9348,7 +9348,7 @@ it("ignores retained conversation folders for remote community admission", async
   try {
     await f.runtime.run({
       ...d,
-      config: { ...(d.config as object), scope: "community" },
+      config: scoped(d).config,
     });
     await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
     await guest.complete();
@@ -9362,21 +9362,10 @@ it("rejects Huddle speech before dispatching a preparing community turn", async 
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();
   const d = f.delivery("typed in another conversation");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   f.huddleChannels.add("room");
   const ended = vi.fn();
-  const connection = await f.runtime.voice(
-    {
-      config,
-      agent: { ...d.agent, config } as unknown as Agent,
-      conversation: { channelId: "room" },
-      signal: new AbortController().signal,
-      async output() {},
-      async transcript() {},
-      ended,
-    },
-    d.agent,
-  );
+  const connection = await join(f, d, { ended });
   const preparing = deferred<void>();
   const core = deferred<string | null | undefined>();
   const spoken = "early-spoken";
@@ -9435,21 +9424,10 @@ it.each(["refused", "missing completion", "late terminal"] as const)(
     const terminating = deferred<void>();
     const f = fixture(late, terminating.promise);
     const d = f.delivery("typed");
-    const config = { ...(d.config as object), scope: "community" };
+    const { config } = scoped(d);
     f.huddleChannels.add("room");
     const ended = vi.fn();
-    const connection = await f.runtime.voice(
-      {
-        config,
-        agent: { ...d.agent, config } as unknown as Agent,
-        conversation: { channelId: "room" },
-        signal: new AbortController().signal,
-        async output() {},
-        async transcript() {},
-        ended,
-      },
-      d.agent,
-    );
+    const connection = await join(f, d, { ended });
     const turnId = "racing-spoken";
     f.delayedInterruptCompletions.add(turnId);
     const exiting = deferred<void>();
@@ -9585,39 +9563,35 @@ it.each(["refused", "missing completion", "late terminal"] as const)(
 it("keeps the retained Solo Canvas when an intervening community turn is refused", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   f.soloChannels.add("channel");
   f.snapshot.session.canvas.available = true;
   f.snapshot.session.canvas.read.mockResolvedValue(
     canvasHead("RETAINED_CANVAS"),
   );
-  try {
-    await f.runtime.run({ ...d, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.complete(0);
-    f.failing.add("turn/start");
-    await f.runtime.run({
-      ...f.delivery("refused channel turn"),
-      config,
-      channelId: "other",
-    });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    await f.workingUntil.mock.calls.at(-1)?.[0];
-    f.failing.delete("turn/start");
-    f.snapshot.session.canvas.read.mockRejectedValue(new Error("offline"));
-    await f.runtime.run({ ...f.delivery("back to Solo"), config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-    expect(inputText(f.starts()[2])).toContain("RETAINED_CANVAS");
-    await f.complete(2);
-  } finally {
-    f.runtime.dispose();
-  }
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  f.failing.add("turn/start");
+  await f.runtime.run({
+    ...f.delivery("refused channel turn"),
+    config,
+    channelId: "other",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.workingUntil.mock.calls.at(-1)?.[0];
+  f.failing.delete("turn/start");
+  f.snapshot.session.canvas.read.mockRejectedValue(new Error("offline"));
+  await f.runtime.run({ ...f.delivery("back to Solo"), config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(inputText(f.starts()[2])).toContain("RETAINED_CANVAS");
+  await f.complete(2);
 });
 
 it("keeps the retained Solo Canvas when a community wake expires during preparation", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   f.soloChannels.add("channel");
   f.snapshot.session.canvas.available = true;
   f.snapshot.session.canvas.read.mockResolvedValue(
@@ -9670,35 +9644,31 @@ it("keeps the retained Solo Canvas when a community wake expires during preparat
 it("session Interrupt discards queued Codex community requests", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
-  try {
-    await f.runtime.run({ ...d, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.runtime.run({
-      ...f.delivery("QUEUED_SHOULD_STOP"),
-      config,
-      channelId: "other",
-    });
-    vi.useFakeTimers();
-    await f.runtime.session(
-      { ...d.agent, config } as unknown as Agent,
-      { channelId: "channel" },
-      "interrupt",
-    );
-    await vi.advanceTimersByTimeAsync(1_000);
-    await f.runtime.run({ ...f.delivery("AFTER_INTERRUPT"), config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    expect(inputText(f.starts()[1])).toContain("AFTER_INTERRUPT");
-    await f.complete(1);
-  } finally {
-    f.runtime.dispose();
-  }
+  const { config } = scoped(d);
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("QUEUED_SHOULD_STOP"),
+    config,
+    channelId: "other",
+  });
+  vi.useFakeTimers();
+  await f.runtime.session(
+    { ...d.agent, config } as unknown as Agent,
+    { channelId: "channel" },
+    "interrupt",
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  await f.runtime.run({ ...f.delivery("AFTER_INTERRUPT"), config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("AFTER_INTERRUPT");
+  await f.complete(1);
 });
 
 it("session Interrupt discards queued unaddressed community wakes", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   const prompt = vi.fn(async () => "SHOULD_NOT_RUN");
   let once: Promise<unknown> | undefined;
   try {
@@ -9735,29 +9705,25 @@ it("session Interrupt discards queued unaddressed community wakes", async () => 
 it("Stop cancels only the selected queued Codex community request", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   const interruptible = vi.fn();
-  try {
-    await f.runtime.run({ ...d, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.runtime.run({
-      ...f.delivery("STOPPED_REQUEST"),
-      effort: "high",
-      config,
-      channelId: "other",
-      interruptible,
-    });
-    expect(interruptible).toHaveBeenCalledOnce();
-    await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
-    expect(f.sent.filter((w) => w.method === "turn/interrupt")).toHaveLength(0);
-    await f.complete(0);
-    await f.runtime.run({ ...f.delivery("AFTER_STOP"), config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    expect(inputText(f.starts()[1])).toContain("AFTER_STOP");
-    await f.complete(1);
-  } finally {
-    f.runtime.dispose();
-  }
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("STOPPED_REQUEST"),
+    effort: "high",
+    config,
+    channelId: "other",
+    interruptible,
+  });
+  expect(interruptible).toHaveBeenCalledOnce();
+  await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
+  expect(f.sent.filter((w) => w.method === "turn/interrupt")).toHaveLength(0);
+  await f.complete(0);
+  await f.runtime.run({ ...f.delivery("AFTER_STOP"), config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("AFTER_STOP");
+  await f.complete(1);
 });
 
 it("waits for community retirement before opening a returning voice seat", async () => {
@@ -9765,7 +9731,7 @@ it("waits for community retirement before opening a returning voice seat", async
   const f = fixture();
   const other = second(f);
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   await f.runtime.run({ ...d, config });
   await f.runtime.run(other.delivery("keep server alive"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
@@ -9778,18 +9744,7 @@ it("waits for community retirement before opening a returning voice seat", async
   );
   f.huddleChannels.add("room");
   const before = f.sent.filter((w) => w.method === "thread/resume").length;
-  const opening = f.runtime.voice(
-    {
-      config,
-      agent: { ...d.agent, config } as unknown as Agent,
-      conversation: { channelId: "room" },
-      signal: new AbortController().signal,
-      async output() {},
-      async transcript() {},
-      ended() {},
-    },
-    d.agent,
-  );
+  const opening = join(f, d);
   try {
     vi.useFakeTimers();
     await vi.advanceTimersByTimeAsync(0);
@@ -9812,7 +9767,7 @@ it.each(["failed", "cancelled", "audio failed", "audio cancelled"])(
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
     const d = f.delivery("first");
-    const config = { ...(d.config as object), scope: "community" };
+    const { config } = scoped(d);
     f.soloChannels.add("channel");
     f.snapshot.session.canvas.available = true;
     f.snapshot.session.canvas.read.mockResolvedValue(
@@ -9835,18 +9790,7 @@ it.each(["failed", "cancelled", "audio failed", "audio cancelled"])(
     else f.held.set("thread/resume", gate.promise);
     if (mode === "failed") f.failing.add("thread/resume");
     const abort = new AbortController();
-    const opening = f.runtime.voice(
-      {
-        config,
-        agent: { ...d.agent, config } as unknown as Agent,
-        conversation: { channelId: "room" },
-        signal: abort.signal,
-        async output() {},
-        async transcript() {},
-        ended() {},
-      },
-      d.agent,
-    );
+    const opening = join(f, d, { signal: abort.signal });
     const rejected = expect(opening).rejects.toThrow();
     try {
       if (audio) await entered.promise;
@@ -9881,8 +9825,7 @@ it.each([
   async ({ compacting, reject }) => {
     const f = fixture();
     const d = f.delivery("seed");
-    const config = { ...(d.config as object), scope: "community" };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config, agent } = scoped(d);
     const admission = deferred<void>();
     const entered = deferred<void>();
     let addressed: Promise<unknown> | undefined;
@@ -9980,8 +9923,7 @@ it.each([false, true])(
   async (compacting) => {
     const f = fixture();
     const d = f.delivery("seed");
-    const config = { ...(d.config as object), scope: "community" };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config, agent } = scoped(d);
     let wake: Promise<unknown> | undefined;
     try {
       await f.runtime.run({ ...d, config });
@@ -10045,8 +9987,7 @@ it.each(["reset", "admission", "source"])(
   async (boundary) => {
     const f = fixture();
     const d = f.delivery("earlier addressed");
-    const config = { ...(d.config as object), scope: "community" };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config, agent } = scoped(d);
     const gate = deferred<void>();
     const entered = deferred<void>();
     const order: string[] = [];
@@ -10145,48 +10086,43 @@ it.each(["withdrawn wake", "rejected admission"])(
   async (reason) => {
     const f = fixture();
     const d = f.delivery("skipped");
-    const config = { ...(d.config as object), scope: "community" };
-    const agent = { ...d.agent, config } as unknown as Agent;
-    try {
-      if (reason === "withdrawn wake") {
-        let current = true;
-        await f.runtime.runOnce({
-          delivery: { agent: d.agent, config, current: () => current },
-          key: "skip",
-          signal: new AbortController().signal,
-          prompt: async () => {
-            current = false;
-            return undefined;
+    const { config, agent } = scoped(d);
+    if (reason === "withdrawn wake") {
+      let current = true;
+      await f.runtime.runOnce({
+        delivery: { agent: d.agent, config, current: () => current },
+        key: "skip",
+        signal: new AbortController().signal,
+        prompt: async () => {
+          current = false;
+          return undefined;
+        },
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    } else {
+      await expect(
+        f.runtime.run({
+          ...d,
+          config,
+          prepareSession: async () => {
+            throw new Error("refused admission");
           },
-        } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
-      } else {
-        await expect(
-          f.runtime.run({
-            ...d,
-            config,
-            prepareSession: async () => {
-              throw new Error("refused admission");
-            },
-          }),
-        ).rejects.toThrow("refused admission");
-      }
-      await vi.waitFor(() =>
-        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
-          "idle",
-        ),
-      );
-      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
-      expect(f.starts()).toHaveLength(0);
-    } finally {
-      f.runtime.dispose();
+        }),
+      ).rejects.toThrow("refused admission");
     }
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+        "idle",
+      ),
+    );
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
+    expect(f.starts()).toHaveLength(0);
   },
 );
 
 it("keeps replacement community status Starting while retired work drains", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
+  const { config } = scoped(d);
   const unsubscribe = deferred<void>();
   const cleanup = deferred<void>();
   f.held.set("thread/unsubscribe", unsubscribe.promise);
@@ -10238,7 +10174,7 @@ it.each(["stop", "interrupt"])(
     const f = fixture();
     const other = second(f);
     const d = f.delivery("first");
-    const config = { ...(d.config as object), scope: "community" };
+    const { config } = scoped(d);
     await f.runtime.run({ ...d, config });
     await f.runtime.run(other.delivery("keep server alive"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
@@ -10287,8 +10223,7 @@ it.each(["stop", "interrupt"])(
 it("retains a deferred remote community handoff until admission finishes", async () => {
   const f = fixture();
   const d = f.delivery("earlier");
-  const config = { ...(d.config as object), scope: "community" as const };
-  const agent = { ...d.agent, config } as unknown as Agent;
+  const { config, agent } = scoped(d);
   let releaseReset!: () => void,
     resetEntered!: () => void,
     releaseAdmission!: () => void,
@@ -10374,8 +10309,7 @@ it.each(["channel", "community"] as const)(
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
     const d = f.delivery("typed work");
-    const config = { ...(d.config as object), scope };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config } = scoped(d, scope);
     const accepted = deferred<void>();
     f.held.set("turn/interrupt", accepted.promise);
     const opened = vi.mocked(openVoice).mock.calls.length;
@@ -10385,18 +10319,7 @@ it.each(["channel", "community"] as const)(
       await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
       const channelId = scope === "community" ? "room" : "channel";
       f.huddleChannels.add(channelId);
-      opening = f.runtime.voice(
-        {
-          config,
-          agent,
-          conversation: { channelId },
-          signal: new AbortController().signal,
-          async output() {},
-          async transcript() {},
-          ended() {},
-        },
-        d.agent,
-      );
+      opening = join(f, d, { config, conversation: { channelId } });
       await vi.waitFor(() =>
         expect(
           f.sent.find((w) => w.method === "turn/interrupt")?.params,
@@ -10436,8 +10359,7 @@ it.each(["channel", "community"] as const)(
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
     const d = f.delivery("typed work");
-    const config = { ...(d.config as object), scope };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config } = scoped(d, scope);
     const channelId = scope === "community" ? "room" : "channel";
     const seat = new AbortController();
     const inspecting = deferred<void>();
@@ -10453,18 +10375,11 @@ it.each(["channel", "community"] as const)(
     });
 
     const opened = vi.mocked(openVoice).mock.calls.length;
-    const opening = f.runtime.voice(
-      {
-        config,
-        agent,
-        conversation: { channelId },
-        signal: seat.signal,
-        async output() {},
-        async transcript() {},
-        ended() {},
-      },
-      d.agent,
-    );
+    const opening = join(f, d, {
+      config,
+      conversation: { channelId },
+      signal: seat.signal,
+    });
 
     try {
       await inspecting.promise;
@@ -10557,8 +10472,7 @@ it.each(["wake", "typed-wake", "wake-typed", "published"])(
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
     const d = f.delivery("seed");
-    const config = { ...(d.config as object), scope: "community" };
-    const agent = { ...d.agent, config } as unknown as Agent;
+    const { config } = scoped(d);
     const signal = new AbortController();
     if (order === "typed-wake") {
       await f.runtime.run({ ...d, config });
@@ -10582,18 +10496,7 @@ it.each(["wake", "typed-wake", "wake-typed", "published"])(
       expect(sent?.result).toMatchObject({ success: true });
     }
     f.huddleChannels.add("room");
-    const opening = f.runtime.voice(
-      {
-        config,
-        agent,
-        conversation: { channelId: "room" },
-        signal: new AbortController().signal,
-        async output() {},
-        async transcript() {},
-        ended() {},
-      },
-      d.agent,
-    );
+    const opening = join(f, d);
     try {
       await vi.waitFor(() =>
         expect(f.sent.some((w) => w.method === "turn/interrupt")).toBe(true),
@@ -10615,8 +10518,7 @@ it("interrupts queued community text before attaching Huddle audio", async () =>
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();
   const first = f.delivery("active text");
-  const config = { ...(first.config as object), scope: "community" };
-  const agent = { ...first.agent, config } as unknown as Agent;
+  const { config } = scoped(first);
   const seat = new AbortController();
   const cleanup = deferred<void>();
   f.huddleChannels.add("room");
@@ -10628,18 +10530,7 @@ it("interrupts queued community text before attaching Huddle audio", async () =>
   const inspect = vi.fn(async () => undefined);
   Object.assign(f.runtime, { inspect });
   const opened = vi.mocked(openVoice).mock.calls.length;
-  const opening = f.runtime.voice(
-    {
-      config,
-      agent,
-      conversation: { channelId: "room" },
-      signal: seat.signal,
-      async output() {},
-      async transcript() {},
-      ended() {},
-    },
-    first.agent,
-  );
+  const opening = join(f, first, { signal: seat.signal });
   void opening.catch(() => {});
 
   try {
@@ -10681,8 +10572,7 @@ it("cancels voice admission when interrupting a community wake fails", async () 
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();
   const d = f.delivery("seed");
-  const config = { ...(d.config as object), scope: "community" };
-  const agent = { ...d.agent, config } as unknown as Agent;
+  const { config, agent } = scoped(d);
   const signal = new AbortController();
   const once = f.runtime.runOnce({
     delivery: { ...d, config },
@@ -10781,8 +10671,7 @@ it("waits for community compaction before opening voice", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();
   const d = f.delivery("seed");
-  const config = { ...(d.config as object), scope: "community" };
-  const agent = { ...d.agent, config } as unknown as Agent;
+  const { config, agent } = scoped(d);
   let opening: ReturnType<typeof f.runtime.voice> | undefined;
   let compacted: Promise<void> | undefined;
   try {
@@ -10802,18 +10691,7 @@ it("waits for community compaction before opening voice", async () => {
     );
     const resumed = f.sent.filter((w) => w.method === "thread/resume").length;
     f.huddleChannels.add("room");
-    opening = f.runtime.voice(
-      {
-        config,
-        agent,
-        conversation: { channelId: "room" },
-        signal: new AbortController().signal,
-        async output() {},
-        async transcript() {},
-        ended() {},
-      },
-      d.agent,
-    );
+    opening = join(f, d);
     vi.useFakeTimers();
     await vi.advanceTimersByTimeAsync(0);
     vi.useRealTimers();
@@ -10846,7 +10724,7 @@ it.each(["mention", "attention"] as const)(
     const delivery = f.delivery("ordinary context remains parseable");
     await f.runtime.run({
       ...delivery,
-      config: { ...(delivery.config as object), scope: "community" },
+      config: scoped(delivery).config,
       ...(kind === "attention"
         ? {
             trigger: {
@@ -10920,8 +10798,7 @@ it("abandons an empty remote binding when a wake is invalidated during history",
 it("preserves queued Codex community work when compaction is interrupted", async () => {
   const f = fixture();
   const d = f.delivery("first");
-  const config = { ...(d.config as object), scope: "community" };
-  const agent = { ...d.agent, config } as unknown as Agent;
+  const { config, agent } = scoped(d);
   const place = { channelId: "channel" };
   await f.runtime.run({ ...d, config });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));

@@ -1,6 +1,9 @@
 import { TeamSidebarSections, TeamSidebarSection } from "./TeamSidebarSource";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
-import { openEmptyChannels } from "../../features/channel-navigation/routes";
+import {
+  newMessage,
+  openEmptyChannels,
+} from "../../features/channel-navigation/routes";
 import {
   useCallback,
   useEffect,
@@ -309,7 +312,7 @@ export function ChannelInventory({
   const composingMessage =
     target.kind === "page" &&
     target.pluginId === "buzz.channels" &&
-    target.route?.params === "new-message";
+    newMessage(target.route?.params) !== undefined;
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = useMemo(
     () =>

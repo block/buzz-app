@@ -91,6 +91,7 @@ export const test = base.extend({
   // harness serves them all over one HTTP/1.1 origin; the native app does not.
   savedCommunities: [["primary", "secondary"], { option: true }],
   dmLabels: [false, { option: true }],
+  // DM id -> its other members: indexes into the peer keys, or hex pubkeys.
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   inboxDm: [false, { option: true }],
@@ -1321,9 +1322,11 @@ export const test = base.extend({
                   "guest",
                 ]),
                 ...(dmMembers[id]
-                  ? dmMembers[id].map((index) => [
+                  ? dmMembers[id].map((member) => [
                       "p",
-                      participants[index],
+                      typeof member === "string"
+                        ? member
+                        : participants[member],
                       "",
                       "member",
                     ])

@@ -571,6 +571,7 @@ export function ChannelInventory({
     trigger?: HTMLElement | undefined;
   }>();
   const [renamingChat, setRenamingChat] = useState<string>();
+  const renameFocus = useRef<string | undefined>(undefined);
   const pendingChatClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -1420,6 +1421,28 @@ export function ChannelInventory({
     });
     setRowFocus(undefined);
   }, [rowFocus, rowFocusTarget, sidebarFocusFallback, slotsMounted]);
+  useLayoutEffect(() => {
+    if (renamingChat || !renameFocus.current || !slotsMounted) return;
+    const id = renameFocus.current;
+    renameFocus.current = undefined;
+    const section = channelSectionKey(id);
+    const summary = sidebar.collapsed.includes(section)
+      ? sidebar.list.current?.querySelector<HTMLElement>(
+          `[data-sidebar-section="${CSS.escape(section)}"] details > summary`,
+        )
+      : undefined;
+    (summary ?? rowFocusTarget(id) ?? sidebarFocusFallback())?.focus({
+      preventScroll: true,
+    });
+  }, [
+    renamingChat,
+    slotsMounted,
+    channelSectionKey,
+    rowFocusTarget,
+    sidebarFocusFallback,
+    sidebar.collapsed,
+    sidebar.list,
+  ]);
   const [groupFocus, setGroupFocus] = useState<string>();
   // Group recovery removes its focused notice; return focus to the group header.
   useLayoutEffect(() => {
@@ -2072,21 +2095,8 @@ export function ChannelInventory({
                                     )?.focus({ preventScroll: true });
                                   }}
                                   close={(focus) => {
+                                    if (focus) renameFocus.current = channel.id;
                                     setRenamingChat(undefined);
-                                    if (focus)
-                                      requestAnimationFrame(() => {
-                                        const summary =
-                                          sidebar.list.current?.querySelector<HTMLElement>(
-                                            `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
-                                          );
-                                        if (
-                                          summary?.closest(
-                                            "details:not([open])",
-                                          )
-                                        )
-                                          summary.focus();
-                                        else focusChannelPlacement(channel.id);
-                                      });
                                   }}
                                 />
                               );

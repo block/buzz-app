@@ -649,6 +649,7 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
       await saveStarted;
       await work.click();
       await input(page).focus();
+      await expect(input(page)).toBeFocused();
       finishSave();
       await expect(row(page, alpha)).toBeHidden();
       await expect(work).toBeFocused();

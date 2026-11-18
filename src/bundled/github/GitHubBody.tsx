@@ -31,7 +31,6 @@ import {
 import {
   attachmentFor,
   attachmentMetadata,
-  authoredWidth,
   bodyUrl,
   inertHtml,
   knownSize,
@@ -68,14 +67,18 @@ function htmlContent(html: string): PhrasingContent[] {
     if (!(node instanceof Element)) return [];
     if (depth > MAX_MARKDOWN_DEPTH)
       return [{ type: "text", value: node.outerHTML }];
-    if (node.localName === "img")
+    if (node.localName === "img") {
+      const width = Number(node.getAttribute("width"));
       return [
         {
           type: "image",
           url: node.getAttribute("src") ?? "",
           alt: node.getAttribute("alt") ?? "",
+          ...(Number.isInteger(width) &&
+            width > 0 && { data: { hProperties: { width } } }),
         },
       ];
+    }
 
     const children = [...node.childNodes].flatMap((child) =>
       convert(child, depth + 1),
@@ -250,11 +253,16 @@ function EmbeddedAttachment({
       }
       onLoadCapture={(event) => {
         show(true);
-        if (image && event.target instanceof HTMLImageElement)
-          rememberSize(source, {
-            width: event.target.naturalWidth,
-            height: event.target.naturalHeight,
-          });
+        if (!image || !(event.target instanceof HTMLImageElement)) return;
+        const { naturalWidth: width, naturalHeight: height } = event.target;
+        rememberSize(source, { width, height });
+        // A remembered size can be stale when the image changed since.
+        if (width > 0 && height > 0)
+          setSize((current) =>
+            current?.width === width && current.height === height
+              ? current
+              : { width, height },
+          );
       }}
       onLoadedDataCapture={() => show(true)}
       // A video player reloads after a network failure (code 2) on its own,
@@ -292,6 +300,7 @@ type Media = (
   label: ReactNode,
   image?: boolean,
   description?: string,
+  width?: number,
 ) => ReactNode;
 const MediaContext = createContext<Media>((source) => source);
 
@@ -324,9 +333,11 @@ const components: Components = {
       );
     return media(href, children, false, plainText(children) || undefined);
   },
-  img: function MarkdownImage({ src, alt }) {
+  img: function MarkdownImage({ src, alt, width }) {
     const media = useContext(MediaContext);
-    return typeof src === "string" && src ? media(src, alt, true, alt) : alt;
+    return typeof src === "string" && src
+      ? media(src, alt, true, alt, Number(width) || undefined)
+      : alt;
   },
   table: ({ children }) => (
     <div className={styles.tableScroll}>
@@ -440,10 +451,9 @@ export const GitHubBody = memo(function GitHubBody({
     }
   };
 
-  const media: Media = (source, label, image = false, description) => {
+  const media: Media = (source, label, image = false, description, width) => {
     const attachment = attachmentFor(source, metadata, image);
     const signed = signedUrl(source, metadata);
-    const width = authoredWidth(source, metadata);
     const link = (
       <a href={source} target="_blank" rel="noreferrer">
         {label || attachment?.name || "Open attachment"}

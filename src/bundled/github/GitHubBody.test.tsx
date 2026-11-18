@@ -890,19 +890,15 @@ it("bounds an image's frame by its authored width before it loads", () => {
   const { container } = render(
     <GitHubBody
       url={url}
-      body={`![Narrow](${image})\n\n![Unsized](${before})`}
-      bodyHtml={`<img src="${image}" width="340"><img src="${before}">`}
+      body={`<img src="${image}" alt="Wide" width="340">\n\n<img src="${image}" alt="Thumbnail" width="64">\n\n![Unsized](${before})`}
     />,
   );
-  const [narrow, unsized] = container.querySelectorAll<HTMLElement>(
-    "[data-media-preview]",
+  const widths = [
+    ...container.querySelectorAll<HTMLElement>("[data-media-preview]"),
+  ].map((frame) =>
+    frame.parentElement?.style.getPropertyValue("--attachment-width"),
   );
-  expect(
-    narrow?.parentElement?.style.getPropertyValue("--attachment-width"),
-  ).toBe("340px");
-  expect(
-    unsized?.parentElement?.style.getPropertyValue("--attachment-width"),
-  ).toBe("");
+  expect(widths).toEqual(["340px", "64px", ""]);
 });
 
 it("sizes an image's frame from an early off-screen read", async () => {
@@ -943,6 +939,32 @@ it("sizes an image's frame from an early off-screen read", async () => {
   vi.unstubAllGlobals();
   render(body);
   expect(frame()?.style.getPropertyValue("--media-ratio")).toBe("400 / 1200");
+});
+
+it("takes an image's new size when it loads after a remembered one", () => {
+  const changing =
+    "https://github.com/user-attachments/assets/5d2e8f10-7a3b-4c6d-9e1f-2a3b4c5d6e7f";
+  const body = <GitHubBody url={url} body={`![Changing](${changing})`} />;
+  const load = (width: number, height: number) => {
+    const preview = screen.getByAltText("Changing");
+    Object.defineProperties(preview, {
+      naturalWidth: { value: width },
+      naturalHeight: { value: height },
+    });
+    fireEvent.load(preview);
+  };
+  const ratio = () =>
+    document
+      .querySelector<HTMLElement>("[data-media-preview]")
+      ?.style.getPropertyValue("--media-ratio");
+  const { unmount } = render(body);
+  load(300, 900);
+  unmount();
+
+  render(body);
+  expect(ratio()).toBe("300 / 900");
+  load(600, 300);
+  expect(ratio()).toBe("600 / 300");
 });
 
 it("preserves linked HTML images and media fallback destinations without nested links", () => {

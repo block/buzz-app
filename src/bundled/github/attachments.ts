@@ -3,13 +3,11 @@ import { MAX_MARKDOWN_LENGTH } from "../../features/relay/message-content";
 
 type MediaKind = Exclude<Attachment["kind"], "file">;
 /** `src` is a signed media URL from the rendered HTML, which loads without a
- * GitHub sign-in but expires within minutes. `width` is an image's authored
- * width in CSS pixels. */
+ * GitHub sign-in but expires within minutes. */
 type Descriptor = {
   kind: MediaKind;
   name?: string | undefined;
   src?: string | undefined;
-  width?: number | undefined;
 };
 const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const assetPath = new RegExp(`^/user-attachments/assets/(${uuid})$`, "i");
@@ -102,12 +100,7 @@ export function attachmentMetadata(html = ""): ReadonlyMap<string, Descriptor> {
         url.hostname === "private-user-images.githubusercontent.com"
           ? url.href
           : descriptors.get(key)?.src;
-      const authored = Number(element.getAttribute("width"));
-      const width =
-        tag === "img" && Number.isInteger(authored) && authored > 0
-          ? authored
-          : descriptors.get(key)?.width;
-      descriptors.set(key, { kind, name, src, width });
+      descriptors.set(key, { kind, name, src });
     }
   }
   return descriptors;
@@ -144,15 +137,6 @@ export function signedUrl(
 ): string | undefined {
   const url = githubMediaUrl(value);
   return url && metadata.get(assetKey(url))?.src;
-}
-
-/** The width `value` was authored at, as `<img width="340">`. */
-export function authoredWidth(
-  value: string,
-  metadata: ReadonlyMap<string, Descriptor>,
-): number | undefined {
-  const url = githubMediaUrl(value);
-  return url && metadata.get(assetKey(url))?.width;
 }
 
 export type Size = Readonly<{ width: number; height: number }>;

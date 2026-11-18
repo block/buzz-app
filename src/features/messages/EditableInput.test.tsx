@@ -5052,6 +5052,51 @@ describe("editable tables", () => {
     expect(h.markdown()).toBe("| a | b |\n| :--- | ---: |\n| 1 | 2 |");
   });
 
+  it("keeps the caret in a cell while an IME composes, then commits the text", async () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+    });
+    act(() => h.input.setSelectionRange(0, 0));
+    const cell = h.input.querySelector("th") as HTMLElement;
+    act(() => fireEvent.compositionStart(h.input));
+    cell.firstChild?.replaceWith(document.createTextNode("\u3053\u3093"));
+    for (const key of ["Tab", "ArrowDown", "Enter"]) {
+      act(() => {
+        fireEvent.keyDown(h.input, { key, isComposing: true, keyCode: 229 });
+      });
+    }
+    expect(activeCell(h.input)).toBe("\u3053\u3093");
+    await act(async () => fireEvent.compositionEnd(h.input));
+    expect(cells(h.input)).toEqual([
+      ["\u3053\u3093", "b"],
+      ["1", "2"],
+    ]);
+    expect(h.markdown()).toBe(
+      "| \u3053\u3093 | b |\n| :--- | ---: |\n| 1 | 2 |",
+    );
+  });
+
+  it.each([
+    ["wide", 40, 2],
+    ["long", 2, 300],
+  ])("keeps a %s table intact", (_name, columns, rows) => {
+    const h = mount();
+    const row = (n: number) =>
+      `| ${Array.from({ length: columns }, (_, c) => `r${n}c${c}`).join(" | ")} |`;
+    const lines = [
+      row(0),
+      `| ${Array(columns).fill("---").join(" | ")} |`,
+      ...Array.from({ length: rows - 1 }, (_, n) => row(n + 1)),
+    ];
+    act(() => {
+      h.input.insertText(lines.join("\n"));
+    });
+    expect(h.input.querySelectorAll("tr")).toHaveLength(rows);
+    expect(h.input.querySelectorAll("tr")[0]?.children).toHaveLength(columns);
+    expect(h.markdown()).toBe(lines.join("\n"));
+  });
+
   it("places a Markdown table inserted from a cell below the current table", () => {
     const h = mount();
     act(() => {

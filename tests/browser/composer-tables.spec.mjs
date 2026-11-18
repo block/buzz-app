@@ -180,6 +180,23 @@ test("Delete from the paragraph above a table never edits the one below", async 
   await expect(input.locator("th").first()).toHaveText("ell");
 });
 
+test("Select all then Backspace clears the draft and undo brings the table back", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.evaluate((el, text) => el.insertText(text), surrounded);
+  await input.focus();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  await expect(input.locator("table")).toHaveCount(0);
+  await expect(input).toHaveText("");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input.locator("table")).toHaveCount(1);
+  await expect(input.locator("p").first()).toHaveText("Before");
+  await expect(input.locator("p").last()).toHaveText("After");
+  await expect(input.locator("td").first()).toHaveText("cellword");
+});
+
 for (const [name, setup] of [
   ["selected text outside", (page) => page.locator("p").first().dblclick()],
   ["a caret outside", (page) => page.locator("p").last().click()],

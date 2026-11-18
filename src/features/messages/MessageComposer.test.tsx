@@ -17628,6 +17628,48 @@ describe("table editing controls", () => {
     expect(h.input().querySelector("table")).toBeNull();
   });
 
+  it.each([undefined, "root"])(
+    "sends the table as Markdown with Enter, and Shift+Enter stays in it, in scope %s",
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      act(() => h.input().insertText("| a | b |\n| - | - |\n| 1 | 2 |"));
+      act(() => h.input().setSelectionRange(0, 0));
+      fireEvent.keyDown(h.input(), { key: "Enter", shiftKey: true });
+      expect(h.input().querySelector("[data-active]")?.textContent).toBe("1");
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.messages.reply).not.toHaveBeenCalled();
+      fireEvent.keyDown(h.input(), { key: "Enter" });
+      const sent = threadRootId ? h.messages.reply : h.messages.send;
+      await waitFor(() => expect(sent).toHaveBeenCalledOnce());
+      expect(sent.mock.calls[0]?.[threadRootId ? 2 : 1]).toBe(
+        "| a | b |\n| --- | --- |\n| 1 | 2 |",
+      );
+    },
+  );
+
+  it("edits a sent table as a grid and saves the same Markdown", () => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([
+      editableMessage({
+        content: "Intro\n\n| a | b |\n| :-- | --: |\n| 1 | 2 |",
+      }),
+    ]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(cells(h.input())).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    act(() => h.input().setSelectionRange(0, 0));
+    act(() => h.input().insertText("!"));
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+      "c".repeat(64),
+      "!Intro\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |",
+      "c".repeat(64),
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+  });
+
   it("moves focus into the toolbar with Alt+F10 and back with Escape", async () => {
     const h = mount();
     act(() => h.input().insertText("| a | b |\n| - | - |\n| 1 | 2 |"));

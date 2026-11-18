@@ -348,6 +348,8 @@ export type SidebarPreferences = SidebarGroups &
     sort?: Readonly<Record<string, SidebarSortMode>>;
     filters?: Readonly<Record<string, SidebarFilterMode>>;
     activeWindowSeconds?: Readonly<Record<string, number>>;
+    /** A first write still needs both verified legacy workspace records. */
+    workspaceMigrationPending?: true;
   }>;
 export type SidebarSectionDraft = Readonly<{
   id: string;

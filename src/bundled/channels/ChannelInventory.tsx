@@ -1106,7 +1106,7 @@ export function ChannelInventory({
         </SoloChatMenuItems>,
       );
     }
-    if (placementWritable && !regions.managed.has(channel.id)) {
+    if (preferences.starWritable && !regions.managed.has(channel.id)) {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
@@ -1159,6 +1159,7 @@ export function ChannelInventory({
               {preferences.data?.sections.map((group) => (
                 <MenuRadioItem
                   key={group.id}
+                  disabled={!placementWritable}
                   value={`group:${group.id}`}
                   closeOnClick={false}
                 >
@@ -1172,7 +1173,11 @@ export function ChannelInventory({
                   {group.name}
                 </MenuRadioItem>
               ))}
-              <MenuRadioItem value={home} closeOnClick={false}>
+              <MenuRadioItem
+                value={home}
+                closeOnClick={false}
+                disabled={!placementWritable}
+              >
                 <MenuIcon>
                   <ChatCircleIcon size={14} />
                 </MenuIcon>
@@ -1206,6 +1211,7 @@ export function ChannelInventory({
             {(starred || currentSectionId) && (
               <MenuItem
                 closeOnClick={false}
+                disabled={!starred && !placementWritable}
                 onClick={() => {
                   if (starred) void setChannelStar(channel.id, false, surface);
                   else void assignGroup(channel.id, undefined, surface);
@@ -2393,8 +2399,20 @@ export function ChannelInventory({
           ))}
         {!cached &&
         startup.ready &&
-        preferences.status === "error" &&
-        !preferences.transient ? (
+        preferences.data?.workspaceMigrationPending ? (
+          <ToastNotice
+            title="Some workspaces couldn’t load"
+            description="Retry to load your previous workspaces and edit the layout."
+            tone="warning"
+          >
+            <Button type="button" size="sm" onClick={preferences.reload}>
+              Retry
+            </Button>
+          </ToastNotice>
+        ) : !cached &&
+          startup.ready &&
+          preferences.status === "error" &&
+          !preferences.transient ? (
           <ToastNotice
             title="Saved sidebar preferences couldn’t refresh"
             description="Your conversations are still available."

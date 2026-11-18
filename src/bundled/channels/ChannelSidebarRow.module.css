@@ -31,7 +31,10 @@
 @media (hover: hover) and (pointer: fine) {
   .row:not(:hover, :focus-within)
     [data-solo-row-action]:not([aria-expanded="true"]) {
+    position: absolute;
+    inset-inline-end: var(--channel-row-fill-end, 0%);
     opacity: 0;
+    pointer-events: none;
   }
 }
 .row:is(:hover, :has([data-context-menu-present])):not(

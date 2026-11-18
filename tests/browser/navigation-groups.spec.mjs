@@ -123,6 +123,60 @@ test("an existing unified layout remains writable during a legacy read failure",
   await expect(rowIn(page, "group:work")).toBeVisible();
 });
 
+test("a failed first legacy read keeps verified preferences and disables only workspace edits", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/primary/query", (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      !filters.some((filter) =>
+        filter["#d"]?.some((id) => id.endsWith(":groups:me")),
+      )
+    )
+      return route.continue();
+    app.report.sidebarPreferenceFailures ??= [];
+    app.report.sidebarPreferenceFailures.push(route.request().url());
+    return route.fulfill({
+      status: 502,
+      json: { error: "Legacy read unavailable" },
+    });
+  });
+  await open(page, app);
+  await expect(page.getByText("Some workspaces couldn’t load")).toBeVisible();
+  await expect(
+    sidebar(page).locator(
+      '[data-sidebar-section="starred"] [data-channel-id="alpha"]',
+    ),
+  ).toBeVisible();
+  await expect(rowIn(page, "group:work")).toBeVisible();
+  const move = await openMove(page, rowIn(page, "group:work"));
+  await expect(
+    move.getByRole("menuitemradio", { name: "Team", exact: true }),
+  ).toBeDisabled();
+  await move
+    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .click();
+  await saved(page, app, 1);
+  await expect(rowIn(page, "starred")).toBeVisible();
+  await openMove(page, rowIn(page, "starred"));
+  await page
+    .getByRole("menuitem", { name: "Remove from Starred", exact: true })
+    .click();
+  await saved(page, app, 2);
+  await expect(rowIn(page, "group:work")).toBeVisible();
+  expect(
+    app.report.sidebarPublications.map(({ coordinate }) => coordinate),
+  ).toEqual(["channel-stars", "channel-stars"]);
+  await page.unroute("**/api/relay/primary/query");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Some workspaces couldn’t load")).toHaveCount(0);
+  await openMove(page, rowIn(page, "group:work"));
+  await page.getByRole("menuitemradio", { name: "Team", exact: true }).click();
+  await saved(page, app, 3);
+  await expect(rowIn(page, "channels")).toBeVisible();
+});
+
 // Browser-owned keyboard nesting, portal geometry, and exclusive row/focus relocation.
 // Record ordering, concurrency, bounds and cancellation matrices stay in Vitest.
 test("row menu moves and removes a channel optimistically, retaining keyboard navigation and confirmed reload", async ({

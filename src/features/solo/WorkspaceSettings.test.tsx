@@ -472,7 +472,7 @@ it("remount checks uncertain lifetime without replaying confirmed Canvas; remain
   h.saved(undefined);
   fireEvent.click(check);
   await waitFor(() => expect(saveChanges()).toBeEnabled());
-  expect(screen.getByRole("status")).toHaveTextContent(
+  expect(await screen.findByRole("status")).toHaveTextContent(
     "Chat name and lifetime saved. Workspace and Canvas still have unsaved changes.",
   );
   expect(h.close).not.toHaveBeenCalled();

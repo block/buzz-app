@@ -22,7 +22,7 @@ import type {
 } from "./sidebar-preferences";
 
 type MoveDestination =
-  | { starred: true }
+  | { starred: boolean }
   | Omit<SidebarAssignmentIntent, "channelId">;
 type MoveIntent = Readonly<{
   id: number;
@@ -129,12 +129,14 @@ export function createSidebarPreferencesStore({
   let readTransient = false;
   // Retain writer routing through failed reads and cache clears until reconciled.
   let creationUncertain = false;
-  const writable = () =>
+  const starWritable = () =>
     !closed &&
     !!confirmed &&
     readFailure === undefined &&
     !!write &&
     !!writeStar;
+  const writable = () =>
+    starWritable() && !confirmed?.workspaceMigrationPending;
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -147,12 +149,14 @@ export function createSidebarPreferencesStore({
   const orderWritable = () =>
     !closed &&
     !!confirmed &&
+    !confirmed.workspaceMigrationPending &&
     readFailure === undefined &&
     !snapshot.cached &&
     !!writeOrder;
   const renameWritable = () =>
     !closed &&
     !!confirmed &&
+    !confirmed.workspaceMigrationPending &&
     readFailure === undefined &&
     !snapshot.cached &&
     !!renameSection;
@@ -161,8 +165,10 @@ export function createSidebarPreferencesStore({
     const assignments = { ...data.assignments };
     const starred = new Set(data.starred);
     for (const { channelId, destination } of pendingMoves.values()) {
-      if ("starred" in destination) starred.add(channelId);
-      else {
+      if ("starred" in destination) {
+        if (destination.starred) starred.add(channelId);
+        else starred.delete(channelId);
+      } else {
         starred.delete(channelId);
         const created = destination.createSection;
         if (created && !sections.some(({ id }) => id === created.id)) {
@@ -284,6 +290,9 @@ export function createSidebarPreferencesStore({
         : {}),
       starred: Object.freeze([...data.starred]),
       muted: Object.freeze([...data.muted]),
+      ...(data.workspaceMigrationPending
+        ? { workspaceMigrationPending: true as const }
+        : {}),
       ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
       ...(data.filters ? { filters: Object.freeze({ ...data.filters }) } : {}),
       ...(data.activeWindowSeconds
@@ -327,11 +336,12 @@ export function createSidebarPreferencesStore({
   // replaces its own fields; mute stays confirmed-only for notification policy.
   const project = () => {
     if (!confirmed) return;
-    void persistence
-      ?.writeStartup?.({
-        preferences: { savedAt: Date.now(), data: confirmed },
-      })
-      .catch(() => {});
+    if (!confirmed.workspaceMigrationPending)
+      void persistence
+        ?.writeStartup?.({
+          preferences: { savedAt: Date.now(), data: confirmed },
+        })
+        .catch(() => {});
     publish({
       // A field-only confirmation cannot recover a failed full read. Any
       // concurrent read made stale by a write must leave recovery available.
@@ -456,7 +466,7 @@ export function createSidebarPreferencesStore({
     if (signal?.aborted) return Promise.reject(signal.reason);
     const intent: MoveIntent = { id: ++nextMove, channelId, destination };
     if (
-      !writable() ||
+      !("starred" in destination ? starWritable() : writable()) ||
       (creationUncertain && "createSection" in destination) ||
       !snapshot.data ||
       !confirmed ||
@@ -507,7 +517,7 @@ export function createSidebarPreferencesStore({
             : await write({ channelId, ...destination }, writeSignal);
           check();
           const stars = await writeStar(
-            { channelId, starred: starring },
+            { channelId, starred: starring && destination.starred },
             writeSignal,
           );
           check();
@@ -553,6 +563,7 @@ export function createSidebarPreferencesStore({
     if (
       closed ||
       !confirmed ||
+      confirmed.workspaceMigrationPending ||
       readFailure !== undefined ||
       snapshot.cached ||
       !removeSection ||
@@ -1078,6 +1089,7 @@ export function createSidebarPreferencesStore({
         return (
           !closed &&
           !!confirmed &&
+          !confirmed.workspaceMigrationPending &&
           readFailure === undefined &&
           !snapshot.cached &&
           !!removeSection &&
@@ -1085,12 +1097,12 @@ export function createSidebarPreferencesStore({
         );
       },
       get starWritable() {
-        return writable();
+        return starWritable();
       },
       async setStar(channelId: string, starred: boolean, signal?: AbortSignal) {
         const data = await move(
           channelId,
-          starred ? { starred: true } : {},
+          starred || confirmed?.workspaceMigrationPending ? { starred } : {},
           signal,
         );
         return data.starred;

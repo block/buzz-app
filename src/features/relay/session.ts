@@ -1962,30 +1962,47 @@ export function createRelaySession(
     const decode = transport?.decodeSidebarPreferences;
     if (!transport?.workspaceMigration || !decode) return undefined;
     const epoch = legacyWorkspaceEpoch;
-    if (!fresh && legacyWorkspaceCache) return legacyWorkspaceCache;
+    if (!fresh && legacyWorkspaceCache) return { groups: legacyWorkspaceCache };
     const active = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
-    const [teamEvents, solo] = await Promise.all([
-      preferenceReader.read(
-        [
-          {
-            kinds: [30078],
-            authors: [transport.viewer],
-            "#d": ["channel-sections"],
-            limit: 1,
-            consistency: "strong",
-          },
-        ],
-        { signal: active, fresh: true, priority: "foreground" },
-      ),
+    const [team, solo] = await Promise.allSettled([
+      preferenceReader
+        .read(
+          [
+            {
+              kinds: [30078],
+              authors: [transport.viewer],
+              "#d": ["channel-sections"],
+              limit: 1,
+              consistency: "strong",
+            },
+          ],
+          { signal: active, fresh: true, priority: "foreground" },
+        )
+        .then(async (events) => {
+          const { sections, assignments } = await decode(events, active);
+          return { sections, assignments };
+        }),
       channelKit.readLegacyGroups(active),
     ]);
-    const groups = mergeLegacyWorkspaces(
-      await decode(teamEvents, active),
-      solo,
-    );
-    active.throwIfAborted();
+    signal.throwIfAborted();
+    if (team.status === "rejected")
+      return solo.status === "fulfilled"
+        ? {
+            partial: mergeLegacyWorkspaces(
+              { sections: [], assignments: {} },
+              solo.value,
+            ),
+          }
+        : undefined;
+    if (solo.status === "rejected") return { partial: team.value };
+    let groups: SidebarGroups;
+    try {
+      groups = mergeLegacyWorkspaces(team.value, solo.value);
+    } catch {
+      return { partial: team.value };
+    }
     if (legacyWorkspaceEpoch === epoch) legacyWorkspaceCache = groups;
-    return groups;
+    return { groups };
   }
   const readPreferences = async (
     signal?: AbortSignal,
@@ -2007,26 +2024,27 @@ export function createRelaySession(
         combined,
         consistency,
       );
-    let legacyError: unknown;
-    const loadingLegacy = readLegacyWorkspaces(combined).catch((error) => {
-      legacyError = error;
-      return undefined;
-    });
+    const loadingLegacy = readLegacyWorkspaces(combined);
     const current = await readSidebarPreferences(
       preferenceReader,
       transport.viewer,
-      async (events, active) => decode(events, active, await loadingLegacy),
+      async (events, active) =>
+        decode(events, active, (await loadingLegacy)?.groups),
       combined,
       consistency,
       true,
     );
     if (current.sectionOrder) return current;
     const legacy = await loadingLegacy;
-    if (!legacy)
-      throw legacyError ?? new Error("Saved workspaces are unavailable.");
+    if (!legacy?.groups)
+      return {
+        ...current,
+        ...legacy?.partial,
+        workspaceMigrationPending: true as const,
+      };
     return {
       ...current,
-      ...projectWorkspaceGroups(workspaceBaseRecord(legacy)),
+      ...projectWorkspaceGroups(workspaceBaseRecord(legacy.groups)),
     };
   };
   function workspaceWrite<T>(
@@ -2047,13 +2065,10 @@ export function createRelaySession(
         ...(transport?.workspaceMigration ? [legacyWorkspaceEpoch.signal] : []),
       ]);
       if (!transport?.workspaceMigration) return write(intent, active);
-      const legacy = await readLegacyWorkspaces(active, true).catch(() => {
-        active.throwIfAborted();
-        // The signer requires a legacy base if there is no unified head yet.
-        return undefined;
-      });
+      const legacy = await readLegacyWorkspaces(active, true);
       active.throwIfAborted();
-      return write(intent, active, legacy);
+      // A verified unified head permits a write during a legacy-only outage.
+      return write(intent, active, legacy?.groups);
     };
   }
   const removeWorkspace = workspaceWrite(transport?.removeSidebarSection);

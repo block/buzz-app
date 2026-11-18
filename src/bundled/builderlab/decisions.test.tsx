@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { DecisionsSettings } from "../../app/DecisionsSettings";
 import { federatedFixture } from "../../features/federated-identity/testing";
 import { createNativeSession } from "./session";
@@ -40,6 +41,7 @@ const request = {
   timeoutMs: 30_000,
 };
 const signal = new AbortController().signal;
+const COMMUNITY = "wss://relay.example";
 const tauri = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
   invoke: vi.fn(async () => ({})),
@@ -316,8 +318,9 @@ it("answers each community with its own sign-in server's account, and leaves the
     expect(decisions.backend(PUBLIC)).toBe(DEFAULT_DECISION_PROVIDER);
     expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
   }
-  // Anywhere, it is ready: one community offers it.
-  expect(decisions.providers()[0]?.status()).toBe("ready");
+  // Without a community, it cannot answer: it bills one.
+  expect(decisions.providers()[0]?.status()).toBe("needs-setup");
+  expect(decisions.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   await expect(
     decisions.decide({ ...request, community: BLOCK }),
   ).resolves.toMatchObject({ outcome: "answered", backend: BUILDERLAB });
@@ -426,9 +429,16 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       });
       const owner = session.credential();
       expect(identity.request).toHaveBeenCalledOnce();
+      // Settings lists the community; with another provider chosen
+      // everywhere, the user picks Builderlab for it.
+      const memberships = [{ id: COMMUNITY, name: "Example" }];
       const settings = entry.startsWith("settings")
         ? render(
-            <DecisionsSettings decisions={decisions} active={() => false} />,
+            <DecisionsSettings
+              decisions={decisions}
+              active={() => false}
+              memberships={memberships}
+            />,
           )
         : undefined;
       expect(identity.request).toHaveBeenCalledOnce();
@@ -436,26 +446,29 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       now += 60_000;
       if (entry.startsWith("settings")) {
         settings?.rerender(
-          <DecisionsSettings decisions={decisions} active={() => true} />,
+          <DecisionsSettings
+            decisions={decisions}
+            active={() => true}
+            memberships={memberships}
+          />,
         );
+        // Showing where Builderlab answers re-reads its permissions.
+        const menu = screen.getByRole("combobox", {
+          name: "Decision provider for Example",
+        });
         if (entry === "settings")
-          expect(
-            await screen.findByRole("combobox", { name: "Decision provider" }),
-          ).toHaveTextContent("Builderlab");
-        else
-          expect(
-            await screen.findByRole("radio", { name: /Builderlab/ }),
-          ).toBeVisible();
-        if (entry === "settings-with-choice") {
-          // Another provider is chosen, so nothing reads Builderlab's
-          // permissions until the user picks it.
-          expect(identity.request).toHaveBeenCalledOnce();
-          await act(async () =>
-            screen.getByRole("radio", { name: /Builderlab/ }).click(),
+          await waitFor(() => expect(menu).toHaveTextContent("Builderlab"));
+        else {
+          await waitFor(() =>
+            expect(identity.request).toHaveBeenCalledTimes(2),
+          );
+          await userEvent.click(menu);
+          await userEvent.click(
+            await screen.findByRole("option", { name: /Builderlab/ }),
           );
         }
         await expect
-          .poll(() => decisions.backend())
+          .poll(() => decisions.backend(COMMUNITY))
           .toBe("block.builderlab/builderlab");
       } else {
         // TypeSafe can answer now, so the request that notices stale
@@ -473,7 +486,7 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
           .providers()
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(true);
-      expect(decisions.backend()).toBe("block.builderlab/builderlab");
+      expect(decisions.backend(COMMUNITY)).toBe("block.builderlab/builderlab");
       expect(fallback).toHaveBeenCalledTimes(
         { settings: 1, request: 2, "settings-with-choice": 0 }[entry],
       );
@@ -481,7 +494,7 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
         expect(native).not.toHaveBeenCalled();
       expect(identity.request).toHaveBeenCalledTimes(2);
       await act(async () => {
-        await decisions.decide(request);
+        await decisions.decide({ ...request, community: COMMUNITY });
       });
       expect(identity.request).toHaveBeenCalledTimes(2);
       expect(session.credential()).toBe(owner);

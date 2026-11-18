@@ -4,8 +4,7 @@
 // the user is signed in, and ready in a community only while that community's
 // Builderlab account may use decisions; see `offerBuilderlabDecisions`.
 // Settings > Decisions API shows the same sign-in control as this plugin's
-// card while it is selected.
-import { useSyncExternalStore } from "react";
+// card.
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
@@ -198,20 +197,11 @@ export function builderlabProvider(
     id: "builderlab",
     label: "Builderlab",
     description: "Use your Builderlab account.",
-    // Without a community: ready if any joined community's Builderlab is,
-    // checking while one is finding out.
-    status: (community?: string): DecisionProviderStatus => {
-      if (community !== undefined || !communities)
-        return statusIn(sessionIn(community));
-      const each = communities
-        .communities()
-        .map((relay) => statusIn(communities.forCommunity(relay)));
-      return each.includes("ready")
-        ? "ready"
-        : each.includes("checking")
-          ? "checking"
-          : "needs-setup";
-    },
+    // Builderlab bills a community, so it cannot answer without one.
+    status: (community?: string): DecisionProviderStatus =>
+      communities && community === undefined
+        ? "needs-setup"
+        : statusIn(sessionIn(community)),
     subscribe: (listener) => {
       const stop = session.subscribe(listener);
       const stopCommunities = communities?.subscribe(listener);
@@ -267,26 +257,15 @@ export function builderlabProvider(
           : { outcome, reason }
       ) as DecisionReply;
     },
-    Settings: ({ active }) => {
-      const state = useSyncExternalStore(session.subscribe, session.snapshot);
-      return (
-        <>
-          <Login
-            session={session}
-            available={loginAvailable}
-            active={active}
-            showHeading={false}
-            openIdentity={openIdentity}
-          />
-          {state.status === "signed-in" &&
-            !state.checkingPermissions &&
-            !state.account?.canUseBuilderlabDecisions && (
-              <p role="status" className="text-body-sm text-secondary">
-                Builderlab decisions are unavailable for this account.
-              </p>
-            )}
-        </>
-      );
-    },
+    // Settings shows in which communities it answers.
+    Settings: ({ active }) => (
+      <Login
+        session={session}
+        available={loginAvailable}
+        active={active}
+        showHeading={false}
+        openIdentity={openIdentity}
+      />
+    ),
   };
 }

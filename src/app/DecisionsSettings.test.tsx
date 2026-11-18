@@ -2,97 +2,98 @@
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import type { ReactNode } from "react";
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   DEFAULT_DECISION_PROVIDER,
   DecisionsService,
+  type DecisionProvider,
   type DecisionProviderStatus,
-  type RegisteredProvider,
 } from "../features/decisions/service";
+import type { Membership } from "../features/communities/service";
 import { DecisionsSettings } from "./DecisionsSettings";
-import { TypeSafeSettings } from "../bundled/typesafe/TypeSafeSettings";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // The service saves choices in localStorage when given no storage.
+  localStorage.clear();
+});
 
 const TYPESAFE = DEFAULT_DECISION_PROVIDER;
+const BUILDERLAB = "block.builderlab/builderlab";
+const BLOCK = "wss://block.example";
+const FRIENDS = "wss://friends.example";
+const memberships: Membership[] = [
+  { id: BLOCK, name: "Block" },
+  { id: FRIENDS, name: "Friends", localName: "Pals" },
+];
 
-/** The decisions service as Settings uses it, choosing as the service does:
- * the saved choice, else TypeSafe. A choice that is not registered answers
- * nothing. Labels name TypeSafe's key as "typesafe". */
-function fake(
-  entries: ({
-    key: string;
-    status: DecisionProviderStatus;
-    /** Replaces the status read, for a provider whose status throws. */
-    readStatus?: RegisteredProvider["status"];
-  } & Partial<Pick<RegisteredProvider, "Settings" | "showSettingsHeading">>)[],
-  chosen?: string,
-) {
-  const listeners = new Set<() => void>();
-  const notify = () => {
-    for (const listener of [...listeners]) listener();
-  };
-  const statuses = new Map(entries.map((entry) => [entry.key, entry.status]));
-  const providers: RegisteredProvider[] = entries.map(({ key, ...entry }) => {
-    const name = key === TYPESAFE ? "typesafe" : key;
-    return {
-      key,
-      id: key,
-      pluginId: key,
-      revision: "one",
-      label: `Provider ${name}`,
-      description: `About ${name}.`,
-      status: () => statuses.get(key) ?? "needs-setup",
-      subscribe: () => () => {},
-      decide: async () => ({ outcome: "failed", reason: "unavailable" }),
-      Settings: () => <p>Settings for {name}</p>,
-      ...(entry.Settings ? { Settings: entry.Settings } : {}),
-      ...(entry.showSettingsHeading !== undefined
-        ? { showSettingsHeading: entry.showSettingsHeading }
-        : {}),
-      ...(entry.readStatus ? { status: entry.readStatus } : {}),
-    };
+/** The real service, with providers the test registers, changes and
+ * removes. */
+function setup() {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
   });
-  const backend = () =>
-    providers.find((provider) => provider.key === (chosen ?? TYPESAFE))?.key;
-  return {
-    providers: () => providers,
-    backend,
-    status: () => {
-      const key = backend();
-      return key ? (statuses.get(key) ?? "needs-setup") : "unavailable";
-    },
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    setBackend(key: string) {
-      chosen = key;
-      notify();
-    },
-    chosen: () => chosen,
-    setStatus(key: string, status: DecisionProviderStatus) {
-      statuses.set(key, status);
-      notify();
-    },
+  const decisions = new DecisionsService(root, undefined);
+  const listeners = new Set<() => void>();
+  const changed = () =>
+    act(() => {
+      for (const listener of [...listeners]) listener();
+    });
+  const removers = new Map<string, () => void>();
+  /** Registers `plugin`'s provider `id`; `status` is read on every change. */
+  const register = (
+    key: string,
+    status: (community?: string) => DecisionProviderStatus,
+    extra: Partial<DecisionProvider> = {},
+  ) => {
+    const [plugin, id] = key.split("/") as [string, string];
+    return root
+      .extend({ pluginOwner: { id: plugin, revision: "one" } })
+      .plugin((ctx) => {
+        removers.set(
+          key,
+          ctx.decisions.registerProvider({
+            id,
+            label: id === "typesafe" ? "TypeSafe" : id,
+            description: `About ${id}.`,
+            status,
+            subscribe: (listener) => {
+              listeners.add(listener);
+              return () => void listeners.delete(listener);
+            },
+            decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+            Settings: () => <p>Settings for {id}</p>,
+            ...extra,
+          }),
+        );
+      })
+      .await();
   };
+  const remove = (key: string) => act(() => removers.get(key)?.());
+  return { root, decisions, register, changed, remove };
 }
+
+/** Builderlab as the community offers it: only in Block. */
+const inBlock = (community?: string): DecisionProviderStatus =>
+  community !== undefined && new URL(community).host === "block.example"
+    ? "ready"
+    : "needs-setup";
+
+const row = (name: string) =>
+  screen
+    .getByText(name, { selector: ".buzz-preference-row-label" })
+    .closest(".buzz-preference-row") as HTMLElement;
 
 it("says to turn a provider on when none is, linking to Manage plugins", async () => {
   const user = userEvent.setup();
   const onSection = vi.fn();
   render(
     <DecisionsSettings
-      decisions={fake([])}
+      decisions={setup().decisions}
       active={() => true}
       onSection={onSection}
     />,
@@ -108,115 +109,125 @@ it("says to turn a provider on when none is, linking to Manage plugins", async (
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
-it("shows a lone provider's settings and honors its heading preference", () => {
-  const view = (showSettingsHeading?: boolean) => (
-    <DecisionsSettings
-      decisions={fake([
-        {
-          key: TYPESAFE,
-          status: "needs-setup",
-          ...(showSettingsHeading === false ? { showSettingsHeading } : {}),
-        },
-      ])}
-      active={() => true}
-    />
-  );
-  const { rerender } = render(view());
-  expect(screen.queryByRole("radio")).toBeNull();
-  expect(
-    screen.getByRole("heading", { name: "Provider typesafe" }),
-  ).toBeVisible();
-  rerender(view(false));
-  expect(
-    screen.queryByRole("heading", { name: "Provider typesafe" }),
-  ).toBeNull();
-  expect(screen.getByText("Settings for typesafe")).toBeVisible();
-});
-
-it("says once, above every provider's settings, that the provider receives message text", () => {
+it("shows every provider's settings once, with the communities where it answers", async () => {
+  const { decisions, register, changed } = setup();
+  let typesafe: DecisionProviderStatus = "ready";
+  await register(TYPESAFE, () => typesafe);
+  await register(BUILDERLAB, inBlock);
   render(
     <DecisionsSettings
-      decisions={fake([
-        { key: TYPESAFE, status: "ready" },
-        { key: "b", status: "needs-setup" },
-      ])}
+      decisions={decisions}
       active={() => true}
+      memberships={memberships}
     />,
   );
   expect(
-    screen.getAllByText(
-      /provider handles these questions and receives the message text/,
-    ),
+    screen.getAllByText(/receives the message text sent with them/),
   ).toHaveLength(1);
-  const disclosure = screen.getByText(
-    /provider handles these questions and receives the message text/,
+  expect(row("builderlab")).toHaveTextContent("Available in Block");
+  expect(row("TypeSafe")).toHaveTextContent(
+    "Available in all your communities",
   );
-  expect(disclosure).toHaveTextContent("private channels");
-  expect(
-    disclosure.compareDocumentPosition(
-      screen.getByText("Settings for typesafe"),
-    ) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  expect(screen.getByText("Settings for builderlab")).toBeVisible();
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  typesafe = "needs-setup";
+  changed();
+  expect(row("TypeSafe")).toHaveTextContent("Not set up");
+  // Where TypeSafe answers no community, the community says what to do.
+  expect(row("Pals")).toHaveTextContent(
+    "Set up TypeSafe above to use decisions here",
+  );
+  expect(row("Block")).not.toHaveTextContent("Set up");
 });
 
-it("chooses a ready provider at once", async () => {
-  const user = userEvent.setup();
-  const decisions = fake([
-    { key: TYPESAFE, status: "ready" },
-    { key: "b", status: "ready" },
-  ]);
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  expect(
-    screen.getByRole("radio", { name: /Provider typesafe/ }),
-  ).toBeChecked();
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  expect(decisions.chosen()).toBe("b");
-  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
-  expect(screen.getByText("Settings for b")).toBeVisible();
+it("explains Builderlab access when no community offers it", async () => {
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register(BUILDERLAB, () => "needs-setup");
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  expect(row("builderlab")).toHaveTextContent(
+    "None of your communities offer Builderlab decisions to this account. For access, contact your account administrator.",
+  );
 });
 
-it("shows the settings of one picked before it is ready, and saves the choice once it is", async () => {
-  const user = userEvent.setup();
-  const decisions = fake([
-    { key: TYPESAFE, status: "ready" },
-    { key: "b", status: "needs-setup" },
-  ]);
+it("says whether each provider is ready while there are no communities", async () => {
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "needs-setup");
+  await register("acme.helper/helper", () => "ready");
   render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  // The working provider keeps answering until b is set up.
-  expect(decisions.chosen()).toBeUndefined();
-  expect(decisions.backend()).toBe(TYPESAFE);
-  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
-  expect(screen.getByText("Settings for b")).toBeVisible();
-  act(() => decisions.setStatus("b", "ready"));
-  expect(decisions.chosen()).toBe("b");
-  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+  expect(row("TypeSafe")).toHaveTextContent("Not set up");
+  expect(row("helper")).toHaveTextContent("Ready");
+  expect(screen.queryByRole("combobox")).toBeNull();
+});
+
+it("chooses a provider for each community, offering only those that can answer there", async () => {
+  const user = userEvent.setup();
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register(BUILDERLAB, inBlock);
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  const menu = (name: string) =>
+    screen.getByRole("combobox", { name: `Decision provider for ${name}` });
+  // Until chosen, each answers with the first default that can.
+  expect(menu("Block")).toHaveTextContent("builderlab");
+  expect(menu("Pals")).toHaveTextContent("TypeSafe");
+  await user.click(menu("Pals"));
+  const offered = await screen.findByRole("option", { name: /builderlab/ });
+  expect(offered).toHaveAttribute("aria-disabled", "true");
+  expect(offered).toHaveTextContent("Not offered in this community");
+  await user.keyboard("{Escape}");
+  // Choosing in one community changes only that community.
+  await user.click(menu("Block"));
+  await user.click(await screen.findByRole("option", { name: /TypeSafe/ }));
+  expect(decisions.backend(BLOCK)).toBe(TYPESAFE);
+  expect(decisions.chosenIn(BLOCK)).toBe(TYPESAFE);
+  expect(decisions.chosenIn(FRIENDS)).toBeUndefined();
+  expect(menu("Block")).toHaveTextContent("TypeSafe");
 });
 
 it("changes nothing while hidden", async () => {
   const user = userEvent.setup();
-  const decisions = fake([
-    { key: TYPESAFE, status: "ready" },
-    { key: "b", status: "ready" },
-  ]);
-  render(<DecisionsSettings decisions={decisions} active={() => false} />);
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  expect(decisions.chosen()).toBeUndefined();
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register(BUILDERLAB, inBlock);
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => false}
+      memberships={memberships}
+    />,
+  );
+  const menu = screen.getByRole("combobox", {
+    name: "Decision provider for Block",
+  });
+  expect(menu).toHaveAttribute("data-disabled");
+  await user.click(menu);
+  expect(screen.queryByRole("option")).toBeNull();
+  expect(decisions.chosenIn(BLOCK)).toBeUndefined();
 });
 
 it("keeps a provider's failing settings inside its own part, even while hidden", async () => {
   const user = userEvent.setup();
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-  const decisions = fake([
-    {
-      key: TYPESAFE,
-      status: "ready",
-      Settings: () => {
-        throw new Error("broken plugin");
-      },
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready", {
+    Settings: () => {
+      throw new Error("broken plugin");
     },
-    { key: "b", status: "ready" },
-  ]);
+  });
+  await register("acme.helper/helper", () => "ready");
   let selected = "plugins";
   const onSection = vi.fn();
   // Settings mounts the Decisions section while another one is shown.
@@ -228,6 +239,7 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
           decisions={decisions}
           active={() => selected === "decisions"}
           onSection={onSection}
+          memberships={memberships}
         />
       </div>
     </>
@@ -238,128 +250,59 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
   rerender(page());
   const alert = screen.getByRole("alert");
   expect(alert).toHaveTextContent(
-    "Provider typesafe settings are unavailable. You can turn its plugin off in Manage plugins.",
+    "TypeSafe settings are unavailable. You can turn its plugin off in Manage plugins.",
   );
   await user.click(
     within(alert).getByRole("button", { name: "Manage plugins" }),
   );
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
   // The rest of the section still works.
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  expect(decisions.chosen()).toBe("b");
-  expect(screen.getByText("Settings for b")).toBeInTheDocument();
+  expect(screen.getByText("Settings for helper")).toBeVisible();
+  await user.click(
+    screen.getByRole("combobox", { name: "Decision provider for Block" }),
+  );
+  await user.click(await screen.findByRole("option", { name: /helper/ }));
+  expect(decisions.backend(BLOCK)).toBe("acme.helper/helper");
   consoleError.mockRestore();
 });
 
-it("treats a provider whose status throws as not ready", async () => {
-  const user = userEvent.setup();
-  const decisions = fake([
-    { key: TYPESAFE, status: "ready" },
-    {
-      key: "b",
-      status: "ready",
-      readStatus: () => {
-        throw new Error("broken status");
-      },
-    },
-  ]);
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  // Shown, as one picked before it is ready, but not chosen.
-  expect(screen.getByText("Settings for b")).toBeVisible();
-  expect(decisions.chosen()).toBeUndefined();
-  expect(decisions.backend()).toBe(TYPESAFE);
-});
-
-it("offers a lone provider when the chosen one is gone, and answers only once it is chosen", async () => {
-  const user = userEvent.setup();
-  // The user chose b, then turned b's plugin off.
-  const decisions = fake([{ key: TYPESAFE, status: "ready" }], "b");
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  expect(decisions.backend()).toBeUndefined();
-  const radio = screen.getByRole("radio", { name: /Provider typesafe/ });
-  expect(radio).not.toBeChecked();
-  expect(screen.queryByText("Settings for typesafe")).toBeNull();
-  await user.click(radio);
-  expect(decisions.chosen()).toBe(TYPESAFE);
-  expect(decisions.backend()).toBe(TYPESAFE);
-  expect(screen.getByText("Settings for typesafe")).toBeVisible();
-  // The choice stays for this visit, so focus stays on it.
-  expect(radio).toBeChecked();
-  expect(radio).toHaveFocus();
-});
-
-it("offers a lone other provider when TypeSafe is off, and sets it up before choosing it", async () => {
-  const user = userEvent.setup();
-  const decisions = fake([{ key: "b", status: "needs-setup" }]);
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  expect(decisions.backend()).toBeUndefined();
-  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
-  // Its setup is reachable, but nothing answers until it is ready.
-  expect(screen.getByText("Settings for b")).toBeVisible();
-  expect(decisions.chosen()).toBeUndefined();
-  act(() => decisions.setStatus("b", "ready"));
-  expect(decisions.chosen()).toBe("b");
-  expect(decisions.backend()).toBe("b");
-  const radio = screen.getByRole("radio", { name: /Provider b/ });
-  expect(radio).toBeChecked();
-  expect(radio).toHaveFocus();
-});
-
-/** The real service with TypeSafe and a provider the test can remove, as a
- * Builderlab sign-out does. Its settings have a Sign out button that does. */
+/** Builderlab's settings have a Sign out button that removes it, as a
+ * sign-out does. */
 async function withdrawable(typesafe = true) {
-  const root = new Context();
-  root.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const decisions = new DecisionsService(root, undefined);
-  const provider = (id: string, Settings?: () => ReactNode) => ({
-    id,
-    label: id,
-    description: `About ${id}.`,
-    status: () => "ready" as const,
-    subscribe: () => () => {},
-    decide: async () => ({
-      outcome: "failed" as const,
-      reason: "unavailable" as const,
-    }),
-    ...(Settings ? { Settings } : {}),
-  });
-  let remove = () => {};
-  const register = (plugin: string, entry: ReturnType<typeof provider>) =>
-    root
-      .extend({ pluginOwner: { id: plugin, revision: "one" } })
-      .plugin((ctx) => {
-        const stop = ctx.decisions.registerProvider(entry);
-        if (plugin === "block.builderlab") remove = stop;
-      })
-      .await();
-  if (typesafe) await register("buzz.typesafe", provider("typesafe"));
-  await register(
-    "block.builderlab",
-    provider("builderlab", () => (
-      <button type="button" onClick={() => remove()}>
+  const context = setup();
+  if (typesafe) await context.register(TYPESAFE, () => "ready");
+  await context.register(BUILDERLAB, inBlock, {
+    Settings: () => (
+      <button type="button" onClick={() => context.remove(BUILDERLAB)}>
         Sign out
       </button>
-    )),
-  );
-  return { decisions, withdraw: () => act(() => remove()) };
+    ),
+  });
+  return context;
 }
 
-it("hands focus to the selected radio when the focused provider's own radio goes", async () => {
-  const { decisions, withdraw } = await withdrawable();
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+it("hands focus to the section when the focused provider's settings go", async () => {
+  const user = userEvent.setup();
+  const { decisions } = await withdrawable();
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  screen.getByRole("button", { name: "Sign out" }).focus();
+  await user.keyboard("{Enter}");
   expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
-  screen.getByRole("combobox", { name: "Decision provider" }).focus();
-  await withdraw();
-  expect(screen.queryByRole("radio", { name: /builderlab/ })).toBeNull();
-  expect(screen.getByRole("radio", { name: /typesafe/ })).toHaveFocus();
+  expect(screen.getByRole("region", { name: "Decisions API" })).toHaveFocus();
+  // Block goes back to TypeSafe.
+  expect(
+    screen.getByRole("combobox", { name: "Decision provider for Block" }),
+  ).toHaveTextContent("TypeSafe");
 });
 
 it("leaves focus elsewhere alone when a provider is removed, as by a 401", async () => {
-  const { decisions, withdraw } = await withdrawable();
+  const { decisions, remove } = await withdrawable();
   render(
     <>
       <button type="button">Elsewhere</button>
@@ -368,7 +311,7 @@ it("leaves focus elsewhere alone when a provider is removed, as by a 401", async
   );
   const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
   elsewhere.focus();
-  await withdraw();
+  remove(BUILDERLAB);
   expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   expect(elsewhere).toHaveFocus();
 });
@@ -383,181 +326,36 @@ it("hands focus to the section when the removed provider was the only one", asyn
   expect(screen.getByRole("region", { name: "Decisions API" })).toHaveFocus();
 });
 
-it("opens TypeSafe with editable focus or a closed saved-key menu until ready", async () => {
-  const user = userEvent.setup();
-  const builderlab = "block.builderlab/builderlab";
-  let keyState: "missing" | "unreadable" = "missing";
-  const credential = {
-    snapshot: () => keyState,
-    subscribe: () => () => undefined,
-    desktop: () => true,
-    save: async () => {},
-    clear: async () => {},
-  };
-  const decisions = fake(
-    [
-      { key: builderlab, status: "ready" },
-      {
-        key: TYPESAFE,
-        status: "needs-setup",
-        Settings: ({ active }) => (
-          <TypeSafeSettings
-            typesafe={credential}
-            active={active}
-            grouped={false}
-          />
-        ),
-      },
-    ],
-    builderlab,
-  );
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  const toggle = screen.getByRole("combobox", { name: "Decision provider" });
-  await user.click(toggle);
-  // The Select opens on an animation frame after the pointer press.
-  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
-  expect(toggle).toHaveTextContent("Builderlab");
-  const dialog = screen.getByRole("dialog", { name: "Connect TypeSafe" });
-  expect(dialog).toHaveAccessibleDescription(
-    "Create an API key at console.typesafe.ai and paste it below.",
-  );
-  expect(
-    within(dialog).getByRole("link", { name: "console.typesafe.ai" }),
-  ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
-  await waitFor(() =>
-    expect(within(dialog).getByLabelText("TypeSafe API key")).toHaveFocus(),
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Close" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(decisions.chosen()).toBe(builderlab);
-
-  keyState = "unreadable";
-  act(() => decisions.setStatus(TYPESAFE, "unconfirmed"));
-  await user.click(toggle);
-  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
-  const saved = screen.getByRole("dialog", { name: "Connect TypeSafe" });
-  expect(within(saved).getByLabelText("TypeSafe API key")).toHaveAttribute(
-    "readonly",
-  );
-  await waitFor(() => expect(within(saved).getByRole("link")).toHaveFocus());
-  expect(screen.queryByRole("menu")).toBeNull();
-  act(() => decisions.setStatus(TYPESAFE, "ready"));
-  expect(decisions.chosen()).toBe(TYPESAFE);
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(toggle).toHaveTextContent("TypeSafe");
-  await user.click(toggle);
-  await user.click(await screen.findByRole("option", { name: "Builderlab" }));
-  expect(decisions.chosen()).toBe(builderlab);
-  expect(toggle).toHaveTextContent("Builderlab");
-  expect(screen.queryByLabelText("TypeSafe API key")).toBeNull();
-});
-
-it("explains lost Builderlab access only while it is selected and confirmed unavailable", async () => {
-  const user = userEvent.setup();
-  const builderlab = "block.builderlab/builderlab";
-  const decisions = fake(
-    [
-      { key: builderlab, status: "ready" },
-      { key: TYPESAFE, status: "ready" },
-    ],
-    builderlab,
-  );
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  const unavailable = () => screen.queryByRole("status");
-  expect(unavailable()).toBeNull();
-  act(() => decisions.setStatus(builderlab, "needs-setup"));
-  expect(screen.getByLabelText("Unavailable for this account")).toBeVisible();
-  expect(unavailable()).toHaveTextContent(
-    "None of your communities offer Builderlab decisions to this account, so your TypeSafe key answers. For access, contact your account administrator.",
-  );
-  expect(screen.queryByText(`Settings for ${builderlab}`)).toBeNull();
-  expect(decisions.chosen()).toBe(builderlab);
-  act(() => decisions.setStatus(builderlab, "checking"));
-  expect(screen.queryByLabelText("Unavailable for this account")).toBeNull();
-  expect(unavailable()).toBeNull();
-  act(() => decisions.setStatus(builderlab, "ready"));
-  expect(unavailable()).toBeNull();
-  act(() => decisions.setStatus(builderlab, "needs-setup"));
-  await user.click(screen.getByRole("combobox", { name: "Decision provider" }));
-  expect(
-    await screen.findByRole("option", { name: "Builderlab" }),
-  ).toHaveAccessibleDescription("Unavailable for this account");
-  act(() => decisions.setStatus(builderlab, "ready"));
-  expect(
-    screen.getByRole("option", { name: "Builderlab" }),
-  ).not.toHaveAccessibleDescription();
-  act(() => decisions.setStatus(builderlab, "needs-setup"));
-  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
-  expect(unavailable()).toBeNull();
-  expect(decisions.chosen()).toBe(TYPESAFE);
-});
-
-it("lists which provider answers in each community while Builderlab is chosen", async () => {
-  const root = new Context();
-  root.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const decisions = new DecisionsService(root, undefined);
-  const listeners = new Set<() => void>();
-  let typesafe: DecisionProviderStatus = "ready";
-  const register = (
-    id: string,
-    plugin: string,
-    status: (community?: string) => DecisionProviderStatus,
-  ) =>
-    root
-      .extend({ pluginOwner: { id: plugin, revision: "one" } })
-      .plugin((ctx) =>
-        ctx.decisions.registerProvider({
-          id,
-          label: id,
-          description: id,
-          status,
-          subscribe: (listener) => {
-            listeners.add(listener);
-            return () => void listeners.delete(listener);
-          },
-          decide: async () => ({ outcome: "failed", reason: "unavailable" }),
-        }),
-      );
-  await register("typesafe", "buzz.typesafe", () => typesafe).await();
-  // Builderlab answers only in Block.
-  await register("builderlab", "block.builderlab", (community) =>
-    community === undefined || new URL(community).host === "block.example"
-      ? "ready"
-      : "needs-setup",
-  ).await();
-  decisions.setBackend("block.builderlab/builderlab");
+it("shows a provider removed from a community's menu as unavailable there", async () => {
+  const { decisions, register, remove } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register("acme.helper/helper", () => "ready");
+  act(() => decisions.setBackend("acme.helper/helper", BLOCK));
   render(
     <DecisionsSettings
       decisions={decisions}
       active={() => true}
-      memberships={[
-        { id: "wss://block.example", name: "Block" },
-        { id: "wss://friends.example", name: "Friends", localName: "Pals" },
-      ]}
+      memberships={memberships}
     />,
   );
-  const row = (name: string) =>
-    screen
-      .getByText(name, { selector: ".buzz-preference-row-label" })
-      .closest(".buzz-preference-row");
-  expect(row("Block")).toHaveTextContent("Builderlab");
-  expect(row("Pals")).toHaveTextContent("TypeSafe");
-  expect(
-    screen.getByText(
-      "Communities that don’t offer Builderlab decisions use your TypeSafe key.",
-    ),
-  ).toBeVisible();
-  act(() => {
-    typesafe = "needs-setup";
-    for (const listener of listeners) listener();
-  });
-  expect(row("Pals")).toHaveTextContent(
-    "TypeSafe · Add your API key to use decisions here",
+  remove("acme.helper/helper");
+  // A chosen provider that is not a default never moves to another.
+  expect(row("Block")).toHaveTextContent("No provider can answer here");
+  expect(decisions.backend(BLOCK)).toBeUndefined();
+  expect(decisions.backend(FRIENDS)).toBe(TYPESAFE);
+});
+
+it("keeps rendering when the community list has one that is not a relay", async () => {
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  const nodes: ReactNode = (
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={[{ id: "not a relay", name: "Broken" }, ...memberships]}
+    />
   );
-  // With TypeSafe chosen, every community uses it: no list.
-  act(() => decisions.setBackend(TYPESAFE));
-  expect(screen.queryByText("Block")).toBeNull();
+  render(nodes);
+  expect(screen.queryByText("Broken")).toBeNull();
+  expect(row("Block")).toBeVisible();
 });

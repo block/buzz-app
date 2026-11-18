@@ -1,9 +1,9 @@
 // Typed decisions for app code and plugins. A caller asks yes/no, choice or
 // score questions about a piece of text; the provider this device chose in
-// Settings answers them in one call. Providers are plugins: each registers
-// with `ctx.decisions.registerProvider`. The host owns the choice, the
-// request limits, the deadline and the answer checks, so every provider is
-// held to the same rules and returns the same checked answers.
+// Settings for the text's community answers them in one call. Providers are
+// plugins: each registers with `ctx.decisions.registerProvider`. The host owns
+// the choice, the request limits, the deadline and the answer checks, so every
+// provider is held to the same rules and returns the same checked answers.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
 import {
@@ -144,10 +144,9 @@ export type DecisionProvider = Readonly<{
     request: DecisionRequest & { timeoutMs: number },
     options: { signal: AbortSignal },
   ): Promise<DecisionReply>;
-  /** Its settings, shown under Settings > Decisions API while it is
-   * selected. */
+  /** Its settings, shown under its name in Settings > Decisions API. */
   Settings?: ComponentType<{ active(): boolean; grouped?: boolean }>;
-  /** Whether Settings adds a heading above the contribution. Defaults to true. */
+  /** Ignored: Settings always names the provider above its settings. */
   showSettingsHeading?: boolean;
   /** Lower comes first in Settings. Default 0. */
   order?: number;
@@ -157,7 +156,8 @@ export type DecisionProvider = Readonly<{
 export interface Decisions {
   decide(request: DecisionRequest): Promise<DecisionResult>;
   /** The key of the provider that answers this device's decisions from
-   * `community` (a relay URL), or undefined when none is registered. */
+   * `community` (a relay URL), or undefined when none is registered. The
+   * user chooses it for each community in Settings. */
   backend(community?: string): string | undefined;
   /** That provider's status there, or `unavailable` when there is none. */
   status(community?: string): DecisionProviderStatus | "unavailable";
@@ -192,7 +192,12 @@ declare module "@deepseek-ai/cordis" {
 
 export type RegisteredProvider = Contribution<DecisionProvider>;
 
+/** The choice for every community without its own. Settings no longer
+ * writes it; a choice saved before per-community choices still applies. */
 export const DECISION_BACKEND_KEY = "buzz-decision-backend.v1";
+/** Each community's choice: a JSON object of community host -> provider. */
+export const COMMUNITY_DECISION_BACKENDS_KEY =
+  "buzz-decision-backend-by-community.v1";
 const MAX_QUESTIONS = 32;
 const NAME_LIMIT = 64;
 const INPUT_LIMIT = 128 * 1024;
@@ -218,6 +223,17 @@ export const statusOf = (
   }
 };
 
+/** The key a community's choice is saved under: its relay host, so its
+ * wss:// and https:// URLs share one choice. */
+export const communityKey = (community: string | undefined) => {
+  if (community === undefined) return undefined;
+  try {
+    return new URL(community).host.toLowerCase() || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
 /** Bundled providers that answer, in this order, while the user has not
@@ -228,17 +244,20 @@ export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
   DEFAULT_DECISION_PROVIDER,
 ];
 
-/** Answers come from the provider the user chose, or the first registered
- * default until they choose. Each request is routed in its community: a
- * provider such as Builderlab answers only where the community offers it.
- * Where a chosen default cannot, the user's own TypeSafe key answers.
- * Decision text can include private messages, so no other provider gets it
- * without that choice: while a chosen provider that is not a default is not
- * registered, decisions are unavailable rather than sent somewhere else. */
+/** Each request is routed in its community: answers come from the provider
+ * the user chose for that community, or the first registered default that
+ * can answer there until they choose. A provider such as Builderlab answers
+ * only where the community offers it; where a chosen default cannot answer,
+ * the user's own TypeSafe key does. Decision text can include private
+ * messages, so no other provider gets it without that choice: while a chosen
+ * provider that is not a default is not registered, decisions there are
+ * unavailable rather than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
-  /** The user's choice in Settings; undefined until they make one. */
+  /** The choice for communities without their own; undefined until made. */
   private chosen: string | undefined;
+  /** Each community's choice, by `communityKey`. */
+  private byCommunity = new Map<string, string>();
   private sorted: readonly RegisteredProvider[] = [];
   private readonly listeners = new Set<() => void>();
   constructor(
@@ -261,6 +280,17 @@ export class DecisionsService extends Service implements Decisions {
       this.chosen = storage?.getItem(DECISION_BACKEND_KEY) ?? undefined;
     } catch {
       // Unreadable storage means no choice.
+    }
+    try {
+      const saved: unknown = JSON.parse(
+        storage?.getItem(COMMUNITY_DECISION_BACKENDS_KEY) ?? "{}",
+      );
+      if (saved && typeof saved === "object" && !Array.isArray(saved))
+        for (const [community, key] of Object.entries(saved))
+          if (typeof key === "string" && key)
+            this.byCommunity.set(community, key);
+    } catch {
+      // Unreadable or malformed storage means no choices.
     }
     let stops: (() => void)[] = [];
     let withdraw: (() => void) | undefined;
@@ -314,18 +344,34 @@ export class DecisionsService extends Service implements Decisions {
       throw new Error("Only an installed plugin can retire a provider");
     if (!id || id.includes("/"))
       throw new Error("Invalid decision provider ID");
-    if (this.chosen !== `${owner.id}/${id}`) return;
-    this.storage?.removeItem(DECISION_BACKEND_KEY);
-    this.chosen = undefined;
+    const retired = `${owner.id}/${id}`;
+    const kept = new Map(
+      [...this.byCommunity].filter(([, key]) => key !== retired),
+    );
+    if (this.chosen !== retired && kept.size === this.byCommunity.size) return;
+    // Removed from storage first: a choice that cannot be cleared stays.
+    if (this.chosen === retired) {
+      this.storage?.removeItem(DECISION_BACKEND_KEY);
+      this.chosen = undefined;
+    }
+    if (kept.size !== this.byCommunity.size) {
+      this.saveCommunities(kept);
+      this.byCommunity = kept;
+    }
     this.notify();
+  }
+  private saveCommunities(choices: ReadonlyMap<string, string>) {
+    this.storage?.setItem(
+      COMMUNITY_DECISION_BACKENDS_KEY,
+      JSON.stringify(Object.fromEntries(choices)),
+    );
   }
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
-  /** The provider that answers in `community` now, and its status. A
-   * registered choice does, except that a chosen default that cannot answer
-   * in that community leaves it to TypeSafe, the user's own key; without a
-   * community, the choice is its own answer, as Settings shows. Without a registered
-   * choice, the first default that can answer does; otherwise TypeSafe,
+  /** The provider that answers in `community` now, and its status. The
+   * community's registered choice does, except that a chosen default that
+   * cannot answer there leaves it to TypeSafe, the user's own key. Without
+   * a registered choice, the first default that can answer does; otherwise TypeSafe,
    * whose setup the user can do, `checking` while another default is still
    * finding out whether it can answer. */
   private route(community?: string):
@@ -336,11 +382,11 @@ export class DecisionsService extends Service implements Decisions {
     | undefined {
     const find = (key: string) =>
       this.sorted.find((provider) => provider.key === key);
-    const chosen = this.chosen === undefined ? undefined : find(this.chosen);
+    const key = this.chosenIn(community);
+    const chosen = key === undefined ? undefined : find(key);
     if (chosen) {
       const status = statusOf(chosen, community);
       const own =
-        community !== undefined &&
         status === "needs-setup" &&
         chosen.key !== DEFAULT_DECISION_PROVIDER &&
         DEFAULT_DECISION_PROVIDERS.includes(chosen.key)
@@ -350,10 +396,7 @@ export class DecisionsService extends Service implements Decisions {
         ? { provider: own, status: statusOf(own, community) }
         : { provider: chosen, status };
     }
-    if (
-      this.chosen !== undefined &&
-      !DEFAULT_DECISION_PROVIDERS.includes(this.chosen)
-    )
+    if (key !== undefined && !DEFAULT_DECISION_PROVIDERS.includes(key))
       return undefined;
     const defaults = DEFAULT_DECISION_PROVIDERS.flatMap((key) => {
       const provider = find(key);
@@ -397,16 +440,30 @@ export class DecisionsService extends Service implements Decisions {
     this.current(community)?.key;
   status = (community?: string): DecisionProviderStatus | "unavailable" =>
     this.route(community)?.status ?? "unavailable";
-  /** Host-only: Settings chooses the provider. Not part of `Decisions`. */
-  setBackend(key: string): void {
+  /** Host-only: the provider the user chose for `community`, or for every
+   * community without its own choice, whether or not it is registered. */
+  chosenIn = (community?: string): string | undefined => {
+    const key = communityKey(community);
+    return (
+      (key === undefined ? undefined : this.byCommunity.get(key)) ?? this.chosen
+    );
+  };
+  /** Host-only: Settings chooses the provider for `community`, or without
+   * one, for every community without its own choice. Not part of
+   * `Decisions`. */
+  setBackend(key: string, community?: string): void {
     if (!this.sorted.some((provider) => provider.key === key)) return;
-    const before = this.backend();
-    this.chosen = key;
+    const before = this.chosenIn(community);
+    const host = communityKey(community);
+    if (community !== undefined && host === undefined) return;
     try {
-      this.storage?.setItem(DECISION_BACKEND_KEY, key);
+      if (host === undefined) this.storage?.setItem(DECISION_BACKEND_KEY, key);
+      else this.saveCommunities(new Map(this.byCommunity).set(host, key));
     } catch {
       // Still in effect for this session.
     }
+    if (host === undefined) this.chosen = key;
+    else this.byCommunity.set(host, key);
     if (before !== key) this.notify();
   }
   private notify() {

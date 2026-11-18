@@ -264,11 +264,15 @@ again; failed reads retain the previous values. Only capabilities change;
 account identity and display details remain those read at sign-in.
 
 The plugin also offers Builderlab as a Decisions API provider while the user is
-signed in. It reads `capabilities.can_use_builderlab_decisions` the same way:
-only explicit `true` makes it ready, and otherwise it needs setup, its settings
-say it is unavailable for this account, and no decision request goes to it.
-Without a choice, the first default that can answer does, so TypeSafe answers
-until access is granted; when no default can, TypeSafe is shown, since its key
+signed in. Each request names its community, and Builderlab answers it with
+the sign-in of that community's sign-in server. It reads
+`capabilities.can_use_builderlab_decisions` the same way: only explicit `true`
+makes it ready in that community, and otherwise it needs setup there,
+Settings shows it is not available there, and no decision request goes to it.
+A request without a community never goes to Builderlab. The user chooses a
+provider for each community in Settings → Decisions API. Without a choice,
+the first default that can answer does, so TypeSafe answers until access is
+granted; when no default can, TypeSafe is shown, since its key
 is something the user can add. While stale permissions refuse, Builderlab's
 status is `checking` during the re-read that reading it starts. That never
 moves the selection: a request is held for it only when no other default can

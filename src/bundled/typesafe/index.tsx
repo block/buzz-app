@@ -1,6 +1,5 @@
 // TypeSafe as a decision provider: the user's own TypeSafe key, kept and sent
-// by native code. Settings > Decisions API shows its key form while it is
-// selected.
+// by native code. Settings > Decisions API shows its key form.
 import type { DecisionProvider } from "../../features/decisions/service";
 import type { PluginModule } from "../../plugins/api";
 import { nativeTypeSafe, TypeSafeKey, type TypeSafeNative } from "./key";
@@ -12,7 +11,6 @@ export const inject = ["decisions"];
 export const typesafeProvider = (typesafe: TypeSafeKey): DecisionProvider => ({
   id: "typesafe",
   label: "TypeSafe",
-  showSettingsHeading: false,
   description: "Use your own TypeSafe API key.",
   status: typesafe.status,
   subscribe: typesafe.subscribe,

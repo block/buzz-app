@@ -2,6 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import { flush } from "../relay/testing";
 import {
+  COMMUNITY_DECISION_BACKENDS_KEY,
   DECISION_BACKEND_KEY,
   DEFAULT_DECISION_PROVIDER,
   DecisionsService,
@@ -309,11 +310,11 @@ it("routes to the first default that can answer, else TypeSafe", async () => {
   expect(service.status()).toBe("ready");
   builderlab.set("ready");
   expect(service.backend()).toBe("block.builderlab/builderlab");
-  // A choice is kept even while it needs setup.
+  // A chosen Builderlab that cannot answer leaves it to TypeSafe.
   builderlab.set("needs-setup");
   service.setBackend("block.builderlab/builderlab");
-  expect(service.backend()).toBe("block.builderlab/builderlab");
-  expect(service.status()).toBe("needs-setup");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status()).toBe("ready");
 });
 
 it("routes each community's requests to the provider that can answer there", async () => {
@@ -325,9 +326,7 @@ it("routes each community's requests to the provider that can answer there", asy
   // Builderlab answers only where the community offers it.
   const builderlab = {
     status: (community?: string) =>
-      community === undefined || community === offered
-        ? ("ready" as const)
-        : ("needs-setup" as const),
+      community === offered ? ("ready" as const) : ("needs-setup" as const),
     decide: async (sent: DecisionRequest) => {
       asked.push(sent.community);
       return reply;
@@ -347,8 +346,7 @@ it("routes each community's requests to the provider that can answer there", asy
     expect(service.backend(offered)).toBe("block.builderlab/builderlab");
     expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
     expect(service.status(other)).toBe("ready");
-    // Without a community, the choice itself, as Settings shows it.
-    expect(service.backend()).toBe("block.builderlab/builderlab");
+    expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
     asked.length = 0;
     const answered = [
       await service.decide({ ...request, community: offered }),
@@ -373,6 +371,92 @@ it("routes each community's requests to the provider that can answer there", asy
   service.setBackend("acme.other/other");
   expect(service.backend(other)).toBe("acme.other/other");
   expect(service.status(other)).toBe("needs-setup");
+});
+
+it("keeps a choice for each community, by host, across reloads", async () => {
+  const storage = memory();
+  const { root, service, plugin } = setup(storage);
+  const block = "wss://Buzz.Block.example";
+  const hiking = "wss://hiking.example";
+  const typesafe = settable("ready");
+  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    status: (community?: string) =>
+      community?.toLowerCase().includes("buzz.block.example")
+        ? "ready"
+        : "needs-setup",
+  });
+  await plugin("acme.helper", { id: "p" });
+  const changed = vi.fn();
+  service.subscribe(changed);
+  // A choice for one community changes only that community.
+  service.setBackend("acme.helper/p", hiking);
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(service.backend(hiking)).toBe("acme.helper/p");
+  expect(service.backend(block)).toBe("block.builderlab/builderlab");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // Its https:// URL, as Settings lists it, shares the choice.
+  service.setBackend(DEFAULT_DECISION_PROVIDER, "https://buzz.block.example");
+  expect(service.backend(block)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.chosenIn(block)).toBe(DEFAULT_DECISION_PROVIDER);
+  // A community that is not a URL keeps no choice.
+  service.setBackend("acme.helper/p", "not a relay");
+  expect(service.backend("not a relay")).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(
+    JSON.parse(storage.getItem(COMMUNITY_DECISION_BACKENDS_KEY) ?? "null"),
+  ).toEqual({
+    "hiking.example": "acme.helper/p",
+    "buzz.block.example": DEFAULT_DECISION_PROVIDER,
+  });
+  expect(storage.getItem(DECISION_BACKEND_KEY)).toBeNull();
+  await root.fiber.dispose();
+  // After a reload, each community keeps its own; a retired provider's
+  // choices go, and those communities use the defaults again.
+  const reloaded = setup(storage);
+  await reloaded.plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await reloaded.plugin("acme.helper", { id: "p" });
+  expect(reloaded.service.backend(hiking)).toBe("acme.helper/p");
+  reloaded.root
+    .extend({ pluginOwner: { id: "acme.helper", revision: "one" } })
+    .decisions.retireProvider("p");
+  expect(reloaded.service.backend(hiking)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(
+    JSON.parse(storage.getItem(COMMUNITY_DECISION_BACKENDS_KEY) ?? "null"),
+  ).toEqual({ "buzz.block.example": DEFAULT_DECISION_PROVIDER });
+  await reloaded.root.fiber.dispose();
+});
+
+it("applies a choice saved before per-community choices where a community has none", async () => {
+  const storage = memory({
+    [DECISION_BACKEND_KEY]: "acme.helper/p",
+    [COMMUNITY_DECISION_BACKENDS_KEY]: JSON.stringify({
+      "hiking.example": DEFAULT_DECISION_PROVIDER,
+    }),
+  });
+  const { root, service, plugin } = setup(storage);
+  await plugin("buzz.typesafe", { id: "typesafe" });
+  // The earlier choice is not a default: decisions stay unavailable until it
+  // registers, rather than going to TypeSafe.
+  expect(service.backend("wss://other.example")).toBeUndefined();
+  expect(service.backend("wss://hiking.example")).toBe(
+    DEFAULT_DECISION_PROVIDER,
+  );
+  await plugin("acme.helper", { id: "p" });
+  expect(service.backend("wss://other.example")).toBe("acme.helper/p");
+  expect(service.backend()).toBe("acme.helper/p");
+  await root.fiber.dispose();
+});
+
+it("ignores malformed saved community choices", async () => {
+  for (const saved of ["{", "[]", JSON.stringify({ "a.example": 7 })]) {
+    const { root, service, plugin } = setup(
+      memory({ [COMMUNITY_DECISION_BACKENDS_KEY]: saved }),
+    );
+    await plugin("buzz.typesafe", { id: "typesafe" });
+    expect(service.backend("wss://a.example")).toBe(DEFAULT_DECISION_PROVIDER);
+    await root.fiber.dispose();
+  }
 });
 
 it("routes a request once a checking default knows whether it can answer", async () => {

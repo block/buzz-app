@@ -17,6 +17,7 @@ import {
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
   fileStore,
@@ -108,6 +109,7 @@ function fixture(
   let thread = 0;
   const sent: Wire[] = [];
   const modelIds: [string, string] = ["test-model", "deep-model"];
+  const voiceCatalog = { v3: ["cove", "maple"] as string[] | undefined };
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
   const failures = new Map<string, string>();
@@ -158,6 +160,8 @@ function fixture(
       let result: unknown = {};
       if (request.method === "initialize")
         result = { userAgent: "fixture buzz-protection-v2" };
+      if (request.method === "thread/realtime/listVoices")
+        result = { voices: voiceCatalog };
       if (request.method === "model/list")
         result = {
           data: [
@@ -686,6 +690,7 @@ function fixture(
     process,
     sent,
     modelIds,
+    voiceCatalog,
     failing,
     failures,
     held,
@@ -2456,6 +2461,49 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
+});
+it("starts a turn without history when the history read times out", async () => {
+  const f = fixture();
+  f.read.mockRejectedValue(
+    new ReadError("unavailable", "Relay read timed out"),
+  );
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.read).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(f.starts()[0]?.params)).toContain("FIRST_REQUEST");
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
+});
+it("accepts a steer without history when the history read times out", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // The native transport rejects with its own message, not a ReadError.
+  f.read.mockRejectedValue("Relay request could not be confirmed");
+  await f.runtime.run(f.delivery("STEER_REQUEST"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  expect(f.read).toHaveBeenCalledTimes(2);
+  expect(
+    JSON.stringify(f.sent.find((wire) => wire.method === "turn/steer")?.params),
+  ).toContain("STEER_REQUEST");
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
+});
+it("still fails a turn whose history read is denied", async () => {
+  const f = fixture();
+  f.read.mockRejectedValue(new ReadError("denied", "Relay read failed (403)"));
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "Codex could not finish: Relay read failed (403).",
+  });
+  expect(f.starts()).toHaveLength(0);
 });
 it("cuts delayed history messages off before the request while applying current edits", async () => {
   const f = fixture();
@@ -5983,6 +6031,144 @@ it("updates Codex repository context from the agent’s captured community, incl
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });
 
+it.each([false, true])(
+  "hands a guarded wake to Codex before completion (active=%s)",
+  async (active) => {
+    const f = fixture();
+    if (active) {
+      await f.runtime.run(f.delivery("first"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    }
+    const accepted = vi.fn();
+    await f.runtime.run({
+      ...pluginWake(f, root),
+      accepted,
+      current: () => true,
+    });
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    const method = active ? "turn/steer" : "turn/start";
+    expect(f.sent.filter((wire) => wire.method === method)).toHaveLength(1);
+    await f.complete();
+  },
+);
+
+it("does not steer a wake invalidated while active history loads", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const gate = deferred<EventData[]>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(() => {
+    reading.resolve();
+    return gate.promise;
+  });
+  let current = true;
+  const accepted = vi.fn();
+  const submitted = f.runtime.run({
+    ...pluginWake(f, root),
+    accepted,
+    current: () => current,
+  });
+  await reading.promise;
+  try {
+    current = false;
+  } finally {
+    gate.resolve([]);
+  }
+  await submitted;
+  await f.workingUntil.mock.calls.at(-1)?.[0];
+  expect(accepted).not.toHaveBeenCalled();
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toEqual([]);
+  await f.complete();
+});
+
+it.each(["stale", "aborted"] as const)(
+  "drops a guarded wake %s during pending session save and permits the next request",
+  async (change) => {
+    let guest = fixture();
+    let target = guestTarget(guest);
+    guest.failures.set(
+      "thread/resume",
+      "no rollout found for thread id thread-1",
+    );
+    const gate = deferred<void>();
+    const saving = deferred<void>();
+    const saved = deferred<void>();
+    const values = new Map<string, string>();
+    const store: AgentStore = {
+      keys: () => [...values.keys()],
+      get: (key) => values.get(key) ?? null,
+      read: async (key) => values.get(key) ?? null,
+      scan: async () => Object.fromEntries(values),
+      add: async (key, value) => {
+        values.set(key, value);
+        return value;
+      },
+      set: async (key, value) => {
+        if (value?.includes('"pending":true')) {
+          saving.resolve();
+          await gate.promise;
+        }
+        if (value === null) values.delete(key);
+        else values.set(key, value);
+        if (value?.includes('"pending":true')) saved.resolve();
+      },
+    };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      async () => target,
+      store,
+    );
+    let current = true;
+    const checked = deferred<void>();
+    const accepted = vi.fn(() => checked.resolve());
+    await f.runtime.run({
+      ...pluginWake(f, root),
+      accepted,
+      current: () => {
+        if (!current) checked.resolve();
+        return current;
+      },
+    });
+    await saving.promise;
+    try {
+      if (change === "aborted") {
+        await target.dispose();
+        guest = fixture();
+        guest.failures.set(
+          "thread/resume",
+          "no rollout found for thread id thread-1",
+        );
+        target = guestTarget(guest);
+      } else current = false;
+    } finally {
+      gate.resolve();
+    }
+    await saved.promise;
+    if (change === "stale") await checked.promise;
+    else
+      await vi.waitFor(() =>
+        expect(
+          [...values.values()].some((value) =>
+            value.includes('"pending":true'),
+          ),
+        ).toBe(false),
+      );
+    expect(accepted).not.toHaveBeenCalled();
+    // This ordinary request is the completion barrier for the canceled job's lane.
+    await f.runtime.run(f.delivery("ordinary request"));
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    expect(inputText(guest.starts()[0])).toContain("ordinary request");
+    expect(accepted).not.toHaveBeenCalled();
+    await guest.complete();
+  },
+);
+
 it("drops source output invalidated while compaction waits without blocking other work", async () => {
   const f = fixture();
   const first = f.delivery("first");
@@ -6332,9 +6518,13 @@ it("keeps interrupting an idle existing conversation a no-op", async () => {
 });
 
 describe("voice seats", () => {
-  async function seated(overrides: Partial<AgentVoiceSeat> = {}) {
+  async function seated(
+    overrides: Partial<AgentVoiceSeat> = {},
+    configure: (f: ReturnType<typeof fixture>) => void = () => {},
+  ) {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
+    configure(f);
     f.huddleChannels.add("channel");
     const delivery = f.delivery("hello");
     const abort = new AbortController();
@@ -6375,6 +6565,109 @@ describe("voice seats", () => {
       params: { threadId: "thread-1", turn: { id: "late" } },
     });
     expect(thinking).not.toHaveBeenCalled();
+  });
+  it.each(["cove", "maple"])(
+    "uses the resolved seat voice %s",
+    async (voice) => {
+      const f = await seated({
+        config: { workspace: "/tmp/voices", voice },
+        synced: { voice },
+      });
+      expect(vi.mocked(openVoice).mock.calls.at(-1)?.[7]).toBe(voice);
+      await f.connection.close();
+    },
+  );
+  it.each(
+    ["unsupported", "missing", "failed"].flatMap((state) =>
+      [true, false].map((synced) => ({ state, synced })),
+    ),
+  )(
+    "refuses an unchecked saved voice: $state, synced=$synced",
+    async ({ state, synced }) => {
+      const before = vi.mocked(openVoice).mock.calls.length;
+      const started = seated(
+        {
+          config: { workspace: "/tmp/voices", voice: "maple" },
+          ...(synced ? { synced: { voice: "maple" } } : {}),
+        },
+        (f) => {
+          if (state === "unsupported") f.voiceCatalog.v3 = ["cove"];
+          if (state === "missing") f.voiceCatalog.v3 = undefined;
+          if (state === "failed") f.failing.add("thread/realtime/listVoices");
+        },
+      );
+      try {
+        await expect(started).rejects.toThrow(
+          state === "unsupported"
+            ? /voice "maple".*Settings/
+            : /Couldn't check.*voice "maple".*Try again/,
+        );
+        expect(vi.mocked(openVoice).mock.calls.length).toBe(before);
+      } finally {
+        await started.then(
+          (f) => f.connection.close(),
+          () => {},
+        );
+      }
+    },
+  );
+  it("releases a cancelled seat while voice verification is pending", async () => {
+    const f = fixture();
+    vi.stubGlobal("RTCPeerConnection", class {});
+    f.huddleChannels.add("channel");
+    const gate = deferred<void>();
+    f.held.set("thread/realtime/listVoices", gate.promise);
+    const delivery = f.delivery("hello");
+    const abort = new AbortController();
+    const seat = {
+      config: { workspace: "/tmp/voices", voice: "maple" },
+      agent: { ...delivery.agent, config: delivery.config } as unknown as Agent,
+      conversation: { channelId: "channel" },
+      signal: abort.signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    };
+    const opening = f.runtime.voice(seat, delivery.agent);
+    let cancelled = false;
+    const rejected = expect(opening)
+      .rejects.toThrow()
+      .then(() => {
+        cancelled = true;
+      });
+    try {
+      await vi.waitFor(() =>
+        expect(
+          f.sent.some((wire) => wire.method === "thread/realtime/listVoices"),
+        ).toBe(true),
+      );
+      abort.abort();
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      await rejected;
+      const connection = await f.runtime.voice(
+        {
+          ...seat,
+          config: { workspace: "/tmp/voices" },
+          signal: new AbortController().signal,
+        },
+        delivery.agent,
+      );
+      await connection.close();
+    } finally {
+      gate.resolve();
+      await rejected;
+    }
+  });
+  it("opens media after verifying an offered synced voice", async () => {
+    const f = await seated({
+      config: { workspace: "/tmp/voices", voice: "maple" },
+      synced: { voice: "maple" },
+    });
+    expect(
+      f.sent.some((wire) => wire.method === "thread/realtime/listVoices"),
+    ).toBe(true);
+    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[7]).toBe("maple");
+    await f.connection.close();
   });
   it("uses resolved seat config and team instead of the local agent config", async () => {
     const f = await seated({

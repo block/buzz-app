@@ -516,7 +516,7 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Mark read through loaded messages",
+      name: "Mark as read through loaded messages",
       exact: true,
     })
     .click();
@@ -558,7 +558,10 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).press("Enter");
     await page
-      .getByRole("button", { name: "Mark unread on this device", exact: true })
+      .getByRole("button", {
+        name: "Mark as unread on this device",
+        exact: true,
+      })
       .click();
     await page
       .getByRole("button", { name: "Close Channel settings tab", exact: true })

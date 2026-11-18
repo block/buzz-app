@@ -3,6 +3,8 @@ name: CI
 on:
   # Manual dispatch runs only Windows; automatic checks include macOS recording.
   workflow_dispatch:
+  # Sunday's preview (release.yml) calls this to rebuild main's caches.
+  workflow_call:
   pull_request:
   push:
     branches: [main]
@@ -78,7 +80,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: agent-protection
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install exact protected Claude fixture
         run: ./bin/node scripts/install-protected-claude-test.mjs
       - name: Native Claude protection boundary
@@ -122,13 +124,17 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Dependency policy
         run: ./bin/cargo-deny --locked check
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
       - name: Rust lint
         run: ./bin/cargo clippy --workspace --locked --all-targets -- -D warnings
+      # Stage resources and build the workspace tests once, before running them
+      # and before FI variants change build inputs.
+      - name: Bundled buzz CLI
+        run: ./bin/node scripts/test-buzz-cli.mjs
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
@@ -151,8 +157,6 @@ jobs:
           ./bin/cargo test -p Buzz --lib --locked host_request
       - name: Scheduled agent command identity
         run: ./bin/node scripts/test-agent-command.mjs
-      - name: Bundled buzz CLI
-        run: ./bin/node scripts/test-buzz-cli.mjs
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 
@@ -265,7 +269,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: browser-fixture
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build native browser fixture
         timeout-minutes: 8
         run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture

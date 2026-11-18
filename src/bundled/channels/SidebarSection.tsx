@@ -509,6 +509,7 @@ export function SidebarSection({
           {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
           <summary
             ref={dragHandle?.ref}
+            tabIndex={0}
             {...dragHandle?.listeners}
             aria-label={title}
             aria-controls={id}

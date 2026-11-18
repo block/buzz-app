@@ -112,6 +112,7 @@ export function useSidebarView(
   preserve = false,
 ) {
   const [view, setView] = useState(() => restore(scope));
+  const savedLocation = useRef(view.location).current;
   const intent = useRef(view);
   const list = useRef<HTMLElement>(null);
   const pending = useRef(true);
@@ -291,6 +292,7 @@ export function useSidebarView(
   );
   return {
     list,
+    savedLocation,
     collapsed: view.collapsed,
     contributionOrder: view.contributionOrder,
     setContributionOrder,

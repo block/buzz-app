@@ -47,10 +47,11 @@ export async function newChat(page) {
     });
     if (await show.isVisible()) await show.click();
   }
-  await page
+  const options = page
     .locator('[data-sidebar-section="solo"]')
-    .getByRole("button", { name: "New options", exact: true })
-    .click();
+    .getByRole("button", { name: "New options", exact: true });
+  await options.focus();
+  await options.press("Enter");
   await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
 }
 

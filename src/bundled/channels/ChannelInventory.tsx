@@ -539,15 +539,17 @@ export function ChannelInventory({
     selectedSection && !composedChatSections.has(selectedSection)
       ? selectedSection
       : undefined;
-  const previousLocation = useRef(location);
+  const previousLocation = useRef(sidebar.savedLocation ?? location);
+  const destinationLocation =
+    target.kind === "conversation" || currentDraft ? location : undefined;
   const pendingExpansion = useRef(false);
   useLayoutEffect(() => {
-    if (!location) {
+    if (!destinationLocation) {
       pendingExpansion.current = false;
       return;
     }
-    if (location !== previousLocation.current) {
-      previousLocation.current = location;
+    if (destinationLocation !== previousLocation.current) {
+      previousLocation.current = destinationLocation;
       pendingExpansion.current =
         !preserveSidebar && !navigator.snapshot().attempt.traversal;
     }
@@ -555,7 +557,13 @@ export function ChannelInventory({
       pendingExpansion.current = false;
       sidebar.toggle(ordinarySelection, true);
     }
-  }, [location, navigator, ordinarySelection, preserveSidebar, sidebar.toggle]);
+  }, [
+    destinationLocation,
+    navigator,
+    ordinarySelection,
+    preserveSidebar,
+    sidebar.toggle,
+  ]);
   const [chatTool, setChatTool] = useState<{
     channel: ChannelSummary;
     kind: "share" | "convert" | "settings";

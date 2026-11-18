@@ -781,7 +781,7 @@ test("inline search exposes selected grid rows and hands focus to the destinatio
     .toBe(true);
 });
 
-test("search result keys follow a saved rebind, leave free arrows to the text and update the hints", async ({
+test("search result keys follow a saved rebind alongside the arrows and update the hints", async ({
   page,
   app,
 }) => {
@@ -831,13 +831,13 @@ test("search result keys follow a saved rebind, leave free arrows to the text an
     .locator("[data-search-result]")
     .first();
   await expect(second).toBeVisible();
-  // Down is no longer a result key.
-  await input.press("ArrowDown");
-  await expect(input).not.toHaveAttribute("aria-activedescendant");
+  // Up and Down still move, as a combobox's arrows do.
   for (const [chord, result] of [
     ["Control+j", first],
     ["Control+j", second],
     [`Control+${previousKey}`, first],
+    ["ArrowDown", second],
+    ["ArrowUp", first],
   ]) {
     await input.press(chord);
     await expect(input).toBeFocused();
@@ -847,9 +847,9 @@ test("search result keys follow a saved rebind, leave free arrows to the text an
     );
   }
   await page.screenshot({ path: test.info().outputPath("rebound.png") });
-  // Unmatched keys still edit: Up moves the caret to the start.
-  await input.fill("lpha");
-  await input.press("ArrowUp");
-  await input.press("a");
+  // Unmatched keys still edit: Left moves the caret.
+  await input.fill("alpa");
+  await input.press("ArrowLeft");
+  await input.press("h");
   await expect(input).toHaveValue("alpha");
 });

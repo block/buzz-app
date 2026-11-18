@@ -1598,7 +1598,7 @@ it("keeps its place for under five minutes away, and starts fresh from five", as
   }
 });
 
-it("moves through results with the person's own keys, saved, and leaves other arrows to the text", async () => {
+it("moves through results with the person's own keys, saved, alongside the arrows", async () => {
   Object.defineProperty(navigator, "platform", {
     configurable: true,
     value: "MacIntel",
@@ -1628,15 +1628,16 @@ it("moves through results with the person's own keys, saved, and leaves other ar
       { key: "j", ctrl: true },
     ]);
     restored.dispose();
-    // Down is no longer a result key, so it stays with the text.
-    const down = fireEvent.keyDown(t.field(), { key: "ArrowDown" });
-    expect(down).toBe(true);
-    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
     await userEvent.keyboard("{Control>}j{/Control}");
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
     await userEvent.keyboard("{Control>}j{/Control}");
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
     await userEvent.keyboard("{Control>}k{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    // Up and Down still move, as a combobox's arrows do.
+    expect(fireEvent.keyDown(t.field(), { key: "ArrowDown" })).toBe(false);
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    expect(fireEvent.keyDown(t.field(), { key: "ArrowUp" })).toBe(false);
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
     await userEvent.keyboard("j");
     expect(t.field()).toHaveValue("j");

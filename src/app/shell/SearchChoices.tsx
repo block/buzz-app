@@ -829,20 +829,25 @@ export function SearchChoices({
           onKeyDown={(event) => {
             const native = event.nativeEvent;
             // The person's result keys come first, so no other key in the
-            // field takes a chord Settings accepted for them. As in the
+            // field takes a chord Settings accepted for them. Bare Up and
+            // Down always move too, as a combobox's arrows do. As in the
             // dispatcher, composition and AltGr never match.
             if (!native.isComposing && native.keyCode !== 229) {
-              const down = matches([steps.next], native, apple);
-              if (
-                !native.getModifierState("AltGraph") &&
-                (down || matches([steps.previous], native, apple))
-              ) {
+              const step = (
+                [
+                  [steps.next, true],
+                  [steps.previous, false],
+                  [DEFAULT_SEARCH_STEPS.next, true],
+                  [DEFAULT_SEARCH_STEPS.previous, false],
+                ] as const
+              ).find(([binding]) => matches([binding], native, apple));
+              if (step && !native.getModifierState("AltGraph")) {
                 event.preventDefault();
                 restore.current = 0;
-                highlight.move(down);
+                highlight.move(step[1]);
                 return;
               }
-              // Arrows the result keys leave free edit the text.
+              // Other arrow chords, such as Shift+Down, edit the text.
               if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
             }
             const shortcutNumber = /^Digit([1-9])$/.exec(event.code)?.[1];

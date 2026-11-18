@@ -799,9 +799,9 @@ and are asked to sign in again in Buzz.
   phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
   and after it, or a channel's or person's latest messages. Up and Down move
-  the highlight; change them under **Previous search result** and **Next
-  search result** in Settings → Shortcuts, for example to ⌃K and ⌃J on a Mac,
-  and the key hints follow. Tab and Shift+Tab,
+  the highlight; add your own keys under **Previous search result** and
+  **Next search result** in Settings → Shortcuts, for example ⌃K and ⌃J on a
+  Mac, and the key hints show them. Up and Down keep working. Tab and Shift+Tab,
   or the group filter buttons above the results, show one group whole, as
   does choosing a group's heading when it has more; Escape goes back. Groups
   reorder as slower results arrive until you move the highlight; after that

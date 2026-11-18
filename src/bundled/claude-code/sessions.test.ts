@@ -471,6 +471,23 @@ it("offers no conversation that is working or about to take a message", async ()
   }
 });
 
+it("offers no conversation whose next message is still being prepared", async () => {
+  const { pool } = sessions();
+  try {
+    await pool.deliver("c/a", "one", 1);
+    const first = pool.incoming("c/a");
+    const second = pool.incoming("c/a");
+    expect(pool.idlest()).toBeUndefined();
+    first();
+    first();
+    expect(pool.idlest()).toBeUndefined();
+    second();
+    expect(pool.idlest()).toBeDefined();
+  } finally {
+    pool.dispose();
+  }
+});
+
 it("stops making room for a one-off turn once it is given up", async () => {
   const given = new AbortController();
   let rooms = 0;

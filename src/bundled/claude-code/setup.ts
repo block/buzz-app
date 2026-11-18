@@ -11,6 +11,7 @@ import type {
 } from "../../features/host/service";
 import { ClaudeAuth } from "./auth";
 import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
+import { PROCESS_LIMIT, withRoom } from "./sessions";
 import script from "./claude.sh?raw";
 import {
   PROTECTED_CLAUDE_ROOT,
@@ -656,26 +657,33 @@ export class ClaudeSetup {
   }
 
   private protectedDownload: Promise<void> | undefined;
-  async protectedInstalled(signal: AbortSignal) {
+  /** `room` makes a place for the check when the host runs all the
+   * processes it allows, as for the turn it precedes. */
+  async protectedInstalled(signal: AbortSignal, room?: () => Promise<boolean>) {
     signal.throwIfAborted();
     const spawn = this.spawn;
     if (!spawn) throw new Error("Protected Claude needs the desktop app");
     const pinned = await protectedRuntime(spawn);
+    const check = withRoom(spawn, room, () => !signal.aborted);
     // Contained, the host starts only its own copy, once that matches the
     // manifest's pin; it never runs the download folder's file. Its hook
     // guard stops a `--version` answer, so starting is the check.
     const verified = async () => {
-      const process = await spawn(pinned, {
+      const process = await check(pinned, {
         args: ["--version"],
         protection: { readOnlyPaths: [PROTECTED_CLAUDE_ROOT], hiddenPaths: [] },
       });
+      // Its place is free for the turn only once it has exited.
       await process.kill();
+      await process.exited;
     };
     try {
       await abortable(verified(), signal);
       return;
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
+      // A full host is not a missing copy.
+      if (error === PROCESS_LIMIT) throw error;
     }
     this.protectedDownload ??= (async () => {
       const platform =

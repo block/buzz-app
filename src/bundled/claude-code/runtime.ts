@@ -466,7 +466,7 @@ export class ClaudeRuntime {
    * the host has had time to kill it. False when none is idle. Idle processes
    * would stop on their own after `IDLE_MS`; until then they hold places a
    * new conversation needs. */
-  private async room() {
+  async room() {
     let idlest: ReturnType<AgentSessions["idlest"]>;
     for (const entry of this.agents.values()) {
       const candidate = entry.sessions.idlest();
@@ -1153,6 +1153,8 @@ export class ClaudeRuntime {
         const wait = prior && (same ? prior.handed : prior.settled);
         let delivered!: Promise<Settled>;
         let interrupted = false;
+        // Its idle process stays while the turn is prepared.
+        const arriving = entry.sessions.incoming(key);
         const handed = (async () => {
           await wait;
           if (interrupted) {
@@ -1242,6 +1244,8 @@ export class ClaudeRuntime {
             () => undefined,
           );
         })();
+        // `deliver` marks it from then on.
+        void handed.then(arriving, arriving);
         const done = handed.then(
           () => delivered,
           (error: unknown): Settled => ({ ok: false, error: String(error) }),

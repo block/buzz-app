@@ -24,6 +24,23 @@ export const IDLE_MS = 15 * 60_000;
 /** How the host refuses a process when it runs all it allows, as the plugin
  * bridge rejects (`host_process.rs`). */
 export const PROCESS_LIMIT = "Too many processes are running";
+/** `spawn` that, at the host's process limit, asks `room` for a place and
+ * tries again, while the process is still `wanted`. */
+export const withRoom =
+  (
+    spawn: Spawn,
+    room: (() => Promise<boolean>) | undefined,
+    wanted: () => boolean,
+  ): Spawn =>
+  async (id, options) => {
+    for (;;)
+      try {
+        return await spawn(id, options);
+      } catch (error) {
+        if (error !== PROCESS_LIMIT || !wanted() || !(await room?.()))
+          throw error;
+      }
+  };
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -101,6 +118,8 @@ export class AgentSessions {
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
   private readonly handing = new Map<string, Promise<void>>();
+  /** Conversations whose next message the runtime is still preparing. */
+  private readonly arriving = new Map<string, number>();
   private readonly opening = new Map<string, Promise<Live | Settled>>();
   private discovery:
     | {
@@ -174,6 +193,7 @@ export class AgentSessions {
       const [key, live] = entry;
       // A message on its way in is about to use it.
       if (this.handing.has(key) || this.opening.has(key)) continue;
+      if (this.arriving.has(key)) continue;
       if (!live.process.active && (!idlest || live.used < idlest[1].used))
         idlest = entry;
     }
@@ -250,6 +270,20 @@ export class AgentSessions {
     this.discovery = undefined;
   }
 
+  /** Marks a message for `key` as on its way, before `deliver` is called, so
+   * its idle process is not stopped to make room; the returned function
+   * unmarks it. */
+  incoming(key: string) {
+    this.arriving.set(key, (this.arriving.get(key) ?? 0) + 1);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const left = (this.arriving.get(key) ?? 1) - 1;
+      if (left) this.arriving.set(key, left);
+      else this.arriving.delete(key);
+    };
+  }
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
@@ -623,20 +657,11 @@ export class AgentSessions {
    * and tries again, while the process is still wanted. Discovery and the
    * spare, started ahead of need, never stop a conversation. */
   private roomy(wanted: () => boolean): Spawn {
-    return async (id, options) => {
-      for (;;)
-        try {
-          return await this.spawn(id, options);
-        } catch (error) {
-          if (
-            error !== PROCESS_LIMIT ||
-            this.disposed ||
-            !wanted() ||
-            !(await this.options.room?.())
-          )
-            throw error;
-        }
-    };
+    return withRoom(
+      this.spawn,
+      this.options.room,
+      () => !this.disposed && wanted(),
+    );
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(

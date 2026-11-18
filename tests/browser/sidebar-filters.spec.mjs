@@ -43,7 +43,9 @@ test("section filters save activity windows and recover hidden channels", async 
   // Filters preserve the current channel; choose a different destination from
   // the row whose exclusion this journey exercises, regardless of startup order.
   await page
-    .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+    // A row leaving its startup section stays mounted without a name.
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "General", exact: true })
     .click();
   await expect(
     page.getByRole("textbox", { name: "Message #General" }),
@@ -366,7 +368,9 @@ test("failed activity reads explain the filter and recover on Retry", async ({
   // Filters preserve the current channel; choose a different destination from
   // the row whose exclusion this journey exercises, regardless of startup order.
   await page
-    .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+    // A row leaving its startup section stays mounted without a name.
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "General", exact: true })
     .click();
   await expect(
     page.getByRole("textbox", { name: "Message #General" }),
@@ -450,7 +454,9 @@ test.describe("filter action focus", () => {
     // Filters preserve the current channel; keep it away from the row whose
     // exclusion this journey exercises.
     await page
-      .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+      // A row leaving its startup section stays mounted without a name.
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "General", exact: true })
       .click();
     await expect(
       page.getByRole("textbox", { name: "Message #General" }),

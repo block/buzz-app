@@ -706,6 +706,7 @@ html[data-keyboard-navigation]
     left: calc(-1 * var(--space-2));
     border-radius: var(--radius-pill);
     background: var(--surface-popover);
+    pointer-events: auto;
     z-index: 2;
   }
   @media (hover: hover) and (pointer: fine) {

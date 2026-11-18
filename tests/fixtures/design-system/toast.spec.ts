@@ -446,3 +446,36 @@ test("notice body opens its destination while nested actions keep their targets"
       .click();
   }
 });
+
+// A linked card must not steal a touch intended for its visible close button.
+test("touch dismisses a linked notice without opening its destination", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    ...(baseURL ? { baseURL } : {}),
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${viewer}#/design/components/toast`);
+    await page
+      .getByRole("button", { name: "Show linked notice", exact: true })
+      .tap();
+    const notice = page.getByRole("dialog", {
+      name: "Plugin update available",
+      exact: true,
+    });
+    await expect(notice).toBeVisible();
+    await notice
+      .getByRole("button", { name: "Dismiss notification", exact: true })
+      .tap({ timeout: 5000 });
+    await expect(notice).toHaveCount(0);
+    await expect(
+      page.getByRole("dialog", { name: "Example dialog", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});

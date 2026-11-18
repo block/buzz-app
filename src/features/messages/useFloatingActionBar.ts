@@ -320,6 +320,8 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
+    // Overlay state changes only through the attributes and nodes observed below.
+    let blocked: boolean | undefined;
     // Returns whether the row shows as revealed. Positioning defers that row
     // write until the bar is placed, so an offscreen frame writes nothing.
     const updateVisibility = (reveal = true) => {
@@ -333,7 +335,7 @@ export function useFloatingActionBar(
         trigger?.getAttribute("aria-haspopup") === "menu"
           ? document.getElementById(trigger.getAttribute("aria-controls") ?? "")
           : null;
-      const blocked = behindActiveOverlay(row, menu);
+      blocked ??= behindActiveOverlay(row, menu);
       // The toolbar yields, but its popup must still identify the target message.
       const revealed = !blocked || ownsPopup;
       if (reveal) row.toggleAttribute("data-actions-revealed", revealed);
@@ -617,6 +619,7 @@ export function useFloatingActionBar(
     // Focus restoration can run before the next animation frame. Release the
     // hidden trigger as soon as its popup closes; coalesce only geometry work.
     const unobserveOverlays = observeOverlays(() => {
+      blocked = undefined;
       updateVisibility();
       schedule();
     });

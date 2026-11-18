@@ -2202,6 +2202,14 @@ export class CodexRuntime {
     const targetEffort = nextCommunityTurn
       ? nextCommunityTurn.request.effort
       : activeCommunityTurn?.effort;
+    const separateWake =
+      communityTarget &&
+      (request.wake || communityTarget.wake) &&
+      ((request.wake && !("plugin" in request.wake)) ||
+        (communityTarget.wake && !("plugin" in communityTarget.wake)) ||
+        request.conversation.channelId !==
+          communityTarget.conversation.channelId ||
+        request.replyRoot !== communityTarget.replyRoot);
     const queueCommunity =
       communityLane &&
       (!communityTarget ||
@@ -2209,8 +2217,7 @@ export class CodexRuntime {
           (activeCommunityTurn?.finished || activeCommunityTurn?.stopped)) ||
         communityLane.voice ||
         communityLane.voiceOpening ||
-        request.wake ||
-        communityTarget.wake ||
+        separateWake ||
         communityTarget.unaddressed ||
         (request.model && request.model !== targetModel) ||
         (request.effort && request.effort !== targetEffort));

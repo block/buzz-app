@@ -8310,6 +8310,89 @@ it("steers community follow-ups into an earlier queued human turn", async () => 
   }
 });
 
+it("steers owner follow-ups and plugin wakes in the same community conversation", async () => {
+  const f = fixture();
+  const first = pluginWake(f);
+  const config = { ...(first.config as object), scope: "community" };
+  f.soloChannels.add("channel");
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+
+    const followUp = f.delivery("Final transcript", "e".repeat(64));
+    await f.runtime.run({ ...followUp, config });
+    const second = pluginWake(f);
+    if (second.trigger.type !== "plugin")
+      throw new Error("Expected plugin wake");
+    await f.runtime.run({
+      ...second,
+      config,
+      trigger: { ...second.trigger, id: "9".repeat(64), text: "New preview" },
+    });
+    await f.runtime.run({
+      ...f.delivery("Next question", "f".repeat(64)),
+      config,
+    });
+
+    const steers = f.sent.filter((wire) => wire.method === "turn/steer");
+    expect(steers.map(inputText)).toEqual([
+      expect.stringContaining("Final transcript"),
+      expect.stringContaining("New preview"),
+      expect.stringContaining("Next question"),
+    ]);
+    expect(f.starts()).toHaveLength(1);
+    if (followUp.trigger.type !== "mention")
+      throw new Error("Expected mention");
+    await f.tool("send", {
+      audience: "everyone",
+      channel: "channel",
+      request: followUp.trigger.event.id,
+      text: "ANSWER",
+    });
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: expect.arrayContaining([
+        ["buzz:request", followUp.trigger.event.id],
+      ]),
+    });
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("joins a queued plugin wake without steering it into another conversation", async () => {
+  const f = fixture();
+  const first = f.delivery("Work in another channel");
+  const config = { ...(first.config as object), scope: "community" };
+  f.soloChannels.add("channel");
+  const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
+  try {
+    await f.runtime.run({ ...first, channelId: "other", config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({ ...pluginWake(f), config });
+    const admitted = deferred<void>();
+    const followUp = f.runtime.run({
+      ...f.delivery("Final transcript", "e".repeat(64)),
+      config,
+      prepareSession: async () => {
+        admitted.resolve();
+        return undefined;
+      },
+    });
+    await admitted.promise;
+    expect(steers()).toHaveLength(0);
+    await f.complete(0);
+    await followUp;
+    expect(inputText(f.starts()[1])).toContain("<plugin-wake");
+    expect(steers()).toHaveLength(1);
+    expect(steers()[0]?.params).toMatchObject({ expectedTurnId: "turn-2" });
+    expect(inputText(steers()[0])).toContain("Final transcript");
+    await f.complete(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps community sessions apart for memberships of the same identity", async () => {
   const f = fixture();
   const base = f.delivery("here");

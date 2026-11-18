@@ -206,8 +206,8 @@ html[data-keyboard-navigation] .document pre code:focus-visible {
   vertical-align: middle;
   accent-color: var(--affordance-prominent);
 }
-.document a:not([data-solo-link], [aria-disabled="true"]),
-.inline a:not([data-solo-link], [aria-disabled="true"]) {
+.document a:not([data-solo-link]),
+.inline a:not([data-solo-link]) {
   color: var(--text-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;

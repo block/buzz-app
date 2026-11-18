@@ -771,12 +771,11 @@ test.describe("links to channels the reader hasn't joined", () => {
     });
     await expect(authored).toHaveAttribute("title", /aren’t a member/);
     await virtuaIdle(page);
-    // A withheld link goes nowhere, so even under the pointer it reads as text.
+    // A withheld link goes nowhere, so the pointer changes nothing about it.
     for (const link of [locked, authored]) {
       await link.hover();
       const look = await link.evaluate((element) => {
         const style = getComputedStyle(element);
-        const text = getComputedStyle(element.parentElement);
         const box = element.getBoundingClientRect();
         const pointed = document.elementFromPoint(
           box.left + box.width / 2,
@@ -785,15 +784,15 @@ test.describe("links to channels the reader hasn't joined", () => {
         return {
           cursor: pointed && getComputedStyle(pointed).cursor,
           line: style.textDecorationLine,
+          thickness: style.textDecorationThickness,
           background: style.backgroundColor,
-          color: style.color === text.color,
         };
       });
       expect(look).toEqual({
         cursor: "default",
-        line: "none",
+        line: "underline",
+        thickness: "1px",
         background: "rgba(0, 0, 0, 0)",
-        color: true,
       });
     }
     await named.hover();

@@ -19,11 +19,9 @@
   background: var(--link-hover);
 }
 
-/* A withheld channel keeps its href for copying, but reads as text. */
+/* A withheld channel keeps its href for copying, but hover offers nothing. */
 .link[aria-disabled="true"] {
-  color: inherit;
   --link-hover: var(--link-fill, transparent);
-  text-decoration: none;
   cursor: default;
 }
 

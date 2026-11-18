@@ -82,9 +82,6 @@ for (const variant of [
       const buttons = [...row.querySelectorAll("button")].map((button) =>
         button.getBoundingClientRect(),
       );
-      const caret = row
-        .querySelector("[data-solo-disclosure]")
-        .getBoundingClientRect();
       const xs = [
         ...new Set([
           bounds.left,
@@ -99,25 +96,29 @@ for (const variant of [
           ...buttons.flatMap((box) => [box.top, box.bottom]),
         ]),
       ].sort((a, b) => a - b);
-      const points = xs
-        .slice(1)
-        .flatMap((x, i) =>
-          ys
-            .slice(1)
-            .map((y, j) => ({ x: (xs[i] + x) / 2, y: (ys[j] + y) / 2 })),
-        );
-      // Prefer space after the caret. With enlarged text, the only free space
-      // may be above it. Exclude actual buttons and clipped scrollbar gutters.
-      return [...points.filter((p) => p.x >= caret.right), ...points].find(
-        (p) =>
-          !buttons.some(
-            (b) =>
-              p.x >= b.left &&
-              p.x <= b.right &&
-              p.y >= b.top &&
-              p.y <= b.bottom,
-          ) && row.contains(document.elementFromPoint(p.x, p.y)),
+      const points = xs.slice(1).flatMap((x, i) =>
+        ys.slice(1).map((y, j) => ({
+          x: Math.round((xs[i] + x) / 2),
+          y: Math.round((ys[j] + y) / 2),
+          clearance: Math.min(x - xs[i], y - ys[j]) / 2,
+        })),
       );
+      // Use an interior CSS pixel. A fractional midpoint on a one-pixel edge
+      // can hit the header during hit testing and miss it on pointer dispatch.
+      return points
+        .sort((a, b) => b.clearance - a.clearance)
+        .find(
+          (p) =>
+            p.clearance >= 2 &&
+            !buttons.some(
+              (b) =>
+                p.x >= b.left &&
+                p.x <= b.right &&
+                p.y >= b.top &&
+                p.y <= b.bottom,
+            ) &&
+            row.contains(document.elementFromPoint(p.x, p.y)),
+        );
     });
     if (!point)
       throw new Error("Workspace header must have visible blank space");

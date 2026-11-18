@@ -571,7 +571,9 @@ export function ChannelInventory({
     trigger?: HTMLElement | undefined;
   }>();
   const [renamingChat, setRenamingChat] = useState<string>();
-  const renameFocus = useRef<string | undefined>(undefined);
+  const renameFocus = useRef<{ id: string; from: Element | null } | undefined>(
+    undefined,
+  );
   const pendingChatClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -1422,18 +1424,29 @@ export function ChannelInventory({
     setRowFocus(undefined);
   }, [rowFocus, rowFocusTarget, sidebarFocusFallback, slotsMounted]);
   useLayoutEffect(() => {
-    if (renamingChat || !renameFocus.current || !slotsMounted) return;
-    const id = renameFocus.current;
-    renameFocus.current = undefined;
-    const section = channelSectionKey(id);
-    const summary = sidebar.collapsed.includes(section)
-      ? sidebar.list.current?.querySelector<HTMLElement>(
-          `[data-sidebar-section="${CSS.escape(section)}"] details > summary`,
-        )
-      : undefined;
-    (summary ?? rowFocusTarget(id) ?? sidebarFocusFallback())?.focus({
-      preventScroll: true,
+    const intent = renameFocus.current;
+    if (renamingChat || !intent || !slotsMounted) return;
+    // Let the editor unmount and the disclosure finish committing before
+    // restoring focus. Preserve any focus the user has moved in the meantime.
+    const frame = requestAnimationFrame(() => {
+      if (renameFocus.current !== intent) return;
+      renameFocus.current = undefined;
+      if (
+        document.activeElement !== document.body &&
+        document.activeElement !== intent.from
+      )
+        return;
+      const section = channelSectionKey(intent.id);
+      const summary = sidebar.collapsed.includes(section)
+        ? sidebar.list.current?.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(section)}"] details > summary`,
+          )
+        : undefined;
+      (summary ?? rowFocusTarget(intent.id) ?? sidebarFocusFallback())?.focus({
+        preventScroll: true,
+      });
     });
+    return () => cancelAnimationFrame(frame);
   }, [
     renamingChat,
     slotsMounted,
@@ -2095,7 +2108,12 @@ export function ChannelInventory({
                                     )?.focus({ preventScroll: true });
                                   }}
                                   close={(focus) => {
-                                    if (focus) renameFocus.current = channel.id;
+                                    renameFocus.current = focus
+                                      ? {
+                                          id: channel.id,
+                                          from: document.activeElement,
+                                        }
+                                      : undefined;
                                     setRenamingChat(undefined);
                                   }}
                                 />

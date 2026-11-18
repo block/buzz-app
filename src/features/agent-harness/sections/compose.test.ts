@@ -44,11 +44,13 @@ describe("the session prompt of each harness", () => {
     });
 
     it(`for Codex, with ${scope} sessions`, async () => {
-      await expect(developerInstructions(agent, scope)).toMatchFileSnapshot(
-        snapshot(`codex.${scope}.default`),
-      );
+      // The thread for a message in a channel's thread.
+      const place = scope === "thread" ? "thread" : "conversation";
       await expect(
-        developerInstructions(agent, scope, workspace),
+        developerInstructions(agent, scope, undefined, place),
+      ).toMatchFileSnapshot(snapshot(`codex.${scope}.default`));
+      await expect(
+        developerInstructions(agent, scope, workspace, place),
       ).toMatchFileSnapshot(snapshot(`codex.${scope}.own-folder`));
     });
   }

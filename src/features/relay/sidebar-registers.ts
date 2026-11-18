@@ -352,7 +352,7 @@ export function editSidebarRecord(
       path.length === 2 &&
       path[0] === "a" &&
       path[1] !== undefined &&
-      !Array.isArray(node)
+      !Object.hasOwn(projection(coordinate, tree).assignments ?? {}, path[1])
     )
       return false;
     return !Array.isArray(node) || node[2] !== value;
@@ -395,7 +395,7 @@ export function editSidebarRecord(
   return { ...current, ...projected, meta };
 }
 
-function pluginSortRegisters(value: unknown): Tree {
+function pluginSortRegisters(value: unknown, limit = 205): Tree {
   if (value === undefined) return {};
   const data = object(value);
   if (
@@ -412,7 +412,7 @@ function pluginSortRegisters(value: unknown): Tree {
         isSidebarSortMode(mode),
     ),
   );
-  if (Object.keys(groups).length > 205)
+  if (Object.keys(groups).length > limit)
     throw new Error("Plugin sidebar sort budget exceeded");
   return groups;
 }
@@ -420,17 +420,18 @@ function pluginSortRegisters(value: unknown): Tree {
 /** Plugin choices stay outside the strict metadata understood by older hosts. */
 export function projectSidebarSort(
   value: Record<string, unknown>,
+  limit = 104,
 ): Record<string, unknown> {
   const projected = projectSidebarRecord("channel-sort", value);
   const groups = { ...object(projected.groups) };
-  if (Object.keys(groups).length > 205)
+  if (Object.keys(groups).length > limit)
     throw new Error("Sidebar sort budget exceeded");
   const base =
     value.meta === undefined
       ? {}
       : (metadata("channel-sort", value.meta, true).g as Tree);
   for (const [key, choice] of Object.entries(
-    pluginSortRegisters(value.pluginSort),
+    pluginSortRegisters(value.pluginSort, limit),
   )) {
     const bound = own(base, key);
     if (

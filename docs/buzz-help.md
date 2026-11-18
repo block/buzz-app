@@ -554,6 +554,8 @@ and are asked to sign in again in Buzz.
   in **Solo**, **Team**, **Forums**, or **Direct messages**. Reorder any section,
   including **Starred**, by dragging its heading or using **Move up** and
   **Move down** in its **…** menu. Escape cancels a drag.
+  The arrow beside a workspace’s creation icon offers **New chat**, **New channel**
+  and **New DM**. The last choice becomes that workspace’s icon and primary action.
   Open **Workspace settings** from the heading’s **…** menu to change the name,
   emoji, folders, worktree, Canvas, or default agents. Use **New channel** from a
   workspace to start with its destination and template selected. You can change

@@ -146,66 +146,21 @@ writer selects the admission contract by the event's `d` coordinate: the five
 sidebar coordinates must match what the sidebar signer produces, and every
 other coordinate must satisfy the recipe contract.
 
-Move channel, Create new, exclusive Starred placement and startup presentation also
-belong to this persistent sidebar. Rows in saved groups, **Starred**, **Channels**
-and **Direct messages** can also be dragged with a pointer onto another saved
-group or **Starred**, or back to their own home section: channels to **Channels**
-and DMs to **Direct messages**. Neither home section accepts the other's rows. The
-drop is the same Move intent, with the same gate, optimistic placement, rollback
-notice and Retry.
-The **Channels** ellipsis menu also offers **Create section**, which creates an
-empty section without moving a channel. All four custom Team section creation
-routes, including **New → Team → New section**, offer optional Unicode or community
-emoji through the shared picker beside the name. **Remove emoji** at the top of the picker clears only the
-emoji. The dialog retains the name, selected emoji and section ID after an
-attempted write fails and waits for confirmation before closing. The submitted
-name stays read-only and focused, and emoji controls stay disabled; a rejected
-gate that attempted no write leaves the draft editable. Failed confirmation uses plain copy and
-offers Retry preferences whenever preferences are unavailable, with Create
-disabled until recovery. After a failed creation,
-the session refreshes preferences from the writer before allowing dismissal so
-an accepted save stays visible even after Cancel. If that read fails too, new
-creation is gated across menu, drop and create-and-move paths, and Retry retains
-writer routing until reconciliation succeeds. Recovery waits for all queued
-preference writes and repeats a writer read invalidated by a concurrent write.
-Ordinary startup remains replica-eligible. Dragging a channel or DM into
-the gap above the first custom section expands an **Add to new section** drop
-target inside the sidebar. With no custom sections, the target is above
-**Channels**; **Starred** keeps its pinned position. The created section appears
-at that same first position. The target stays revealed for the rest of that drag, with
-reduced motion opening it immediately; other section destinations remain available.
-Dropping there opens the existing create-and-move dialog; cancelling leaves the
-channel in place, and no preference is written until submission. These entry
-points supplement the per-channel **Move channel → Create new…** route and use
-the existing gated preference queue and encrypted section record.
-Only a row's select surface starts a drag, the surface its row menu wraps.
-**Starred** accepts drops only when it is already visible; starting a drag does
-not reveal an empty section. Use the row menu to star the first channel.
-Dropping into Starred stars the channel; dropping out assigns the destination
-and clears its star, just like the row menu. Forums take no part in dragging,
-and the row menu remains the keyboard path.
-A saved group also drags by its header, expanded or collapsed, onto another saved
-group; an accent line shows where it lands, and Escape cancels. Its section menu's
-**Move up** and **Move down** are the keyboard and single-pointer path. Each move
-rewrites every live section's `order` register with one stamp, so channels, sort
-and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. **Rename section**
-in the same menu changes the name, emoji, or both through **Rename**. Emoji-only
-changes do not resend the name; omitted fields preserve their latest values, and
-**Remove emoji** writes an explicit null icon register. Changed name/icon leaves
-share one atomic register edit, leaving channels, order, sort and unrelated
-preferences intact. The dialog keeps the draft and shows the error if the save
-fails; saving an unchanged draft closes without a write. The shared picker is a
-transient nested surface: Escape closes only the picker and returns focus to its
-trigger, without creating a history visit. The
-session serializes placement, sort and mute writes through one queue, retaining
-one confirmed preferences snapshot beneath
-pending Move and Sort projections. Each confirmation updates only its owned fields
-before reapplying pending intent; failure cannot roll back unrelated confirmed
-state. Field-only confirmations cannot recover a failed full preference read or
-hide its Retry. Move stays gated until that read succeeds. Mute optimism remains
-presentation-only; notification policy continues to use confirmed mutes. This
-composition does not change the whole-record cross-device limitation below.
+The sidebar defaults to **Starred**, personal workspaces, **Solo**, **Team**,
+**Forums**, and **Direct messages**. All sections can be reordered by dragging
+the heading or through **Move up** and **Move down**. The saved order syncs with
+workspace placement.
+
+Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
+its home section. The row’s **Move to…** menu offers the same destinations.
+Moving out of Starred clears the star. The drop target above the first
+workspace opens **Move to new workspace**. **New workspace** in the creation
+menu uses the same settings form and leaves existing placements in place.
+
+Each workspace heading has a compact creation control. Its arrow opens
+**New chat**, **New channel**, and **New DM**. The last choice becomes that
+workspace’s primary action on this device. A channel starts with the workspace
+and its template selected, and users can change either in the dialog.
 
 Sections collapse and expand through their headers; the ellipsis menu does not
 repeat that action. Collapsed section keys and sidebar scroll remain separate, scoped view intent.
@@ -219,7 +174,7 @@ content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles 
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
 failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until their activity is read. Activity applies in one update when a read finishes; a read that fails partway still applies what it read, and channels it did not reach stay available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
-separate kind-30078 `channel-filter` record. They leave saved sorting and section
+separate kind-30078 `channel-workspace-filter` record. They leave saved sorting and section
 membership unchanged; earlier device-only filter choices are ignored, not automatically published.
 Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
 The currently open channel remains visible in its section regardless of its filter,
@@ -271,9 +226,9 @@ conversation content and unmount when leaving Messages.
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
-kind-30078 `channel-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
+kind-30078 `channel-workspace-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
 A–Z writes a null register and removes that group's legacy override.
-Filters use the same bounded group-register shape in a separate `channel-filter`
+Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
 coordinate: Unreads is `unreads`, Active in the last is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
 stores each group’s duration in whole-day seconds; absence means 30 days. Presets
@@ -289,51 +244,14 @@ removing the section. A saved startup copy is display-only until relay reads rec
 Like sorting, this is whole-record last-write-wins; another client sees changes
 when it loads or refreshes preferences, without a new automatic reconciliation loop.
 
-Sections use
-`meta: { v: 1, s: { ... }, a: { ... } }`: per-section name/icon/order/live registers
-and per-channel assignments. Upgraded readers project metadata as authoritative;
-writers regenerate the legacy fields and preserve unrelated registers, including
-section deletion (`live=false`) and assignment/sort reset (`null`) tombstones.
-Stars and mutes keep their existing `updatedAt` entries, not this register schema.
-
-A register is `[version, device, value]`, with a nonnegative safe-integer millisecond
-version and 16 lowercase hex device ID. Meta-less relay heads import at event
-seconds × 1,000 with the zero device ID. Edits exceed every observed register
-version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; menu-created sections append after the canonical
-live maximum, while drop-created sections precede the live minimum. Orphan
-assignments are omitted from the legacy projection, not deleted
-from metadata. Read projection accepts Desktop string values on retained section
-name/icon registers; only projected live text receives UI length limits. Already
-satisfied intents return without rewriting the head, including assignment removal
-when its register is absent, explicitly null, or points to a nonprojecting section.
-Actual rewrites still reject
-out-of-policy retained values rather than dropping or truncating them.
-Unsupported/malformed metadata fails closed, including unknown fields;
-this is not general forward-schema salvage. Live projection caps remain 100
-sections, 1,000 assignments and 104 overrides per section-choice record; retained tombstones are bounded
-by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
-additionally requires legacy fields to equal the validated register projection.
-
-Saving preserves unrelated top-level fields and known register choices present in
-the strong head read before publication. This is wire-format compatibility, not
-the older Desktop's local-authoritative register cache or automatic reconciler.
-
-Persistence is **whole-record last-write-wins**, not conflict-safe per-section
-merging. Two devices can read the same record and save different sections; the
-winning replacement can silently erase the other device's choice even when both
-saves report success. The broker's mutation queue serializes its own writes only.
-Read-back checks the requested section at that moment; it cannot detect an unseen
-choice overwritten in another section or guarantee preservation against later
-writes. “Independent” describes selecting a mode per section, not simultaneous
-cross-device save guarantees. Retaining the shared record preserves compatibility
-with existing desktop writers; convergence across unseen heads would require a
-separately designed reconciliation lifecycle or atomic relay support.
-
-`browser-host/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
-through the real mutation helper: another section saves and confirms between a
-read and publication, then the stale whole-record replacement wins and also
-confirms. This is contract coverage, not a concurrency fix.
+Workspaces use a compact encrypted `channel-workspaces` record with sections,
+assignments, section order, and removal markers. The first edit saves the
+combined legacy projection. Older desktop and mobile clients read their
+original coordinates. Their writes cannot replace the unified record. An
+upgraded client can import previously unseen workspaces and filings. A saved
+unified placement or removal takes precedence. The relay selects one whole
+record when same-account writers race, so confirmation can precede a later
+replacement of the same edit.
 
 ## Starting a direct message
 
@@ -1811,8 +1729,8 @@ terminal, which keeps Escape and Option+Arrow for the shell.
   conversation** (Option+Shift+Up/Down) step through the sidebar's rendered order,
   Solo chats and team rows alike. As in Slack, plain Option+Up/Down steps from the
   composer only while its draft is empty; with text it moves the caret by paragraph
-  instead. `conversation-rows.ts` scans the sidebar's `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
-  are already applied; rows in a collapsed section or the inactive pane are skipped. A
+  instead. `conversation-rows.ts` scans the rendered sidebar order after workspace
+  placement, sorting and filters. It skips collapsed sections. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.
   Plain stepping does not wrap, and at either end it does nothing; unread stepping

@@ -199,7 +199,7 @@ function CreateSectionDropTarget() {
           data-drop-target={isOver || undefined}
         >
           <PlusIcon size={24} />
-          <span>Add to new section</span>
+          <span>Add to new workspace</span>
         </div>
       </motion.div>
     </div>

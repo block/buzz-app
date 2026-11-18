@@ -2559,6 +2559,7 @@ function ChannelWorkspace({
           {composingMessage ? (
             <LiveNewMessage
               intent={messageDraft?.intent}
+              workspace={messageDraft?.workspace}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}

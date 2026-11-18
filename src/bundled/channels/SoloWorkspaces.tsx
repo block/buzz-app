@@ -1,3 +1,4 @@
+import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
 import { FadingLabel } from "./FadingLabel";
 import { ChannelSidebarRows } from "../../features/channel-navigation/ChannelSidebarRows";
 import { createPortal } from "react-dom";
@@ -68,7 +69,8 @@ import {
   NavigationItem,
 } from "../../shared/design-system/ui/NavigationItem";
 import type { Navigation } from "../../features/navigation/controller";
-import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
+import { SoloChatMenuItems } from "./SoloChatMenu";
+import { NewWorkspace } from "../../features/solo/NewWorkspace";
 import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 import {
@@ -287,7 +289,11 @@ export function SoloWorkspaces({
     id: string;
     name: string;
   }>();
-  const groups = snapshot.data?.sections ?? [];
+  const order = workspaceSectionOrder(snapshot.data);
+  const sections = snapshot.data?.sections ?? [];
+  const groups = snapshot.data?.sectionOrder
+    ? order.flatMap((key) => sections.filter(({ id }) => key === `group:${id}`))
+    : sections;
   const orderWritable = preferences.sectionOrderWritable;
   const [orderFocus, setOrderFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -302,7 +308,15 @@ export function SoloWorkspaces({
   const moveProject = (id: string, to: number) => {
     const ids = groups.map((group) => group.id).filter((key) => key !== id);
     ids.splice(to, 0, id);
-    void preferences.reorderSections(id, ids).catch(() => {});
+    if (!snapshot.data?.sectionOrder) {
+      void preferences.reorderSections(id, ids).catch(() => {});
+      return;
+    }
+    let next = 0;
+    const reordered = order.map((key) =>
+      key.startsWith("group:") ? `group:${ids[next++]}` : key,
+    );
+    void preferences.reorderSections(`group:${id}`, reordered).catch(() => {});
   };
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
@@ -1069,24 +1083,20 @@ export function SoloWorkspaces({
         />
       )}
       {creatingFor && (
-        <NewWorkspaceDialog
+        <NewWorkspace
           key={creatingFor.id}
-          name={creatingFor.title}
+          session={session}
+          moveConversation
           close={() => setCreatingFor(undefined)}
-          create={(name) => {
+          create={(section) => {
             if (
               !preferences.writable ||
               prepareSoloMove(session, creatingFor.id)
             )
-              return false;
-            const id = crypto.randomUUID();
-            void preferences
-              .createAndAssign(creatingFor.id, { id, name })
-              .catch(() => {});
-            toggle(id, true);
-            setCreatingFor(undefined);
-            return true;
+              throw new Error("Workspaces are unavailable. Try again.");
+            return preferences.createAndAssign(creatingFor.id, section);
           }}
+          onCreated={(id) => toggle(id, true)}
         />
       )}
     </>

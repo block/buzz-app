@@ -1,3 +1,4 @@
+import type { ChatIcon } from "../../features/conversation/service";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { useIsPresent } from "motion/react";
 import {
@@ -41,6 +42,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
 
 type ItemProps = {
+  chatIcon?: ChatIcon["component"] | undefined;
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
   onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
   channel: ChannelSummary;
@@ -140,6 +142,7 @@ function useOrdinaryUnread(
 
 function ChannelSidebarItemCore({
   rowContributions,
+  chatIcon: ChatIconComponent,
   onHiddenChange,
   channel,
   profile,
@@ -224,6 +227,14 @@ function ChannelSidebarItemCore({
               <Icon size={16} />
             )}
           </DmTypingBadge>
+        ) : ChatIconComponent ? (
+          <ContributionBoundary fallback={<Icon size={16} />}>
+            <ChatIconComponent
+              session={session}
+              channelId={channel.id}
+              fallback={<Icon size={16} />}
+            />
+          </ContributionBoundary>
         ) : (
           <Icon size={16} />
         )
@@ -393,9 +404,15 @@ function ContributedChannelRow({
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
   const live = useLiveChannelSummary(session.channels, channel);
+  const pluginSection =
+    channel.channelType === "solo"
+      ? sectionKey.startsWith("group:")
+        ? sectionKey.slice(6)
+        : ""
+      : sectionKey;
   const row = useMemo(
-    () => sidebarRow(live, sectionKey, unread),
-    [live, sectionKey, unread],
+    () => sidebarRow(live, pluginSection, unread),
+    [live, pluginSection, unread],
   );
   return (
     <SidebarRowRenderer

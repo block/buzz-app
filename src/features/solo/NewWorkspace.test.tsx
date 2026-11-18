@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -26,6 +27,52 @@ afterEach(() => {
 });
 const prompt = () =>
   screen.findByRole("alertdialog", { name: "Discard changes?" });
+
+it("keeps a workspace draft editable while preferences recover and restores focus", async () => {
+  const user = userEvent.setup();
+  let writable = false;
+  const listeners = new Set<() => void>();
+  const recover = () => {
+    writable = true;
+    for (const listener of listeners) listener();
+  };
+  const create = vi.fn(async () => {});
+  const session = {
+    scope: "https://relay.example.test:viewer",
+    sidebarPreferences: {
+      get sectionCreationWritable() {
+        return writable;
+      },
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      refresh: vi.fn(async () => recover()),
+    },
+  } as unknown as RelaySession;
+  render(
+    <NewWorkspace
+      session={session}
+      create={create}
+      close={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  const submit = screen.getByRole("button", { name: "Create" });
+  await user.type(name, "Release");
+  expect(submit).toBeDisabled();
+  expect(create).not.toHaveBeenCalled();
+  const retry = screen.getByRole("button", { name: "Retry preferences" });
+  retry.focus();
+  act(recover);
+  expect(name).toHaveFocus();
+  await user.type(name, " notes");
+  await user.click(submit);
+  expect(create).toHaveBeenCalledWith(
+    expect.objectContaining({ name: "Release notes" }),
+  );
+});
 
 /** A dialog nothing submits, so only dismissal can close it. */
 function mount() {

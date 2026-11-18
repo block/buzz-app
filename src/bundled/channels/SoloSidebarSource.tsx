@@ -11,6 +11,16 @@ import { SoloRegions } from "./SoloRegions";
 function SoloSidebarContents(props: MessagesSidebarState) {
   const { regions } = useSoloNavigation(props.session);
   if (!regions.length) return null;
+  if (!props.composedChatSections.size)
+    return (
+      <SoloRegions
+        session={props.session}
+        scope={props.scope}
+        navigator={props.navigator}
+        target={props.target}
+        sidebar={props.sidebar}
+      />
+    );
   return (
     <SoloInventory
       session={props.session}
@@ -20,14 +30,14 @@ function SoloSidebarContents(props: MessagesSidebarState) {
       chatIcons={props.chatIcons}
       chatMenus={props.chatMenus}
       sidebarRows={props.sidebarRows}
-      renderContents={(ordinary, _header, pendingClick, composeOrdinary) => (
+      composedChatSections={props.composedChatSections}
+      renderContents={(_ordinary, _header, pendingClick, composeOrdinary) => (
         <SoloRegions
           session={props.session}
           scope={props.scope}
           navigator={props.navigator}
           target={props.target}
           sidebar={props.sidebar}
-          ordinary={ordinary}
           composeOrdinary={composeOrdinary}
           pendingClick={pendingClick}
         />
@@ -37,7 +47,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
 }
 export const soloSidebarSource: SidebarSectionSource = {
   version: 2,
-  id: "solo-regions",
+  id: "solo",
   context: "buzz.channels/messages",
   scope: "solo",
   component: function SoloSidebarSource({ render }) {

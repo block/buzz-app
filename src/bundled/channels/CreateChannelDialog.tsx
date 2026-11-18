@@ -127,14 +127,15 @@ function OpenCreateChannelDialog({
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
   const [starred, setStarred] = useState(false);
+  const loadDefaults = !!initialGroup && session.channelKit.available;
   const channelTemplates = useChannelTemplates();
   const [workspaceTemplate, setWorkspaceTemplate] = useState<ChannelTemplate>();
-  const [loadingDefaults, setLoadingDefaults] = useState(!!initialGroup);
+  const [loadingDefaults, setLoadingDefaults] = useState(loadDefaults);
   const [defaultsError, setDefaultsError] = useState("");
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the same workspace.
   useEffect(() => {
-    if (!initialGroup) return;
+    if (!loadDefaults) return;
     let active = true;
     setLoadingDefaults(true);
     setDefaultsError("");
@@ -183,7 +184,7 @@ function OpenCreateChannelDialog({
     return () => {
       active = false;
     };
-  }, [defaultsAttempt, initialGroup, session]);
+  }, [defaultsAttempt, initialGroup, loadDefaults, session]);
   const templates = workspaceTemplate
     ? [
         workspaceTemplate,
@@ -304,6 +305,7 @@ function OpenCreateChannelDialog({
     description !== "" ||
     privateChannel ||
     lifetime !== "ongoing" ||
+    groupId !== initialGroup ||
     (chosenTemplate !== undefined &&
       chosenTemplate !== (workspaceTemplate?.id ?? ""));
   const requestClose = () => {
@@ -326,8 +328,8 @@ function OpenCreateChannelDialog({
       )
         throw new Error(
           groupsReady
-            ? "This group is no longer available. Close this dialog and create from another sidebar group or Channels."
-            : "Wait for saved sidebar groups to load, then try again.",
+            ? "This workspace is no longer available. Choose another workspace or Team."
+            : "Wait for saved workspaces to load, then try again.",
         );
       await onCreate({
         name: normalizedName,
@@ -404,7 +406,7 @@ function OpenCreateChannelDialog({
                     />{" "}
                   </>
                 ) : null}
-                {starred ? "Starred" : (destination?.name ?? "saved group")}
+                {starred ? "Starred" : (destination?.name ?? "saved workspace")}
               </>
             )}
           </span>
@@ -533,6 +535,33 @@ function OpenCreateChannelDialog({
               setError("");
             }}
           />
+          {initialGroup && (
+            <Select
+              label="Destination workspace"
+              variant="field"
+              value={groupId}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    { value: "", label: "Team" },
+                    ...(groupId && !destination
+                      ? [{ value: groupId, label: "Saved workspace" }]
+                      : []),
+                    ...destinations.map(({ id, name }) => ({
+                      value: id,
+                      label: name,
+                    })),
+                  ],
+                },
+              ]}
+              onValueChange={(value) => {
+                if (!editing.current) return;
+                setGroupId(value);
+                setError("");
+              }}
+            />
+          )}
           {defaultsError && chosenTemplate === undefined && (
             <p role="alert">
               {defaultsError}{" "}

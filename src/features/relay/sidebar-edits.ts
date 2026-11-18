@@ -175,9 +175,10 @@ export function validSidebarSectionOrder(
   sectionIds: readonly string[],
 ): boolean {
   return (
-    sectionIds.length <= MAX_WORKSPACES + HOME_SIDEBAR_SECTIONS.length &&
-    sectionIds.every(validSidebarChannelId) &&
-    new Set(sectionIds).size === sectionIds.length
+    validWorkspaceSectionOrder(sectionIds) ||
+    (sectionIds.length <= MAX_WORKSPACES &&
+      sectionIds.every(validSidebarChannelId) &&
+      new Set(sectionIds).size === sectionIds.length)
   );
 }
 
@@ -259,7 +260,35 @@ export function editSidebarAssignment(
       [["s", added.id, "live"], true],
     );
   }
-  return editSidebarRecord("channel-sections", current, createdAt, writes, now);
+  const next = editSidebarRecord(
+    "channel-sections",
+    current,
+    createdAt,
+    writes,
+    now,
+  );
+  if (
+    current.sectionOrder === undefined ||
+    createSection?.position !== "first" ||
+    existing.some(({ id }) => id === createSection.id)
+  )
+    return next;
+  const key = `group:${createSection.id}`;
+  const previous = workspaceSectionOrder(
+    projectSidebarPreferences(
+      current,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    ),
+  );
+  const first = previous.findIndex((entry) => entry.startsWith("group:"));
+  const order = [...previous];
+  order.splice(first < 0 ? order.indexOf("starred") + 1 : first, 0, key);
+  return { ...next, sectionOrder: order };
 }
 
 export function editSidebarSort(

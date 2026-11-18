@@ -1,4 +1,5 @@
 import { expect } from "@playwright/test";
+import { isSidebarPreferencesBatch } from "../../src/features/relay/sidebar-preferences.ts";
 import { verifyEvent } from "nostr-tools";
 import { createHash } from "node:crypto";
 
@@ -428,15 +429,15 @@ export function policyRelay({
           );
         }
         if (filters.length !== 1) {
-          // Sidebar preferences read only these five exact own-author coordinates.
-          expect(filters).toHaveLength(5);
-          expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
-            "channel-filter",
-            "channel-mutes",
-            "channel-sections",
-            "channel-sort",
-            "channel-stars",
-          ]);
+          const legacySortAndFilter =
+            filters.length === 2 &&
+            filters
+              .map((filter) => filter["#d"]?.[0])
+              .sort()
+              .join() === "channel-filter,channel-sort";
+          expect(
+            legacySortAndFilter || isSidebarPreferencesBatch(filters),
+          ).toBe(true);
           for (const filter of filters) {
             expect(filter.kinds).toEqual([30078]);
             expect(filter.authors).toEqual([viewer]);

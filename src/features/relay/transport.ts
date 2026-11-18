@@ -36,6 +36,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   projectWorkspaceGroups,
+  encodeLegacyWorkspaceEnvelope,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
@@ -904,7 +905,11 @@ export async function connectBrokerTransport(
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(legacy ? { events, legacy } : events),
+              body: JSON.stringify(
+                legacy
+                  ? { events, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : events,
+              ),
               signal,
             });
             if (!result.ok)
@@ -1170,7 +1175,12 @@ export async function connectBrokerTransport(
                 credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(
-                  legacy ? { intent: { sectionId }, legacy } : { sectionId },
+                  legacy
+                    ? {
+                        intent: { sectionId },
+                        legacy: encodeLegacyWorkspaceEnvelope(legacy),
+                      }
+                    : { sectionId },
                 ),
                 signal,
               },
@@ -1195,7 +1205,11 @@ export async function connectBrokerTransport(
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(legacy ? { intent, legacy } : intent),
+              body: JSON.stringify(
+                legacy
+                  ? { intent, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : intent,
+              ),
               signal,
             });
             if (!response.ok)
@@ -1219,7 +1233,12 @@ export async function connectBrokerTransport(
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(
-                legacy ? { intent: { sectionIds }, legacy } : { sectionIds },
+                legacy
+                  ? {
+                      intent: { sectionIds },
+                      legacy: encodeLegacyWorkspaceEnvelope(legacy),
+                    }
+                  : { sectionIds },
               ),
               signal,
             });
@@ -1239,7 +1258,11 @@ export async function connectBrokerTransport(
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(legacy ? { intent, legacy } : intent),
+              body: JSON.stringify(
+                legacy
+                  ? { intent, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : intent,
+              ),
               signal,
             });
             if (!result.ok) {

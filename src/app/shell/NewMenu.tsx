@@ -10,19 +10,15 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
-import { hasSoloDraft } from "../../features/solo/draft-projects";
 import {
   resetNewChatProject,
   soloDraftInput,
 } from "../../features/solo/SoloDraft";
 import {
-  soloDraft,
   soloDraftTarget,
   resumeSoloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
-import { readView, writeView } from "../../shared/view-state";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -31,8 +27,7 @@ import {
   MenuItem,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
-import { CaretDownIcon, PlusIcon } from "../../shared/design-system/icons";
-import styles from "./NewMenu.module.css";
+import { PlusIcon } from "../../shared/design-system/icons";
 
 type Props = {
   relay: RelayData;
@@ -74,44 +69,21 @@ function ReadyNewMenu({
 }: Props & { session: RelaySession; available: boolean }) {
   const preferences = useSidebarPreferences(session.sidebarPreferences);
   const scope = splitPartition(session.scope);
-  const viewKey = "sidebar-new-action";
-  const [action, setAction] = useState<Action>(() => {
-    const saved = readView<unknown>(session.scope, viewKey, "chat");
-    return saved === "channel" || saved === "dm" ? saved : "chat";
-  });
   const [channelGroup, setChannelGroup] = useState<string>();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const primary = useRef<HTMLButtonElement>(null);
   const caret = useRef<HTMLButtonElement>(null);
   const finalFocus = useRef<HTMLElement>(null);
   const [draftFocus, setDraftFocus] = useState<HTMLElement | null>(null);
   const current = () => relay.snapshot().session === session;
-  const workspace = () => {
-    const target = navigator.snapshot().entry?.target;
-    const group =
-      target?.kind === "conversation"
-        ? preferences.data?.assignments[target.channelId]
-        : target?.kind === "page" && target.pluginId === "buzz.channels"
-          ? soloDraft(target.route?.params)?.project
-          : undefined;
-    return preferences.data?.sections.some(({ id }) => id === group)
-      ? group
-      : undefined;
-  };
   const disabled = (kind: Action) =>
     !available ||
     (kind === "channel" && !session.channelCreation.available) ||
     (kind === "dm" && !scope);
-  const run = (kind: Action, fromMenu = false) => {
+  const run = (kind: Action) => {
     if (!current() || disabled(kind)) return;
-    if (fromMenu) {
-      setAction(kind);
-      writeView(session.scope, viewKey, kind);
-    }
-    finalFocus.current = fromMenu ? caret.current : primary.current;
-    const project = workspace();
+    finalFocus.current = caret.current;
     if (kind === "channel") {
-      setChannelGroup(project ?? "");
+      setChannelGroup("");
       return;
     }
     if (kind === "dm") {
@@ -127,44 +99,27 @@ function ReadyNewMenu({
       return;
     }
     const target = navigator.snapshot().entry?.target;
-    const destination = resumeSoloDraftTarget(session.scope, target, project);
+    const destination = resumeSoloDraftTarget(session.scope, target);
     const input = destination === target ? soloDraftInput() : null;
     if (input) {
-      if (fromMenu) setDraftFocus(input);
-      else input.focus();
+      setDraftFocus(input);
       return;
     }
-    if (project && !hasSoloDraft(session, session.scope, project))
-      resetNewChatProject(session.scope, project);
     void navigator.open(destination);
   };
   const controls = (
-    <fieldset className={styles.split} aria-label="Create">
-      <Button
-        ref={primary}
-        size="sm"
-        variant="subtle"
-        shape="control"
-        disabled={disabled(action)}
-        onClick={() => run(action)}
-      >
-        <PlusIcon size={15} />
-        {actions[action]}
-      </Button>
-      <MenuTrigger
-        render={
-          <IconButton
-            ref={caret}
-            disabled={!available}
-            aria-label="New options"
-            title="New options"
-            variant="inset"
-            size="sm"
-            icon={<CaretDownIcon size={14} />}
-          />
-        }
-      />
-    </fieldset>
+    <MenuTrigger
+      render={
+        <IconButton
+          ref={caret}
+          disabled={!available}
+          aria-label="New options"
+          title="New options"
+          size="compact"
+          icon={<PlusIcon strokeWidth={2.5} size={15} />}
+        />
+      }
+    />
   );
   return (
     <>
@@ -191,7 +146,7 @@ function ReadyNewMenu({
             <MenuItem
               key={kind}
               disabled={disabled(kind)}
-              onClick={() => run(kind, true)}
+              onClick={() => run(kind)}
             >
               {actions[kind]}
             </MenuItem>

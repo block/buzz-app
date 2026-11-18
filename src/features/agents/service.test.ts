@@ -2,9 +2,11 @@ import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
 import { UnattestedProfile } from "../relay/identity-archives";
-import { createSoloPreferences } from "../relay/solo-preferences";
-import type { ChannelKit } from "../channel-templates/capability";
-import type { KitEntry, KitValue } from "../channel-templates/model";
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
+import type {
+  SidebarAssignmentIntent,
+  SidebarPreferences,
+} from "../relay/sidebar-preferences";
 import { federatedFixture } from "../federated-identity/testing";
 import { workingAgentDetails } from "../../bundled/channels/working-agents";
 import { completionTarget } from "../notifications/agent-completions";
@@ -14421,60 +14423,45 @@ it.each(["authority", "assignment"])(
 );
 
 it.each(["filed", "deleted", "retired"])(
-  "uses the existing Solo preference writer across placement outcome: %s",
+  "uses the shared workspace writer across placement outcome: %s",
   async (outcome) => {
     const f = await setup();
-    const lifetime = new AbortController();
     const call = new AbortController();
-    const saved = runnerGate(),
-      release = runnerGate();
-    let entries: KitEntry[] = [
-      {
-        eventId: "head",
-        createdAt: 1,
-        record: {
-          version: 1,
-          community: "https://relay.example.test",
-          deleted: false,
-          value: {
-            type: "groups",
-            id: "me",
-            groups: [
-              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
-            ],
-            assignments: {},
-          },
-        },
+    const saved = runnerGate();
+    const release = runnerGate();
+    let head: SidebarPreferences = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      sectionOrder: [],
+      legacyTemplates: { work: "do-not-copy" },
+      starred: [],
+      muted: [],
+    };
+    const save = vi.fn(
+      async ({ channelId, sectionId }: SidebarAssignmentIntent) => {
+        if (!head.sections.some(({ id }) => id === sectionId))
+          throw new Error("Sidebar group no longer exists");
+        if (channelId && sectionId)
+          head = {
+            ...head,
+            assignments: { ...head.assignments, [channelId]: sectionId },
+          };
+        if (outcome === "retired") {
+          saved.resolve();
+          await release.promise;
+        }
+        return head;
       },
-    ];
-    const save = vi.fn(async (value: KitValue) => {
-      entries = [
-        {
-          eventId: "next",
-          createdAt: 2,
-          record: {
-            version: 1,
-            community: "https://relay.example.test",
-            deleted: false,
-            value,
-          },
-        },
-      ];
-      if (outcome === "retired") {
-        saved.resolve();
-        await release.promise;
-      }
-    });
-    const kit = {
+    );
+    const preferences = createSidebarPreferencesStore({
       available: true,
-      refresh: vi.fn(async () => {}),
-      snapshot: () => ({ status: "ready", entries }),
-      save,
-    } as unknown as ChannelKit;
-    const preferences = createSoloPreferences(kit, lifetime.signal);
+      read: async () => head,
+      write: save,
+      writeStar: async () => [],
+    });
     const authority = "f".repeat(64);
     Object.assign(f.session, {
-      channelKit: kit,
+      channelKit: { refresh: async () => {} },
       sidebarPreferences: preferences.queries,
       relayAuthor: authority,
       snapshotRead: async () => [
@@ -14517,13 +14504,13 @@ it.each(["filed", "deleted", "retired"])(
           ["p", viewer],
         ],
       });
-      if (outcome === "deleted") entries = [];
+      if (outcome === "deleted") head = { ...head, sections: [] };
       if (outcome === "deleted") {
         await expect(file?.("new-chat")).resolves.toMatchObject({
           status: "unconfirmed",
-          error: expect.stringContaining("Solo group is unavailable"),
+          error: expect.stringContaining("Sidebar group no longer exists"),
         });
-        expect(save).not.toHaveBeenCalled();
+        expect(head.assignments).toEqual({});
       } else {
         const pending = file?.("new-chat");
         if (outcome === "retired") {
@@ -14536,16 +14523,7 @@ it.each(["filed", "deleted", "retired"])(
           status: outcome === "retired" ? "unconfirmed" : "filed",
         });
         expect(save).toHaveBeenCalledExactlyOnceWith(
-          {
-            type: "groups",
-            id: "me",
-            groups: [
-              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
-            ],
-            assignments: { "new-chat": "work" },
-          },
-          "head",
-          false,
+          { channelId: "new-chat", sectionId: "work" },
           expect.any(AbortSignal),
         );
         await preferences.queries.refresh();
@@ -14556,7 +14534,6 @@ it.each(["filed", "deleted", "retired"])(
     } finally {
       release.resolve();
       preferences.dispose();
-      lifetime.abort();
       await f.ctx.fiber.dispose();
     }
   },

@@ -8,10 +8,7 @@ import {
   validSidebarSectionRename,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
-import {
-  importWorkspaceFallback,
-  projectSidebarRecord,
-} from "../src/features/relay/sidebar-registers.ts";
+import { importWorkspaceFallback } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -19,8 +16,13 @@ import {
   projectWorkspaceGroups,
   SIDEBAR_COORDINATES,
   WORKSPACE_COORDINATE,
+  WORKSPACE_PREFERENCE_COORDINATES,
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
   workspaceBaseRecord,
-  workspaceRecordForWrite,
+  expandWorkspaceRecord,
+  decodeLegacyWorkspaceEnvelope,
+  workspacePayloadForSigning,
 } from "../src/features/relay/sidebar-preferences.ts";
 
 export const SIDEBAR_REQUEST_BYTES = 960 * 1024; // Five bounded encrypted coordinates.
@@ -29,10 +31,13 @@ export const SIDEBAR_UPLOAD_SLOTS = 2;
 export const SIDEBAR_UPLOAD_MS = 10_000;
 /** Local host decoder, deliberately not an arbitrary NIP-44 decrypt capability. */
 export function decodeSidebarPreferences(input, secret) {
-  const { events, legacy } = Array.isArray(input)
+  const { events, legacy: legacyEnvelope } = Array.isArray(input)
     ? { events: input }
     : (input ?? {});
-  if (legacy !== undefined) workspaceBaseRecord(legacy);
+  const legacy =
+    legacyEnvelope === undefined
+      ? undefined
+      : decodeLegacyWorkspaceEnvelope(legacyEnvelope);
   if (
     !Array.isArray(events) ||
     events.length > SIDEBAR_COORDINATES.length ||
@@ -50,7 +55,7 @@ export function decodeSidebarPreferences(input, secret) {
       event?.kind !== 30078 ||
       event.pubkey !== viewer ||
       tags?.length !== 1 ||
-      (coordinate !== WORKSPACE_COORDINATE &&
+      (!WORKSPACE_PREFERENCE_COORDINATES.includes(coordinate) &&
         !SIDEBAR_COORDINATES.includes(coordinate)) ||
       coordinates.has(coordinate) ||
       typeof event.content !== "string" ||
@@ -71,19 +76,18 @@ export function decodeSidebarPreferences(input, secret) {
         JSON.parse(plaintext),
       );
     }
-    if (decoded.has(WORKSPACE_COORDINATE))
+    const workspace = decoded.get(WORKSPACE_COORDINATE);
+    const sort = decoded.get(WORKSPACE_SORT_COORDINATE);
+    const filter = decoded.get(WORKSPACE_FILTER_COORDINATE);
+    if (workspace || sort || filter)
       return projectWorkspacePreferences(
-        importWorkspaceFallback(
-          projectSidebarRecord(
-            "channel-sections",
-            decoded.get(WORKSPACE_COORDINATE),
-          ),
-          legacy,
-        ),
+        workspace
+          ? importWorkspaceFallback(expandWorkspaceRecord(workspace), legacy)
+          : undefined,
         decoded.get("channel-stars"),
         decoded.get("channel-mutes"),
-        decoded.get("channel-sort"),
-        decoded.get("channel-filter"),
+        sort ?? decoded.get("channel-sort"),
+        filter ?? decoded.get("channel-filter"),
       );
     return projectSidebarPreferences(
       decoded.get("channel-sections"),
@@ -160,10 +164,7 @@ function parseSectionsEvent(events, secret, legacy) {
     const blob = JSON.parse(plaintext);
     projectWorkspaceGroups(blob);
     return {
-      blob: importWorkspaceFallback(
-        projectSidebarRecord("channel-sections", blob),
-        legacy,
-      ),
+      blob: importWorkspaceFallback(expandWorkspaceRecord(blob), legacy),
       createdAt: event.created_at,
     };
   } finally {
@@ -285,7 +286,7 @@ function prepareSections(events, secret, now, legacy, edit) {
   return {
     groups,
     event: signWorkspace(
-      workspaceRecordForWrite(blob, legacy),
+      workspacePayloadForSigning(blob, legacy),
       secret,
       Math.max(Math.floor(now / 1000), current.createdAt + 1),
     ),

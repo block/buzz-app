@@ -1,5 +1,8 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
 use buzz_agent_controller::LegacyHumanError;
 use buzz_credential_store as credentials;
@@ -499,6 +502,16 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
         v.as_str()
             .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
     };
+    let workspace_choices = matches!(
+        coordinate,
+        "channel-workspace-sort" | "channel-workspace-filter"
+    );
+    let choice_limit = if workspace_choices { 205 } else { 104 };
+    let coordinate = match coordinate {
+        "channel-workspace-sort" => "channel-sort",
+        "channel-workspace-filter" => "channel-filter",
+        _ => coordinate,
+    };
     match coordinate {
         "channel-sections" | "channel-workspaces" => {
             let workspaces = coordinate == "channel-workspaces";
@@ -506,13 +519,9 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 .get("sections")
                 .and_then(|v| v.as_array())
                 .ok_or_else(invalid)?;
-            let assignments = data
-                .get("assignments")
-                .and_then(|v| v.as_object())
-                .ok_or_else(invalid)?;
             let (section_limit, assignment_limit) =
                 if workspaces { (200, 2000) } else { (100, 1000) };
-            if sections.len() > section_limit || assignments.len() > assignment_limit {
+            if sections.len() > section_limit {
                 return Err(invalid());
             }
             if workspaces {
@@ -522,6 +531,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                         "version"
                             | "sections"
                             | "assignments"
+                            | "filings"
                             | "sectionOrder"
                             | "legacyTemplates"
                             | "removedSections"
@@ -596,14 +606,53 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     return Err(invalid());
                 }
             }
-            if assignments.iter().any(|(id, section)| {
-                id.trim().is_empty()
-                    || id.encode_utf16().count() > 256
-                    || !section
-                        .as_str()
-                        .is_some_and(|v| !v.trim().is_empty() && v.encode_utf16().count() <= 256)
-            }) {
-                return Err(invalid());
+            if workspaces && data.contains_key("filings") {
+                let filings = data["filings"].as_object().ok_or_else(invalid)?;
+                if data.contains_key("assignments") {
+                    return Err(invalid());
+                }
+                let mut conversations = std::collections::HashSet::new();
+                for (workspace, rows) in filings {
+                    let rows = rows.as_array().ok_or_else(invalid)?;
+                    if rows.is_empty() || !ids.contains(workspace.as_str()) {
+                        return Err(invalid());
+                    }
+                    for row in rows {
+                        let row = row.as_str().ok_or_else(invalid)?;
+                        let valid = if let Some(escaped) = row.strip_prefix("~~") {
+                            escaped.encode_utf16().count() < 256
+                        } else if let Some(packed) = row.strip_prefix('~') {
+                            packed.len() == 43
+                                && STANDARD_NO_PAD
+                                    .decode(packed)
+                                    .is_ok_and(|bytes| bytes.len() == 32)
+                        } else {
+                            !row.trim().is_empty()
+                                && row.encode_utf16().count() <= 256
+                                && !(row.len() == 64
+                                    && row
+                                        .bytes()
+                                        .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f')))
+                        };
+                        if !valid
+                            || !conversations.insert(row)
+                            || conversations.len() > assignment_limit
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                }
+            } else {
+                let assignments = data["assignments"].as_object().ok_or_else(invalid)?;
+                if assignments.len() > assignment_limit
+                    || assignments.iter().any(|(id, section)| {
+                        id.trim().is_empty()
+                            || id.encode_utf16().count() > 256
+                            || !text(section, 256)
+                    })
+                {
+                    return Err(invalid());
+                }
             }
         }
         "channel-stars" | "channel-mutes" => {
@@ -641,7 +690,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             if coordinate == "channel-filter" {
                 if let Some(windows) = data.get("activeWindowSeconds") {
                     let windows = windows.as_object().ok_or_else(invalid)?;
-                    if windows.len() > 205
+                    if windows.len() > choice_limit
                         || windows.iter().any(|(group, value)| {
                             group.trim().is_empty()
                                 || group.encode_utf16().count() > 264
@@ -654,7 +703,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     }
                 }
             }
-            if groups.len() > 205
+            if groups.len() > choice_limit
                 || groups.iter().any(|(group, mode)| {
                     group.encode_utf16().count() > 264
                         || !mode.is_string()
@@ -702,7 +751,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             if !choices
                 .get("g")
                 .and_then(|v| v.as_object())
-                .is_some_and(|g| g.len() <= 205)
+                .is_some_and(|g| g.len() <= choice_limit)
             {
                 return Err(invalid());
             }
@@ -871,6 +920,8 @@ pub(crate) fn sidebar_coordinate(value: &str) -> bool {
             | "channel-mutes"
             | "channel-sort"
             | "channel-filter"
+            | "channel-workspace-sort"
+            | "channel-workspace-filter"
             | "main-agent"
     )
 }

@@ -35,6 +35,9 @@ import { createSidebarPreferencesStore } from "../../features/relay/sidebar-pref
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import { SIDEBAR_REVEAL_BUDGET_MS } from "../../bundled/channels/useSidebarStartup";
+import { teamSidebarSource } from "../../bundled/channels/TeamSidebarSource";
+import type { RegisteredSidebarSectionSource } from "../../features/channel-navigation/sidebar-section-components";
+import type { RegisteredSidebarSection } from "../../features/channel-navigation/sidebar-sections-service";
 stubAvatarBrowserApis();
 afterEach(() => {
   cleanup();
@@ -205,8 +208,7 @@ it("keeps focus on a different chat after an Enter-save finishes", async () => {
   );
   expect(destination).toHaveFocus();
 });
-it("shows only Solo under a plugin restriction and restores the saved filter after", async () => {
-  const user = userEvent.setup();
+it("shows only chats under a plugin restriction and restores the other sections after", async () => {
   let restrictions: readonly RegisteredSidebarRestriction[] = [];
   const listeners = new Set<() => void>();
   const publish = (next: readonly RegisteredSidebarRestriction[]) => {
@@ -221,10 +223,71 @@ it("shows only Solo under a plugin restriction and restores the saved filter aft
     },
     restrict: () => () => {},
   };
-  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
-    sidebarScope,
-  });
-  await user.click(screen.getByRole("tab", { name: "Team" }));
+  const contributions: readonly RegisteredSidebarSection[] = [
+    {
+      version: 1,
+      id: "inventory",
+      key: "test.sidebar/inventory",
+      pluginId: "test.sidebar",
+      revision: "fixture",
+      title: "Plugin heading",
+      icon: null,
+      rows: {
+        snapshot: () => sectionRows,
+        subscribe: () => () => {},
+      },
+      select: () => conversationTarget(scope, "team"),
+    },
+  ];
+  const sectionRows = [{ id: "plugin-row", label: "Plugin row" }];
+  const sources: readonly RegisteredSidebarSectionSource[] = [
+    {
+      ...teamSidebarSource,
+      key: "buzz.channels/team",
+      pluginId: "buzz.channels",
+      revision: "bundled",
+    },
+    {
+      ...teamSidebarSource,
+      id: "team-addon",
+      key: "test.sidebar/team-addon",
+      pluginId: "test.sidebar",
+      revision: "fixture",
+      component: ({ render }) =>
+        render([
+          {
+            id: "team-addon",
+            defaultPosition: 99,
+            element: <span>Team plugin slot</span>,
+          },
+        ]),
+    },
+  ];
+  const f = fixture(
+    true,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    {
+      sidebarScope,
+      sidebarSections: {
+        version: 1,
+        register() {},
+        subscribe: () => () => {},
+        snapshot: () => contributions,
+        sourceSnapshot: () => sources,
+      },
+    },
+  );
+  f.roster((rows) => [
+    ...rows,
+    { id: "team", name: "Team row", channelType: "stream" },
+  ]);
+  expect(await screen.findByText("Plugin heading")).toBeVisible();
+  expect(await screen.findByText("Team plugin slot")).toBeVisible();
   act(() =>
     publish([
       {
@@ -241,69 +304,28 @@ it("shows only Solo under a plugin restriction and restores the saved filter aft
   expect(screen.queryByRole("tabpanel")).toBeNull();
   expect(screen.getByText("Focusing")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Inbox" })).toBeNull();
-  expect(screen.getByRole("region", { name: "Solo" })).toBeVisible();
-  act(() => publish([]));
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
-});
-it("filters the combined sidebar without navigating or resetting Solo sections", async () => {
-  const user = userEvent.setup();
-  const f = fixture(true);
-  const all = screen.getByRole("tab", { name: "All" });
-  const solo = screen.getByRole("tab", { name: "Solo" });
-  const team = screen.getByRole("tab", { name: "Team" });
-  expect(all).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("button", { name: "New" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Planning/ })).toBeVisible();
   expect(
-    screen.getAllByRole("separator", { name: "Resize sidebar" }),
-  ).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "Chats" }));
-  await user.click(team);
-  expect(
-    screen.queryByRole("button", { name: "New chat" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
-  expect(screen.getByRole("tabpanel", { name: "Team" })).toHaveAttribute(
-    "id",
-    team.getAttribute("aria-controls"),
-  );
-  await user.click(solo);
-  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
-  expect(screen.queryByRole("heading", { name: "Solo" })).toBeNull();
-  // Without its heading, Solo creates from New beside the tabs.
-  expect(
-    screen.queryByRole("button", { name: "New chat or workspace" }),
+    screen.queryByRole("button", { name: "More actions for Team" }),
   ).toBeNull();
-  expect(screen.getByRole("button", { name: "Chats" })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  );
-  await user.keyboard("{ArrowRight}");
-  expect(team).toHaveFocus();
-  expect(solo).toHaveAttribute("aria-selected", "true");
-  await user.keyboard("{Enter}");
-  expect(team).toHaveAttribute("aria-selected", "true");
-  await user.click(all);
-  expect(f.open).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  expect(screen.queryByText("Plugin heading")).toBeNull();
+  expect(screen.queryByText("Team plugin slot")).toBeNull();
+  act(() => publish([]));
+  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+  expect(screen.getByText("Plugin heading")).toBeVisible();
+  expect(screen.getByText("Team plugin slot")).toBeVisible();
+});
+it("keeps unfiled creation in the Solo heading", async () => {
+  const user = userEvent.setup();
+  const f = fixture(true, true);
+  expect(screen.queryByRole("tab")).toBeNull();
+  const solo = document.querySelector('[data-sidebar-section="solo"]');
+  if (!(solo instanceof HTMLElement)) throw new Error("Missing Solo section");
+  await user.click(within(solo).getByRole("button", { name: "New options" }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual([
-    "New chat",
-    "New workspace",
-    "New DM",
-    "New channel",
-    "New section",
-  ]);
-  await user.click(screen.getByRole("menuitem", { name: "New chat" }));
-  expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
-  await user.click(solo);
-  await user.click(screen.getByRole("button", { name: "New" }));
-  await user.click(await screen.findByRole("menuitem", { name: "New DM" }));
+  ).toEqual(["New chat", "New channel", "New DM", "New workspace"]);
+  await user.click(screen.getByRole("menuitem", { name: "New DM" }));
   expect(f.open).toHaveBeenLastCalledWith({
     version: 1,
     kind: "page",
@@ -314,12 +336,12 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   });
 });
 
-it("collapses the Solo and Team inventories independently in All", async () => {
+it("collapses the Solo and Team home sections independently", async () => {
   const user = userEvent.setup();
   fixture(true);
   const section = (key: "solo" | "team") => {
     const summary = document.querySelector<HTMLElement>(
-      `[data-sidebar-section="scope:${key}"] summary`,
+      `[data-sidebar-section="${key === "team" ? "channels" : key}"] [aria-controls]`,
     );
     expect(summary).not.toBeNull();
     const panel = document.getElementById(
@@ -341,23 +363,20 @@ it("collapses the Solo and Team inventories independently in All", async () => {
   expect(solo.panel).toHaveAttribute("hidden");
   expect(team.panel).toHaveAttribute("hidden");
 
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
-  await user.click(screen.getByRole("tab", { name: "All" }));
   expect(section("solo").panel).toHaveAttribute("hidden");
   expect(section("team").panel).toHaveAttribute("hidden");
 });
 
-it("mounts no actions menu for the Solo and Team group headers", async () => {
+it("mounts one action menu for each home section", async () => {
   vi.useFakeTimers();
   try {
     fixture(true);
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const more = (title: string) =>
       document.querySelector(`button[aria-label="More actions for ${title}"]`);
-    // Both headers hide their actions, yet each channel update re-rendered a menu.
-    expect(more("Channels")).not.toBeNull();
-    expect(more("Solo")).toBeNull();
-    expect(more("Team")).toBeNull();
+    expect(more("Solo")).not.toBeNull();
+    expect(more("Team")).not.toBeNull();
+    expect(more("Channels")).toBeNull();
   } finally {
     vi.useRealTimers();
   }
@@ -367,9 +386,13 @@ it("expands Team when navigation selects one of its conversations", async () => 
   vi.useFakeTimers();
   try {
     const f = fixture(true);
+    f.roster((channels) => [
+      ...channels,
+      { id: "team-channel", name: "Team channel", channelType: "stream" },
+    ]);
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const summary = document.querySelector<HTMLElement>(
-      '[data-sidebar-section="scope:team"] summary',
+      '[data-sidebar-section="channels"] [aria-controls]',
     );
     expect(summary).not.toBeNull();
     const panel = document.getElementById(
@@ -405,7 +428,7 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
     });
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const summary = document.querySelector<HTMLElement>(
-      '[data-sidebar-section="scope:solo"] summary',
+      '[data-sidebar-section="solo"] [aria-controls]',
     );
     expect(summary).not.toBeNull();
     const panel = document.getElementById(
@@ -422,43 +445,6 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
   }
 });
 
-it.each(["Solo", "All"])(
-  "preserves %s for a source opening and selects Team on its next explicit open",
-  async (filter) => {
-    const f = fixture(true);
-    f.roster((channels) => [
-      ...channels,
-      {
-        id: "source",
-        name: "Source channel",
-        channelType: "stream",
-        cached: true,
-      },
-    ]);
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-channel-id="source"]'),
-      ).not.toBeNull(),
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: filter }));
-    const target = conversationTarget(scope, "source");
-    await act(() => f.open(target, { sidebar: "preserve" }));
-    expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    const teamRow = document.querySelector('[data-channel-id="source"]');
-    expect(teamRow).not.toBeNull();
-    expect(teamRow).not.toHaveAttribute("aria-current");
-    await act(() => f.open(target));
-    expect(
-      screen.getByRole("tab", { name: filter === "All" ? "All" : "Team" }),
-    ).toHaveAttribute("aria-selected", "true");
-    expect(teamRow).toHaveAttribute("aria-current", "page");
-  },
-);
-
 it("preserves a source opening only for itself, through a later render", async () => {
   const f = fixture(true);
   f.roster((channels) => [
@@ -473,8 +459,6 @@ it("preserves a source opening only for itself, through a later render", async (
   await waitFor(() =>
     expect(document.querySelector('[data-channel-id="source"]')).not.toBeNull(),
   );
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
   const target = conversationTarget(scope, "source");
   const thread: OpenTarget = {
     version: 1,
@@ -489,26 +473,13 @@ it("preserves a source opening only for itself, through a later render", async (
   // Something unrelated rendering the sidebar keeps the preserved opening.
   f.connection({ status: "ready" });
   expect(teamRow()).not.toHaveAttribute("aria-current");
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   // A later open in it, here a thread, uses the normal destination rules.
   await act(() => f.open(thread));
   expect(teamRow()).toHaveAttribute("aria-current", "page");
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   // Moving within the conversation, as Back and Forward over the thread do,
   // keeps a filter chosen since: it is not a new destination.
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
   f.navigateWithin(target);
   f.navigateWithin(thread);
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   // And a preserved opening from inside that thread applies again.
   await act(() => f.open(target, { sidebar: "preserve" }));
   expect(teamRow()).not.toHaveAttribute("aria-current");
@@ -518,12 +489,11 @@ it.each([
   ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],
 ])(
-  "opens %s from any filter and returns focus to New on cancel",
+  "opens %s and returns focus to New options on cancel",
   async (item, title, close) => {
     const user = userEvent.setup();
     fixture(true, true);
-    await user.click(screen.getByRole("tab", { name: "Team" }));
-    const trigger = screen.getByRole("button", { name: "New" });
+    const trigger = screen.getByRole("button", { name: "New options" });
     await user.click(trigger);
     await user.click(await screen.findByRole("menuitem", { name: item }));
     const dialog = await screen.findByRole("dialog", { name: title });
@@ -537,43 +507,10 @@ it.each([
   },
 );
 
-it("creates a sidebar section from New without moving or opening a conversation", async () => {
-  const user = userEvent.setup();
-  const f = fixture(true, true);
-  const create = vi
-    .spyOn(f.session.sidebarPreferences, "createSection")
-    .mockResolvedValue(undefined);
-  const assign = vi.spyOn(f.session.sidebarPreferences, "assign");
-  f.connection({});
-  await user.click(screen.getByRole("button", { name: "New" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New section" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Create new section",
-  });
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Section name" }),
-    "Projects",
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Create" }));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Create new section" }),
-    ).toBeNull(),
-  );
-  expect(create).toHaveBeenCalledExactlyOnceWith({
-    id: expect.any(String),
-    name: "Projects",
-  });
-  expect(assign).not.toHaveBeenCalled();
-  expect(f.open).not.toHaveBeenCalled();
-});
-
 it("keeps unavailable creation actions disabled", async () => {
   const user = userEvent.setup();
   fixture(true);
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.click(screen.getByRole("button", { name: "New options" }));
   expect(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
@@ -581,13 +518,10 @@ it("keeps unavailable creation actions disabled", async () => {
     "aria-disabled",
     "true",
   );
-  expect(screen.getByRole("menuitem", { name: "New section" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(screen.queryByRole("menuitem", { name: "New section" })).toBeNull();
 });
 
-it.each([["New", "New workspace"]])(
+it.each([["New options", "New workspace"]])(
   "opens an ordinary workspace draft from %s and ignores later completion after session replacement",
   async (triggerName, itemName) => {
     const f = fixture(true, true);
@@ -638,50 +572,16 @@ it.each([["New", "New workspace"]])(
   },
 );
 
-it("retains scope across Settings remounts and reveals navigation outside the filter", async () => {
-  const f = fixture(true);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("tab", { name: "Team" }));
-  f.sidebar(false);
-  f.sidebar(true);
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  f.navigate(soloDraftTarget(scope));
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  f.navigate({
-    version: 1,
-    kind: "conversation",
-    channelId: "team-channel",
-    scope: { viewer, communityOrigin: "https://relay.test" },
-  });
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await user.click(screen.getByRole("tab", { name: "All" }));
-  f.navigate(conversationTarget(scope, id));
-  expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-});
-
 it.each([
   ["New workspace", "New workspace", "Name"],
   ["New channel", "Create a channel", "Name"],
-  ["New section", "Create new section", "Section name"],
 ])(
   "retains typed %s input through cached reconnect and session replacement",
   async (item, title, inputName) => {
     const f = fixture(true, true);
     const user = userEvent.setup();
     f.connection({ status: "connecting", cached: true });
-    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(screen.getByRole("button", { name: "New options" }));
     await user.click(await screen.findByRole("menuitem", { name: item }));
     const input = within(
       await screen.findByRole("dialog", { name: title }),
@@ -698,24 +598,6 @@ it.each([
   },
 );
 
-it("keeps navigation scope preferences partitioned by community", async () => {
-  const f = fixture(true);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("tab", { name: "Team" }));
-  const second = `https://second.test:${viewer}`;
-  f.connection({ scope: second, session: { ...f.session, scope: second } });
-  expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
-  f.connection({ scope, session: f.session });
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-});
-
 it("header channel creation expands the saved destination without changing other collapsed sections", async () => {
   writeView(scope, "channel-sidebar", {
     collapsed: ["channels", "starred"],
@@ -726,7 +608,7 @@ it("header channel creation expands the saved destination without changing other
     .spyOn(f.session.channelCreation, "create")
     .mockResolvedValue("new-channel");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.click(screen.getByRole("button", { name: "New options" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "New channel" }),
   );
@@ -759,17 +641,8 @@ it("reveals Solo when New chat reopens the same destination after filtering it o
   const f = fixture(true);
   const user = userEvent.setup();
   f.navigate(soloDraftTarget(scope));
-  await user.click(screen.getByRole("tab", { name: "Team" }));
-  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.click(screen.getByRole("button", { name: "New options" }));
   await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
 });
 
 const soloFailure = vi.hoisted(() => ({ active: false }));
@@ -786,24 +659,43 @@ vi.mock("../../bundled/channels/SoloInventory", async (original) => {
 });
 
 it("contains a Solo render failure without rendering the failed inventory in its fallback", async () => {
+  const h = createSoloRegionFixture(viewer);
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) => ({ ...channel, cached: true })),
+  );
+  await h.register({
+    composeWorkspaces: true,
+    component: ({ ui }) => ui.Chats && <ui.Chats />,
+  });
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   soloFailure.active = true;
   try {
-    fixture(true);
+    render(
+      <ToastProvider>
+        <PrimarySidebar
+          relay={h.relay}
+          navigator={h.navigator}
+          target={conversationTarget(h.scope, "chat")}
+        >
+          <button type="button">Inbox</button>
+        </PrimarySidebar>
+      </ToastProvider>,
+    );
     expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "Conversations couldn’t open.",
     );
     soloFailure.active = false;
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Retry sidebar" }));
-    expect(
-      await screen.findByRole("navigation", { name: "Solo conversations" }),
-    ).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^Chat$/ })).toBeVisible();
   } finally {
     soloFailure.active = false;
     consoleError.mockRestore();
+    await h.dispose();
   }
 });
 
@@ -821,7 +713,7 @@ it("does not reveal or open a channel when its creation completes in a replaced 
     .spyOn(f.session.channelCreation, "create")
     .mockReturnValue(pending);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.click(screen.getByRole("button", { name: "New options" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "New channel" }),
   );
@@ -852,7 +744,7 @@ it("does not reveal or open a channel when its creation completes in a replaced 
 });
 
 it.each(["empty", "chats", "projects", "both"])(
-  "keeps Solo creation available with %s, including the Solo filter",
+  "keeps unfiled creation available with %s",
   async (inventory) => {
     const user = userEvent.setup();
     const f = fixture(true, true);
@@ -878,13 +770,10 @@ it.each(["empty", "chats", "projects", "both"])(
       },
     });
     f.connection({});
-    const nav = screen.getByRole("navigation", { name: "Solo conversations" });
-    if (inventory === "empty") {
-      await user.click(within(nav).getByRole("button", { name: "New chat" }));
-      expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
-    }
-    await user.click(screen.getByRole("tab", { name: "Solo" }));
-    const trigger = screen.getByRole("button", { name: "New" });
+    expect(
+      await screen.findByLabelText("Solo", { selector: "summary" }),
+    ).toBeVisible();
+    const trigger = screen.getByRole("button", { name: "New options" });
     await user.click(trigger);
     await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
     expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
@@ -901,7 +790,7 @@ it.each(["empty", "chats", "projects", "both"])(
 it("keeps new Solo chats available when project creation is unavailable", async () => {
   const user = userEvent.setup();
   const f = fixture(true);
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.click(screen.getByRole("button", { name: "New options" }));
   expect(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
@@ -909,100 +798,7 @@ it("keeps new Solo chats available when project creation is unavailable", async 
   expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
 });
 
-it("changes Team to Solo only for a live explicit chip intent and does not replay it after navigation and remount", async () => {
-  const h = createSoloRegionFixture(viewer);
-  const current = conversationTarget(h.scope, "owned");
-  let target = current;
-  const tree = () => (
-    <ToastProvider>
-      <PrimarySidebar relay={h.relay} navigator={h.navigator} target={target}>
-        {null}
-      </PrimarySidebar>
-    </ToastProvider>
-  );
-  const view = render(tree());
-  try {
-    await act(() => h.navigate(current));
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
-    act(() => h.service.reveal("owned"));
-    expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    target = conversationTarget(h.scope, "team");
-    await act(() => h.navigate(target));
-    view.rerender(tree());
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
-    act(() => h.roster([...h.session.channels.list().channels]));
-    view.rerender(<div />);
-    view.rerender(tree());
-    expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-  } finally {
-    view.unmount();
-    await h.dispose();
-  }
-});
-
-it("an explicit Solo reveal during a restriction keeps the saved Team filter", async () => {
-  const h = createSoloRegionFixture(viewer);
-  let restrictions: readonly RegisteredSidebarRestriction[] = [];
-  const listeners = new Set<() => void>();
-  const publish = (next: readonly RegisteredSidebarRestriction[]) => {
-    restrictions = next;
-    for (const listener of listeners) listener();
-  };
-  const sidebarScope: SidebarScope = {
-    snapshot: () => restrictions,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    restrict: () => () => {},
-  };
-  const target = conversationTarget(h.scope, "owned");
-  const view = render(
-    <ToastProvider>
-      <PrimarySidebar
-        relay={h.relay}
-        navigator={h.navigator}
-        target={target}
-        sidebarScope={sidebarScope}
-      >
-        {null}
-      </PrimarySidebar>
-    </ToastProvider>,
-  );
-  try {
-    await act(() => h.navigate(target));
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
-    act(() =>
-      publish([
-        {
-          id: "focus",
-          scope: "solo",
-          banner: () => <span>Focusing</span>,
-          key: "test.focus/focus",
-          pluginId: "test.focus",
-          revision: "bundled",
-        },
-      ]),
-    );
-    act(() => h.service.reveal("owned"));
-    act(() => publish([]));
-    expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-  } finally {
-    view.unmount();
-    await h.dispose();
-  }
-});
-
-it("uses one contributed heading and the prior All Team Nexus order, with no heading creation", async () => {
+it("renders one contributed region heading with no built-in creation action", async () => {
   const h = createSoloRegionFixture(viewer);
   await h.register({ title: "Nexus", component: () => null });
   const target = conversationTarget(h.scope, "owned");
@@ -1014,17 +810,8 @@ it("uses one contributed heading and the prior All Team Nexus order, with no hea
     </ToastProvider>,
   );
   try {
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "All",
-      "Team",
-      "Nexus",
-    ]);
-    expect(screen.queryByText("Solo")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Nexus")).toHaveLength(2);
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Nexus" }));
+    expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.getAllByText("Nexus")).toHaveLength(1);
-    await userEvent.setup().click(screen.getByRole("tab", { name: "All" }));
-    expect(screen.getAllByText("Nexus")).toHaveLength(2);
     // Headings carry no creation of their own; the New menu owns it.
     expect(
       screen.queryByRole("button", { name: "Create" }),
@@ -1064,7 +851,7 @@ it("omits a contributed create action whose menu fails", async () => {
     </ToastProvider>,
   );
   try {
-    expect(screen.getAllByText("Nexus")).toHaveLength(2);
+    expect(screen.getAllByText("Nexus")).toHaveLength(1);
     expect(
       screen.queryByRole("button", { name: "Create" }),
     ).not.toBeInTheDocument();
@@ -1074,8 +861,13 @@ it("omits a contributed create action whose menu fails", async () => {
   }
 });
 
-it("collapsing the contributed Solo section in All hides its ordinary chats", async () => {
+it("collapses contributed Solo rows while leaving the single ordinary chat in Solo", async () => {
   const h = createSoloRegionFixture(viewer);
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) => ({ ...channel, cached: true })),
+  );
   await h.register({
     title: "Nexus",
     component: ({ ui }) => (
@@ -1107,9 +899,10 @@ it("collapsing the contributed Solo section in All hides its ordinary chats", as
     expect(
       document.getElementById(heading?.getAttribute("aria-controls") ?? ""),
     ).toHaveAttribute("hidden");
+    expect(await screen.findByRole("button", { name: /^Chat/ })).toBeVisible();
     expect(
-      view.container.querySelector('[data-solo-channel-id="chat"]'),
-    ).not.toBeVisible();
+      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+    ).toHaveLength(1);
   } finally {
     view.unmount();
     await h.dispose();
@@ -1239,7 +1032,7 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({
     available: true,
-    groupsOnly: true,
+    writeStar: async () => [],
     read: async () => ({
       sections: [
         { id: "work", name: "Work", order: 0 },
@@ -1257,7 +1050,8 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   h.roster(
     h.session.channels
       .list()
-      .channels.filter((channel) => channel.id === "chat"),
+      .channels.filter((channel) => channel.id === "chat")
+      .map((channel) => ({ ...channel, cached: true })),
   );
   const view = render(
     <ToastProvider>
@@ -1274,15 +1068,16 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   const user = userEvent.setup();
   const checkOrdinary = async () => {
     expect(
-      screen.getByRole("button", { name: "New chat in Work" }),
+      await screen.findByRole("button", { name: "New chat in Work" }),
     ).toBeVisible();
-    const empty = screen.getAllByRole("button", { name: "New chat in Empty" });
-    expect(empty).toHaveLength(2);
-    expect(empty.some((button) => button.textContent === "New chat")).toBe(
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "New chat in Empty" }),
+    ).toBeVisible();
+    expect(
+      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+    ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(screen.getByRole("button", { name: "New options" }));
     expect(
       await screen.findByRole("menuitem", { name: "New chat" }),
     ).toBeVisible();
@@ -1310,17 +1105,14 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
       }),
     );
     expect(
-      screen.queryByRole("button", { name: "New chat in Work" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "New chat in Empty" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "New chat in Chats" }),
+      screen.getByRole("button", { name: "New chat in Work" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "New" }));
+    expect(
+      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+    ).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "New options" }));
     await screen.findByRole("menuitem", { name: "New workspace" });
-    expect(screen.queryByRole("menuitem", { name: "New chat" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "New chat" })).toBeVisible();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await act(() => source.fiber.dispose());
@@ -1332,7 +1124,7 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   }
 });
 
-it.each(["New"])(
+it.each(["New options"])(
   "selects the created workspace through its source from %s and retains selection failures for retry",
   async (triggerName) => {
     const h = createSoloRegionFixture(viewer);
@@ -1344,7 +1136,7 @@ it.each(["New"])(
     };
     const preferences = createSidebarPreferencesStore({
       available: true,
-      groupsOnly: true,
+      writeStar: async () => [],
       read: async () => saved,
       write: async () => saved,
       createSection: async (section) => {
@@ -1434,7 +1226,7 @@ it.each(["neighbor", "heading", "moved"])(
     const h = createSoloRegionFixture(viewer);
     const preferences = createSidebarPreferencesStore({
       available: true,
-      groupsOnly: true,
+      writeStar: async () => [],
       read: async () => ({
         sections: [{ id: "work", name: "Work", order: 0 }],
         assignments: { chat: "work" },
@@ -1498,7 +1290,7 @@ it("keeps an ordinary chat editor and pending save through layout changes and ta
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({
     available: true,
-    groupsOnly: true,
+    writeStar: async () => [],
     read: async () => ({
       sections: [{ id: "work", name: "Work", order: 0 }],
       assignments: { chat: "work" },

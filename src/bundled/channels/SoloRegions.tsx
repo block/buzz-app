@@ -64,6 +64,18 @@ import type {
   SoloRegionProps,
 } from "../../features/channel-navigation/solo-navigation-contract";
 
+export function visibleSoloRegions(
+  regions: readonly SoloRegion[],
+  order: readonly string[],
+) {
+  return orderContributedSidebarSections(
+    regions
+      .filter((region) => !region.hidden && region.reason !== "disabled")
+      .map((region) => ({ key: `solo-region:${region.key}`, region })),
+    order,
+  ).map(({ region }) => region);
+}
+
 export function SoloRegions({
   session,
   navigator,
@@ -102,16 +114,10 @@ export function SoloRegions({
   const pendingClick = sharedPendingClick ?? localPendingClick;
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
-  const regions = orderContributedSidebarSections(
-    // Hidden sources draw nothing; explicitly disabled chats use ordinary Solo.
-    snapshot.regions
-      .filter((region) => !region.hidden && region.reason !== "disabled")
-      .map((region) => ({
-        key: `solo-region:${region.key}`,
-        region,
-      })),
+  const regions = visibleSoloRegions(
+    snapshot.regions,
     sidebar.contributionOrder,
-  ).map(({ region }) => region);
+  );
   const primary = regions.findIndex((region) => region.source);
   const current = target.kind === "conversation" ? target.channelId : undefined;
   const currentChannel = current

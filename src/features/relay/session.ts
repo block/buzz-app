@@ -97,7 +97,7 @@ import {
   workspaceBaseRecord,
   projectWorkspaceGroups,
   SIDEBAR_COORDINATES,
-  WORKSPACE_COORDINATE,
+  WORKSPACE_PREFERENCE_COORDINATES,
   type SidebarGroups,
 } from "./sidebar-preferences";
 import { sidebarSortNeedsActivity } from "./sidebar-sort";
@@ -2040,7 +2040,10 @@ export function createRelaySession(
         signal,
       ]);
       if (!transport?.workspaceMigration) return write(intent, active);
+      const revision = legacyWorkspaceRevision;
       const legacy = await readLegacyWorkspaces(active, true);
+      if (revision !== legacyWorkspaceRevision)
+        throw new Error("Saved workspaces changed while loading. Try again.");
       return write(intent, active, legacy);
     };
   }
@@ -3527,7 +3530,9 @@ export function createRelaySession(
         coordinates.length !== 1 ||
         !coordinate ||
         (!legacy &&
-          coordinate !== WORKSPACE_COORDINATE &&
+          !WORKSPACE_PREFERENCE_COORDINATES.some(
+            (value) => value === coordinate,
+          ) &&
           !SIDEBAR_COORDINATES.some((value) => value === coordinate))
       )
         continue;

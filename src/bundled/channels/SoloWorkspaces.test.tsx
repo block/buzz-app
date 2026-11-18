@@ -101,9 +101,8 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeSort: async () => ({}),
       writeOrder: order,
-      // Groups-only chats have no Messages sort coordinate.
-      groupsOnly: true,
     });
   const order = vi.fn(async (ids: readonly string[]) => {
     saved = {
@@ -258,10 +257,7 @@ it("creates and moves through the relay service, then restores in a fresh store"
   await user.click(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   );
-  await user.type(
-    screen.getByRole("textbox", { name: "Workspace name" }),
-    "Projects",
-  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Projects");
   await user.click(screen.getByRole("button", { name: "Create and move" }));
   await waitFor(() =>
     expect(h.write).toHaveBeenCalledWith(
@@ -1089,7 +1085,7 @@ it("rejects a late personal move through the same owner used by menu selections 
       muted: [],
     }),
     available: true,
-    groupsOnly: true,
+    writeStar: async () => [],
     write,
   });
   try {

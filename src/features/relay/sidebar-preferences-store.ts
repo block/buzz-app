@@ -72,7 +72,6 @@ export function createSidebarPreferencesStore({
   persistence,
   removeSection,
   renameSection,
-  groupsOnly = false,
   writeOrder,
   createSection,
   writeFilter,
@@ -91,8 +90,6 @@ export function createSidebarPreferencesStore({
   persistence?: HeadPersistence | undefined;
   removeSection?: SidebarSectionRemovalMutator | undefined;
   renameSection?: SidebarSectionRenameMutator | undefined;
-  /** Solo groups have no Star coordinate; do not write Messages stars on moves. */
-  groupsOnly?: boolean | undefined;
   writeOrder?: SidebarSectionOrderMutator | undefined;
   createSection?: SidebarSectionCreationMutator | undefined;
   writeFilter?: SidebarFilterMutator | undefined;
@@ -137,7 +134,7 @@ export function createSidebarPreferencesStore({
     !!confirmed &&
     readFailure === undefined &&
     !!write &&
-    (groupsOnly || !!writeStar);
+    !!writeStar;
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -279,6 +276,12 @@ export function createSidebarPreferencesStore({
         data.sections.map((section) => Object.freeze({ ...section })),
       ),
       assignments: Object.freeze({ ...data.assignments }),
+      ...(data.sectionOrder
+        ? { sectionOrder: Object.freeze([...data.sectionOrder]) }
+        : {}),
+      ...(data.legacyTemplates
+        ? { legacyTemplates: Object.freeze({ ...data.legacyTemplates }) }
+        : {}),
       starred: Object.freeze([...data.starred]),
       muted: Object.freeze([...data.muted]),
       ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
@@ -464,8 +467,7 @@ export function createSidebarPreferencesStore({
       !snapshot.data ||
       !confirmed ||
       !write ||
-      (!writeStar && !groupsOnly) ||
-      (groupsOnly && "starred" in destination)
+      !writeStar
     )
       return rejectMove(
         channelId,
@@ -501,10 +503,10 @@ export function createSidebarPreferencesStore({
             ? undefined
             : await write({ channelId, ...destination }, writeSignal);
           check();
-          const stars =
-            !groupsOnly && writeStar
-              ? await writeStar({ channelId, starred: starring }, writeSignal)
-              : [];
+          const stars = await writeStar(
+            { channelId, starred: starring },
+            writeSignal,
+          );
           check();
           if (!confirmed)
             throw new Error("Sidebar group moves are unavailable");
@@ -605,11 +607,7 @@ export function createSidebarPreferencesStore({
           throw new Error("Sidebar section removal is unavailable");
         writeSignal.throwIfAborted();
         mutation++;
-        confirmed = {
-          ...confirmed,
-          sections: next.sections,
-          assignments: next.assignments,
-        };
+        confirmed = { ...confirmed, ...next };
         failedFilters.delete(group);
         project();
         return retained(confirmed);
@@ -715,17 +713,10 @@ export function createSidebarPreferencesStore({
     queries: Object.freeze({
       available,
       get sectionRemovalWritable() {
-        return groupsOnly
-          ? writable() && !snapshot.cached && !!removeSection
-          : this.removeSectionWritable;
+        return this.removeSectionWritable;
       },
       removeSection(sectionId: string, callerSignal?: AbortSignal) {
-        if (!groupsOnly) return removeSectionMutation(sectionId, callerSignal);
-        if (!writable() || snapshot.cached || !removeSection)
-          return Promise.reject(new Error("Section deletion is unavailable"));
-        return writeGroups("Section deletion is unavailable", (signal) =>
-          removeSection(sectionId, signal),
-        );
+        return removeSectionMutation(sectionId, callerSignal);
       },
       get sectionRenameWritable() {
         return renameWritable();
@@ -758,9 +749,7 @@ export function createSidebarPreferencesStore({
         );
       },
       createSection(section: SidebarSectionDraft) {
-        const failure = groupsOnly
-          ? "Workspaces are unavailable"
-          : "Section creation is unavailable";
+        const failure = "Section creation is unavailable";
         const create =
           createSection ??
           (write
@@ -1093,7 +1082,7 @@ export function createSidebarPreferencesStore({
         );
       },
       get starWritable() {
-        return !groupsOnly && writable();
+        return writable();
       },
       async setStar(channelId: string, starred: boolean, signal?: AbortSignal) {
         const data = await move(

@@ -458,7 +458,7 @@ it("discards the unsaved privacy step and draft when creation closes and reopens
 });
 
 it.each(["work", "", "starred"])(
-  "derives the title and fixed destination from the opening group %j",
+  "prefills the title and destination from the opening group %j",
   async (initialGroup) => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => {});
@@ -480,9 +480,11 @@ it.each(["work", "", "starred"])(
           ? "Create a channel in Work"
           : "Create a channel";
     expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
-    expect(
-      screen.queryByRole("combobox", { name: "Destination group" }),
-    ).not.toBeInTheDocument();
+    const workspace = screen.queryByRole("combobox", {
+      name: "Destination workspace",
+    });
+    if (initialGroup === "work") expect(workspace).toHaveTextContent("Work");
+    else expect(workspace).not.toBeInTheDocument();
     if (initialGroup === "starred")
       expect(
         screen
@@ -536,8 +538,8 @@ it.each([true, false])(
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       groupsReady
-        ? "This group is no longer available. Close this dialog and create from another sidebar group or Channels."
-        : "Wait for saved sidebar groups to load, then try again.",
+        ? "This workspace is no longer available. Choose another workspace or Team."
+        : "Wait for saved workspaces to load, then try again.",
     );
     expect(onCreate).not.toHaveBeenCalled();
     view.rerender(

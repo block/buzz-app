@@ -10,6 +10,8 @@ import { createRelaySession } from "./session";
 import { importWorkspaceFallback } from "./sidebar-registers";
 import {
   workspaceBaseRecord,
+  expandWorkspaceRecord,
+  workspacePayloadForSigning,
   workspaceRecordForWrite,
   type SidebarGroups,
 } from "./sidebar-preferences";
@@ -144,10 +146,10 @@ it("renames, moves, unfiles and deletes a legacy import near the byte limit", ()
 });
 
 it("leaves an oversized legacy projection readable and never truncates it to save", () => {
-  const legacy = legacyWithFilings(700, 150);
+  const legacy = legacyWithFilings(700, 190);
   const source = workspaceBaseRecord(legacy);
   expect(Object.keys(source.assignments)).toHaveLength(700);
-  expect(() => workspaceRecordForWrite(source, legacy)).toThrow(
+  expect(() => workspacePayloadForSigning(source, legacy)).toThrow(
     "storage limit",
   );
   const reduced = editSidebarSectionRemoval(
@@ -155,5 +157,50 @@ it("leaves an oversized legacy projection readable and never truncates it to sav
     0,
     legacy.sections[0]?.id ?? "",
   );
-  expect(workspaceRecordForWrite(reduced, legacy).sections).toHaveLength(19);
+  expect(workspacePayloadForSigning(reduced, legacy).sections).toHaveLength(19);
+});
+
+it("fits two full legacy rosters through rename, move, unfile and removal", () => {
+  const sections = Array.from({ length: 200 }, (_, order) => ({
+    id: `00000000-0000-4000-8000-${String(order).padStart(12, "0")}`,
+    name: `Workspace ${order}`,
+    order,
+  }));
+  const assignments = Object.fromEntries(
+    Array.from({ length: 2000 }, (_, index) => [
+      index.toString(16).padStart(64, "0"),
+      sections[index % sections.length]?.id ?? "",
+    ]),
+  );
+  const legacy = { sections, assignments };
+  const source = workspaceBaseRecord(legacy);
+  const [first, second] = Object.keys(assignments);
+  const [original, destination] = sections;
+  if (!first || !second || !original || !destination)
+    throw new Error("Incomplete fixture");
+  const readback = (value: Record<string, unknown>) => {
+    const wire = JSON.stringify(workspacePayloadForSigning(value, legacy));
+    expect(wire.length).toBeLessThan(128 * 1024);
+    expect(JSON.parse(wire)).toHaveProperty("filings");
+    return expandWorkspaceRecord(JSON.parse(wire));
+  };
+  const renamed = readback(
+    editSidebarSectionRename(source, 0, original.id, "Renamed"),
+  );
+  expect(renamed).toMatchObject({ assignments });
+  const moved = readback(
+    editSidebarAssignment(renamed, 0, {
+      channelId: first,
+      sectionId: destination.id,
+    }),
+  );
+  expect(moved.assignments).toHaveProperty(first, destination.id);
+  const unfiled = readback(
+    editSidebarAssignment(moved, 0, { channelId: second }),
+  );
+  expect(unfiled.assignments).not.toHaveProperty(second);
+  const removed = readback(editSidebarSectionRemoval(unfiled, 0, original.id));
+  expect(removed.removedSections).toEqual([original.id]);
+  expect(removed.unfiled).toEqual([second]);
+  expect(Object.keys(removed.assignments as object)).toHaveLength(1990);
 });

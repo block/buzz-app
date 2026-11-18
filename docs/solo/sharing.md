@@ -238,18 +238,11 @@ details** recovers failed reads without losing that intent. If another details
 surface confirmed the publication, fresh matching metadata can advance the retained
 conversion receipt without another kind-9002 command.
 
-`conversion.ts` retains only chat-local orchestration intent and the confirmed
-metadata phase, with a shared running guard. It is not permission evidence or a
-persistent transaction. After the label edit succeeds but project unfiling fails,
-the dialog says **Channel converted. Finish removing it from its Solo project.**
-**Finish conversion** re-reads details, confirms the label is gone and the
-settings are unchanged, and retries only the preference write. Failed reads keep
-the recovery entry. A verified superseding settings edit retires an unconfirmed
-conversion receipt, including after Reload or reopening the dialog; it does not
-rewrite those settings or remove project filing. Restart loses the
-orchestration receipt, not access or the channel: the conversation is already an
-ordinary Team channel, and a leftover project assignment for a channel without the
-label is ignored by Solo.
+**Finish conversion** re-reads details when the publication needs confirmation.
+Failed reads keep the recovery entry. A verified newer settings edit retires
+an unconfirmed conversion receipt after Reload or reopening the dialog.
+Conversion keeps the workspace assignment. An unfiled chat appears in Team
+once its Solo label is removed.
 
 ### Ordinary behavior after conversion
 

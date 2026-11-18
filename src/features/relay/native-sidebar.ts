@@ -25,8 +25,11 @@ import {
   projectWorkspacePreferences,
   projectWorkspaceGroups,
   WORKSPACE_COORDINATE,
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
   workspaceBaseRecord,
-  workspaceRecordForWrite,
+  expandWorkspaceRecord,
+  workspacePayloadForSigning,
   type SidebarAssignmentIntent,
   type SidebarGroups,
   type SidebarSectionEdit,
@@ -42,6 +45,8 @@ const coordinates = [
   "channel-mutes",
   "channel-sort",
   "channel-filter",
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
   "main-agent",
 ] as const;
 type Coordinate = (typeof coordinates)[number];
@@ -51,7 +56,7 @@ const empty = (coordinate: Coordinate): Record<string, unknown> =>
     ? { version: 1, agent: null }
     : coordinate === "channel-sections"
       ? { version: 1, sections: [], assignments: {} }
-      : coordinate === "channel-sort" || coordinate === "channel-filter"
+      : coordinate.endsWith("-sort") || coordinate.endsWith("-filter")
         ? { version: 1, groups: {} }
         : { version: 1, channels: {} };
 const agentKey = /^[0-9a-f]{64}$/;
@@ -88,20 +93,25 @@ export function nativeSidebar(transport: ReadTransport) {
     cancelled(signal);
     if (raw[WORKSPACE_COORDINATE] !== undefined) {
       const workspaces = importWorkspaceFallback(
-        projectSidebarRecord(
-          "channel-sections",
-          raw[WORKSPACE_COORDINATE] as Record<string, unknown>,
-        ),
+        expandWorkspaceRecord(raw[WORKSPACE_COORDINATE]),
         legacy,
       );
       return projectWorkspacePreferences(
         workspaces,
         raw["channel-stars"],
         raw["channel-mutes"],
-        raw["channel-sort"],
-        raw["channel-filter"],
+        raw[WORKSPACE_SORT_COORDINATE] ?? raw["channel-sort"],
+        raw[WORKSPACE_FILTER_COORDINATE] ?? raw["channel-filter"],
       );
     }
+    if (raw[WORKSPACE_SORT_COORDINATE] || raw[WORKSPACE_FILTER_COORDINATE])
+      return projectWorkspacePreferences(
+        undefined,
+        raw["channel-stars"],
+        raw["channel-mutes"],
+        raw[WORKSPACE_SORT_COORDINATE] ?? raw["channel-sort"],
+        raw[WORKSPACE_FILTER_COORDINATE] ?? raw["channel-filter"],
+      );
     return projectSidebarPreferences(
       raw["channel-sections"],
       raw["channel-stars"],
@@ -144,12 +154,16 @@ export function nativeSidebar(transport: ReadTransport) {
     return {
       payload:
         coordinate === WORKSPACE_COORDINATE
-          ? projectSidebarRecord("channel-sections", value)
-          : coordinate === "channel-sections" ||
-              coordinate === "channel-sort" ||
-              coordinate === "channel-filter"
-            ? projectSidebarRecord(coordinate, value)
-            : value,
+          ? expandWorkspaceRecord(value)
+          : coordinate === "channel-sections"
+            ? projectSidebarRecord("channel-sections", value)
+            : coordinate === WORKSPACE_SORT_COORDINATE ||
+                coordinate === "channel-sort"
+              ? projectSidebarRecord("channel-sort", value)
+              : coordinate === WORKSPACE_FILTER_COORDINATE ||
+                  coordinate === "channel-filter"
+                ? projectSidebarRecord("channel-filter", value)
+                : value,
       createdAt: events[0]?.created_at ?? 0,
     };
   }
@@ -164,9 +178,16 @@ export function nativeSidebar(transport: ReadTransport) {
       coordinate === "channel-sections" ? value : undefined,
       coordinate === "channel-stars" ? value : undefined,
       coordinate === "channel-mutes" ? value : undefined,
-      coordinate === "channel-sort" ? value : undefined,
+      coordinate === "channel-sort" || coordinate === WORKSPACE_SORT_COORDINATE
+        ? value
+        : undefined,
       sectionIds,
-      coordinate === "channel-filter" ? value : undefined,
+      coordinate === "channel-filter" ||
+        coordinate === WORKSPACE_FILTER_COORDINATE
+        ? value
+        : undefined,
+      coordinate === WORKSPACE_SORT_COORDINATE ||
+        coordinate === WORKSPACE_FILTER_COORDINATE,
     );
   }
   async function mutate<T>(
@@ -187,6 +208,14 @@ export function nativeSidebar(transport: ReadTransport) {
     legacy?: SidebarGroups,
   ): Promise<T> {
     const current = await head(coordinate, signal);
+    const fallback =
+      coordinate === WORKSPACE_SORT_COORDINATE
+        ? "channel-sort"
+        : coordinate === WORKSPACE_FILTER_COORDINATE
+          ? "channel-filter"
+          : undefined;
+    const base =
+      fallback && !current.createdAt ? await head(fallback, signal) : current;
     const withLegacy = (head: Head) => {
       if (coordinate !== WORKSPACE_COORDINATE) return head.payload;
       if (head.createdAt) return importWorkspaceFallback(head.payload, legacy);
@@ -194,8 +223,8 @@ export function nativeSidebar(transport: ReadTransport) {
         throw new Error("Saved workspaces are unavailable. Try again.");
       return workspaceBaseRecord(legacy);
     };
-    const payload = withLegacy(current);
-    const draft = prepare(payload, current.createdAt);
+    const payload = withLegacy(base);
+    const draft = prepare(payload, base.createdAt);
     const unchanged =
       same(payload, draft.next) && (current.createdAt > 0 || !draft.record);
     if (unchanged) return draft.result;
@@ -204,7 +233,7 @@ export function nativeSidebar(transport: ReadTransport) {
     else project(coordinate, draft.next);
     const next =
       coordinate === WORKSPACE_COORDINATE
-        ? workspaceRecordForWrite(draft.next, legacy)
+        ? workspacePayloadForSigning(draft.next, legacy)
         : draft.next;
     if (new TextEncoder().encode(JSON.stringify(next)).length > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");
@@ -212,10 +241,7 @@ export function nativeSidebar(transport: ReadTransport) {
       await invoke<unknown>("relay_sign_sidebar", {
         coordinate,
         payload: next,
-        createdAt: Math.max(
-          Math.floor(Date.now() / 1000),
-          current.createdAt + 1,
-        ),
+        createdAt: Math.max(Math.floor(Date.now() / 1000), base.createdAt + 1),
       }),
     );
     cancelled(signal);
@@ -424,16 +450,18 @@ export function nativeSidebar(transport: ReadTransport) {
         );
         return {
           next,
-          result: project("channel-sort", next, sectionIds).sort ?? {},
+          result:
+            project(WORKSPACE_SORT_COORDINATE, next, sectionIds).sort ?? {},
         };
       };
       return mutate(
-        "channel-sort",
+        WORKSPACE_SORT_COORDINATE,
         signal,
         prepare,
         (value) =>
-          (project("channel-sort", value, sectionIds).sort?.[group] ??
-            "alpha") === mode,
+          (project(WORKSPACE_SORT_COORDINATE, value, sectionIds).sort?.[
+            group
+          ] ?? "alpha") === mode,
         "Sidebar sort changed on another device; reload and try again",
       );
     },
@@ -455,7 +483,7 @@ export function nativeSidebar(transport: ReadTransport) {
           Date.now(),
           activeWindowSeconds,
         );
-        const settings = project("channel-filter", next, sectionIds);
+        const settings = project(WORKSPACE_FILTER_COORDINATE, next, sectionIds);
         return {
           next,
           result: {
@@ -465,7 +493,7 @@ export function nativeSidebar(transport: ReadTransport) {
         };
       };
       return mutate(
-        "channel-filter",
+        WORKSPACE_FILTER_COORDINATE,
         signal,
         prepare,
         (value) =>

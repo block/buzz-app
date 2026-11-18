@@ -1,4 +1,4 @@
-import { teamSidebarSlotsReady } from "./TeamSidebarSource";
+import { teamSidebarSlotsReady, teamSidebarSource } from "./TeamSidebarSource";
 import { SidebarSectionSlotView } from "../../features/channel-navigation/SidebarSectionSources";
 import { MessagesSidebarEnvironment } from "./sidebar-environment";
 import type { SidebarContextProps } from "../../features/sidebar/contracts";
@@ -147,17 +147,16 @@ function ScopedSidebar({
   );
   const header = (
     <>
-      <div className={styles.sidebarControls}>
-        {restriction && props.sidebarScope && (
+      {restriction && props.sidebarScope && (
+        <div className={styles.sidebarControls}>
           <div className={styles.sidebarScope}>
             <RestrictionBanner
               entry={restriction}
               registry={props.sidebarScope}
             />
           </div>
-        )}
-        {props.creationAction}
-      </div>
+        </div>
+      )}
       {props.children && !restriction && (
         <div className={styles.destinations}>{props.children}</div>
       )}
@@ -176,6 +175,9 @@ function ScopedSidebar({
           viewer={connection.viewer}
           sidebarSections={props.sidebarSections}
           sidebarRows={props.sidebarRows}
+          chatIcons={props.chatIcons}
+          chatMenus={props.chatMenus}
+          creationAction={props.creationAction}
           cached={!!connection.cached}
           chatsOnly={!!restriction}
           layoutReady={committedSlots?.generation === slotGeneration}
@@ -186,6 +188,7 @@ function ScopedSidebar({
           connectionError={connection.error}
           render={({
             sidebar,
+            composedChatSections,
             dmPreviews,
             frame,
             before,
@@ -201,6 +204,7 @@ function ScopedSidebar({
                 navigator: props.navigator,
                 target: props.target,
                 sidebar,
+                composedChatSections,
                 active: () => true,
                 chatIcons: props.chatIcons,
                 chatMenus: props.chatMenus,
@@ -214,7 +218,13 @@ function ScopedSidebar({
                   const teamContent = (
                     <>
                       {slots
-                        .filter((slot) => slot.scope === "team")
+                        .filter(
+                          (slot) =>
+                            slot.scope === "team" &&
+                            (!restriction ||
+                              slot.source.component ===
+                                teamSidebarSource.component),
+                        )
                         .map((slot) => (
                           <SidebarSectionSlotView key={slot.key} slot={slot} />
                         ))}

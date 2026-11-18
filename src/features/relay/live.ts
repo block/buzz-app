@@ -29,7 +29,7 @@ import { yieldToHost } from "./yield.ts";
 import { EMOJI_SET } from "./emoji.ts";
 import {
   SIDEBAR_COORDINATES,
-  WORKSPACE_COORDINATE,
+  WORKSPACE_PREFERENCE_COORDINATES,
 } from "./sidebar-preferences.ts";
 import { legacyWorkspaceRecipeCoordinate } from "../channel-templates/model.ts";
 import { relayOrigin } from "../communities/destination.ts";
@@ -1381,7 +1381,12 @@ export function subscribeRelayTraffic(
                 authors: [viewer],
                 "#d": [
                   ...SIDEBAR_COORDINATES,
-                  WORKSPACE_COORDINATE,
+                  ...WORKSPACE_PREFERENCE_COORDINATES.filter(
+                    (coordinate) =>
+                      !SIDEBAR_COORDINATES.some(
+                        (legacy) => legacy === coordinate,
+                      ),
+                  ),
                   legacyWorkspaceRecipeCoordinate(relayOrigin(url)),
                 ],
                 since: route.since,

@@ -3,13 +3,6 @@ import type { SidebarGroups } from "./sidebar-preferences";
 
 const displacedTeamPrefix = "legacy-team:";
 
-/** Retain the original Team preference key for the exceptional remapped group. */
-export function legacyTeamWorkspaceId(id: string) {
-  return id.startsWith(displacedTeamPrefix)
-    ? id.slice(displacedTeamPrefix.length)
-    : undefined;
-}
-
 /** Both sources are verified heads. Preserve Solo IDs as template coordinates. */
 export function mergeLegacyWorkspaces(
   team: SidebarGroups,

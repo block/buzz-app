@@ -285,7 +285,7 @@ export function ConvertToChannel({
           : (base &&
               selectedAccess === "private" &&
               soloRetainedAccessWarning(base)) ||
-            "Move this conversation from Solo to Team. History, Canvas, members and lifetime stay the same."
+            "Change this chat to a channel. It keeps its workspace, history, Canvas, members and lifetime."
       }
       onOpenChange={(open) => {
         if (!open) setOpen(false);
@@ -352,7 +352,7 @@ export function ConvertToChannel({
       />
       {converted && (
         <p role="status">
-          Channel converted. Finish removing it from its Solo workspace.
+          Channel converted. Finish to return to the conversation.
         </p>
       )}
       {!base && !error && <p role="status">Loading chat details…</p>}

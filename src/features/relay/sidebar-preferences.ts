@@ -10,6 +10,8 @@ import type { RelayEvent } from "./events.ts";
 import type { RelayReader } from "./reader.ts";
 
 export const WORKSPACE_COORDINATE = "channel-workspaces";
+export const WORKSPACE_SORT_COORDINATE = "channel-workspace-sort";
+export const WORKSPACE_FILTER_COORDINATE = "channel-workspace-filter";
 export const HOME_SIDEBAR_SECTIONS = [
   "starred",
   "solo",
@@ -61,9 +63,20 @@ export function isSidebarPreferencesBatch(
     )
   );
 }
+export const WORKSPACE_PREFERENCE_COORDINATES = [
+  WORKSPACE_COORDINATE,
+  "channel-stars",
+  "channel-mutes",
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
+] as const;
+
 function sidebarBatchCoordinate(filter: ReadFilter) {
   const coordinate = filter?.["#d"]?.[0];
-  return coordinate === WORKSPACE_COORDINATE ? "channel-sections" : coordinate;
+  if (coordinate === WORKSPACE_COORDINATE) return "channel-sections";
+  if (coordinate === WORKSPACE_SORT_COORDINATE) return "channel-sort";
+  if (coordinate === WORKSPACE_FILTER_COORDINATE) return "channel-filter";
+  return coordinate;
 }
 
 export type SidebarGroups = Readonly<{
@@ -91,6 +104,11 @@ export function workspaceBaseRecord(groups: SidebarGroups) {
       : {}),
   });
   return { version: 1, ...normalized };
+}
+
+export function decodeLegacyWorkspaceEnvelope(value: unknown): SidebarGroups {
+  const data = object(value);
+  return projectWorkspaceGroups({ ...data, version: 1, sectionOrder: [] });
 }
 
 /** Keep only removal markers that suppress a filing still in a legacy head. */
@@ -121,11 +139,92 @@ export function workspaceRecordForWrite(
     ...(removedSections.length ? { removedSections } : {}),
     ...(unfiled.length ? { unfiled } : {}),
   };
-  if (new TextEncoder().encode(JSON.stringify(result)).length > 128 * 1024)
-    throw new Error(
-      "Saved workspaces exceed the storage limit. Try unfiling conversations or removing a workspace.",
-    );
   return result;
+}
+
+const hexConversationId = /^[0-9a-f]{64}$/;
+
+function packConversationId(id: string) {
+  if (hexConversationId.test(id)) {
+    const bytes =
+      id.match(/../g)?.map((pair) => Number.parseInt(pair, 16)) ?? [];
+    return `~${btoa(String.fromCharCode(...bytes)).slice(0, -1)}`;
+  }
+  return id.startsWith("~") ? `~${id}` : id;
+}
+
+function unpackConversationId(id: string) {
+  if (id.startsWith("~~")) return id.slice(1);
+  if (!id.startsWith("~") && !hexConversationId.test(id)) return id;
+  if (!/^~[A-Za-z0-9+/]{43}$/.test(id))
+    throw new Error("Invalid compact workspace filing");
+  const bytes = atob(id.slice(1));
+  if (`~${btoa(bytes).slice(0, -1)}` !== id)
+    throw new Error("Invalid compact workspace filing");
+  return Array.from(bytes, (byte) =>
+    byte.charCodeAt(0).toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/** Expand compact filings before applying migration fallbacks or an edit. */
+export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
+  const data = object(value);
+  if (data.filings === undefined)
+    return projectSidebarRecord("channel-sections", data);
+  if (data.assignments !== undefined || data.meta !== undefined)
+    throw new Error("Invalid compact workspace filings");
+  const { filings, ...record } = data;
+  const entries = Object.entries(object(filings));
+  if (entries.length > MAX_WORKSPACES || !Array.isArray(record.sections))
+    throw new Error("Invalid compact workspace filings");
+  const workspaceIds = new Set(
+    record.sections.map((section) => object(section).id),
+  );
+  const assignments = new Map<string, string>();
+  for (const [section, rows] of entries) {
+    text(section);
+    if (!workspaceIds.has(section) || !Array.isArray(rows) || !rows.length)
+      throw new Error("Invalid compact workspace filings");
+    for (const row of rows) {
+      const id = text(unpackConversationId(text(row, 257)));
+      if (assignments.has(id) || assignments.size >= MAX_WORKSPACE_ASSIGNMENTS)
+        throw new Error("Invalid compact workspace filings");
+      assignments.set(id, section);
+    }
+  }
+  return { ...record, assignments: Object.fromEntries(assignments) };
+}
+
+/** Group large records by workspace and compact hexadecimal IDs within the same byte budget. */
+export function workspacePayloadForSigning(
+  payload: Record<string, unknown>,
+  legacy: SidebarGroups | undefined,
+) {
+  const record = compactWorkspaceRecord(
+    workspaceRecordForWrite(payload, legacy),
+  );
+  if (new TextEncoder().encode(JSON.stringify(record)).length <= 128 * 1024)
+    return record;
+  throw new Error("Saved workspaces exceed the storage limit.");
+}
+
+export function encodeLegacyWorkspaceEnvelope(groups: SidebarGroups) {
+  return compactWorkspaceRecord(workspaceBaseRecord(groups));
+}
+
+function compactWorkspaceRecord<T extends SidebarGroups>(record: T) {
+  const fits = (value: unknown) =>
+    new TextEncoder().encode(JSON.stringify(value)).length <= 128 * 1024;
+  if (fits(record)) return record;
+  const { assignments, ...metadata } = record;
+  const filings = new Map<string, string[]>();
+  for (const [id, section] of Object.entries(assignments)) {
+    const packed = packConversationId(id);
+    const rows = filings.get(section);
+    if (rows) rows.push(packed);
+    else filings.set(section, [packed]);
+  }
+  return { ...metadata, filings: Object.fromEntries(filings) };
 }
 
 export function projectWorkspacePreferences(
@@ -326,7 +425,9 @@ export function projectSidebarPreferences(
     muted: [],
   };
   if (sections !== undefined) {
-    const data = projectSidebarRecord("channel-sections", object(sections));
+    const data = workspaceRecord
+      ? expandWorkspaceRecord(sections)
+      : projectSidebarRecord("channel-sections", object(sections));
     if (
       data.version !== 1 ||
       !Array.isArray(data.sections) ||
@@ -411,7 +512,9 @@ export function projectSidebarPreferences(
   if (sort !== undefined) {
     const data = object(sort);
     if (data.version !== 1) throw new Error("Unsupported sidebar sort");
-    const entries = Object.entries(projectSidebarSort(data));
+    const entries = Object.entries(
+      projectSidebarSort(data, workspaceRecord ? 205 : 104),
+    );
     const fixed = new Set<string>(HOME_SIDEBAR_SECTIONS);
     const liveSections = new Set(
       (sortSectionIds ?? []).map((id) => `section:${id}`),
@@ -436,7 +539,8 @@ export function projectSidebarPreferences(
     const data = projectSidebarRecord("channel-filter", object(filters));
     if (data.version !== 1) throw new Error("Unsupported sidebar filter");
     const entries = Object.entries(object(data.groups));
-    if (entries.length > 205) throw new Error("Sidebar filter budget exceeded");
+    if (entries.length > (workspaceRecord ? 205 : 104))
+      throw new Error("Sidebar filter budget exceeded");
     const fixed = new Set<string>(HOME_SIDEBAR_SECTIONS);
     const liveSections = new Set(
       (sortSectionIds ?? []).map((id) => `section:${id}`),
@@ -453,7 +557,7 @@ export function projectSidebarPreferences(
       ),
     );
     if (
-      windows.length > 205 ||
+      windows.length > (workspaceRecord ? 205 : 104) ||
       windows.some(([, value]) => !validActiveWindow(value))
     )
       throw new Error("Invalid sidebar activity window");
@@ -520,24 +624,43 @@ export async function readSidebarPreferences(
 ): Promise<SidebarPreferences> {
   let events: readonly RelayEvent[];
   try {
-    events = await reader.read(
-      SIDEBAR_COORDINATES.map((coordinate) => ({
-        kinds: [30078],
-        authors: [viewer],
-        "#d": [
-          workspaceMigration && coordinate === "channel-sections"
-            ? WORKSPACE_COORDINATE
-            : coordinate,
-        ],
-        limit: 1,
-        ...(consistency ? { consistency } : {}),
-      })),
-      {
-        signal,
-        priority: "foreground",
-        ...(consistency ? { fresh: true } : {}),
-      },
+    const read = (coordinates: readonly string[]) =>
+      reader.read(
+        coordinates.map((coordinate) => ({
+          kinds: [30078],
+          authors: [viewer],
+          "#d": [coordinate],
+          limit: 1,
+          ...(consistency ? { consistency } : {}),
+        })),
+        {
+          signal,
+          priority: "foreground",
+          ...(consistency ? { fresh: true } : {}),
+        },
+      );
+    events = await read(
+      workspaceMigration
+        ? WORKSPACE_PREFERENCE_COORDINATES
+        : SIDEBAR_COORDINATES,
     );
+    if (workspaceMigration) {
+      // A new preference coordinate supersedes only its own legacy choice.
+      const present = new Set(
+        events.flatMap((event) =>
+          event.tags.flatMap(([key, value]) =>
+            key === "d" && value ? [value] : [],
+          ),
+        ),
+      );
+      const legacy = [
+        ...(!present.has(WORKSPACE_SORT_COORDINATE) ? ["channel-sort"] : []),
+        ...(!present.has(WORKSPACE_FILTER_COORDINATE)
+          ? ["channel-filter"]
+          : []),
+      ];
+      if (legacy.length) events = [...events, ...(await read(legacy))];
+    }
     signal.throwIfAborted();
   } catch (error) {
     const cause = signal.aborted ? signal.reason : error;

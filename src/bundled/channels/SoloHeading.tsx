@@ -37,7 +37,8 @@ import {
   ChannelMembersButton,
   ChannelMembersDialog,
 } from "./ChannelMembersDialog";
-import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
+import { SoloChatMenuItems } from "./SoloChatMenu";
+import { NewWorkspace } from "../../features/solo/NewWorkspace";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useSoloOwner } from "./ChatSharedMark";
 
@@ -232,22 +233,19 @@ export function SoloToolbar({
         />
       )}
       {creatingWorkspace && (
-        <NewWorkspaceDialog
-          name={channel.name}
+        <NewWorkspace
+          session={session}
+          moveConversation
           finalFocus={actionsTrigger}
           close={() => setCreatingWorkspace(false)}
-          create={(name) => {
+          create={(section) => {
             if (!preferences.writable || prepareSoloMove(session, channel.id))
-              return false;
-            onMove(
-              preferences.createAndAssign(channel.id, {
-                id: crypto.randomUUID(),
-                name,
-              }),
-            );
-            setCreatingWorkspace(false);
-            return true;
+              throw new Error("Workspaces are unavailable. Try again.");
+            const moving = preferences.createAndAssign(channel.id, section);
+            onMove(moving);
+            return moving;
           }}
+          onCreated={() => {}}
         />
       )}
       {readError && (

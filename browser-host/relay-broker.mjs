@@ -1,7 +1,9 @@
 import {
   isSidebarPreferencesBatch,
-  projectWorkspaceGroups,
+  decodeLegacyWorkspaceEnvelope,
   WORKSPACE_COORDINATE,
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
 } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -19,9 +21,9 @@ import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
 import {
   assertSidebarSortIntent,
-  mutateSidebarSort,
+  mutateWorkspaceSort,
   assertSidebarFilterIntent,
-  mutateSidebarFilter,
+  mutateWorkspaceFilter,
 } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
@@ -1435,14 +1437,14 @@ export function relayBrokerPlugin({
                 mutateSidebarStar,
               ],
               "/api/relay/sidebar-filter": [
-                "channel-filter",
+                WORKSPACE_FILTER_COORDINATE,
                 assertSidebarFilterIntent,
-                mutateSidebarFilter,
+                mutateWorkspaceFilter,
               ],
               "/api/relay/sidebar-sort": [
-                "channel-sort",
+                WORKSPACE_SORT_COORDINATE,
                 assertSidebarSortIntent,
-                mutateSidebarSort,
+                mutateWorkspaceSort,
               ],
               "/api/relay/sidebar-mute": [
                 "channel-mutes",
@@ -1451,9 +1453,10 @@ export function relayBrokerPlugin({
               ],
             }[route];
             const sorting =
-              coordinate === "channel-sort" || coordinate === "channel-filter";
+              coordinate === WORKSPACE_SORT_COORDINATE ||
+              coordinate === WORKSPACE_FILTER_COORDINATE;
             const muting = coordinate === "channel-mutes";
-            // Sort and order intents carry up to 100 section IDs.
+            // Sort, filter and order intents carry the workspace roster.
             const listing =
               sorting || route === "/api/relay/sidebar-section-order";
             const workspace = coordinate === WORKSPACE_COORDINATE;
@@ -1473,9 +1476,23 @@ export function relayBrokerPlugin({
             try {
               intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
               if (workspace && intent && Object.hasOwn(intent, "legacy")) {
+                if (
+                  Object.keys(intent).some(
+                    (key) => key !== "intent" && key !== "legacy",
+                  )
+                )
+                  throw new Error("Invalid workspace intent envelope");
                 ({ intent, legacy } = intent);
-                legacy = projectWorkspaceGroups({ ...legacy, version: 1 });
+                legacy = decodeLegacyWorkspaceEnvelope(legacy);
               }
+              if (
+                workspace &&
+                Buffer.byteLength(JSON.stringify(intent) ?? "") >
+                  (listing ? 64 * 1024 : 2048)
+              )
+                return json(res, 413, {
+                  error: "Sidebar preference intent is too large",
+                });
               assertIntent(intent);
             } catch {
               return json(res, 400, {
@@ -1553,8 +1570,11 @@ export function relayBrokerPlugin({
                     },
                     requestSignal,
                   );
-                const readHead = async () => {
-                  const response = await dispatch("/query", filter);
+                const readHead = async (target = coordinate) => {
+                  const response = await dispatch(
+                    "/query",
+                    filter.map((entry) => ({ ...entry, "#d": [target] })),
+                  );
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference query failed (${response.status})`,
@@ -1588,7 +1608,7 @@ export function relayBrokerPlugin({
                   publishEvent,
                   legacy,
                 );
-                return coordinate === "channel-filter"
+                return coordinate === WORKSPACE_FILTER_COORDINATE
                   ? {
                       groups: result.filters,
                       activeWindowSeconds: result.activeWindowSeconds,

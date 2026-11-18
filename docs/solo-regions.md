@@ -25,7 +25,7 @@ recovery actions while the host renders its channels.
 
 A ready snapshot with `hidden: true` keeps the region out of the sidebar: the
 host draws no heading, rows, header actions, or "In" chip for it, and it neither
-names the Solo tab nor composes its workspaces. The region stays in the shared
+names a sidebar section or composes ordinary chats. The region stays in the shared
 projection, so its labeled chats stay out of the Solo list, its filing guard and
 workspace still apply, and its drafts still start; the chats remain reachable by
 links, notifications, and search, and the source presents them in its own UI. If the
@@ -53,7 +53,7 @@ workspaces.
 
 A source can open a channel that also appears in Team with
 `ctx.navigation.open(target, { sidebar: "preserve" })`. This opening keeps the
-sidebar scope, scroll, and disclosure state. It does not select or reveal the
+sidebar scroll and disclosure state. It does not select or reveal the
 Team row. The source supplies its own selected row. Check
 `ctx.navigation.snapshot().attempt.sidebar` along with the target to select it
 only for this opening. Retry retains the option. Later opens and Back/Forward

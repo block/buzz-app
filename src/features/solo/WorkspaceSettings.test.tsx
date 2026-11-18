@@ -27,7 +27,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { WorkspaceNameConflict } from "../relay/solo-preferences";
+import { WorkspaceNameConflict } from "../relay/sidebar-edits";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { readWorkspace, projectTemplateId, workspaceCanvas } from "./workspace";
 
@@ -145,9 +145,17 @@ it("saves section defaults as an existing relay template without writing section
   const close = vi.fn();
   const session = {
     scope: "https://relay.example.test:viewer",
+    sidebarPreferences: {
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Work", order: 0 }] },
+      }),
+    },
     channelKit: {
       refresh: async () => {},
       snapshot: () => ({ status: "ready", entries: [] }),
+      snapshotList: () => [],
       save,
     },
   } as unknown as RelaySession;
@@ -159,9 +167,12 @@ it("saves section defaults as an existing relay template without writing section
       close={close}
     />,
   );
-  fireEvent.change(await screen.findByRole("textbox", { name: /^Folders/ }), {
-    target: { value: "~/Development/project" },
-  });
+  fireEvent.change(
+    await screen.findByPlaceholderText("~/Development/my-project"),
+    {
+      target: { value: "~/Development/project" },
+    },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Work carefully" },
@@ -213,6 +224,10 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   });
   const session = {
     scope: "https://relay.example.test:viewer",
+    sidebarPreferences: {
+      refresh: async () => {},
+      snapshot: () => ({ status: "ready", data: { sections: [] } }),
+    },
     channelKit: kit.capability,
   } as unknown as RelaySession;
   const close = vi.fn();
@@ -879,8 +894,8 @@ it("closes untouched settings at once, and Cancel discards edits without asking"
 function project(entries: unknown[] = []) {
   const close = vi.fn();
   const group = { id: "work", name: "Work", defaultTemplateId: "" };
-  const rename = vi.fn(async (_id: string, name: string) => {
-    group.name = name;
+  const rename = vi.fn(async (_id: string, edit: { name?: string }) => {
+    if (edit.name) group.name = edit.name;
   });
   const save = vi.fn(async () => {});
   const session = {
@@ -910,7 +925,15 @@ function project(entries: unknown[] = []) {
       }),
       save,
     },
-    sidebarPreferences: { sectionRenameWritable: true, renameSection: rename },
+    sidebarPreferences: {
+      sectionRenameWritable: true,
+      renameSection: rename,
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: group.name, order: 0 }] },
+      }),
+    },
   } as unknown as RelaySession;
   const view = () => (
     <WorkspaceSettings
@@ -963,7 +986,7 @@ it.each([
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.rename.mock.calls).toEqual(
-      renamed ? [["work", "Projects", "Work"]] : [],
+      renamed ? [["work", { name: "Projects" }, "Work"]] : [],
     );
     expect(h.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -1049,7 +1072,12 @@ it("keeps an open form's conflicting name and instructions until explicit reload
     canvas: "Keep the open-dialog instructions",
   });
   expect(h.group.name).toBe("Renamed elsewhere");
-  expect(h.rename).toHaveBeenNthCalledWith(1, "work", "Projects", "Work");
+  expect(h.rename).toHaveBeenNthCalledWith(
+    1,
+    "work",
+    { name: "Projects" },
+    "Work",
+  );
   expect(h.save).not.toHaveBeenCalled();
   expect(h.close).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
@@ -1077,7 +1105,7 @@ it("keeps an open form's conflicting name and instructions until explicit reload
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.rename).toHaveBeenLastCalledWith(
     "work",
-    "Projects",
+    { name: "Projects" },
     "Renamed elsewhere",
   );
   expect(h.save).toHaveBeenCalledWith(
@@ -1152,9 +1180,9 @@ it("validates workspace names and retains failed edits across remount and partia
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.rename).toHaveBeenCalledTimes(3);
   expect(h.rename.mock.calls).toEqual([
-    ["work", "Projects", "Work"],
-    ["work", "Projects", "Work"],
-    ["work", "Another name", "Projects"],
+    ["work", { name: "Projects" }, "Work"],
+    ["work", { name: "Projects" }, "Work"],
+    ["work", { name: "Another name" }, "Projects"],
   ]);
   expect(h.save).toHaveBeenCalledTimes(2);
   expect(h.save).toHaveBeenLastCalledWith(

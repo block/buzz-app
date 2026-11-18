@@ -93,6 +93,7 @@ export function SoloInventory({
   chatIcons,
   chatMenus,
   sidebarRows,
+  composedChatSections,
   renderContents,
 }: {
   session: RelaySession;
@@ -103,6 +104,7 @@ export function SoloInventory({
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarRows?: SidebarRows | undefined;
+  composedChatSections?: ReadonlySet<string> | undefined;
   /** Places the conversations in a host that titles them; creation then
    * belongs to the host's own New menu, so only the standalone header has it. */
   renderContents?: (
@@ -263,12 +265,19 @@ export function SoloInventory({
       )),
     [menus, session],
   );
+  const ownsPlacement = (id: string | undefined) =>
+    !composedChatSections ||
+    composedChatSections.has(id ? `group:${id}` : "solo");
+  const starred = new Set(preferences.data?.starred);
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
     // Opening one from a link without membership adds nothing here.
     .filter(
       (item) =>
-        eligibleSolo(item, session.viewer) && !regions.excluded.has(item.id),
+        eligibleSolo(item, session.viewer) &&
+        !regions.excluded.has(item.id) &&
+        (!composedChatSections || !starred.has(item.id)) &&
+        ownsPlacement(preferences.data?.assignments[item.id]),
     )
     .sort(
       (a, b) =>
@@ -408,41 +417,47 @@ export function SoloInventory({
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
-        drafts={listedDrafts.map((destination) => {
+        drafts={listedDrafts.flatMap((destination) => {
           const route =
             destination.kind === "page"
               ? soloDraft(destination.route?.params)
               : undefined;
+          if (!ownsPlacement(route?.project)) return [];
           const selected =
             !!draft &&
             !draft.region &&
             draft.linked === route?.linked &&
             draft.project === route?.project;
-          return {
-            id: route?.linked ?? route?.project ?? "solo",
-            projectId: route?.project,
-            selected,
-            content: (
-              <NavigationItem
-                label="New chat"
-                aria-description="Unsent draft"
-                selected={selected}
-                icon={
-                  <span className={styles.conversationIcon} aria-hidden="true">
-                    <PencilSimpleIcon size={16} />
-                  </span>
-                }
-                onClick={() => {
-                  const input = selected ? soloDraftInput() : null;
-                  if (input) {
-                    input.focus();
-                    return;
+          return [
+            {
+              id: route?.linked ?? route?.project ?? "solo",
+              projectId: route?.project,
+              selected,
+              content: (
+                <NavigationItem
+                  label="New chat"
+                  aria-description="Unsent draft"
+                  selected={selected}
+                  icon={
+                    <span
+                      className={styles.conversationIcon}
+                      aria-hidden="true"
+                    >
+                      <PencilSimpleIcon size={16} />
+                    </span>
                   }
-                  void navigator.open(destination);
-                }}
-              />
-            ),
-          };
+                  onClick={() => {
+                    const input = selected ? soloDraftInput() : null;
+                    if (input) {
+                      input.focus();
+                      return;
+                    }
+                    void navigator.open(destination);
+                  }}
+                />
+              ),
+            },
+          ];
         })}
         session={session}
         scope={scope}

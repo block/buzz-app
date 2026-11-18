@@ -683,12 +683,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       exact: true,
     });
     await expect(insert).toBeVisible();
-    // Slack-sized cells: the small-control cell around an inline-emoji glyph.
-    await expect(insert).toHaveCSS("width", "32px");
-    await expect(insert).toHaveCSS("height", "32px");
-    await expect(insert).toHaveCSS("font-size", "22px");
-    await expect(insert.locator("img")).toHaveCSS("max-width", "32px");
-    await expect(insert.locator("img")).toHaveCSS("max-height", "32px");
+    // Control-sized cells around a picker-sized glyph.
+    await expect(insert).toHaveCSS("width", "40px");
+    await expect(insert).toHaveCSS("height", "40px");
+    await expect(insert).toHaveCSS("font-size", "28px");
+    await expect(insert.locator("img")).toHaveCSS("max-width", "40px");
+    await expect(insert.locator("img")).toHaveCSS("max-height", "40px");
     const searchNode = await search.elementHandle();
     // Exercise the actual widget boundary without recreating the picker/search.
     for (const mode of ["dark", "light"]) {

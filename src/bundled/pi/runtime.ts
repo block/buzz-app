@@ -681,6 +681,7 @@ export class PiRuntime {
           context,
           text,
           steer: steerPrompt(text),
+          scope: topLevel ? channel : root,
           request,
           ...(attention ? { reply: where } : {}),
           ...(attention || accepted ? { refresh: true } : {}),

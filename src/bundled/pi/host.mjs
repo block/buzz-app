@@ -927,6 +927,8 @@ export function serve({
         queues: new Map(),
         /** Why each request withdrawn with a failed run is unanswered. */
         failed: new Map(),
+        /** Where each request not yet settled replies, by submission. */
+        scopes: new Map(),
         closing: false,
       };
       const places = (await harness.snapshot(Places, context)) ?? {};
@@ -1137,6 +1139,10 @@ export function serve({
       // A run that answered keeps `run` while its `afterRun` tasks finish; a
       // new request then starts the next run, not steers this one.
       state.busy = Boolean(live.run && !live.run.afterRun);
+      // The requests the run took: the one that started it, and its steers.
+      // A run Pi starts from what it queued, in the commit that ends the
+      // last, has its own.
+      state.inputs = live.run?.inputs ?? [];
       if (!live.run) {
         inputs.clear();
         calls.clear();
@@ -1232,6 +1238,7 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
+    opened.scopes.delete(id);
     // A one-off turn's conversation, with no place, is not used again.
     if (!opened.contexts.has(record.conversationId))
       opened.cores.delete(record.conversationId);
@@ -1313,9 +1320,11 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. The agent's `core` memory read for it is the
-   * conversation's latest; a failed read shows it none if not yet shown. */
-  async function submit(opened, conversation, turn, busy, refresh) {
+   * as in Claude, and one from another `scope` than the run's, as `watched`
+   * holds it, is told where the run's results still go. The agent's `core`
+   * memory read for it is the conversation's latest; a failed read shows it
+   * none if not yet shown. */
+  async function submit(opened, conversation, turn, busy, refresh, watched) {
     opened.cores.set(conversation.id, turn.core?.text);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
@@ -1339,10 +1348,21 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
+    // Read after the waits above, in which the run may have ended, or the next
+    // one started and taken this turn in. Pi runs a steer as a run of its own
+    // when the run ends before taking it, so the added line is worded to hold
+    // then too. The run's first input started it, whether a turn or a steer
+    // Pi queued.
+    const running = opened.scopes.get(watched?.inputs[0]);
+    const text = steers ? turn.steer : turn.text;
+    const content =
+      running && running !== turn.scope
+        ? `${text}\n\nThe reply target above is for the new message only. Unfinished work from thread ${running} keeps \`reply: "${running}"\`. Later messages keep their own reply targets.`
+        : text;
     const submission = await conversation.submit(
       {
         type: "input",
-        content: steers ? turn.steer : turn.text,
+        content,
         whenBusy: "steer",
         requestId: turn.request,
       },
@@ -1604,7 +1624,8 @@ export function serve({
         }
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
-        const { busy } = await watch(opened, conversation.id);
+        const watched = await watch(opened, conversation.id);
+        const { busy } = watched;
         // Read before the turn is submitted: what Pi then holds decides it.
         const session =
           !busy && (await firstTurn(opened, conversation.id))
@@ -1622,8 +1643,10 @@ export function serve({
           refresh
             ? () => call("prompt", { agent, request: turn.request })
             : undefined,
+          watched,
         );
         if (!submitted) return false;
+        opened.scopes.set(submitted.submission, turn.scope);
         if (session !== undefined) Object.assign(submitted, { session });
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.

@@ -361,6 +361,7 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
     key: `${channel}/${root.id}`,
     at: 110,
     context: { channel, root: root.id },
+    scope: root.id,
     request: mention.id,
     provider: "",
     model: "",
@@ -766,6 +767,7 @@ it("continues an owner's Solo chat at the top level, and reports its failures th
   expect(host.requests("deliver")[0]?.params).toMatchObject({
     key: "solo-1",
     context: { channel: "solo-1", topLevel: true },
+    scope: "solo-1",
   });
   const failed = deliver(
     { type: "mention", event: me("3") },
@@ -2188,6 +2190,7 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
     expect(f.host.requests("deliver")[0]?.params).toMatchObject({
       key: channel,
       context: { channel },
+      scope: root.id,
       reply: { channel, root: root.id, topLevel: false },
     });
   } finally {

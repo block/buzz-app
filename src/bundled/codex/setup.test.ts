@@ -56,12 +56,18 @@ function appServer(
   models: number,
   options: HostProcessOptions = {},
   account = SIGNED_OUT,
+  failure?: string,
 ) {
   let exit!: (code: number | null) => void;
   const process: HostProcess & { ended?: boolean } = {
     write: async (text) => {
       const wire: Wire = JSON.parse(text);
       if (wire.id == null) return;
+      if (failure) {
+        options.onStderr?.(failure);
+        exit(1);
+        return;
+      }
       const result =
         wire.method === "model/list"
           ? {
@@ -233,11 +239,21 @@ function releases(
   {
     current,
     broken,
+    authError,
     asset = ASSET,
-  }: { current?: string; broken?: string; asset?: string } = {},
+  }: {
+    current?: string;
+    broken?: string;
+    authError?: string;
+    asset?: string;
+  } = {},
 ) {
   const state = {
     current,
+    broken,
+    authError,
+    loginCode: 0,
+    logins: [] as (string | undefined)[],
     offline: false,
     fetched: [] as string[],
     used: [] as string[],
@@ -250,7 +266,12 @@ function releases(
     const version = options.env?.BUZZ_CODEX_VERSION ?? state.current;
     if (id === "app-server") {
       const server = Object.assign(
-        appServer(version === broken ? 0 : 1, options),
+        appServer(
+          version === state.broken ? 0 : 1,
+          options,
+          SIGNED_OUT,
+          state.authError,
+        ),
         { version },
       );
       state.servers.push(server);
@@ -261,6 +282,10 @@ function releases(
     else if (id === "install") {
       state.fetched.push(args.join(" "));
       if (state.offline) result = { code: 1 };
+    } else if (id === "login") {
+      state.logins.push(version);
+      result = { code: state.loginCode };
+      if (state.loginCode === 0) state.authError = undefined;
     } else if (id === "use") {
       state.current = args[0];
       state.used.push(args.join(" "));
@@ -324,6 +349,111 @@ it("keeps the copy in use when a new release fails its test", async () => {
   expect(state.fetched).toHaveLength(1);
   await setup.run("install");
   expect(state.fetched).toHaveLength(2);
+});
+
+const REFRESH_ERROR =
+  "failed to load configuration: Your access token could not be refreshed. Please log out and sign in again.";
+
+it("signs in with a downloaded candidate and retests it without downloading again", async () => {
+  const { spawn, request, state } = releases("0.169.0", {
+    authError: REFRESH_ERROR,
+  });
+  const setup = new CodexSetup(spawn, request);
+  await setup.run("install");
+  expect(state.used).toEqual([]);
+  expect(setup.snapshot()).toMatchObject({
+    status: { state: "signed-out", version: "0.169.0" },
+    notice: "Codex 0.169.0 was downloaded. Sign in again to finish setup.",
+  });
+  // Neither background updates nor another Install click repeat the download.
+  await setup.update(true);
+  await setup.run("install");
+  await expect(setup.installed(new AbortController().signal)).rejects.toThrow(
+    REFRESH_ERROR,
+  );
+  expect(state.fetched).toHaveLength(1);
+  await setup.run("login");
+  expect(state.logins).toEqual(["0.169.0"]);
+  expect(state.servers).toHaveLength(2);
+  expect(state.servers.every((server) => server.ended)).toBe(true);
+  expect(state.used).toEqual(["0.169.0"]);
+  expect(state.fetched).toHaveLength(1);
+  expect(setup.snapshot()).toMatchObject({
+    status: { state: "ready", version: "0.169.0" },
+    notice: undefined,
+  });
+  await expect(
+    setup.installed(new AbortController().signal),
+  ).resolves.toBeUndefined();
+});
+
+it("keeps the previous release active while a candidate waits for sign-in", async () => {
+  const { spawn, request, state } = releases("0.169.0", {
+    current: "0.168.0",
+    authError: REFRESH_ERROR,
+  });
+  const setup = new CodexSetup(spawn, request);
+  await setup.run("install");
+  expect(state.current).toBe("0.168.0");
+  expect(state.used).toEqual([]);
+  await expect(
+    setup.installed(new AbortController().signal),
+  ).resolves.toBeUndefined();
+  await setup.run("login");
+  expect(state.used).toEqual(["0.169.0"]);
+});
+
+it("keeps the downloaded candidate available after sign-in fails", async () => {
+  const { spawn, request, state } = releases("0.169.0", {
+    authError: REFRESH_ERROR,
+  });
+  const setup = new CodexSetup(spawn, request);
+  await setup.run("install");
+  state.loginCode = 1;
+  await setup.run("login");
+  expect(state.used).toEqual([]);
+  expect(setup.snapshot().status).toEqual({
+    state: "signed-out",
+    version: "0.169.0",
+  });
+  state.loginCode = 0;
+  await setup.run("login");
+  expect(state.used).toEqual(["0.169.0"]);
+  expect(state.fetched).toHaveLength(1);
+});
+
+it("keeps a cancelled candidate sign-in retryable without activation", async () => {
+  const disk = releases("0.169.0", { authError: REFRESH_ERROR });
+  const { spawn, waiting, release } = held(disk, "login");
+  const setup = new CodexSetup(spawn, disk.request);
+  await setup.run("install");
+  const login = setup.run("login");
+  await waiting;
+  setup.cancel();
+  release();
+  await login;
+  expect(disk.state.used).toEqual([]);
+  expect(setup.snapshot().status).toEqual({
+    state: "signed-out",
+    version: "0.169.0",
+  });
+  await setup.run("login");
+  expect(disk.state.used).toEqual(["0.169.0"]);
+  expect(disk.state.fetched).toHaveLength(1);
+});
+
+it("still rejects a genuinely broken candidate after sign-in", async () => {
+  const { spawn, request, state } = releases("0.169.0", {
+    current: "0.168.0",
+    authError: REFRESH_ERROR,
+  });
+  const setup = new CodexSetup(spawn, request);
+  await setup.run("install");
+  state.broken = "0.169.0";
+  await setup.run("login");
+  expect(state.used).toEqual([]);
+  expect(state.current).toBe("0.168.0");
+  expect(setup.snapshot().notice).toContain("Buzz keeps using 0.168.0.");
 });
 
 it("does nothing when the copy is already the latest", async () => {

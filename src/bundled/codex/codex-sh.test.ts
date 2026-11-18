@@ -432,6 +432,23 @@ async function signingIn(auth: object, gate = false) {
   return { ...f, review: `${f.dir}-review-home` };
 }
 
+it("signs in with a downloaded candidate before any release is active", async () => {
+  const f = await signingIn(chatgpt);
+  await rm(join(f.dir, "current"));
+  await run("bash", ["-c", script, "codex.sh", "login"], {
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: f.home,
+      BUZZ_CODEX_VERSION: "0.1.0",
+    },
+  });
+  expect(await readdir(f.dir)).not.toContain("current");
+  expect((await f.step("review")).stdout).toContain(workspace);
+  expect(
+    JSON.parse(await readFile(join(f.codex, "auth.json"), "utf8")),
+  ).toEqual(chatgpt);
+});
+
 it("signs in to the review home, records its ChatGPT workspace, and hands the sign-in over", async () => {
   const f = await signingIn(chatgpt);
   await f.step("login");

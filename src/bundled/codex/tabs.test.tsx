@@ -67,6 +67,7 @@ function fixture({
   signedIn = true,
   requiresOpenaiAuth = true,
   installed = true,
+  startupError,
   saved = {},
   turns = () => ({ result: { data: [] } }),
   threads = [],
@@ -90,6 +91,7 @@ function fixture({
   /** Whether the configured model provider needs an OpenAI sign-in. */
   requiresOpenaiAuth?: boolean;
   installed?: boolean;
+  startupError?: string;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
@@ -100,17 +102,22 @@ function fixture({
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const items = new Map<string, unknown[]>();
   // Buzz's copy, as its launcher answers: its `login` step runs until it ends.
-  const disk = { signedIn, installed };
+  const disk = { signedIn, installed, startupError };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
     if (id === "codex" || id === "login") {
       const args = options?.args?.join(" ");
       if (id === "login") logins.push(exit);
-      else if (!disk.installed) exit.resolve(127);
+      else if (!disk.installed && !options?.env?.BUZZ_CODEX_VERSION)
+        exit.resolve(127);
       else if (args === "login status") exit.resolve(disk.signedIn ? 0 : 1);
       else {
-        queueMicrotask(() => options?.onStdout?.("codex-cli 0.162.1\n"));
+        queueMicrotask(() =>
+          options?.onStdout?.(
+            `codex-cli ${options?.env?.BUZZ_CODEX_VERSION ?? "0.162.1"}\n`,
+          ),
+        );
         exit.resolve(0);
       }
       return {
@@ -128,6 +135,11 @@ function fixture({
       write: async (text: string) => {
         const wire: Wire = JSON.parse(text);
         if (wire.id == null) return;
+        if (id === "app-server" && disk.startupError) {
+          options?.onStderr?.(disk.startupError);
+          exit.resolve(1);
+          return;
+        }
         if (wire.method === "thread/turns/list") {
           const reply = turns((wire.params as { threadId: string }).threadId);
           // Kept for `thread/items/list`, which Buzz reads them through.
@@ -2045,6 +2057,93 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
     await screen.findByRole("combobox", { name: "Model" }),
   ).toHaveTextContent("Default");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+const REFRESH_ERROR =
+  "failed to load configuration: Your access token could not be refreshed. Please log out and sign in again.";
+
+it("offers sign-in when model discovery rejects stored credentials", async () => {
+  const f = fixture({ startupError: REFRESH_ERROR });
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex needs you to sign in.",
+  );
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: "Install integration" }),
+  ).toBeNull();
+});
+
+it("does not mistake an MCP refresh failure for the Codex account", async () => {
+  const error =
+    "MCP OAuth refresh token was rejected; reauthorization required.";
+  const f = fixture({ startupError: error });
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+});
+
+it("recovers the first install through the open dialog without a second download", async () => {
+  const f = fixture({ installed: false, startupError: REFRESH_ERROR });
+  let downloads = 0;
+  const spawn = async (id: string, options?: HostProcessOptions) => {
+    if (["platform", "install", "use"].includes(id)) {
+      if (id === "platform")
+        queueMicrotask(() => options?.onStdout?.("Darwin arm64\n"));
+      if (id === "install") downloads++;
+      if (id === "use") f.disk.installed = true;
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    }
+    return f.spawn(id, options);
+  };
+  const setup = new CodexSetup(spawn, async () => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      tag_name: "rust-v0.169.0",
+      assets: [
+        {
+          name: "codex-package-aarch64-apple-darwin.tar.gz",
+          digest: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+    }),
+  }));
+  const provider = new CodexProvider(spawn, localStore(), setup);
+  const { CreateModel } = createTabs(provider, f.runtime, spawn, setup);
+  render(<CreateModel config={defaults} disabled={false} onChange={vi.fn()} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install integration" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Sign in to Codex",
+  });
+  expect(
+    within(dialog).getByText(
+      "Codex 0.169.0 was downloaded. Sign in again to finish setup.",
+    ),
+  ).toBeVisible();
+  const signIn = within(dialog).getByRole("button", { name: "Sign in" });
+  await waitFor(() => expect(signIn).toBeEnabled());
+  expect(f.disk.installed).toBe(false);
+  fireEvent.click(signIn);
+  await waitFor(() => expect(f.logins).toHaveLength(1));
+  expect(
+    f.spawn.mock.calls.find(([id]) => id === "login")?.[1]?.env
+      ?.BUZZ_CODEX_VERSION,
+  ).toBe("0.169.0");
+  f.disk.startupError = undefined;
+  f.logins[0]?.resolve(0);
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(f.disk.installed).toBe(true);
+  expect(downloads).toBe(1);
+  provider.dispose();
 });
 
 it("moves the card from Install integration to Sign in once the install succeeds", async () => {

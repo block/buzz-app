@@ -98,7 +98,9 @@ See the launcher for home recovery when a desktop build inherits Buzz's
 Buzz runs its own Codex, never the executable on PATH. The launcher installs
 releases under Buzz's app data `codex/<version>/bin/codex`, checks OpenAI's
 published checksum and tests the release before switching. A failed update
-leaves the previous copy in use.
+leaves the previous copy in use. If its test instead finds a rejected sign-in,
+setup offers **Sign in** using the downloaded copy, then retests it before
+switching. Cancelling leaves that copy available to retry while Buzz stays open.
 
 Buzz checks for updates when agents load and every six hours. The first download
 (about 130 MB) waits until a Codex agent is running or **Install integration** is clicked.

@@ -153,6 +153,13 @@ export async function checkCodex(spawn: Spawn): Promise<CodexStatus> {
   }
 }
 
+/** Codex's own credential failures, not an MCP server's OAuth error. */
+export function needsCodexSignIn(error: unknown) {
+  return /Missing bearer or basic authentication|Incorrect API key provided|could not be refreshed\b[^.\n]*\. Please (?:log out and )?sign in again/i.test(
+    message(error),
+  );
+}
+
 /** A failed turn's notice as the conversation reads it, in Markdown: a
  * missing or refused sign-in links to `settings`, where Codex signs in once
  * for every Codex agent. Signed out, Codex reaches OpenAI with no credentials
@@ -166,9 +173,7 @@ export async function checkCodex(spawn: Spawn): Promise<CodexStatus> {
 export function explainTurn(notice: string, settings: string) {
   const explanation = /Missing bearer or basic authentication/i.test(notice)
     ? `Codex isn't signed in. Head to [Settings](${settings}) to sign in.`
-    : /Incorrect API key provided|could not be refreshed\b[^.\n]*\. Please (?:log out and )?sign in again/i.test(
-          notice,
-        )
+    : needsCodexSignIn(notice)
       ? `OpenAI rejected Codex's sign-in. It may have expired or been revoked. Head to [Settings](${settings}) to sign in again.`
       : undefined;
   if (!explanation) return notice;
@@ -241,6 +246,10 @@ export class CodexSetup {
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
   private readonly refused = new Set<string>();
+  /** Downloaded, but not activated: sign-in must succeed before it can be tested. */
+  private pending:
+    | { version: string; current: string | undefined; reason: string }
+    | undefined;
   /** Looking for Buzz's copy or downloading one, which deliveries wait for
    * while Buzz has found no copy to run. */
   private holding: Promise<void> | undefined;
@@ -279,7 +288,9 @@ export class CodexSetup {
     }
     this.checked ??= (async () => {
       this.set({ checking: true });
-      const status = await checkCodex(spawn);
+      const status: CodexStatus = await (this.pending
+        ? { state: "signed-out", version: this.pending.version }
+        : checkCodex(spawn));
       this.checked = undefined;
       this.set({ status, checking: false });
       return status;
@@ -291,7 +302,7 @@ export class CodexSetup {
    * without a copy is left without one: the download is large. */
   update(needed: boolean) {
     const spawn = this.spawn;
-    if (!spawn || this.state.running) return Promise.resolve();
+    if (!spawn || this.state.running || this.pending) return Promise.resolve();
     // Held from the first check: until it answers, there may be no copy.
     return this.hold(
       (async () => {
@@ -338,6 +349,10 @@ export class CodexSetup {
         if (signal.aborted) abort();
       });
     }
+    // No unvalidated candidate may start a conversation, even though setup
+    // offers sign-in instead of another download.
+    if (this.pending && !this.pending.current)
+      throw new Error(this.pending.reason);
   }
   /** Makes `work` what deliveries wait on, until it ends. */
   private hold(work: Promise<void>) {
@@ -366,7 +381,17 @@ export class CodexSetup {
     this.set({ running: step, ...(asked ? { output: "" } : {}) });
     try {
       if (step === "install") await this.install(spawn);
-      else await this.step(spawn, "login", [], "Sign-in");
+      else {
+        const pending = this.pending;
+        await this.step(
+          pending ? pinned(spawn, pending.version) : spawn,
+          "login",
+          [],
+          "Sign-in",
+        );
+        if (pending && !this.cancelled)
+          await this.testAndUse(spawn, pending.version, pending.current);
+      }
     } catch (error) {
       this.log(`\n${message(error)}`);
     } finally {
@@ -398,6 +423,7 @@ export class CodexSetup {
   /** Downloads the latest release, checks it against its published checksum,
    * tests it, and only then makes it the one new sessions start. */
   private async install(spawn: Spawn) {
+    if (this.pending) return;
     if (!this.request) throw new Error("Codex downloads need the desktop app");
     const status = await checkCodex(spawn);
     const current = "version" in status ? status.version : undefined;
@@ -427,10 +453,22 @@ export class CodexSetup {
       throw new Error(`Codex ${latest} lists no checksum for ${target}`);
     this.log(`Downloading Codex ${latest}…\n`);
     await this.step(spawn, "install", [latest, target, checksum], "Download");
+    await this.testAndUse(spawn, latest, current);
+  }
+
+  private async testAndUse(spawn: Spawn, latest: string, current?: string) {
     this.log(`Testing Codex ${latest}…\n`);
     try {
       await testRelease(spawn, latest);
     } catch (error) {
+      if (needsCodexSignIn(error)) {
+        this.pending = { version: latest, current, reason: message(error) };
+        const notice = `Codex ${latest} was downloaded. Sign in again to finish setup.`;
+        this.set({ notice });
+        this.log(`\n${message(error)}\n${notice}\n`);
+        return;
+      }
+      this.pending = undefined;
       this.refused.add(latest);
       const reason = `Codex ${latest} failed its test: ${message(error)}`;
       this.set({
@@ -439,6 +477,7 @@ export class CodexSetup {
       throw new Error(reason);
     }
     await this.step(spawn, "use", [latest], "Switching");
+    this.pending = undefined;
     this.set({ notice: undefined });
     this.log(`Codex ${latest} is installed.\n`);
   }

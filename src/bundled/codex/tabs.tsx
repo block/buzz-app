@@ -70,7 +70,7 @@ import {
 } from "./config";
 import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
-import type { CodexSetup } from "./setup";
+import { type CodexSetup, needsCodexSignIn } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
@@ -187,7 +187,7 @@ export class CodexProvider {
         });
       }
     } catch (error) {
-      const reason = message(error);
+      const reason = needsCodexSignIn(error) ? SIGN_IN_ERROR : message(error);
       if (this.abort === abort && !abort.signal.aborted)
         this.set({
           readiness: "attention",
@@ -483,7 +483,7 @@ function CodexSignIn({
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { running, output } = useSyncExternalStore(
+  const { running, output, notice } = useSyncExternalStore(
     login.subscribe,
     login.snapshot,
   );
@@ -515,6 +515,11 @@ function CodexSignIn({
         }}
       >
         <section className="grid gap-2">
+          {step === "login" && notice && (
+            <p role="status" className="m-0">
+              {notice}
+            </p>
+          )}
           {step === "install" && (
             <p role="status" className="m-0">
               {checking && !running ? "Checking Codex…" : NOT_INSTALLED}

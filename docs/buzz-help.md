@@ -1547,6 +1547,12 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
   out. API key and keyring sign-ins can't run them.
+- If Codex downloads but its setup test reports an expired or rejected sign-in,
+  choose **Sign in** in the setup dialog or Codex's harness defaults. Buzz keeps
+  the downloaded copy, signs in with it, then tests it again before activating
+  it. Cancelling sign-in leaves it available to retry while Buzz stays open.
+  A rejected sign-in during model discovery also offers **Sign in**, not another
+  installation.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

@@ -143,7 +143,7 @@ import {
   browserThreadFollows,
   type ThreadFollowStorage,
 } from "./thread-follows";
-import { createMessages } from "./messages";
+import { createMessages, replyInvocationIntents } from "./messages";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
@@ -1700,6 +1700,41 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
+  function invocationScope(
+    channelId: string,
+    root: string,
+  ): ((agentPubkey: string) => boolean) | undefined {
+    const optIn = replyInvocationIntents.get(session);
+    const owner = transport?.viewer;
+    const communityOrigin = transport?.scope;
+    if (!optIn || !owner || !communityOrigin) return;
+    const channel = channels.queries.get?.(channelId);
+    if (
+      !channel ||
+      channel.cached ||
+      channel.metadataCached ||
+      channel.metadataPending ||
+      channel.pending ||
+      channel.archived ||
+      channel.huddle ||
+      (channel.channelType !== "stream" && channel.channelType !== "forum")
+    )
+      return;
+    const scope = { agentChoices, archives: archives.queries, viewer: owner };
+    const { selectable } = agentChoices.snapshot();
+    return (agentPubkey) =>
+      !agentUnavailable(scope, agentPubkey) &&
+      (profiles.queries.owner?.(agentPubkey) === owner ||
+        selectable.some(
+          (agent) => agent.managed && agent.pubkey === agentPubkey,
+        )) &&
+      optIn({
+        communityOrigin,
+        owner,
+        source: { channelId, root },
+        agentPubkey,
+      });
+  }
   function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 40100) return;
     const id = event.tags.find((t) => t[0] === "h")?.[1];
@@ -3069,6 +3104,7 @@ export function createRelaySession(
               .map((event) => [event.id, event]),
           ).values(),
         ],
+        invocationScope,
       ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {

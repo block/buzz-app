@@ -198,7 +198,11 @@ import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { ChannelSummary } from "../relay/contracts";
+import { replyInvocationIntents } from "../relay/messages";
+import {
+  INVOCATION_INTENT_VERSION,
+  type ChannelSummary,
+} from "../relay/contracts";
 import {
   parseSlug,
   type AttentionObject,
@@ -1596,6 +1600,7 @@ export type NoteChange = Readonly<{ note?: PluginNote | null }>;
 const MODEL_FIELDS = ["model", "provider", "effort"] as const;
 export type Agents = {
   readonly invocationSubthreads?: true;
+  readonly invocationIntentVersion?: 1;
   registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
@@ -2328,6 +2333,7 @@ const wssOf = (origin: string) =>
 export class AgentsService extends Service implements Agents {
   private readonly sessionAdmissions;
   readonly invocationSubthreads = true as const;
+  readonly invocationIntentVersion = INVOCATION_INTENT_VERSION;
   registerSessionRouter(router: AgentSessionRouter) {
     this.sessionAdmissions.register(this.ctx, router);
   }
@@ -2711,6 +2717,7 @@ export class AgentsService extends Service implements Agents {
             agent: agent.key,
             owner: agent.owner,
             harness: type.key,
+            communityOrigin: communityDestination(agent.relay).url,
             ...placement,
             invocationId:
               trigger.type === "mention" ? trigger.event.id : trigger.id,
@@ -2733,6 +2740,7 @@ export class AgentsService extends Service implements Agents {
           agent: agent.key,
           owner: agent.owner,
           harness: agent.type,
+          communityOrigin: communityDestination(agent.relay).url,
           ...placement,
           invocationId:
             trigger.type === "mention" ? trigger.event.id : trigger.id,
@@ -8609,6 +8617,17 @@ export class AgentsService extends Service implements Agents {
         connection,
         stopLive: this.listen(live.session, origin, connection),
       };
+      if (live) {
+        replyInvocationIntents.set(
+          live.session,
+          this.sessionAdmissions.invocationIntent,
+        );
+        live.controller.signal.addEventListener(
+          "abort",
+          () => replyInvocationIntents.delete(live.session),
+          { once: true },
+        );
+      }
     }
     // Disconnecting stops its agents even when no binding changed.
     this.update();

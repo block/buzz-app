@@ -1,13 +1,17 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
 import { localAgentsFixture } from "../agents/local-testing";
+import type { AgentInvocationIntent } from "../agents/session-admission";
+import { replyInvocationIntents } from "./messages";
+import { PublishRejected } from "./outbox";
 import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import {
   flush,
   keypair,
+  message,
   metadata,
   roster,
   scriptedTransport,
@@ -179,6 +183,96 @@ it.each([false, true])(
     expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
   },
 );
+
+it("signs invocation intent only for an opted-in owned recipient and keeps it on retry", async () => {
+  const origin = "https://relay.example.test";
+  const local = localAgentsFixture([
+    {
+      pubkey: honey.pubkey,
+      name: "Honey",
+      relayUrl: origin,
+      owner: viewer.pubkey,
+    },
+  ]);
+  const invocationIntent = vi.fn<(input: AgentInvocationIntent) => boolean>(
+    () => true,
+  );
+  const h = setup(false, true, local);
+  replyInvocationIntents.set(h.session, invocationIntent);
+  await h.members(
+    undefined,
+    undefined,
+    undefined,
+    metadata(relay, "c", "General", undefined, [["t", "stream"]]),
+  );
+  h.live().state({ status: "connected", routes: [] });
+  const root = eventDto(message(viewer, "c", "Discussion", 1700000001));
+  const parent = eventDto(
+    message(namesake, "c", "Earlier reply", 1700000002, [
+      ["e", root.id, "", "reply"],
+    ]),
+  );
+  h.live().receive([root, parent], { phase: "live", channelId: "c" });
+  h.publish.mockRejectedValueOnce(new PublishRejected("try again"));
+  const tags = ["buzz:invocation-intent", "1", honey.pubkey];
+  const id = h.session.messages.reply(
+    "c",
+    root.id,
+    "Please take this",
+    [honey.pubkey, namesake.pubkey],
+    [],
+    parent.id,
+  );
+  await vi.waitFor(() =>
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === id)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  const first = eventDto(structuredClone(h.publish.mock.calls[0]?.[0]));
+  expect(first).toMatchObject({ id, pubkey: viewer.pubkey, kind: 9 });
+  expect(first.tags).toEqual(
+    expect.arrayContaining([
+      ["h", "c"],
+      ["e", root.id, "", "root"],
+      ["e", parent.id, "", "reply"],
+      ["p", honey.pubkey],
+      ["p", namesake.pubkey],
+      tags,
+    ]),
+  );
+  expect(
+    first.tags.filter(([name]) => name === "buzz:invocation-intent"),
+  ).toEqual([tags]);
+  expect(invocationIntent).toHaveBeenCalledExactlyOnceWith({
+    communityOrigin: origin,
+    owner: viewer.pubkey,
+    source: { channelId: "c", root: root.id },
+    agentPubkey: honey.pubkey,
+  });
+
+  replyInvocationIntents.delete(h.session);
+  h.session.messages.retry(id);
+  await vi.waitFor(() =>
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === id)
+        ?.delivery,
+    ).toBe("accepted"),
+  );
+  expect(h.publish.mock.calls[1]?.[0]).toEqual(first);
+  expect(h.sign).toHaveBeenCalledTimes(1);
+
+  h.session.messages.reply(
+    "c",
+    root.id,
+    "Legacy reply",
+    [honey.pubkey],
+    [],
+    parent.id,
+  );
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledTimes(3));
+  expect(h.publish.mock.calls[2]?.[0].tags).not.toContainEqual(tags);
+});
 it("mentions a just-added member despite an older replica roster", async () => {
   const h = setup();
   await h.members([viewer.pubkey]);

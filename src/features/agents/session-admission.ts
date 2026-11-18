@@ -2,8 +2,13 @@ import type { Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import type { JsonValue } from "../navigation/targets";
 import { unframed } from "../agent-harness/plugin-wake";
-import type { RelayEvent } from "../relay/events";
-import type { AgentKey } from "./membership";
+import { hasEventProof, type RelayEvent } from "../relay/events";
+import {
+  INVOCATION_INTENT_TAG,
+  INVOCATION_INTENT_VERSION,
+} from "../relay/contracts";
+import { threadReference } from "../relay/thread-reference";
+import { pubkeyOf, type AgentKey } from "./membership";
 import type { AgentStore } from "./store";
 
 export type AgentSessionSource = Readonly<{
@@ -13,10 +18,19 @@ export type AgentSessionSource = Readonly<{
   community?: true;
 }>;
 
+export type AgentInvocationIntent = Readonly<{
+  communityOrigin: string;
+  owner: string;
+  source: Readonly<{ channelId: string; root: string }>;
+  agentPubkey: string;
+}>;
+
 export type AgentSessionAdmission = Readonly<{
   agent: AgentKey;
   owner: string;
   harness: string;
+  /** The runner's community, independent of the selected community. */
+  communityOrigin: string;
   source: AgentSessionSource;
   /** The native conversation scope. It can include several source threads. */
   conversation: AgentSessionSource;
@@ -41,6 +55,41 @@ type AdmissionRequest = Omit<
   AgentSessionAdmission,
   "sessionKey" | "intent" | "association" | "adopted"
 >;
+
+function hasInvocationIntent({
+  agent,
+  event,
+  owner,
+  source,
+  invocationId,
+}: AdmissionRequest) {
+  if (
+    event?.kind !== 9 ||
+    event.id !== invocationId ||
+    event.pubkey !== owner ||
+    !hasEventProof(event)
+  )
+    return false;
+  const thread = threadReference(event);
+  const channels = event.tags.filter(([name]) => name === "h");
+  const recipient = pubkeyOf(agent);
+  return (
+    !!thread &&
+    thread.rootId === source.root &&
+    thread.rootId !== event.id &&
+    thread.parentId !== event.id &&
+    channels.length === 1 &&
+    channels[0]?.[1] === source.channelId &&
+    event.tags.some(([name, key]) => name === "p" && key === recipient) &&
+    event.tags.some(
+      ([name, version, key, ...rest]) =>
+        name === INVOCATION_INTENT_TAG &&
+        version === String(INVOCATION_INTENT_VERSION) &&
+        key === recipient &&
+        !rest.length,
+    )
+  );
+}
 /** Physical thread and the invocation that owns a routed conversation. */
 export type InvocationSubthread = Readonly<{ root: string; parent: string }>;
 export type AgentSessionRouter = Readonly<{
@@ -50,9 +99,11 @@ export type AgentSessionRouter = Readonly<{
   matches(
     input: Pick<
       AgentSessionAdmission,
-      "agent" | "owner" | "harness" | "source"
+      "agent" | "owner" | "harness" | "communityOrigin" | "source"
     >,
   ): boolean;
+  /** Opt in to signed invocation intent for an eligible addressed agent. */
+  invocationIntent?(input: AgentInvocationIntent): boolean;
   /** Runs after authority checks, before the harness chooses its session.
    * Resolve task ancestry here; undefined preserves the native placement. */
   route?(
@@ -160,12 +211,29 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
         );
       routers.register(ctx, router);
     },
+    invocationIntent(input: AgentInvocationIntent) {
+      return (
+        !stopped &&
+        routers.snapshot().some((router) => {
+          try {
+            return !!router.route && router.invocationIntent?.(input) === true;
+          } catch {
+            return false;
+          }
+        })
+      );
+    },
     async route(
       input: AdmissionRequest,
       nativePlacement?: true,
       pinNativePlacement?: () => Promise<void> | undefined,
     ) {
       check(input.signal);
+      const marked = hasInvocationIntent(input);
+      if (marked && !input.communityOrigin)
+        throw new Error(
+          "The invocation community is unavailable. Retry when it is connected.",
+        );
       const key =
         SESSION_ADMISSION_PREFIX +
         JSON.stringify([
@@ -175,30 +243,43 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
           input.invocationId,
         ]);
       const saved = await storage.read(key);
-      if (saved !== null && parse<InvocationSubthread | null>(saved) === null)
-        return;
+      const ordinary =
+        saved !== null && parse<InvocationSubthread | null>(saved) === null;
+      if (ordinary && !marked) return;
       const conversationKey = (parent: string) =>
         routeConversationKey(input.agent, input.harness, {
           channelId: input.source.channelId,
           root: parent,
         });
       const prior =
-        saved ??
-        (input.source.root
+        saved === null && input.source.root
           ? await storage.read(conversationKey(input.source.root))
-          : null);
+          : saved;
       const savedRoute =
-        prior === null ? undefined : checkedRoute(parse<unknown>(prior));
-      if (nativePlacement && !savedRoute) return;
-      const candidates = routers.snapshot().filter((router) => router.route);
-      if (!candidates.length) return savedRoute;
+        prior === null || ordinary
+          ? undefined
+          : checkedRoute(parse<unknown>(prior));
+      if (nativePlacement && !savedRoute && !marked) return;
+      const candidates = routers
+        .snapshot()
+        .filter(
+          (router) => router.route && (!marked || router.invocationIntent),
+        );
+      if (!candidates.length && !marked) return savedRoute;
       await Promise.all(candidates.map((router) => router.ready()));
       check(input.signal);
       const matches = candidates.filter((router) => router.matches(input));
       if (matches.length > 1)
         throw new Error("More than one plugin routes this conversation");
       const router = matches[0];
-      if (!router) return savedRoute;
+      if (!router) {
+        if (marked)
+          throw new Error(
+            "The invocation router is unavailable. Retry when it is ready.",
+          );
+        return savedRoute;
+      }
+      if (ordinary) return;
       // A request already admitted under the old placement stays there.
       const legacy = await storage.read(
         SESSION_ADMISSION_PREFIX +

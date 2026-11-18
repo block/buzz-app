@@ -109,6 +109,28 @@ Local host receipts do not establish cross-device task identity. Existing admitt
 invocations keep their previous placement. Older plugins without `route` keep
 the existing behavior.
 
+Hosts with `ctx.agents.invocationIntentVersion === 1` include `communityOrigin`
+in router admission. It is the normalized HTTPS origin of the actual runner's
+community. The router can also implement a synchronous, read-only
+`invocationIntent({ communityOrigin, owner, source, agentPubkey })` predicate.
+`source` contains the channel ID and physical thread root. Return `true` only
+for recipients this router can admit. The host calls active routers for
+addressed agents the sending viewer owns in a writable stream or forum with a
+verified reply target.
+
+The host appends `["buzz:invocation-intent", "1", agentPubkey]` to the signed
+kind-9 reply before computing its ID. The recipient is lowercase 64-digit hex
+and must also be present in a signed `p` tag. Retry keeps the original signed
+event. The tag carries no authority or task identity. To read intent, verify
+the author, community, recipients and reply ancestry. Unknown versions,
+malformed tags and unmarked replies supply no pending-intent evidence. Reuse
+confirmed bindings for older replies. A marked ancestor without a confirmed
+binding can be a continuation of an earlier invocation. Reconcile against that
+ancestor chain with a bounded wait. Throw on an unconfirmed outcome so retry
+can try the same invocation again. A marked reply for its owner's agent needs
+a matching router that implements `invocationIntent`. If that router is
+unavailable, admission fails and the same invocation can retry.
+
 A page-owned `Workspace` can select `{ channelId, threadId: sourceRoot,
 subthreadId: invocationId }`. It shows and composes within that branch. Drafts
 created in this workspace retain the explicit branch target when reopened.

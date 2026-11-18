@@ -1566,7 +1566,7 @@ export function createTabs(
               }
               previewDisabled={!!bound}
               previewLoading={provider.snapshot().previewChecking ?? false}
-              onChange={async (voice) => {
+              onCommit={async (voice) => {
                 if (settingsHost?.pendingSave) {
                   setDraft(readConfig({ ...draft, voice }));
                   return;
@@ -1586,7 +1586,6 @@ export function createTabs(
                 } catch (reason) {
                   // An unconfirmed write can still arrive through sync.
                   setError(message(reason));
-                  throw reason;
                 } finally {
                   setSaving(false);
                 }

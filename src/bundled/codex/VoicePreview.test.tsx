@@ -49,7 +49,7 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
       previews={previews}
       voice="maple"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
@@ -73,6 +73,7 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
 it("ends a preview when its keyed voice changes or settings closes", async () => {
   vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
   const user = userEvent.setup();
+  const onCommit = vi.fn();
   const view = render(
     <VoicePreview
       key="cove"
@@ -81,7 +82,7 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
       previews={previews}
       voice="cove"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={onCommit}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
@@ -95,7 +96,7 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
       previews={previews}
       voice="maple"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={onCommit}
     />,
   );
   expect(first?.aborted).toBe(true);
@@ -105,6 +106,7 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
   const second = vi.mocked(previewVoice).mock.calls[1]?.[2];
   view.unmount();
   expect(second?.aborted).toBe(true);
+  expect(onCommit).not.toHaveBeenCalled();
 });
 
 it("shows errors and lets the user retry the default voice", async () => {
@@ -119,7 +121,7 @@ it("shows errors and lets the user retry the default voice", async () => {
       previews={previews}
       voice=""
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   if (!screen.queryByRole("dialog"))
@@ -144,7 +146,7 @@ it("shows errors and lets the user retry the default voice", async () => {
 
 it("selects and previews rows, replaces playback and stops on dismissal", async () => {
   vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
-  const onChange = vi.fn();
+  const onCommit = vi.fn();
   const user = userEvent.setup();
   render(
     <VoicePreview
@@ -154,25 +156,27 @@ it("selects and previews rows, replaces playback and stops on dismissal", async 
       voice="cove"
       defaultVoice="cove"
       disabled={false}
-      onChange={onChange}
+      onCommit={onCommit}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
-  expect(onChange).toHaveBeenCalledWith("maple");
+  expect(onCommit).not.toHaveBeenCalled();
   expect(screen.getByRole("dialog")).toBeVisible();
   await user.click(screen.getByRole("radio", { name: "Cove" }));
   expect(first?.aborted).toBe(true);
-  const second = vi.mocked(previewVoice).mock.calls[1]?.[2];
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  const second = vi.mocked(previewVoice).mock.calls[2]?.[2];
   await user.keyboard("{Escape}");
   expect(second?.aborted).toBe(true);
+  expect(onCommit).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Huddle voice" })).toBeVisible();
 });
 
-it("chooses and previews a row without closing the picker", async () => {
-  const onChange = vi.fn();
+it("previews multiple voices and commits only the final choice on Close", async () => {
+  const onCommit = vi.fn();
   const user = userEvent.setup();
   render(
     <VoicePreview
@@ -182,7 +186,7 @@ it("chooses and previews a row without closing the picker", async () => {
       voice=""
       defaultVoice="cove"
       disabled={false}
-      onChange={onChange}
+      onCommit={onCommit}
     />,
   );
   expect(
@@ -190,7 +194,7 @@ it("chooses and previews a row without closing the picker", async () => {
   ).toHaveTextContent("Cove · Default");
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
-  expect(onChange).toHaveBeenCalledWith("maple");
+  expect(onCommit).not.toHaveBeenCalled();
   expect(previewVoice).toHaveBeenCalledWith(
     host,
     expect.any(Promise),
@@ -198,6 +202,12 @@ it("chooses and previews a row without closing the picker", async () => {
     expect.any(Function),
   );
   expect(screen.getByRole("dialog")).toBeVisible();
+  await user.click(screen.getByRole("radio", { name: "Cove" }));
+  expect(onCommit).not.toHaveBeenCalled();
+  const playback = vi.mocked(previewVoice).mock.calls.at(-1)?.[2];
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(playback?.aborted).toBe(true);
+  expect(onCommit).toHaveBeenCalledExactlyOnceWith("cove");
 });
 
 it("ignores stale audio callbacks after another selection", async () => {
@@ -210,7 +220,7 @@ it("ignores stale audio callbacks after another selection", async () => {
       voice="cove"
       voices={["cove", "maple"]}
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
@@ -232,7 +242,7 @@ it("preloads the selected recording, then the other choices when the picker open
       voice=""
       defaultVoice="cove"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   await waitFor(() =>
@@ -253,7 +263,7 @@ it("keeps playback alive when loading changes to playing", async () => {
       previews={previews}
       voice="cove"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   if (!screen.queryByRole("dialog"))
@@ -267,7 +277,7 @@ it("keeps playback alive when loading changes to playing", async () => {
 });
 it("keeps arrow navigation and activation of the selected row open", async () => {
   const user = userEvent.setup();
-  const onChange = vi.fn();
+  const onCommit = vi.fn();
   render(
     <VoicePreview
       host={host}
@@ -276,15 +286,16 @@ it("keeps arrow navigation and activation of the selected row open", async () =>
       voice=""
       defaultVoice="cove"
       disabled={false}
-      onChange={onChange}
+      onCommit={onCommit}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
-  screen.getByRole("radio", { name: "Codex default (Cove)" }).focus();
+  screen.getByRole("radio", { name: "Codex default" }).focus();
   await user.keyboard("{ArrowDown}");
   expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
-  expect(onChange).toHaveBeenCalledWith("cove");
-  await user.click(screen.getByRole("radio", { name: "Codex default (Cove)" }));
+  expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
+  expect(onCommit).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("radio", { name: "Codex default" }));
   expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
 });
 
@@ -302,7 +313,7 @@ it("stops a pending preview when retained settings become hidden", async () => {
         previews={previews}
         voice="maple"
         disabled={false}
-        onChange={vi.fn()}
+        onCommit={vi.fn()}
       />
     </div>,
   );
@@ -336,7 +347,7 @@ it("stops hidden retained previews without checkVisibility", async () => {
         previews={previews}
         voice="maple"
         disabled={false}
-        onChange={vi.fn()}
+        onCommit={vi.fn()}
       />
     </div>,
   );
@@ -354,7 +365,7 @@ it("stops hidden retained previews without checkVisibility", async () => {
 
 it("filters supported voices by locale without changing the saved voice", async () => {
   const user = userEvent.setup();
-  const onChange = vi.fn();
+  const onCommit = vi.fn();
   render(
     <VoicePreview
       voice="vale"
@@ -366,7 +377,7 @@ it("filters supported voices by locale without changing the saved voice", async 
         unsupported: "French",
       }}
       disabled={false}
-      onChange={onChange}
+      onCommit={onCommit}
     />,
   );
   const trigger = screen.getByRole("button", { name: "Huddle voice" });
@@ -385,7 +396,7 @@ it("filters supported voices by locale without changing the saved voice", async 
   await user.click(await screen.findByRole("option", { name: "Hindi" }));
   expect(screen.getByRole("radio", { name: "Neer" })).toBeEnabled();
   expect(screen.queryByRole("radio", { name: "Vale" })).toBeNull();
-  expect(onChange).not.toHaveBeenCalled();
+  expect(onCommit).not.toHaveBeenCalled();
   await waitFor(() => expect(locale).toHaveFocus());
   await user.keyboard("{ArrowDown}");
   await user.click(await screen.findByRole("option", { name: "Other voices" }));
@@ -399,93 +410,13 @@ it("filters supported voices by locale without changing the saved voice", async 
   ).toHaveTextContent("British English");
 });
 
-it("reports a failed save without previewing it and allows a retry", async () => {
-  const onChange = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("Could not save voice"))
-    .mockResolvedValueOnce(undefined);
-  const user = userEvent.setup();
-  render(
-    <VoicePreview
-      host={host}
-      previews={previews}
-      voice="cove"
-      voices={["cove", "maple"]}
-      disabled={false}
-      onChange={onChange}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
-  await user.click(screen.getByRole("radio", { name: "Maple" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not save voice",
-  );
-  await expect(vi.mocked(previewVoice).mock.calls[0]?.[1]).rejects.toThrow(
-    "Could not save voice",
-  );
-  await user.click(screen.getByRole("radio", { name: "Maple" }));
-  expect(previewVoice).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByRole("button", { name: /preview/i })).toBeNull();
-});
-
-it("does not start audio when a save finishes after closing the picker", async () => {
-  let finish!: () => void;
-  const onChange = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const user = userEvent.setup();
-  render(
-    <VoicePreview
-      host={host}
-      previews={previews}
-      voice="cove"
-      voices={["cove", "maple"]}
-      disabled={false}
-      onChange={onChange}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
-  await user.click(screen.getByRole("radio", { name: "Maple" }));
-  await user.click(screen.getByRole("button", { name: "Close" }));
-  await act(async () => finish());
-  expect(vi.mocked(previewVoice).mock.calls[0]?.[2].aborted).toBe(true);
-});
-
-it("starts preparing audio in the click gesture while persistence is pending", async () => {
-  let finish!: () => void;
-  const user = userEvent.setup();
-  render(
-    <VoicePreview
-      voice="cove"
-      voices={["cove", "maple"]}
-      previews={previews}
-      disabled={false}
-      onChange={() =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        })
-      }
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
-  await user.click(screen.getByRole("radio", { name: "Maple" }));
-  try {
-    expect(previewVoice).toHaveBeenCalledOnce();
-  } finally {
-    await act(async () => finish());
-  }
-});
 it("retains a selected preview through recording discovery and uses its new URL", async () => {
   const user = userEvent.setup();
   const props = {
     voice: "cove",
     voices: ["cove", "maple"],
     disabled: false,
-    onChange: vi.fn(),
+    onCommit: vi.fn(),
   };
   const view = render(<VoicePreview {...props} previewLoading />);
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
@@ -496,7 +427,7 @@ it("retains a selected preview through recording discovery and uses its new URL"
 });
 it("returns focus to Voice when the picker closes during persistence", async () => {
   const user = userEvent.setup();
-  const props = { voice: "cove", disabled: false, onChange: vi.fn() };
+  const props = { voice: "cove", disabled: false, onCommit: vi.fn() };
   const view = render(<VoicePreview {...props} />);
   const trigger = screen.getByRole("button", { name: "Huddle voice" });
   await user.click(trigger);
@@ -523,7 +454,7 @@ it("refreshes after a retained pane finishes leaving and returns", async () => {
         voices={["cove"]}
         voice=""
         disabled={false}
-        onChange={vi.fn()}
+        onCommit={vi.fn()}
         onShown={onShown}
       />
     </div>,
@@ -559,7 +490,7 @@ it.each([
         voice={voice}
         defaultVoice="cove"
         disabled={false}
-        onChange={vi.fn()}
+        onCommit={vi.fn()}
       />,
     );
     expect(
@@ -568,26 +499,28 @@ it.each([
   },
 );
 
-it("reports missing recordings as neutral status after saving", async () => {
-  const onChange = vi.fn();
+it("shows neutral status for missing recordings and still lets the user save", async () => {
+  const onCommit = vi.fn();
   render(
     <VoicePreview
       voices={["cove", "maple"]}
       voice="cove"
       disabled={false}
-      onChange={onChange}
+      onCommit={onCommit}
     />,
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
-  expect(onChange).toHaveBeenCalledWith("maple");
+  expect(onCommit).not.toHaveBeenCalled();
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
       "No recording is available for this voice.",
     ),
   );
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(onCommit).toHaveBeenCalledExactlyOnceWith("maple");
 });
 
 it("keeps preview download failures as errors", async () => {
@@ -601,7 +534,7 @@ it("keeps preview download failures as errors", async () => {
       voices={["cove", "maple"]}
       voice="cove"
       disabled={false}
-      onChange={vi.fn()}
+      onCommit={vi.fn()}
     />,
   );
   const user = userEvent.setup();

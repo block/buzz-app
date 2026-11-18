@@ -60,6 +60,14 @@ test("Codex Voices persist separately through the settings host", async ({
     )
     .toBeGreaterThan(8);
   const locale = page.getByRole("combobox", { name: "Language and region" });
+  const defaultVoice = chooserRows.getByRole("radio", {
+    name: "Codex default",
+    exact: true,
+  });
+  await expect(defaultVoice).toHaveAccessibleDescription("Currently Cove");
+  expect((await defaultVoice.boundingBox()).y).toBeLessThan(
+    (await locale.boundingBox()).y,
+  );
   await expect(locale).toContainText("American English");
   await expect(
     page.getByRole("radio", { name: "Vale", exact: true }),
@@ -70,6 +78,7 @@ test("Codex Voices persist separately through the settings host", async ({
     .click();
   await page.mouse.click(8, 8);
   await expect(chooserRows).toBeVisible();
+  await expect(defaultVoice).toHaveAccessibleDescription("Currently Cove");
   await expect(
     page.getByRole("radio", { name: "Vale", exact: true }),
   ).toBeVisible();
@@ -80,9 +89,7 @@ test("Codex Voices persist separately through the settings host", async ({
   await page
     .getByRole("option", { name: "American English", exact: true })
     .click();
-  await page
-    .getByRole("radio", { name: "Codex default (Cove)", exact: true })
-    .focus();
+  await page.getByRole("radio", { name: "Codex default", exact: true }).focus();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(
@@ -92,7 +99,15 @@ test("Codex Voices persist separately through the settings host", async ({
     page.getByRole("radio", { name: "Maple", exact: true }),
   ).toBeChecked();
   await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", {
+      name: "Huddle voice",
+      exact: true,
+      includeHidden: true,
+    }),
+  ).toContainText("Cove · Default");
   await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(voice).toContainText("Maple");
   await expect(voice).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -149,7 +164,10 @@ test("Codex Voices persist separately through the settings host", async ({
     expect(
       await chooser.evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
+    await maple.press("Space");
+    await expect(maple).toBeChecked();
     await page.keyboard.press("Escape");
+    await expect(voice).toHaveText("Cove");
     await expect(voice).toBeFocused();
     await expect(pane.getByRole("button", { name: /Preview/ })).toHaveCount(0);
     expect(await pane.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(

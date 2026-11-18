@@ -25,7 +25,7 @@ export function VoicePreview({
   disabled,
   previewDisabled = false,
   previewLoading = false,
-  onChange,
+  onCommit,
   onShown,
 }: {
   host?: PreviewHost | undefined;
@@ -37,10 +37,13 @@ export function VoicePreview({
   disabled: boolean;
   previewDisabled?: boolean;
   previewLoading?: boolean;
-  onChange(voice: string): void | Promise<void>;
+  onCommit(voice: string): void;
   onShown?(): void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pendingVoice, setPendingVoice] = useState<string>();
+  const selectedVoice = pendingVoice ?? voice;
+  const cancelled = useRef(false);
   const [locale, setLocale] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const valueId = useId();
@@ -96,6 +99,7 @@ export function VoicePreview({
       waiting.current = undefined;
       setPlaying(undefined);
       setOpen(false);
+      setPendingVoice(undefined);
     }
   });
   useEffect(() => {
@@ -152,13 +156,10 @@ export function VoicePreview({
   };
   const available = (value: string) =>
     !value || !voices || voices.includes(value);
-  const defaultLabel = defaultVoice
-    ? `Codex default (${name(defaultVoice)})`
-    : "Codex default";
   const label = (value: string) =>
     value
       ? `${name(value)}${available(value) ? "" : " (unavailable)"}`
-      : defaultLabel;
+      : "Codex default";
   const failure = feedback && (
     <p
       role={feedback.error ? "alert" : "status"}
@@ -171,28 +172,25 @@ export function VoicePreview({
   );
   const select = async (value: string) => {
     stop();
-    const abort = new AbortController();
+    setPendingVoice(value);
     setFeedback(undefined);
+    if (previewDisabled) return;
+    const abort = new AbortController();
     const unavailable = new Error("No recording is available for this voice.");
     try {
-      const saved = onChange(value);
-      if (previewDisabled) {
-        await saved;
-        return;
-      }
       const recording = previewLoading
         ? new Promise<string>((resolve) => {
             waiting.current = { voice: value, abort, resolve };
           })
         : Promise.resolve(previews?.[value || defaultVoice || ""] ?? "");
-      const ready = Promise.all([saved, recording]).then(([, url]) => {
+      const ready = recording.then((url) => {
         if (!url) throw unavailable;
         return url;
       });
       // Readiness still settles if the device cannot initialize audio.
       void ready.catch(() => {});
       setPlaying({ voice: value, abort, loading: true });
-      // Enter the audio owner during activation; sound waits for save and discovery.
+      // Enter the audio owner during activation; sound waits for discovery.
       await previewVoice(host, ready, abort.signal, () =>
         setPlaying((current) =>
           current?.abort === abort ? { ...current, loading: false } : current,
@@ -204,7 +202,7 @@ export function VoicePreview({
           text:
             reason instanceof Error
               ? reason.message
-              : "Could not save or preview voice. Try again.",
+              : "Could not preview voice. Try again.",
           error: reason !== unavailable,
         });
     } finally {
@@ -224,10 +222,13 @@ export function VoicePreview({
         }
       }}
       onClick={() => {
-        if (value === voice) void select(value);
+        if (value === selectedVoice) void select(value);
       }}
       disabled={!available(value)}
       label={label(value)}
+      description={
+        !value && defaultVoice ? `Currently ${name(defaultVoice)}` : undefined
+      }
     />
   );
   const groups = new Map<string, string[]>();
@@ -267,6 +268,8 @@ export function VoicePreview({
             aria-expanded={open}
             onClick={() => {
               setLocale(undefined);
+              setFeedback(undefined);
+              cancelled.current = false;
               setOpen(true);
             }}
           >
@@ -279,45 +282,62 @@ export function VoicePreview({
           </Button>
         )}
       />
-      {!open && failure}
       <Dialog
         open={open}
         onOpenChange={(next) => {
           stop();
           setOpen(next);
+          if (next) return;
+          setPendingVoice(undefined);
+          setFeedback(undefined);
+          if (
+            !cancelled.current &&
+            pendingVoice !== undefined &&
+            pendingVoice !== voice &&
+            available(pendingVoice)
+          )
+            onCommit(pendingVoice);
+        }}
+        onEscape={() => {
+          cancelled.current = true;
+          return false;
         }}
         title="Choose voice"
+        description="Close with X to save your choice, or press Escape to cancel."
         dismissOnOutsideClick={false}
         size="compact"
         headerGap="compact"
         finalFocus={trigger}
       >
         <div className="grid gap-3">
-          {!!locales.length && (
-            <Select
-              label="Language and region"
-              variant="field"
-              disabled={disabled}
-              value={shownLocale}
-              groups={[
-                {
-                  label: "",
-                  options: locales.map((value) => ({ value, label: value })),
-                },
-              ]}
-              onValueChange={(value) => {
-                stop();
-                setLocale(value);
-              }}
-            />
-          )}
           <Field label="Voice" labelVisibility="hidden">
             <RadioGroup
-              value={voice}
+              value={selectedVoice}
               onValueChange={(value) => void select(value)}
               disabled={disabled}
             >
               {row("")}
+              {!!locales.length && (
+                <Select
+                  label="Language and region"
+                  variant="field"
+                  disabled={disabled}
+                  value={shownLocale}
+                  groups={[
+                    {
+                      label: "",
+                      options: locales.map((value) => ({
+                        value,
+                        label: value,
+                      })),
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    stop();
+                    setLocale(value);
+                  }}
+                />
+              )}
               {(groups.get(shownLocale) ?? []).map(row)}
             </RadioGroup>
           </Field>

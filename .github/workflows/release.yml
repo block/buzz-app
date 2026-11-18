@@ -94,8 +94,8 @@ jobs:
     # purge_caches only orders the build; it runs whether or not that ran.
     needs: [source, purge_caches]
     if: >-
-      ${{ !cancelled() && needs.source.result == 'success' && github.repository == 'block/buzz-app' &&
-          !inputs.promote_version && (inputs.candidates || github.ref == 'refs/heads/main') }}
+      github.repository == 'block/buzz-app' && !cancelled() && needs.source.result == 'success' &&
+      !inputs.promote_version && (inputs.candidates || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/desktop-build.yml
     permissions:
       contents: write

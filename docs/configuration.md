@@ -229,8 +229,15 @@ only from someone with an install record. Index listings are counted by
 manifest id. Counts are read from current revisions. Anyone the relay lets read that
 community can read the records, including who installed what; on a relay that
 doesn't require community membership, that is any authenticated user. **Record
-my plugins in this community** on the page keeps one choice per community on
-the device; turning it off publishes an `on: false` revision of each of the
+my plugins in this community** on the page is off by default. A relay operator
+can turn it on for members who haven't chosen by setting
+`BUZZ_PLUGIN_RECORDING_DEFAULT=on`; the relay advertises it as
+`"plugin_recording_default": "on"` in its NIP-11 document, and the client reads
+it once per community per launch. A missing field or any other value counts as
+off. If the document can't be read, the pass is retried and nothing is
+withdrawn. A member's own choice wins either way, and the page says when the community's
+default is on. The switch keeps one choice per community on the device; turning
+it off publishes an `on: false` revision of each of the
 member's records there, and earlier revisions stay in the artifact history. A
 build without an index records nothing. A community without NIP-CL or NIP-AR
 shows no counts and gets no records.

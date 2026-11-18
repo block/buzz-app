@@ -32,8 +32,11 @@ export type Inventory = Readonly<{
 type Storage = Pick<globalThis.Storage, "getItem" | "setItem">;
 
 export type Recorder = Readonly<{
-  /** Whether the selected community records the viewer's plugins. */
+  /** Whether the selected community records the viewer's plugins: the
+   * viewer's own choice there, else the community's default. */
   recording(): boolean;
+  /** The selected community's default, once read; off until then. */
+  defaultOn(): boolean;
   /** Saves the selected community's choice, then withdraws or restores the
    * viewer's records there. Rejects when that didn't finish; it is retried. */
   setRecording(on: boolean): Promise<void>;
@@ -47,8 +50,9 @@ export type Recorder = Readonly<{
   /** Tells the recorder which channel the counts were read from, so it
    * records there when that differs from where it last did. */
   sawChannel(channel: string): void;
-  /** Called after the recorder wrote records. */
-  subscribe(listener: () => void): () => void;
+  /** Called with `wrote` after the recorder wrote records, and with
+   * `default` when a community's default turned out to be on. */
+  subscribe(listener: (change: Change) => void): () => void;
   stop(): void;
 }>;
 
@@ -67,10 +71,13 @@ function defaultStorage(): Storage | undefined {
 
 class Superseded extends Error {}
 
+type Change = "wrote" | "default";
+
 export function createRecorder({
   relay,
   inventory,
   listed,
+  relayDefault = async () => false,
   storage = defaultStorage(),
   delayMs = 2_000,
   retryMs = RETRY_MS,
@@ -80,18 +87,22 @@ export function createRecorder({
   inventory: Inventory;
   /** Manifest ids the community index lists. Only those are recorded. */
   listed: () => Promise<ReadonlySet<string>>;
+  /** The community's own default for members who haven't chosen. A
+   * rejection retries the pass instead of reading as off. */
+  relayDefault?: (session: RelaySession) => Promise<boolean>;
   storage?: Storage | undefined;
   delayMs?: number;
   retryMs?: number;
   relistMs?: number;
 }>): Recorder {
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change: Change) => void>();
   const done = new WeakMap<
     RelaySession,
     { fingerprint: string; channel: string | undefined }
   >();
   // Choices made this run win over storage, so a failed save still holds.
   const chosen = new Map<string, boolean>();
+  const defaults = new Map<string, boolean>();
   const writes = new Set<Promise<unknown>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -109,24 +120,31 @@ export function createRecorder({
     }
   };
 
-  const recordingIn = (session: RelaySession | undefined) => {
-    if (!session) return false;
+  const choiceIn = (session: RelaySession) => {
     const choice = chosen.get(session.scope) ?? saved()[session.scope];
-    return typeof choice === "boolean" ? choice : true;
+    return typeof choice === "boolean" ? choice : undefined;
   };
 
-  const notify = () => {
-    for (const listener of listeners) listener();
+  const recordingIn = (session: RelaySession | undefined) =>
+    !!session && (choiceIn(session) ?? defaults.get(session.scope) ?? false);
+
+  const notify = (change: Change) => {
+    for (const listener of listeners) listener(change);
   };
 
   async function once(force: boolean) {
     const session = readyPage(relay);
     const everything = inventory.installed();
     if (!session || !everything) return;
-    const on = recordingIn(session);
+    let on = false;
     let wrote = false;
     let fingerprint = "";
     try {
+      if (choiceIn(session) === undefined && !defaults.has(session.scope)) {
+        defaults.set(session.scope, await relayDefault(session));
+        if (defaults.get(session.scope)) notify("default");
+      }
+      on = recordingIn(session);
       const ids = on ? await listed() : new Set<string>();
       const installed = everything.filter((plugin) => ids.has(plugin.id));
       fingerprint = JSON.stringify([
@@ -187,7 +205,7 @@ export function createRecorder({
       }
       throw error;
     } finally {
-      if (wrote) notify();
+      if (wrote) notify("wrote");
     }
   }
 
@@ -228,6 +246,10 @@ export function createRecorder({
 
   return {
     recording: () => recordingIn(readyPage(relay)),
+    defaultOn: () => {
+      const session = readyPage(relay);
+      return !!session && (defaults.get(session.scope) ?? false);
+    },
     async setRecording(on) {
       const session = readyPage(relay);
       if (!session) return;

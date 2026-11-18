@@ -11,6 +11,8 @@ import { createRecorder, type Recorder } from "./recorder";
 import { fakeCommunity, listing, rawIndex } from "./testing";
 
 const recorders: Recorder[] = [];
+/** As on a relay that records members' plugins by default. */
+const communityOn = async () => true;
 afterEach(() => {
   cleanup();
   for (const recorder of recorders.splice(0)) recorder.stop();
@@ -81,6 +83,7 @@ async function setup(
   const openPluginSettings = vi.fn();
   const source = shared ? indexSource({ request }, indexUrl) : undefined;
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: relay.relay,
     listed: source?.listed ?? (async () => new Set([listing().id, popular.id])),
     delayMs: 0,
@@ -581,4 +584,16 @@ it("withdraws the record of a plugin a refresh shows is no longer listed", async
     ).toBeNull(),
   );
   await waitFor(() => expect(mine()).toEqual([false]));
+});
+
+it("says when the community records members' plugins by default", async () => {
+  await setup();
+  expect(
+    await screen.findByText(
+      /This community records members' plugins unless they turn this off\./,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Record my plugins in this community" }),
+  ).toBeChecked();
 });

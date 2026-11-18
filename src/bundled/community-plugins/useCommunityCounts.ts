@@ -46,6 +46,9 @@ export function useCommunityCounts(
   const [recording, setRecording] = useState(
     () => recorder?.recording() ?? false,
   );
+  const [defaultOn, setDefaultOn] = useState(
+    () => recorder?.defaultOn() ?? false,
+  );
   const [written, setWritten] = useState(0);
   const [failed, setFailed] = useState(false);
   const writes = useRef(0);
@@ -60,7 +63,12 @@ export function useCommunityCounts(
   }, []);
 
   useEffect(
-    () => recorder?.subscribe(() => setWritten((count) => count + 1)),
+    () =>
+      recorder?.subscribe((change) => {
+        if (change === "wrote") setWritten((count) => count + 1);
+        setRecording(recorder.recording());
+        setDefaultOn(recorder.defaultOn());
+      }),
     [recorder],
   );
 
@@ -144,6 +152,7 @@ export function useCommunityCounts(
   // biome-ignore lint/correctness/useExhaustiveDependencies: Each community keeps its own choice.
   useEffect(() => {
     setRecording(recorder?.recording() ?? false);
+    setDefaultOn(recorder?.defaultOn() ?? false);
     setFailed(false);
   }, [recorder, session]);
 
@@ -152,6 +161,8 @@ export function useCommunityCounts(
     state,
     session,
     recording,
+    /** This community records members' plugins unless they turn it off. */
+    defaultOn,
     /** The last recording change didn't finish; it is retried. */
     failed,
     changeRecording,

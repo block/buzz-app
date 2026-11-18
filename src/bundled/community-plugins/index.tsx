@@ -4,6 +4,7 @@ import { communityIndexUrl, listingRepository } from "./config";
 import { CommunityPluginsPage } from "./CommunityPluginsPage";
 import { indexSource } from "./index-source";
 import { createRecorder } from "./recorder";
+import { relayRecordingDefault } from "./relay-default";
 
 export const inject = [
   "pages",
@@ -25,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ? createRecorder({
         relay: ctx.relay,
         listed: index.listed,
+        relayDefault: (session) => relayRecordingDefault(session.scope),
         inventory: {
           installed: () => inventory.installed(),
           subscribe: (listener) => inventory.subscribe(listener),

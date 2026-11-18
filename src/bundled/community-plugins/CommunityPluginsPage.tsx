@@ -408,7 +408,11 @@ function Browse({
         <>
           <SwitchPreferenceRow
             label="Record my plugins in this community"
-            description="Anyone who can read this community can see which plugins you installed and upvoted. Each community keeps its own choice on this device. Turning it off takes yours out of the counts; earlier records stay in the community's history."
+            description={`${
+              counts.defaultOn
+                ? "This community records members' plugins unless they turn this off."
+                : "Off unless you turn it on."
+            } Anyone who can read this community can see which listed plugins you installed and upvoted. Your choice here wins over the community's, and each community keeps its own on this device. Turning it off takes yours out of the counts; earlier records stay in the community's history.`}
             checked={counts.recording}
             disabled={changing || !ready}
             onCheckedChange={(on: boolean) => {

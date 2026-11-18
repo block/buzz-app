@@ -24,6 +24,8 @@ const notes: InstalledPlugin = {
 const board: InstalledPlugin = { id: "octo.board", source: "local" };
 
 const listed = async () => new Set(["octo.notes", "octo.board"]);
+/** As on a relay that records members' plugins by default. */
+const communityOn = async () => true;
 
 const recorders: Recorder[] = [];
 afterEach(() => {
@@ -52,6 +54,7 @@ function start(
   plugins: ReturnType<typeof inventory>,
 ) {
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay,
     inventory: plugins,
     listed,
@@ -106,7 +109,12 @@ it("records installs and withdraws uninstalls as they happen", async () => {
   );
   plugins.set([board]);
   await vi.waitFor(() => expect(on(community)).toEqual(["octo.board"]));
-  expect(written).toHaveBeenCalledTimes(3);
+  expect(written.mock.calls).toEqual([
+    ["default"],
+    ["wrote"],
+    ["wrote"],
+    ["wrote"],
+  ]);
   expect(community.create).not.toHaveBeenCalled();
 });
 
@@ -231,6 +239,7 @@ it("holds an opt-out the device couldn't save", async () => {
   const community = fakeCommunity();
   const plugins = inventory([notes]);
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: plugins,
     listed,
@@ -283,6 +292,7 @@ it("publishes nothing more from a pass that was running when recording turned of
 it("reports a withdrawal that failed and retries it", async () => {
   const community = fakeCommunity();
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory([notes]),
     listed,
@@ -345,6 +355,7 @@ it("records only plugins the index lists, and withdraws one it stops listing", a
   const private_: InstalledPlugin = { id: "acme.secret", source: "local" };
   let ids = new Set(["octo.notes", "octo.board"]);
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory([notes, board, private_]),
     listed: async () => ids,
@@ -367,6 +378,7 @@ it("withdraws nothing when the index can't be read", async () => {
   const community = fakeCommunity();
   let fail = false;
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory([notes]),
     listed: async () => {
@@ -390,6 +402,7 @@ it("keeps the opt-out pending until every batch is withdrawn", async () => {
     (_, n) => ({ id: `octo.p${n}`, source: "local" }),
   );
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory(many),
     listed: async () => new Set(many.map((plugin) => plugin.id)),
@@ -405,6 +418,7 @@ it("keeps the opt-out pending until every batch is withdrawn", async () => {
 it("reports an opt-out it can't confirm when the viewer's records were too many to read", async () => {
   const community = fakeCommunity();
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory([notes]),
     listed,
@@ -432,6 +446,7 @@ it("checks the index again on its own and withdraws a plugin it stopped listing"
   const community = fakeCommunity();
   let ids = new Set(["octo.notes", "octo.board"]);
   const recorder = createRecorder({
+    relayDefault: communityOn,
     relay: community.relay,
     inventory: inventory([notes, board]),
     listed: async () => ids,
@@ -443,4 +458,64 @@ it("checks the index again on its own and withdraws a plugin it stopped listing"
   expect(on(community)).toEqual(["octo.board", "octo.notes"]);
   ids = new Set(["octo.notes"]);
   await vi.waitFor(() => expect(on(community)).toEqual(["octo.notes"]));
+});
+
+it("records nothing and creates no channel where the community's default is off", async () => {
+  const community = fakeCommunity();
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    listed,
+    delayMs: 1,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  expect(recorder.recording()).toBe(false);
+  expect(recorder.defaultOn()).toBe(false);
+  expect(community.create).not.toHaveBeenCalled();
+  expect(community.publish).not.toHaveBeenCalled();
+  await recorder.setRecording(true);
+  expect(on(community)).toEqual(["octo.notes"]);
+});
+
+it("lets a member's own choice win over a community that records by default", async () => {
+  const community = fakeCommunity();
+  window.localStorage.setItem(
+    RECORD_KEY,
+    JSON.stringify({ [community.session.scope]: false }),
+  );
+  const relayDefault = vi.fn(communityOn);
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    listed,
+    relayDefault,
+    delayMs: 1,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  expect(recorder.recording()).toBe(false);
+  expect(community.publish).not.toHaveBeenCalled();
+  expect(relayDefault).not.toHaveBeenCalled();
+});
+
+it("withdraws nothing when the community's default can't be read", async () => {
+  const community = fakeCommunity();
+  const first = start(community.relay, inventory([notes]));
+  await first.sync();
+  first.stop();
+  expect(on(community)).toEqual(["octo.notes"]);
+  const relaunched = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    listed,
+    relayDefault: async () => {
+      throw new Error("offline");
+    },
+    delayMs: 1,
+    retryMs: 60_000,
+  });
+  recorders.push(relaunched);
+  await expect(relaunched.sync()).rejects.toThrow("offline");
+  expect(on(community)).toEqual(["octo.notes"]);
 });

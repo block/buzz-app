@@ -8546,6 +8546,75 @@ it("ignores retained conversation folders for remote community admission", async
   }
 });
 
+it("rejects Huddle speech before dispatching a preparing community turn", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const d = f.delivery("typed in another conversation");
+  const config = { ...(d.config as object), scope: "community" };
+  f.huddleChannels.add("room");
+  const ended = vi.fn();
+  const connection = await f.runtime.voice(
+    {
+      config,
+      agent: { ...d.agent, config } as unknown as Agent,
+      conversation: { channelId: "room" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended,
+    },
+    d.agent,
+  );
+  const preparing = deferred<void>();
+  const core = deferred<string | null | undefined>();
+  const spoken = "early-spoken";
+  f.delayedInterruptCompletions.add(spoken);
+  f.core.mockImplementationOnce(() => {
+    preparing.resolve();
+    return core.promise;
+  });
+  try {
+    await f.runtime.run({ ...d, channelId: "other", config });
+    await preparing.promise;
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: spoken } },
+    });
+    await f.tool(
+      "send",
+      { text: "spoken", audience: "everyone", final: true },
+      -1,
+      {
+        threadId: "thread-1",
+        turnId: spoken,
+      },
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(ended).toHaveBeenCalledOnce();
+    core.resolve(undefined);
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.starts()).toHaveLength(0);
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: spoken, status: "interrupted" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(inputText(f.starts()[0])).toContain("typed in another conversation");
+    await f.complete(0, "");
+  } finally {
+    vi.useRealTimers();
+    core.resolve(undefined);
+    f.runtime.dispose();
+    await connection.close();
+  }
+});
+
 it.each(["refused", "missing completion", "late terminal"] as const)(
   "drains rejected Huddle speech before starting queued text (%s)",
   async (mode) => {

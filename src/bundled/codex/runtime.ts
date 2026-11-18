@@ -192,6 +192,7 @@ type Active = {
   turnId?: string;
   ready: Promise<void>;
   released: Promise<void>;
+  rejectedSpeech?: Promise<void>;
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
@@ -1817,16 +1818,18 @@ export class CodexRuntime {
             method === "turn/started" &&
             p.turn &&
             settings.scope === "community" &&
-            active?.finished &&
+            active &&
+            (active.finished || !active.threadId) &&
             !Object.hasOwn(active.reply, "adopted")
           ) {
-            void close({
-              typed: active,
-              drained: this.drainRejectedSpeech(rpc, threadId, p.turn.id),
-            });
+            const drained = this.drainRejectedSpeech(rpc, threadId, p.turn.id);
+            active.rejectedSpeech = drained;
+            void close({ typed: active, drained });
             seat.ended(
               new Error(
-                "Room instructions are still being restored. Rejoin the Huddle and repeat your request.",
+                active.finished
+                  ? "Room instructions are still being restored. Rejoin the Huddle and repeat your request."
+                  : "The shared session is preparing another turn. Rejoin the Huddle and repeat your request.",
               ),
             );
             return;
@@ -3424,7 +3427,10 @@ export class CodexRuntime {
         resuming,
         fresh,
       } = loaded;
-      active.threadId = threadId;
+      // The seat owns the subscription. The typed follower can claim its
+      // native turn only once the typed request is about to be sent.
+      if (!seat || adopted !== undefined || settings.scope !== "community")
+        active.threadId = threadId;
       // A refusal outside this turn does not explain how it ends.
       explain = server.explainer?.(threadId);
       active.workspace = workspace;
@@ -3467,6 +3473,7 @@ export class CodexRuntime {
             at: Date.now(),
             ...(tools ? { tools } : {}),
           });
+        if (active.rejectedSpeech) await active.rejectedSpeech;
         if (signal.aborted || (request.current && !request.current())) {
           if (this.target && !resuming) {
             // An empty remote thread has no rollout to resume on the next request.
@@ -3497,6 +3504,7 @@ export class CodexRuntime {
             ]
               .filter(Boolean)
               .join("\n\n") + "\n\n";
+        active.threadId = threadId;
         const turn = await rpc
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,
@@ -3585,12 +3593,12 @@ export class CodexRuntime {
       if (adopted === undefined || !active.finished) signal.throwIfAborted();
       if (status === "interrupted" && active.stopped) {
         for (const taken of active.requests) taken.answered(true);
-        await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
+        await this.terminals(rpc, threadId, STOP_LINGER_MS);
         this.status(agent.key, key, "Stopped");
       } else if (status === "interrupted") {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
-        await this.terminals(rpc, active.threadId);
+        await this.terminals(rpc, threadId);
         await this.publish(
           active.reply,
           "Codex’s turn was interrupted. Send another mention to continue.",

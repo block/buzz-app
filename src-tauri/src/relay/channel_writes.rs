@@ -304,6 +304,11 @@ mod tests {
         unset[2][1] = "everyone";
         unset[3][1] = "0";
         assert!(valid("artifact-type-policy", &command(unset)));
+        for value in ["a1.b_c-d", "com.example.mention-groups.group"] {
+            let mut tags = base;
+            tags[1][1] = value;
+            assert!(valid("artifact-type-policy", &command(tags)), "{value}");
+        }
 
         let too_long = format!("a.{}", "b".repeat(127));
         let upper_prev = "A".repeat(64);
@@ -316,6 +321,10 @@ mod tests {
             (1, "Com.example"),
             (1, "com.1example"),
             (1, "com..example"),
+            (1, ".com.example"),
+            (1, "com.example."),
+            (1, "com.exAmple"),
+            (1, "com.ex!ample"),
             (2, "owners"),
             (3, upper_prev.as_str()),
             (3, "1"),

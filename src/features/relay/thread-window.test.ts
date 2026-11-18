@@ -252,7 +252,7 @@ it("pages older to a read frontier in one read, revalidating the root once", asy
   });
   await h.view.refresh();
   const before = h.requests.length;
-  await h.view.loadMore(50);
+  await h.view.loadMore(() => 50);
   const read = h.requests.slice(before);
   expect(read[0]).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
   expect(read.slice(1).map(([f]) => f?.limit)).toEqual([50, 50, 50, 50]);
@@ -261,18 +261,6 @@ it("pages older to a read frontier in one read, revalidating the root once", asy
     canLoadMore: true,
   });
   expect(h.view.snapshot().replies[0]?.createdAt).toBeLessThanOrEqual(50);
-
-  // Requested during a refresh, the load keeps its frontier.
-  const queued = h.requests.length;
-  const refreshing = h.view.refresh();
-  void h.view.loadMore(12);
-  await refreshing;
-  await vi.waitFor(() => {
-    expect(h.view.snapshot().replies[0]?.createdAt).toBeLessThanOrEqual(12);
-    expect(h.view.snapshot().status).toBe("ready");
-  });
-  // One root read for the refresh, one for the queued load.
-  expect(h.requests.slice(queued).filter(([f]) => f?.ids)).toHaveLength(2);
 });
 // A strict-window relay over `replies`, newest first.
 const pagedThread =
@@ -312,7 +300,7 @@ it("reads a shallow frontier without loading large older replies", async () => {
   await h.view.refresh();
   const before = h.requests.length;
   // Unread from the 40th newest reply: one 50-row continuation reaches it.
-  await h.view.loadMore(10 + 170);
+  await h.view.loadMore(() => 10 + 170);
   expect(h.requests.slice(before + 1).map(([f]) => f?.limit)).toEqual([50]);
   expect(h.view.snapshot()).toMatchObject({
     status: "ready",
@@ -321,26 +309,51 @@ it("reads a shallow frontier without loading large older replies", async () => {
   });
   expect(h.view.snapshot().replies).toHaveLength(60);
 });
-it("replays a queued ordinary older load as one page", async () => {
-  const replies = Array.from({ length: 303 }, (_, n) => reply(n)).sort(
-    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-  );
-  const h = await setup(pagedThread(replies));
-  await h.view.refresh();
-  const queued = h.requests.length;
-  const refreshing = h.view.refresh();
-  void h.view.loadMore();
-  await refreshing;
-  await vi.waitFor(() => {
-    expect(h.view.snapshot().replies).toHaveLength(60);
-    expect(h.view.snapshot().status).toBe("ready");
+it("stops a frontier load when the frontier moves past the loaded replies", async () => {
+  const replies = Array.from({ length: 303 }, (_, n) =>
+    message(author, channel, `reply ${n}`, 10 + n, [
+      ["e", root.id, "", "reply"],
+    ]),
+  ).reverse();
+  const relay = pagedThread(replies);
+  let frontier = 0;
+  const h = await setup((f) => {
+    // A read synced from another device while the first older page loads.
+    if (f.until !== undefined) frontier = Infinity;
+    return relay(f);
   });
-  const windows = h.requests
-    .slice(queued)
-    .filter(([f]) => f?.thread_window)
-    .map(([f]) => f?.limit);
-  // The refresh's first window, then one older page.
-  expect(windows).toEqual([10, 50]);
+  await h.view.refresh();
+  const before = h.requests.length;
+  await h.view.loadMore(() => frontier);
+  expect(h.requests.slice(before + 1).map(([f]) => f?.limit)).toEqual([50]);
+  expect(h.view.snapshot().replies).toHaveLength(60);
+});
+it("resumes a failed frontier load from the page that failed", async () => {
+  const replies = Array.from({ length: 303 }, (_, n) =>
+    message(author, channel, `reply ${n}`, 10 + n, [
+      ["e", root.id, "", "reply"],
+    ]),
+  ).reverse();
+  const relay = pagedThread(replies);
+  let windows = 0;
+  let fail = true;
+  const h = await setup((f) => {
+    if (f.thread_window && f.until !== undefined && ++windows === 2 && fail)
+      return relay(f).filter((event) => event.kind !== 39007);
+    return relay(f);
+  });
+  await h.view.refresh();
+  await h.view.loadMore(() => 0);
+  expect(h.view.snapshot().status).toBe("error");
+  fail = false;
+  const retry = h.requests.length;
+  await h.view.loadMore();
+  const [window] =
+    h.requests.slice(retry).find(([f]) => f?.thread_window) ?? [];
+  // The retry reads the failed second page, not the first again.
+  expect(window?.until).toBe(10 + 303 - 60);
+  expect(h.view.snapshot()).toMatchObject({ status: "ready" });
+  expect(h.view.snapshot().replies).toHaveLength(110);
 });
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;

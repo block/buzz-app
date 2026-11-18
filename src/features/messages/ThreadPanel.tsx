@@ -1090,8 +1090,12 @@ function ThreadMessages({
       oldest &&
       (unreadOlder || oldest.createdAt > readThrough)
     ) {
-      // Page to the frontier in one read, not one page per decision.
-      if (snapshot.canLoadMore) void view.loadMore(readThrough);
+      // Page to the frontier in one read, not one page per decision. Read
+      // per page: a read synced mid-load can move it.
+      if (snapshot.canLoadMore)
+        void view.loadMore(
+          () => since ?? session.unread.threadReadThrough(channelId, messageId),
+        );
       // Past the page limit the first unread reply stays unknown.
       else setBoundary({ ...boundary, id: null });
       return;

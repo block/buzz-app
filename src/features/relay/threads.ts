@@ -96,8 +96,8 @@ export type ThreadView = {
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   /** Reads older replies; with `through`, keeps paging in this one read until
-   * a reply at or before that time is loaded. */
-  loadMore(through?: number): Promise<void>;
+   * a reply at or before the time it returns is loaded. */
+  loadMore(through?: () => number): Promise<void>;
   /** Change exact selection only when verified ancestry belongs to this thread. */
   retarget(messageId: string, signal: AbortSignal): Promise<ThreadRetarget>;
   dispose(): void;
@@ -239,9 +239,8 @@ export function createThreadView({
   let controller: AbortController | undefined;
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
-  /** An older load requested during a background repair, which stays ready:
-   * the earliest read frontier asked for, or Infinity for one page. */
-  let older: false | number = false;
+  /** An older page requested during a background repair, which stays ready. */
+  let older = false;
   /** Resumed rows shown beside the evidence until the first refresh settles.
    * That refresh reads as a fresh view would, in the background. */
   let shown: ThreadResume | undefined;
@@ -670,16 +669,16 @@ export function createThreadView({
     }
   }
 
-  async function run(replace: boolean, established = false, through?: number) {
+  async function run(
+    replace: boolean,
+    established = false,
+    through?: () => number,
+  ) {
     if (disposed) return;
     if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
-      else
-        older = Math.min(
-          older === false ? Infinity : older,
-          through ?? Infinity,
-        );
+      else older = true;
       return;
     }
     if (!canAccess()) {
@@ -825,7 +824,7 @@ export function createThreadView({
         let page = 0;
         page < targetPages ||
         (mode === "older" && !reached && page < MAX_PAGES) ||
-        (through !== undefined && oldest > through && nextPages < MAX_PAGES);
+        (through !== undefined && oldest > through() && nextPages < MAX_PAGES);
         page++
       ) {
         let response: readonly RelayEvent[];
@@ -923,6 +922,13 @@ export function createThreadView({
         // after LIMIT, so an empty continuation means merely no more returned.
         more = bounds ? bounds.hasMore : replies.length > 0;
         if (nextPages === targetPages) range = { cursor: nextCursor };
+        // Each older page commits as it lands, so a later failure retries
+        // from the next page rather than the first.
+        if (!replace) {
+          if (!retain(union(remote, fetched))) return;
+          cursor = nextCursor;
+          pages = nextPages;
+        }
         if (!more) break;
       }
       if (!active()) return;
@@ -987,14 +993,9 @@ export function createThreadView({
           const established = again === "established";
           again = false;
           void run(true, established);
-        } else if (older !== false && !disposed) {
-          const through = older;
+        } else if (older && !disposed) {
           older = false;
-          void run(
-            false,
-            false,
-            Number.isFinite(through) ? through : undefined,
-          );
+          void run(false);
         }
       }
     }
@@ -1089,7 +1090,7 @@ export function createThreadView({
       },
       retarget,
       refresh: () => run(true),
-      loadMore: (through?: number) => run(false, false, through),
+      loadMore: (through?: () => number) => run(false, false, through),
       dispose() {
         listeners.clear();
         purge(true);

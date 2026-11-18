@@ -419,7 +419,8 @@ export function AgentDetails({
                 </div>
               )}
             </motion.div>
-            {!editingName && notice}
+            {/* Hidden, not unmounted, so editing the name does not reread it. */}
+            {notice && <div hidden={editingName}>{notice}</div>}
             <div className={hero.actions}>
               {!editingName && messageAction(backdrop ? "glass" : "subtle")}
               <ProfileActions

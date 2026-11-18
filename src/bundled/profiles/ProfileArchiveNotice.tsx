@@ -29,8 +29,12 @@ export function ProfileArchiveNotice({
     archives.snapshot,
     archives.snapshot,
   );
-  // Read whenever the snapshot is not current (idle), as after a dropped
-  // connection marks it stale.
+  // Archive reads are finite snapshots, so each opening reads the current one,
+  // and so does a stale (idle) snapshot, as after a dropped connection.
+  useEffect(() => {
+    void pubkey;
+    void archives.refresh();
+  }, [archives, pubkey]);
   const idle = snapshot.status === "idle";
   useEffect(() => {
     if (idle) void archives.ensure();

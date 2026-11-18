@@ -64,6 +64,28 @@ const HEX = /^[0-9a-f]{64}$/;
 const CONSENT_PATHS = new Set(["self", "owner", "admin", "relay"]);
 const MAX_BYTES = 2 * 1024 * 1024;
 
+/** The replacement a relay archive delta for `pubkey` names, when it is a
+ * well-formed NIP-IA archive delta naming exactly one other valid key. */
+function successor(delta: RelayEvent, pubkey: string): string | undefined {
+  if (delta.kind !== 8002) return undefined;
+  const tags = (name: string) => delta.tags.filter(([key]) => key === name);
+  const [target, ...targets] = tags("p");
+  const [consent, ...consents] = tags("consent");
+  const [tag, ...extra] = tags("replaced-by");
+  const next = tag?.[1];
+  return tags("-").length === 1 &&
+    !targets.length &&
+    target?.[1] === pubkey &&
+    !consents.length &&
+    CONSENT_PATHS.has(consent?.[1] ?? "") &&
+    !extra.length &&
+    next &&
+    HEX.test(next) &&
+    next !== pubkey
+    ? next
+    : undefined;
+}
+
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
  * The caller supplies only explicit NIP-11 self, never the contact-key fallback.
  * Reads are lazy finite snapshots, not a live archive subscription.
@@ -342,16 +364,18 @@ export function createIdentityArchives(
   /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
    * when that delta is a well-formed archive delta. Callers show it only while
    * `state(pubkey)` is "archived". Presentation only, never access.
-   * Older relays stamp deltas to the second, so two deltas at the newest
-   * second leave the current one unknown and name no replacement. */
+   * Older relays stamp deltas to the second, and concurrent publishers can
+   * share one, so deltas tied at the newest second count only when they all
+   * give the same answer, and a full page of them names no replacement. */
   async function replacement(
     pubkey: string,
     signal?: AbortSignal,
   ): Promise<string | undefined> {
     if (closed || !available || !authority || !HEX.test(pubkey))
       return undefined;
+    const limit = 3;
     const events = await reader.read(
-      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit: 2 }],
+      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit }],
       { ...(signal && { signal }), priority: "background", fresh: true },
     );
     const deltas = events.filter(
@@ -359,31 +383,14 @@ export function createIdentityArchives(
         (event.kind === 8002 || event.kind === 8003) &&
         event.pubkey === authority,
     );
-    const delta = deltas.reduce<RelayEvent | undefined>(newer, undefined);
-    if (
-      delta?.kind !== 8002 ||
-      deltas.some(
-        (event) =>
-          event.id !== delta.id && event.created_at === delta.created_at,
-      )
-    )
-      return undefined;
-    const tags = (name: string) => delta.tags.filter(([key]) => key === name);
-    const [target, ...targets] = tags("p");
-    const [consent, ...consents] = tags("consent");
-    const [tag, ...extra] = tags("replaced-by");
-    const next = tag?.[1];
-    return tags("-").length === 1 &&
-      !targets.length &&
-      target?.[1] === pubkey &&
-      !consents.length &&
-      CONSENT_PATHS.has(consent?.[1] ?? "") &&
-      !extra.length &&
-      next &&
-      HEX.test(next) &&
-      next !== pubkey
-      ? next
-      : undefined;
+    const newest = deltas.reduce<RelayEvent | undefined>(newer, undefined);
+    if (!newest) return undefined;
+    const tied = deltas.filter(
+      (event) => event.created_at === newest.created_at,
+    );
+    if (tied.length >= limit) return undefined;
+    const answers = new Set(tied.map((event) => successor(event, pubkey)));
+    return answers.size === 1 ? [...answers][0] : undefined;
   }
   /** From the latest successful read only, so deletion and confirmation never
    * act on retained evidence. */

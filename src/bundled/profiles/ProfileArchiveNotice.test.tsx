@@ -123,15 +123,26 @@ function mount(
     clearCache: async () => {},
   };
   const open = vi.fn(() => true);
-  render(
+  const push = vi.fn(() => true);
+  const panel = (opening: number) => (
     <ProfilePanel
+      key={opening}
       relay={relay}
       {...(ownedBy && { agents: ownedBy(viewer) })}
       target={profileTarget(old.pubkey) ?? ""}
       close={() => {}}
-      context={{ channelId: "c", canOpen: () => true, open }}
-    />,
+      context={{
+        channelId: "c",
+        canOpen: () => true,
+        open,
+        ...(ownedBy && { push }),
+      }}
+    />
   );
+  let openings = 0;
+  const view = render(panel(openings));
+  /** Closes the profile and opens it again in the same session. */
+  const reopen = () => view.rerender(panel(++openings));
   act(() => live?.state({ status: "connected", routes: [] }));
   /** The live connection drops and comes back. */
   const reconnect = () =>
@@ -139,7 +150,15 @@ function mount(
       live?.state({ status: "retrying", routes: [] });
       live?.state({ status: "connected", routes: [] });
     });
-  return { query, open, failing, archives: owner.session.archives, reconnect };
+  return {
+    query,
+    open,
+    push,
+    failing,
+    archives: owner.session.archives,
+    reconnect,
+    reopen,
+  };
 }
 const people = [
   profile(old, { name: "Old Key" }),
@@ -283,7 +302,7 @@ it("drops a replacement the next archive snapshot has not confirmed", async () =
   expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
 });
 
-it("withholds the replacement when two deltas share the newest second", async () => {
+it("withholds the replacement when deltas at the newest second disagree", async () => {
   // Relays before strictly later delta stamps break a same-second tie by id,
   // so either delta may be the current one.
   const replaced = delta(old.pubkey, [["replaced-by", successor.pubkey]], {
@@ -296,7 +315,14 @@ it("withholds the replacement when two deltas share the newest second", async ()
     plain = delta(old.pubkey, [["n", String(n)]], {
       created_at: 1_700_000_030,
     });
-  mount([...people, snapshot([old.pubkey]), replaced, plain]);
+  const { archives } = mount([
+    ...people,
+    snapshot([old.pubkey]),
+    replaced,
+    plain,
+  ]);
+  // The owner's own answer is the completion barrier for the negative check.
+  await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
   await waitFor(() =>
     expect(screen.getByTestId("profile-archived")).toHaveTextContent(
       "This key is archived in this community.",
@@ -376,7 +402,7 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
       controlAttention: () => {},
     } as unknown as Agents;
   };
-  const { open } = mount(
+  const { open, push } = mount(
     [
       ...people,
       snapshot([old.pubkey]),
@@ -392,11 +418,73 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
   await user.click(
     screen.getByRole("button", { name: "Open new key profile: New Key" }),
   );
-  expect(open).not.toHaveBeenCalled();
+  await user.click(
+    within(
+      screen.getByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(push).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Open new key profile: New Key" }),
+  );
   await user.click(
     within(
       screen.getByRole("alertdialog", { name: "Discard changes?" }),
     ).getByRole("button", { name: "Discard changes" }),
   );
-  expect(open).toHaveBeenCalledExactlyOnceWith(profileTarget(successor.pubkey));
+  // The profile's own navigation, push before open, as its other links use.
+  expect(push).toHaveBeenCalledExactlyOnceWith(profileTarget(successor.pubkey));
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("reads the archive again when a profile opens, in both directions", async () => {
+  const events: RelayEvent[] = [...people, snapshot([])];
+  const { reopen } = mount(events);
+  await screen.findByRole("heading", { name: "Old Key" });
+  expect(screen.queryByTestId("profile-archived")).toBeNull();
+
+  // Another device archives the key with a replacement.
+  events.push(
+    snapshot([old.pubkey], 1_700_000_040),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]], {
+      created_at: 1_700_000_040,
+    }),
+  );
+  reopen();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+
+  // And then unarchives it.
+  events.push(
+    snapshot([], 1_700_000_050),
+    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
+  );
+  reopen();
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+});
+
+it("links the replacement when deltas at the newest second agree", async () => {
+  // Concurrent publishers can sign the same state at the same second.
+  const tags = [["replaced-by", successor.pubkey]];
+  mount([
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, tags, { created_at: 1_700_000_060 }),
+    delta(old.pubkey, [...tags, ["n", "1"]], { created_at: 1_700_000_060 }),
+  ]);
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+});
+
+it("names no replacement when a full page of deltas shares the newest second", async () => {
+  const tags = [["replaced-by", successor.pubkey]];
+  const { archives } = mount([
+    ...people,
+    snapshot([old.pubkey]),
+    ...["1", "2", "3"].map((n) =>
+      delta(old.pubkey, [...tags, ["n", n]], { created_at: 1_700_000_070 }),
+    ),
+  ]);
+  // A fourth delta at that second could disagree, unseen past the limit.
+  await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
 });

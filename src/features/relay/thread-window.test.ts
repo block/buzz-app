@@ -261,8 +261,29 @@ const ordered = (rows: readonly RelayEvent[]) =>
   [...rows]
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
     .map((e) => e.id);
+// Sign this immutable evidence once at module setup, outside each test's clock.
+const longThread = Object.freeze(
+  Array.from({ length: 1100 }, (_, n) => reply(n)),
+);
+const reactedThread = (() => {
+  const rows = longThread.slice(0, 762);
+  const reactions = rows.flatMap((row) =>
+    [0, 1].map((n) =>
+      signed(author, {
+        kind: 7,
+        created_at: row.created_at + n,
+        content: n ? "+" : "🎉",
+        tags: [
+          ["h", channel],
+          ["e", row.id],
+        ],
+      }),
+    ),
+  );
+  return Object.freeze({ rows, reactions });
+})();
 it("scrolls back past ten pages to the start of a 763-reply thread and repairs every retained page", async () => {
-  const rows = Array.from({ length: 763 }, (_, n) => reply(n));
+  const rows = longThread.slice(0, 763);
   const h = await setup(newestFirst(rows));
   await h.view.refresh();
   while (h.view.snapshot().canLoadMore) await h.view.loadMore();
@@ -278,7 +299,7 @@ it("scrolls back past ten pages to the start of a 763-reply thread and repairs e
   expect(h.view.snapshot().replies.map((e) => e.id)).toEqual(ordered(rows));
 });
 it("stops scrollback at half the thread budget, keeping the loaded replies and room for live traffic", async () => {
-  const rows = Array.from({ length: 1100 }, (_, n) => reply(n));
+  const rows = longThread;
   const h = await setup(newestFirst(rows));
   await h.view.refresh();
   while (h.view.snapshot().canLoadMore) await h.view.loadMore();
@@ -305,20 +326,7 @@ it("stops scrollback at half the thread budget, keeping the loaded replies and r
   ]);
 });
 it("never stops scrollback short of ten pages when replies carry reactions", async () => {
-  const rows = Array.from({ length: 762 }, (_, n) => reply(n));
-  const reactions = rows.flatMap((row) =>
-    [0, 1].map((n) =>
-      signed(author, {
-        kind: 7,
-        created_at: row.created_at + n,
-        content: n ? "+" : "🎉",
-        tags: [
-          ["h", channel],
-          ["e", row.id],
-        ],
-      }),
-    ),
-  );
+  const { rows, reactions } = reactedThread;
   const h = await setup(newestFirst(rows, reactions));
   await h.view.refresh();
   while (h.view.snapshot().canLoadMore) await h.view.loadMore();

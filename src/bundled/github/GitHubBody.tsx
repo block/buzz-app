@@ -34,7 +34,10 @@ import {
   authoredWidth,
   bodyUrl,
   inertHtml,
+  knownSize,
+  rememberSize,
   signedUrl,
+  type Size,
 } from "./attachments";
 import styles from "./GitHub.module.css";
 
@@ -186,6 +189,7 @@ function githubHtml() {
 function EmbeddedAttachment({
   source,
   signed,
+  image = false,
   children,
   fallback,
   caption,
@@ -195,7 +199,8 @@ function EmbeddedAttachment({
   source: string;
   /** The latest signed link for `source` in the rendered HTML. */
   signed?: string | undefined;
-  children(src: string): ReactNode;
+  image?: boolean;
+  children(src: string, size: Size | undefined): ReactNode;
   fallback: ReactNode;
   caption: ReactNode;
   /** The authored width, which bounds the frame before the media loads. */
@@ -213,6 +218,23 @@ function EmbeddedAttachment({
     setShown(signed);
     setFailed(false);
   }
+  const [size, setSize] = useState(() => knownSize(source));
+  // GitHub gives no image height, so an image loads at once, off screen, and
+  // its frame takes the image's size before it scrolls into view.
+  const probe = image && !size ? (signed ?? source) : undefined;
+  useEffect(() => {
+    if (!probe) return;
+    const element = new Image();
+    element.onload = () => {
+      const { naturalWidth: width, naturalHeight: height } = element;
+      rememberSize(source, { width, height });
+      if (width > 0 && height > 0) setSize({ width, height });
+    };
+    element.src = probe;
+    return () => {
+      element.onload = null;
+    };
+  }, [probe, source]);
   const show = (next: boolean) => {
     setLoaded(next);
     setFailed(!next);
@@ -226,14 +248,28 @@ function EmbeddedAttachment({
           ? ({ "--attachment-width": `${width}px` } as CSSProperties)
           : undefined
       }
-      onLoadCapture={() => show(true)}
+      onLoadCapture={(event) => {
+        show(true);
+        if (image && event.target instanceof HTMLImageElement)
+          rememberSize(source, {
+            width: event.target.naturalWidth,
+            height: event.target.naturalHeight,
+          });
+      }}
       onLoadedDataCapture={() => show(true)}
       // A video player reloads after a network failure (code 2) on its own,
       // so that keeps its link and only shows the original link until the
       // video loads again. An expired or missing link fails as unsupported
       // (code 4) in Chromium and WebKit, and takes another link. Audio has no
       // quiet reload, so any audio failure does.
-      onLoadedMetadataCapture={() => setLoaded(true)}
+      onLoadedMetadataCapture={(event) => {
+        setLoaded(true);
+        if (event.target instanceof HTMLVideoElement)
+          rememberSize(source, {
+            width: event.target.videoWidth,
+            height: event.target.videoHeight,
+          });
+      }}
       onErrorCapture={(event) => {
         const target = event.target;
         if (target instanceof HTMLVideoElement && target.error?.code === 2) {
@@ -244,7 +280,7 @@ function EmbeddedAttachment({
       }}
     >
       {/* Media keeps a failure until remounted with a new source. */}
-      <Fragment key={shown}>{children(shown)}</Fragment>
+      <Fragment key={shown}>{children(shown, size)}</Fragment>
       {loaded ? caption : fallback}
     </div>
   );
@@ -422,6 +458,7 @@ export const GitHubBody = memo(function GitHubBody({
           onMedia: (loaded: boolean, link: string) =>
             renew(source, loaded, link),
         })}
+        image={attachment.kind === "image"}
         width={width}
         fallback={link}
         caption={
@@ -430,12 +467,14 @@ export const GitHubBody = memo(function GitHubBody({
             : null
         }
       >
-        {(src) =>
+        {(src, size) =>
           attachment.kind === "audio" ? (
             <AudioAttachment attachment={attachment} source={src} />
           ) : (
             <MediaAttachment
-              attachment={attachment}
+              attachment={
+                size ? { ...attachment, dimensions: size } : attachment
+              }
               media={() => src}
               {...(description !== undefined
                 ? { imageDescription: description }

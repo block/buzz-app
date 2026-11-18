@@ -901,6 +901,46 @@ it("bounds an image's frame by its authored width before it loads", () => {
   ).toBe("");
 });
 
+it("sizes an image's frame from an early off-screen read", async () => {
+  const tall =
+    "https://github.com/user-attachments/assets/0b7c41c2-1f62-4a55-9a4e-6f1d2c3b4a51";
+  const signed =
+    "https://private-user-images.githubusercontent.com/1/2-0b7c41c2-1f62-4a55-9a4e-6f1d2c3b4a51.png?jwt=fresh";
+  const read: string[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      naturalWidth = 400;
+      naturalHeight = 1200;
+      onload: (() => void) | null = null;
+      set src(value: string) {
+        read.push(value);
+        queueMicrotask(() => this.onload?.());
+      }
+    },
+  );
+  const body = (
+    <GitHubBody
+      url={url}
+      body={`![Tall](${tall})`}
+      bodyHtml={`<img src="${signed}">`}
+    />
+  );
+  const { unmount } = render(body);
+  const frame = () =>
+    document.querySelector<HTMLElement>("[data-media-preview]");
+  await waitFor(() =>
+    expect(frame()?.style.getPropertyValue("--media-ratio")).toBe("400 / 1200"),
+  );
+  expect(read).toEqual([signed]);
+
+  // A body shown again sizes the frame from the size read before.
+  unmount();
+  vi.unstubAllGlobals();
+  render(body);
+  expect(frame()?.style.getPropertyValue("--media-ratio")).toBe("400 / 1200");
+});
+
 it("preserves linked HTML images and media fallback destinations without nested links", () => {
   const { container } = render(
     <GitHubBody

@@ -83,7 +83,10 @@ import {
   recentNotesSection,
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { readProject } from "../../features/agent-harness/project";
+import {
+  readProject,
+  worksElsewhere,
+} from "../../features/agent-harness/project";
 import {
   referencedFolders,
   referencedSkills,
@@ -264,6 +267,15 @@ const NOTICE_LIMIT = 100;
 type Gateway = Readonly<{ route: EligibleRoute; turn: TurnContext }>;
 /** The label of a base prompt that a saved session prompt got later. */
 const BASE_LABEL = "base ";
+/** The choices the base prompt of the conversation session `key` is built
+ * with; a session outside any conversation has only the owner's. */
+const sectionsOf = (
+  handle: Pick<AgentHandle, "promptSections"> | undefined,
+  key: string | undefined,
+) => {
+  const [channelId, root] = key?.split("/") ?? [];
+  return handle?.promptSections?.(channelId, root);
+};
 /** The base prompt in a system prompt. */
 const baseOf = (systemPrompt: string) =>
   promptSections(systemPrompt).find(({ tag }) => tag === "base")?.body ?? "";
@@ -1956,7 +1968,10 @@ export class ClaudeRuntime {
     const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
-          Boolean(reads && this.folder(agent.key, key)),
+          worksElsewhere(
+            reads ? this.folder(agent.key, key) : undefined,
+            sectionsOf(entry.handle, key),
+          ),
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
@@ -2218,7 +2233,7 @@ export class ClaudeRuntime {
           this.credentials,
           // The base prompt's sections: a change gives an idle session the
           // new prompt at its next turn.
-          entry.handle?.promptSections?.(),
+          sectionsOf(entry.handle, key),
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
@@ -2245,6 +2260,7 @@ export class ClaudeRuntime {
         const directories = home ? [home, ...(shared ?? [])] : shared;
         const cwd = folder || workspace;
         const handle = entry.handle;
+        const sections = sectionsOf(handle, key);
         return {
           ...where(entry.config),
           cwd,
@@ -2282,7 +2298,7 @@ export class ClaudeRuntime {
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
             notes,
-            sections: handle?.promptSections?.(),
+            sections,
           }),
         };
       },

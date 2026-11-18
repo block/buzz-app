@@ -1052,6 +1052,8 @@ it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
 showing what the session has not seen and taking plugins' notes. Its
 `cursor` is opaque: save it with the session and give it to the next
 `turnPrompt`, which keeps a mark for each thread of a channel conversation.
+Give `systemPrompt` the `conversation` so that a type with
+`conversationSections` gets the base prompt sections a plugin replaced there.
 `reply` posts as the agent there. `tools(agent, conversation, { read })`
 answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
 declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
@@ -1149,8 +1151,8 @@ gives one of the owner's local agents standing instructions in one
 conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
 Each of that agent's turns there shows them in an `<owner-instructions
 source="…">` section after the plugin instructions, escaped the same way, and
-the base prompt ranks them below the owner's messages and above a Solo chat's
-Canvas. They are kept on this device for now. `conversationInstructions(agent,
+the base prompt ranks them below its own sections and above a Solo chat's
+Canvas that an agent wrote. They are kept on this device for now. `conversationInstructions(agent,
 place)` resolves with the text. See [Agents](agents.md).
 
 A bundled plugin can give this launch's recommended agent setup in place of
@@ -2115,6 +2117,16 @@ that is off, so an older host rejects that profile's whole plugin catalog and
 may offer settings recovery. Before you open the profile in an older build,
 remove the declaring plugin, or roll it back to a version without the field,
 in the newer build.
+
+`ctx.agents.setConversationSections(agent, { channelId, root? }, sections)`
+gives one of the owner's local agents the plugin's text for declared sections
+in one conversation, which the plugin then manages; an empty set clears them.
+Each turn's base instructions there show the text in a `<plugin-section
+id="…" plugin="…">` wrapper in place of the section's default text. One plugin
+manages a conversation at a time, the owner's own choice for a section wins
+over the plugin's text, and a protected agent uses none.
+`conversationSections(agent, place)` resolves with the plugin's set and
+whether a prompt uses each text. See [Agents](agents.md).
 
 A plugin that needs a long-lived program, such as an agent CLI that speaks a
 JSON protocol on stdin and stdout, declares it under `host.processes`:

@@ -73,7 +73,11 @@ import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { project, readCanvas } from "../../features/agent-harness/project";
+import {
+  project,
+  readCanvas,
+  worksElsewhere,
+} from "../../features/agent-harness/project";
 import {
   referencedFolders,
   referencedSkills,
@@ -189,7 +193,7 @@ type Request = {
   sessionContext?: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
-  /** `project` for a turn that works where `elsewhere` says. */
+  /** `project` for a turn that works where `worksElsewhere` says. */
   projectAt?: (elsewhere: boolean) => string | undefined;
   canvas?: Project;
   solo?: boolean;
@@ -985,7 +989,7 @@ export class CodexRuntime {
         {},
         undefined,
         home,
-        sessionPlace(conversation),
+        conversation,
       );
       const { bridge } = prepared;
       let { params } = prepared;
@@ -2250,9 +2254,13 @@ export class CodexRuntime {
     // A community session works in the agent's workspace, as
     // `conversationPlace` has it, whatever folder the chat kept.
     const canvasProjectOf = (
-      elsewhere = settings.scope !== "community" &&
-        // A Solo chat is one conversation, with no thread root.
-        Boolean(this.folder(reads.scope, agent.key, channelId)),
+      elsewhere = worksElsewhere(
+        settings.scope === "community"
+          ? undefined
+          : // A Solo chat is one conversation, with no thread root.
+            this.folder(reads.scope, agent.key, channelId),
+        agent.promptSections?.(channelId),
+      ),
     ) => canvasRead && project(canvasRead.text, elsewhere);
     const projectOf = (elsewhere?: boolean) =>
       [
@@ -2835,8 +2843,6 @@ export class CodexRuntime {
         workspace,
         {},
         delivery.synced,
-        undefined,
-        "standalone",
       );
       const { model, effort, summary, bridge } = prepared;
       let { params } = prepared;
@@ -3613,8 +3619,8 @@ export class CodexRuntime {
     synced?: Delivery["synced"],
     /** The agent's workspace, when `workspace` is the conversation's folder. */
     home?: string,
-    /** What the thread is, for its Session Model. */
-    place?: Facts["place"],
+    /** The conversation the thread is for; none for a one-off turn. */
+    conversation?: Readonly<{ channelId: string; root?: string }>,
   ) {
     const normalized = await rpc.request<{
       config: ProviderConfig & {
@@ -3655,8 +3661,18 @@ export class CodexRuntime {
     const credential = await rpc.toolCredential(agent);
     // Read once: what the thread is told and what its saved prompt shows
     // come from the same choices.
-    const choices = agent.promptSections?.();
-    const base = composeBase(baseFacts(settings, home, place), choices);
+    const choices = agent.promptSections?.(
+      conversation?.channelId,
+      conversation?.root,
+    );
+    const base = composeBase(
+      baseFacts(
+        settings,
+        home,
+        conversation ? sessionPlace(conversation) : "standalone",
+      ),
+      choices,
+    );
     const params = {
       model,
       cwd: workspace,
@@ -3806,7 +3822,7 @@ export class CodexRuntime {
       request,
       request.synced,
       home,
-      sessionPlace(request.conversation),
+      request.conversation,
     );
     const { model, effort, summary, bridge, base, choices } = prepared;
     let { params } = prepared;
@@ -3931,8 +3947,6 @@ export class CodexRuntime {
       return {
         threadId,
         workspace,
-        // Where it works, which its Canvas states the rule from.
-        elsewhere: Boolean(home),
         params,
         model,
         effort,
@@ -3946,6 +3960,8 @@ export class CodexRuntime {
         base,
         facts,
         sections,
+        // Where it works, which its Canvas states the rule from.
+        elsewhere: worksElsewhere(home && workspace, choices),
         updates: fresh
           ? ""
           : sectionUpdates(existing?.sections, facts, choices),
@@ -4053,7 +4069,12 @@ export class CodexRuntime {
       seat = lane.voice;
       // A seat keeps its loaded thread between turns, and the owner can
       // change a section meanwhile: its turns get the sections as they are.
-      const choices = seat && agent.promptSections?.();
+      const choices =
+        seat &&
+        agent.promptSections?.(
+          request.conversation.channelId,
+          request.conversation.root,
+        );
       if (
         seat &&
         adopted === undefined &&

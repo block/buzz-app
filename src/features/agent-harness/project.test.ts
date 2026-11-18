@@ -11,6 +11,7 @@ import {
   ownerCanvas,
   project,
   readProject,
+  worksElsewhere,
 } from "./project";
 
 afterEach(() => {
@@ -50,7 +51,7 @@ it("hands over the whole Canvas, naming the folders it works in", () => {
   expect(NO_PROJECT.directories).toEqual([]);
 });
 
-it("names a Canvas's folders as reading when the conversation has its own folder", () => {
+it("names a Canvas's folders as reading when the chat's work happens elsewhere", () => {
   const worktree = { location: "~/trees", baseBranch: "main" };
   for (const canvas of [
     workspaceCanvas({ folders: ["~/app"], worktree, canvas: "Use tokens." }),
@@ -76,6 +77,36 @@ it("names a Canvas's folders as reading when the conversation has its own folder
     "\n\n## Project folders\n\n- `~/app`\n\nUse tokens.\n</workspace-canvas>",
   );
   expect(project(by("Just notes"), true)).toEqual(project(by("Just notes")));
+});
+
+it("is elsewhere with a folder of its own, or a plugin's working location rule", () => {
+  const plugin = (sections: Record<string, string>) => ({
+    plugin: { id: "example", sections },
+  });
+  expect(worksElsewhere(undefined, undefined)).toBe(false);
+  expect(worksElsewhere("/work/task", undefined)).toBe(true);
+  expect(
+    worksElsewhere(undefined, plugin({ "working-location": "In the task." })),
+  ).toBe(true);
+  // Another section does not move the work, nor does a text the prompt
+  // would not use.
+  expect(worksElsewhere(undefined, plugin({ progress: "Report once." }))).toBe(
+    false,
+  );
+  expect(worksElsewhere(undefined, plugin({ "working-location": " " }))).toBe(
+    false,
+  );
+});
+
+it("says who wrote the Canvas, which the base prompt ranks it by", () => {
+  expect(project(by("Ask before each step.")).section).toContain(
+    "<workspace-canvas>\nThis Solo chat's Canvas as of this message, which your owner wrote: their standing instructions for this chat, which your owner's messages override. It replaces any earlier workspace Canvas.\n\nAsk",
+  );
+  expect(
+    project({ content: "Ask before each step.", agent: true }).section,
+  ).toContain(
+    "<workspace-canvas>\nThis Solo chat's Canvas as of this message, which an agent wrote: standing instructions for this chat, which your owner's messages and your base instructions override. It replaces any earlier workspace Canvas.\n\nAsk",
+  );
 });
 
 it("lets worktree rules the owner edited by hand stand in a conversation with its own folder", () => {

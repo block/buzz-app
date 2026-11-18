@@ -1,7 +1,9 @@
 // Builds the base prompt from its sections. The host picks each section's
 // text before the model sees it, so the prompt states one rule per topic.
 // For each section the first that applies wins: a locked section's default
-// text, the owner's choice, the host variant, the default text.
+// text, the owner's choice, the text of the plugin that manages the
+// conversation, the host variant, the default text.
+import { attribute } from "../plugin-instructions";
 import {
   hash,
   type OwnerChoice,
@@ -13,7 +15,11 @@ import { type Facts, LAYOUT, locked, SECTIONS, type Section } from "./index";
 
 /** A section as printed: `source` names who replaced its text, and an empty
  * body is a section the owner turned off. */
-type Printed = Readonly<{ section: Section; body: string; source?: "owner" }>;
+type Printed = Readonly<{
+  section: Section;
+  body: string;
+  source?: "owner" | "plugin";
+}>;
 
 /** The owner's choice for `section`, when it may have one and the choice is
  * well formed. Anything else is as if there were none. */
@@ -31,6 +37,22 @@ function ownerChoice(
     : undefined;
 }
 
+/** The managing plugin's text for `section`, when a plugin may replace it
+ * and the text is well formed. */
+function pluginText(section: Section, choices: SectionChoices | undefined) {
+  const text = section.plugin && choices?.plugin?.sections?.[section.id];
+  return typeof text === "string" && !textProblem(text) ? text : undefined;
+}
+
+/** Who replaces the text of section `id` in a prompt built with `choices`,
+ * if anyone. */
+export function replacedBy(id: string, choices: SectionChoices | undefined) {
+  const section = SECTIONS.find((section) => section.id === id);
+  if (!section) return undefined;
+  if (ownerChoice(section, choices)) return "owner";
+  return pluginText(section, choices) === undefined ? undefined : "plugin";
+}
+
 const bodies = (facts: Facts, choices?: SectionChoices): Printed[] =>
   SECTIONS.map((section) => {
     const owner = ownerChoice(section, choices);
@@ -42,6 +64,13 @@ const bodies = (facts: Facts, choices?: SectionChoices): Printed[] =>
           owner.mode === "off"
             ? ""
             : `<owner-section id="${section.id}">\n${wrapped(owner.text)}\n</owner-section>`,
+      };
+    const plugin = pluginText(section, choices);
+    if (plugin !== undefined)
+      return {
+        section,
+        source: "plugin",
+        body: `<plugin-section id="${section.id}" plugin="${attribute(choices?.plugin?.id ?? "")}">\n${wrapped(plugin)}\n</plugin-section>`,
       };
     return {
       section,

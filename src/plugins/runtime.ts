@@ -47,6 +47,13 @@ export class PluginRuntime {
     this.load = load;
     root.provide("pluginStatus", {
       isActive: this.isActive,
+      promptSections: (id) => {
+        const entry = this.entries.get(id);
+        return entry && this.isActive(id, entry.plugin.revision)
+          ? entry.plugin.manifest.host?.agentPromptSections
+          : undefined;
+      },
+      on: (id) => id in this.states,
       subscribe: this.subscribe,
       settled: () =>
         !configuring() &&

@@ -1870,6 +1870,106 @@ it("shows the base sections chosen since on a session that resumes after the app
   expect(saved()[1]?.text).toContain('<owner-section id="etiquette">');
 });
 
+it("builds a conversation's prompt with the sections of the plugin that manages it", async () => {
+  const start = (id: string) =>
+    message(id, "@Claude hi", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const managedRoot = start("2");
+  const otherRoot = start("5");
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", managedRoot.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([managedRoot, otherRoot, reply]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  let managed: SectionChoices = {
+    plugin: {
+      id: "example.plugin",
+      sections: { "working-location": "Work in the task's folder." },
+    },
+  };
+  Object.assign(agent, {
+    promptSections: (channelId?: string, root?: string) =>
+      channelId === channel && root === managedRoot.id ? managed : {},
+  });
+  const wrapper =
+    '## Working location\n<plugin-section id="working-location" plugin="example.plugin">\nWork in the task\'s folder.\n</plugin-section>';
+  await deliver({ type: "mention", event: managedRoot });
+  await flush(10);
+  await deliver({ type: "mention", event: otherRoot });
+  await flush(10);
+  const [here, there] = prompted();
+  expect(systemPromptOf(here)).toContain(wrapper);
+  expect(systemPromptOf(here)).not.toContain(
+    "Make file changes on a new branch",
+  );
+  // Another conversation of the same agent has the default rule.
+  expect(systemPromptOf(there)).not.toContain("<plugin-section id=");
+  expect(systemPromptOf(there)).toContain("Make file changes on a new branch");
+
+  // The plugin clears its sections: the idle session resumes on the default.
+  managed = {};
+  await deliver({ type: "mention", event: reply });
+  await flush(10);
+  const again = prompted()[2];
+  expect(here?.killed).toBe(true);
+  expect(there?.killed).toBe(false);
+  expect(again?.options.args).toContain("--resume");
+  expect(systemPromptOf(again)).not.toContain("<plugin-section id=");
+});
+
+it("tells a Solo chat whose plugin gives the working location to read its Canvas's folders", async () => {
+  const { deliver, claudes, agent } = setup([], {
+    solo: new Set([channel]),
+    canvas: {
+      content: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+    },
+  });
+  Object.assign(agent, {
+    // A Solo chat is one conversation, with no thread root.
+    promptSections: (channelId?: string, root?: string): SectionChoices =>
+      channelId === channel && !root
+        ? {
+            plugin: {
+              id: "example.plugin",
+              sections: { "working-location": "Work in the task's folder." },
+            },
+          }
+        : {},
+  });
+  await deliver({
+    type: "mention",
+    event: message("1", "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(systemPromptOf(claude)).toContain(
+    '<plugin-section id="working-location" plugin="example.plugin">',
+  );
+  const turn = claude?.prompts[0];
+  expect(turn).toContain(
+    "These folders hold code that is relevant to this chat: `~/Development/app`, `~/Development/trees`. They are for reading.",
+  );
+  expect(turn).toContain("## Project folders\n\n- `~/Development/app`");
+  expect(turn).not.toContain("create a new worktree");
+});
+
 it("starts each session from the host's core memory, reading only recent notes from the relay", async () => {
   const { deliver, claudes, core, memoryRead } = setup();
   const mention = (id: string) =>

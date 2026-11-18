@@ -724,9 +724,10 @@ conversation with
 `ctx.agents.setConversationInstructions(pubkey, { channelId, root? }, text)`.
 Every turn of that agent there then ends with an `<owner-instructions>`
 section naming the plugin, after any `<plugin-instructions>`; Mesh agents get
-none. The base prompt ranks the section with the agent's instructions: the
-owner's messages override it, and it overrides a Solo chat's Canvas. New text
-replaces the old; empty text clears it, and later turns there say no such
+none. The base prompt ranks the section below its own sections: the owner's
+messages, a Solo chat's Canvas that the owner wrote, the agent's instructions
+and the base instructions override it, and it overrides a Canvas that an agent
+wrote and any `<plugin-instructions>`. New text replaces the old; empty text clears it, and later turns there say no such
 instructions apply now. While the agent is not in the channel, its turns there
 say so too. Text is at most 8192 UTF-8 bytes after trimming and is sent with
 every turn. `place` names the conversation as session controls do: a root for
@@ -736,6 +737,34 @@ restart and the agent leaving the community, and is dropped when the agent is
 deleted; another program that does not share this device's agent state does
 not see it. `ctx.agents.conversationInstructions(pubkey, place)` resolves
 with the text, or undefined. Plugins feature-detect the methods.
+
+A plugin whose manifest declares `host.agentPromptSections` replaces sections
+of the base prompt for the owner's local agent in one conversation with
+`ctx.agents.setConversationSections(pubkey, { channelId, root? }, sections)`.
+`sections` maps a section ID to the plugin's text for it. The plugin that
+holds a conversation's set manages that conversation: the agent's next turn
+there gets each text in place of the section's default text, in a
+`<plugin-section>` wrapper that names the plugin, and the base prompt ranks it
+as the section it replaces. A running session gets a changed section at its
+next turn: Claude restarts its process and resumes the session, and Codex sends
+the changed sections to the resumed thread. Each call replaces the plugin's
+whole set, and an empty set clears it. Each ID must be one the manifest
+declares, each text has from 1 to 4096 UTF-8 bytes after trimming, and the set
+at most 12 KiB; a plugin cannot turn a section off. `place` follows the rules
+of conversation instructions. The call rejects while another plugin that is on
+manages the conversation. The host uses a text only while the plugin is on, its
+manifest still declares the section and the agent's type supports the
+sections. The owner's own choice for a section
+in **Settings → Agent setup → Base instructions** wins over the plugin's text,
+and a protected agent uses no plugin text.
+`ctx.agents.conversationSections(pubkey, place)` resolves with the plugin's
+set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`
+or `"protected"` when a prompt does not use the text, or with undefined when
+the plugin holds none there. When the plugin replaces `working-location` in a
+Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
+folder. The set is kept on this device, survives a restart, and is dropped
+when the agent is deleted. Claude and Codex (`conversationSections` on the
+type) support it; other harnesses reject. Plugins feature-detect the methods.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

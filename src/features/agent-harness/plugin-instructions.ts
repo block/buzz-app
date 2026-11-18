@@ -17,7 +17,8 @@ const body = (text: string) =>
         "<\\/$1",
       ),
   );
-const attribute = (plugin: string) => plugin.replace(/[^\w.:-]/g, "");
+/** A plugin's id as an attribute of a section it gave. */
+export const attribute = (plugin: string) => plugin.replace(/[^\w.:-]/g, "");
 
 /** One `<plugin-instructions>` section for each plugin's instructions, or
  * undefined when there are none. A turn's sections are the complete current
@@ -42,7 +43,7 @@ export function ownerInstructions(
   if (!entry && !clearAbsent) return undefined;
   const text = body(entry?.text ?? "");
   const content = text
-    ? `Your owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your owner's messages override them. Where they conflict with a workspace Canvas, follow these.\n\n${text}`
+    ? `Your owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your owner's messages, a workspace Canvas that your owner wrote, your agent instructions and your base instructions override them.\n\n${text}`
     : "Your owner has no standing instructions for you in this conversation now. Disregard any earlier <owner-instructions>.";
   return `<owner-instructions${entry ? ` source="${attribute(entry.plugin)}"` : ""}>\n${content}\n</owner-instructions>`;
 }

@@ -9202,6 +9202,99 @@ describe("a thread that keeps the base sections it started with", () => {
       ).toHaveLength(1);
     });
   });
+
+  describe("when a plugin manages the conversation", () => {
+    const managed = {
+      plugin: {
+        id: "example.plugin",
+        sections: { "working-location": "Work in the task's folder." },
+      },
+    };
+    const wrapper =
+      '## Working location\n<plugin-section id="working-location" plugin="example.plugin">\nWork in the task\'s folder.\n</plugin-section>';
+    /** A delivery to the agent as the host hands it the choices: the
+     * plugin's only in the conversation it manages. */
+    const delivery = (
+      f: ReturnType<typeof fixture>,
+      content: string,
+      threadRoot = root,
+    ) => {
+      const result = f.delivery(content, threadRoot);
+      return {
+        ...result,
+        agent: {
+          ...result.agent,
+          promptSections: (channelId?: string, thread?: string) =>
+            channelId === "channel" && thread === root ? managed : {},
+        },
+      } as Delivery;
+    };
+    const instructions = (f: ReturnType<typeof fixture>) =>
+      f.sent
+        .filter((wire) => wire.method === "thread/start")
+        .map((wire) =>
+          String(
+            (wire.params as { developerInstructions?: string })
+              .developerInstructions,
+          ),
+        );
+
+    it("starts that conversation's thread on the plugin's sections, and no other's", async () => {
+      const f = fixture();
+      await f.runtime.run(delivery(f, "first"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.runtime.run(delivery(f, "elsewhere", "d".repeat(64)));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      const [here, there] = instructions(f);
+      expect(here).toContain(wrapper);
+      expect(here).not.toContain("Make file changes on a new branch");
+      expect(there).not.toContain("<plugin-section id=");
+      expect(there).toContain("Make file changes on a new branch");
+    });
+
+    it("sends them to a thread that started before the plugin managed it", async () => {
+      const f = resumed({ layout: 1, parts: current.parts });
+      await f.runtime.run(delivery(f, "hello"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+      expect(context(f.starts()[0])).toContain(
+        `\n\n${wrapper}\n</base-section-updates>`,
+      );
+    });
+
+    it("tells a Solo chat to read its Canvas's folders, not to make a worktree", async () => {
+      const f = fixture();
+      asSoloChat(f);
+      f.snapshot.session.canvas.available = true;
+      f.snapshot.session.canvas.read.mockResolvedValue(
+        canvasHead(
+          workspaceCanvas({
+            folders: ["/repos/app"],
+            worktree: { location: "/repos/trees", baseBranch: "main" },
+            canvas: "Use tokens.",
+          }),
+        ),
+      );
+      const result = f.delivery("@Codex solo");
+      await f.runtime.run({
+        ...result,
+        agent: {
+          ...result.agent,
+          // A Solo chat is one conversation, with no thread root.
+          promptSections: (channelId?: string, thread?: string) =>
+            channelId === "channel" && !thread ? managed : {},
+        },
+      } as Delivery);
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(instructions(f)[0]).toContain(wrapper);
+      const turn = inputText(f.starts()[0]);
+      expect(turn).toContain(
+        "These folders hold code that is relevant to this chat: `/repos/app`, `/repos/trees`. They are for reading.",
+      );
+      expect(turn).toContain("which your owner wrote");
+      expect(turn).not.toContain("create a new worktree");
+    });
+  });
 });
 
 describe("a conversation given its own folder", () => {

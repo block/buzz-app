@@ -14,10 +14,8 @@ import {
 import { Select } from "../../shared/design-system/ui/Select";
 import { useTeams } from "../../features/agents/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
-import {
-  templateAgentChoices,
-  type AgentChoicesSnapshot,
-} from "../../features/agents/choices";
+import { templateEvidence } from "../../features/channel-templates/useTemplateAgents";
+import { templateAgentChoices } from "../../features/agents/choices";
 import {
   useEffect,
   useId,
@@ -69,20 +67,6 @@ type Props = {
 export function CreateChannelDialog(props: Props) {
   // Each opening owns its callbacks. Closing/reopening cannot revive an old editor.
   return props.open ? <OpenCreateChannelDialog {...props} /> : null;
-}
-/** Templates add members only from ready inventory and archive evidence. */
-function templateEvidence(choices: AgentChoicesSnapshot) {
-  const ready =
-    choices.templates.status === "ready" && choices.archives.status === "ready";
-  return {
-    ready,
-    // Still being read, as opposed to failed or unavailable.
-    checking:
-      !ready &&
-      (choices.templates.pending ||
-        choices.archives.status === "idle" ||
-        choices.archives.status === "loading"),
-  };
 }
 function OpenCreateChannelDialog({
   open,

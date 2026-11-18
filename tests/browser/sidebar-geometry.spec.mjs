@@ -147,11 +147,11 @@ function columnsAgainstChannelRow(row) {
 
 const newOptions = (page) =>
   page.locator('[data-sidebar-section="solo"]').getByRole("button", {
-    name: "New options",
+    name: "New chat in Solo",
     exact: true,
   });
 
-// The creation action belongs to Solo's heading and stays in it at every scale.
+// Solo's New chat action stays in its heading at every scale.
 function controlsAgainstHeading(button) {
   const heading = button.closest(".navigation-section-heading");
   const summary = heading.querySelector("summary").getBoundingClientRect();

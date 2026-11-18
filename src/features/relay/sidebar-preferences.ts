@@ -27,6 +27,8 @@ export const HOME_SIDEBAR_SECTIONS = [
   "forums",
   "dms",
 ] as const;
+/** Sidebar-placed pages, such as Activity, ordered among the sections. */
+export const SIDEBAR_PAGES_SECTION = "pages";
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
   "channel-stars",
@@ -385,6 +387,7 @@ export function workspaceSectionOrder(
 ): readonly string[] {
   const [starred, ...home] = HOME_SIDEBAR_SECTIONS;
   const defaults = [
+    SIDEBAR_PAGES_SECTION,
     starred,
     ...(groups?.sections ?? []).map(({ id }) => `group:${id}`),
     ...home,
@@ -393,6 +396,8 @@ export function workspaceSectionOrder(
   const available = new Set(defaults);
   const order = groups.sectionOrder.filter((key) => available.delete(key));
   if (available.delete(starred)) order.unshift(starred);
+  if (available.delete(SIDEBAR_PAGES_SECTION))
+    order.unshift(SIDEBAR_PAGES_SECTION);
   // Workspaces added since the last reorder follow the existing workspaces.
   const newWorkspaces = defaults.filter(
     (key) => key.startsWith("group:") && available.has(key),
@@ -408,12 +413,13 @@ export function workspaceSectionOrder(
 export function validWorkspaceSectionOrder(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
-    value.length <= MAX_WORKSPACES + HOME_SIDEBAR_SECTIONS.length &&
+    value.length <= MAX_WORKSPACES + HOME_SIDEBAR_SECTIONS.length + 1 &&
     new Set(value).size === value.length &&
     value.every(
       (key) =>
         typeof key === "string" &&
-        (HOME_SIDEBAR_SECTIONS.some((home) => home === key) ||
+        (key === SIDEBAR_PAGES_SECTION ||
+          HOME_SIDEBAR_SECTIONS.some((home) => home === key) ||
           (key.startsWith("group:") &&
             !!key.slice(6).trim() &&
             key.length <= 262)),

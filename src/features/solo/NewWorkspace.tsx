@@ -15,13 +15,19 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { Select } from "../../shared/design-system/ui/Select";
+import { useChannelTemplates } from "../channel-templates/local";
+import { useTemplateAgents } from "../channel-templates/useTemplateAgents";
+import { TemplateAgentsStatus } from "../channel-templates/TemplateAgentsStatus";
 import { DiscardChanges } from "../agents/AgentSaveButton";
 import {
   emptyWorkspace,
   projectTemplate,
   projectTemplateId,
+  readWorkspace,
   workspaceCanvas,
   type Workspace,
+  appliedTemplate,
 } from "./workspace";
 import { WorkspaceFields } from "./WorkspaceFields";
 import styles from "./WorkspaceSettings.module.css";
@@ -52,6 +58,11 @@ export function NewWorkspace({
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("");
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
+  // A chosen channel template also supplies the workspace's default agents.
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const templates = useChannelTemplates();
+  const chosen = templates.find(({ id }) => id === selectedTemplate);
+  const templateSetup = useTemplateAgents(session, chosen);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(true);
   const [error, setError] = useState("");
@@ -60,6 +71,9 @@ export function NewWorkspace({
   const [conflict, setConflict] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const pending = useRef(false);
+  const published = useRef<{
+    template: ReturnType<typeof projectTemplate> | undefined;
+  }>(undefined);
   const defaults = useRef<Resume>({
     enqueued: (eventId) => {
       defaults.current.id = eventId;
@@ -91,19 +105,35 @@ export function NewWorkspace({
   }, [writable]);
   const submit = async () => {
     const trimmed = name.trim();
-    if (!trimmed || !writable || pending.current || conflict) return;
+    if (
+      !trimmed ||
+      !writable ||
+      pending.current ||
+      conflict ||
+      (!published.current && templateSetup.pending)
+    )
+      return;
     pending.current = true;
     setBusy(true);
     setError("");
     try {
-      // Validate defaults before anything is published.
-      const canvas = workspaceCanvas(workspace);
-      const template = canvas
-        ? projectTemplate(session.scope, await projectTemplateId(id), trimmed, {
-            ...emptyLineup(),
-            canvas,
-          })
-        : undefined;
+      // Validate defaults before anything is published; a retry reuses them
+      // even if the template or its agents change meanwhile.
+      if (!published.current) {
+        const canvas = workspaceCanvas(workspace);
+        published.current = {
+          template:
+            canvas || chosen
+              ? projectTemplate(
+                  session.scope,
+                  await projectTemplateId(id),
+                  trimmed,
+                  { ...emptyLineup(), agents: templateSetup.agents, canvas },
+                )
+              : undefined,
+        };
+      }
+      const { template } = published.current;
       setSubmitted(true);
       await create({ id, name: trimmed, ...(icon ? { icon } : {}) });
       if (template) {
@@ -137,6 +167,7 @@ export function NewWorkspace({
             defaults.current,
           );
       }
+      if (chosen) appliedTemplate.write(session.scope, id, chosen.id);
       await onCreated(id);
       setOpen(false);
     } catch (reason) {
@@ -158,6 +189,7 @@ export function NewWorkspace({
     (submitted ||
       name.trim() !== "" ||
       icon !== "" ||
+      selectedTemplate !== "" ||
       workspace.folders.length > 0 ||
       workspace.worktree !== undefined ||
       workspace.canvas.trim() !== "");
@@ -177,7 +209,7 @@ export function NewWorkspace({
       dismissOnOutsideClick={false}
       title={moveConversation ? "Move to new workspace" : "New workspace"}
       description="Set defaults for new conversations."
-      height="stable"
+      height="stable-tall"
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
@@ -191,7 +223,11 @@ export function NewWorkspace({
               type="submit"
               variant="prominent"
               loading={busy}
-              disabled={!name.trim() || !writable}
+              disabled={
+                !name.trim() ||
+                !writable ||
+                (!submitted && templateSetup.pending)
+              }
             >
               {submitted
                 ? "Retry"
@@ -231,6 +267,45 @@ export function NewWorkspace({
             />
           </SidebarSectionEmojiInput>
         </Field>
+        {templates.length > 0 && (
+          <>
+            <Select
+              label="Start from a template"
+              variant="field"
+              value={selectedTemplate}
+              disabled={busy || submitted}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    { value: "", label: "Custom settings" },
+                    ...templates.map((template) => ({
+                      value: template.id,
+                      label: template.name,
+                    })),
+                  ],
+                },
+              ]}
+              onValueChange={(id) => {
+                const template = templates.find(
+                  (template) => template.id === id,
+                );
+                setSelectedTemplate(template ? id : "");
+                if (!template) return;
+                try {
+                  setWorkspace(readWorkspace(template.canvas));
+                } catch {
+                  // Hand-edited workspace instructions stay as written.
+                  setWorkspace({
+                    ...emptyWorkspace(),
+                    canvas: template.canvas,
+                  });
+                }
+              }}
+            />
+            <TemplateAgentsStatus setup={templateSetup} />
+          </>
+        )}
         <WorkspaceFields
           value={workspace}
           onChange={setWorkspace}

@@ -567,16 +567,18 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     .and_then(|order| order.as_array())
                     .ok_or_else(invalid)?;
                 let mut keys = std::collections::HashSet::new();
-                if order.len() > section_limit + 5
+                if order.len() > section_limit + 6
                     || order.iter().any(|key| {
                         let Some(key) = key.as_str() else {
                             return true;
                         };
                         !keys.insert(key)
-                            || (!matches!(key, "starred" | "solo" | "channels" | "forums" | "dms")
-                                && !key.strip_prefix("group:").is_some_and(|id| {
-                                    !id.trim().is_empty() && id.encode_utf16().count() <= 256
-                                }))
+                            || (!matches!(
+                                key,
+                                "pages" | "starred" | "solo" | "channels" | "forums" | "dms"
+                            ) && !key.strip_prefix("group:").is_some_and(|id| {
+                                !id.trim().is_empty() && id.encode_utf16().count() <= 256
+                            }))
                     })
                 {
                     return Err(invalid());

@@ -131,6 +131,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const defaultPages = (
+  <nav aria-label="Pages">
+    <button type="button">Projects</button>
+  </nav>
+);
+
 function fixture(
   sidebarPreferences?: ReturnType<
     typeof createSidebarPreferencesStore
@@ -231,17 +237,16 @@ function fixture(
       attempt: { id: "visit" },
     }),
   } as unknown as Navigation;
+  /** Any `controls` other than the default page navigation mount beside the
+   * sidebar, so they keep their state when the pages section mounts. */
   const view = (
     id: string,
-    pages: ReactNode = (
-      <nav aria-label="Pages">
-        <button type="button">Projects</button>
-      </nav>
-    ),
+    controls: ReactNode = defaultPages,
     sidebarVisible = true,
   ) => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
+        {controls !== defaultPages && controls}
         {sidebarVisible && (
           <PrimarySidebar
             relay={relay}
@@ -258,7 +263,7 @@ function fixture(
             sidebarSections={sidebarSections}
             sidebarRows={sidebarRows}
           >
-            {pages}
+            {controls === defaultPages ? controls : null}
           </PrimarySidebar>
         )}
       </ChannelNavigationProvider>
@@ -1211,7 +1216,8 @@ it.each(["ready", "error"] as const)(
     expect(
       within(pages).getByRole("button", { name: "Projects" }),
     ).toBeVisible();
-    expect(pages.closest(`.${styles.destinations}`)).not.toBeNull();
+    // A ready inventory lists pages itself, in their orderable section.
+    expect(!!pages.closest(`.${styles.destinations}`)).toBe(status === "error");
   },
 );
 
@@ -2539,6 +2545,7 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     ).toHaveAttribute("data-sidebar-section", "group:later");
     expect(order).toHaveBeenLastCalledWith(
       [
+        "pages",
         "starred",
         "group:later",
         "group:work",

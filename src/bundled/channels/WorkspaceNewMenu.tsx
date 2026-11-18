@@ -58,8 +58,9 @@ export function WorkspaceNewMenu({
   return (
     <SplitButton
       {...primaryProps}
-      variant="outline"
-      size="xs"
+      variant="ghost"
+      size="sm"
+      icon
       menuLabel={`New options in ${name}`}
       menu={actions.map((choice) => (
         <MenuItem

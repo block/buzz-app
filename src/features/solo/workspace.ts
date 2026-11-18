@@ -8,6 +8,7 @@ import {
   resolveLineup,
 } from "../channel-templates/model";
 import { splitPartition } from "../relay/partition";
+import { readView, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 
 export type Workspace = {
@@ -166,6 +167,18 @@ function parseWorkspace(content: string): Workspace {
     canvas: content.slice(blockEnd + end.length + 3),
   });
 }
+
+// Channel templates are on this device, so which one a workspace last applied
+// is too; its settings reopen showing it.
+const appliedTemplateKey = (projectId: string) =>
+  `solo:workspace-template:${projectId}`;
+export const appliedTemplate = {
+  read: (scope: string, projectId: string) =>
+    readView(scope, appliedTemplateKey(projectId), ""),
+  /** Custom settings (`""`) forgets it. */
+  write: (scope: string, projectId: string, templateId: string) =>
+    writeView(scope, appliedTemplateKey(projectId), templateId || null),
+};
 
 /** One existing encrypted template record per project. */
 export async function projectTemplateId(projectId: string) {

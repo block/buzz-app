@@ -321,13 +321,19 @@ it("shows only chats under a plugin restriction and restores the other sections 
   expect(screen.getByText("Plugin heading")).toBeVisible();
   expect(screen.getByText("Team plugin slot")).toBeVisible();
 });
-it("keeps unfiled creation in the Solo heading", async () => {
+it("keeps Solo creation to chats and the New menu above the sections", async () => {
   const user = userEvent.setup();
   const f = fixture(true, true);
   expect(screen.queryByRole("tab")).toBeNull();
   const solo = document.querySelector('[data-sidebar-section="solo"]');
   if (!(solo instanceof HTMLElement)) throw new Error("Missing Solo section");
-  await user.click(within(solo).getByRole("button", { name: "New options" }));
+  expect(
+    within(solo).getByRole("button", { name: "New chat in Solo" }),
+  ).not.toHaveAttribute("aria-haspopup");
+  expect(
+    within(solo).queryByRole("button", { name: "New options" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "New options" }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["New chat", "New channel", "New DM", "New workspace"]);

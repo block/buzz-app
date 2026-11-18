@@ -115,8 +115,8 @@ function ReadyNewMenu({
           disabled={!available}
           aria-label="New options"
           title="New options"
-          size="compact"
-          icon={<PlusIcon strokeWidth={2.5} size={15} />}
+          size="md"
+          icon={<PlusIcon strokeWidth={2.5} size={18} />}
         />
       }
     />

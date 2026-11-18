@@ -835,6 +835,7 @@ it("reorders sections through native signing and readback, never rewriting a sat
     assignments: { alpha: "work" },
     sectionOrder: [
       "group:later",
+      "pages",
       "starred",
       "group:work",
       "solo",
@@ -847,7 +848,7 @@ it("reorders sections through native signing and readback, never rewriting a sat
   if (!head) throw new Error("Missing sections head");
   vi.mocked(invoke).mockClear();
   await transport.writeSidebarSectionOrder(
-    ["group:later", "starred", "group:work"],
+    ["group:later", "pages", "starred", "group:work"],
     signal,
   );
   expect(
@@ -1046,6 +1047,7 @@ it.each([
             sections: sections(live),
             sectionOrder: [
               ...live.map((id) => `group:${id}`),
+              "pages",
               "starred",
               "solo",
               "channels",
@@ -1072,6 +1074,7 @@ it.each([
         sections: sections(live),
         sectionOrder: [
           ...live.map((id) => `group:${id}`),
+          "pages",
           "starred",
           "solo",
           "channels",

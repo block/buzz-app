@@ -675,6 +675,7 @@ it("real broker reorders sections through the signed, confirmed narrow command",
     sectionOrder: [
       `group:${ids[1]}`,
       `group:${ids[0]}`,
+      "pages",
       "starred",
       "solo",
       "channels",

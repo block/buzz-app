@@ -146,6 +146,13 @@ function ScopedSidebar({
       ),
     [slotGeneration],
   );
+  const inventory =
+    !!session && (connection.status === "ready" || !!connection.cached);
+  const footer = props.creationAction && (
+    <div className={styles.sidebarCreation} data-sidebar-floating-action="">
+      {props.creationAction}
+    </div>
+  );
   const header = (
     <>
       {restriction && props.sidebarScope && (
@@ -158,15 +165,16 @@ function ScopedSidebar({
           </div>
         </div>
       )}
-      {props.children && !restriction && (
+      {props.children && !restriction && !inventory && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
   );
   return (
     <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
-      {session && (connection.status === "ready" || connection.cached) ? (
+      {session && inventory ? (
         <ChannelInventory
+          pages={restriction ? undefined : props.children}
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}
@@ -178,7 +186,6 @@ function ScopedSidebar({
           sidebarRows={props.sidebarRows}
           chatIcons={props.chatIcons}
           chatMenus={props.chatMenus}
-          creationAction={props.creationAction}
           cached={!!connection.cached}
           chatsOnly={!!restriction}
           layoutReady={committedSlots?.generation === slotGeneration}
@@ -254,6 +261,7 @@ function ScopedSidebar({
                         resizable
                         label="Sidebar"
                         header={header}
+                        footer={footer}
                         {...frame}
                         launchPending={
                           committedSlots?.generation === slotGeneration
@@ -307,6 +315,7 @@ function ScopedSidebar({
         <props.Frame
           label="Sidebar"
           header={header}
+          footer={footer}
           launchPending={
             connection.status === "connecting" ? "required" : undefined
           }

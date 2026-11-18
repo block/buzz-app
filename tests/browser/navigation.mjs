@@ -28,7 +28,7 @@ export async function openPage(page, name, { connected = true } = {}) {
   await selectPage(page, name, { connected });
 }
 
-// The Solo heading hosts the sidebar's New options menu.
+// The sidebar's floating New button hosts the New options menu.
 export async function newChat(page) {
   // The community switcher appears after local startup has replaced the launch view.
   await expect(
@@ -47,9 +47,10 @@ export async function newChat(page) {
     });
     if (await show.isVisible()) await show.click();
   }
-  const options = page
-    .locator('[data-sidebar-section="solo"]')
-    .getByRole("button", { name: "New options", exact: true });
+  const options = page.getByRole("button", {
+    name: "New options",
+    exact: true,
+  });
   await options.focus();
   await options.press("Enter");
   await page.getByRole("menuitem", { name: "New chat", exact: true }).click();

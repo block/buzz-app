@@ -4,6 +4,7 @@ import { SOLO_LABEL } from "./labels";
 import { PublishRejected } from "../relay/outbox";
 import { readView, writeView } from "../../shared/view-state";
 import { createChannelKit } from "../channel-templates/capability";
+import { channelTemplates } from "../channel-templates/local";
 import {
   LIVE_CANVAS_BYTES,
   LIVE_CANVAS_LIMIT,
@@ -30,6 +31,12 @@ import type { RelaySession } from "../relay/session";
 import { WorkspaceNameConflict } from "../relay/sidebar-edits";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { readWorkspace, projectTemplateId, workspaceCanvas } from "./workspace";
+import { createRelaySession } from "../relay/session";
+// Template agent checks read these; no case here applies a template's agents.
+const templateSession = (({ agentChoices, channels }) => ({
+  agentChoices,
+  channels,
+}))(createRelaySession(null).session);
 
 beforeEach(() => {
   localStorage.clear();
@@ -49,6 +56,7 @@ it("edits a chat's workspace and Canvas with its exact loaded revision", async (
   );
   const close = vi.fn();
   const session = {
+    ...templateSession,
     canvas: {
       available: true,
       read: async () => ({
@@ -104,6 +112,7 @@ it("retains a conflicted draft and never silently reloads over it", async () => 
   });
   const close = vi.fn();
   const session = {
+    ...templateSession,
     canvas: {
       available: true,
       read: async () => ({ id: "old", content: "Original" }),
@@ -144,6 +153,7 @@ it("saves section defaults as an existing relay template without writing section
   const save = vi.fn(async () => {});
   const close = vi.fn();
   const session = {
+    ...templateSession,
     scope: "https://relay.example.test:viewer",
     sidebarPreferences: {
       refresh: async () => {},
@@ -223,6 +233,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
     },
   });
   const session = {
+    ...templateSession,
     scope: "https://relay.example.test:viewer",
     sidebarPreferences: {
       refresh: async () => {},
@@ -334,6 +345,7 @@ function combined() {
   const close = vi.fn(),
     visit = new AbortController();
   const session = {
+    ...templateSession,
     canvas,
     channelDetails: details.capability,
   } as unknown as RelaySession;
@@ -819,6 +831,7 @@ function chat(
 ) {
   const close = vi.fn();
   const session = {
+    ...templateSession,
     canvas: {
       available: true,
       read: async () => ({ id: "revision-one", content: "Original" }),
@@ -899,6 +912,7 @@ function project(entries: unknown[] = []) {
   });
   const save = vi.fn(async () => {});
   const session = {
+    ...templateSession,
     scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
@@ -1268,9 +1282,15 @@ it("asks before closing Workspace settings with a different agent lineup", async
       },
     },
   });
+  // Channel templates are local; the workspace's saved defaults are relay records.
+  channelTemplates.save({
+    name: "Review kit",
+    teams: [],
+    agents: ["b".repeat(64)],
+    canvas: "Shared",
+  });
   const h = project([
     template(await projectTemplateId("work"), "Work chats", "a"),
-    template("review", "Review kit", "b"),
   ]);
   expect(await instructions()).toHaveValue("Shared");
   // The saved defaults' agents are where the dialog starts, not an edit.
@@ -1290,6 +1310,34 @@ it("asks before closing Workspace settings with a different agent lineup", async
   );
   expect(choice).toHaveTextContent("Review kit");
   expect(h.close).toHaveBeenCalledOnce();
+});
+
+it("reopens Workspace settings showing the template it last applied", async () => {
+  const user = userEvent.setup();
+  channelTemplates.save({
+    name: "Sunny stuff",
+    teams: [],
+    agents: [],
+    canvas: "Be sunny",
+  });
+  const first = project();
+  await instructions();
+  await user.click(
+    screen.getByRole("combobox", { name: "Start from a template" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Sunny stuff" }));
+  expect(await instructions()).toHaveValue("Be sunny");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(first.close).toHaveBeenCalledOnce());
+  cleanup();
+  // Reopening shows the applied template, and showing it is not an edit.
+  const second = project();
+  await instructions();
+  expect(
+    screen.getByRole("combobox", { name: "Start from a template" }),
+  ).toHaveTextContent("Sunny stuff");
+  await user.keyboard("{Escape}");
+  expect(second.close).toHaveBeenCalledOnce();
 });
 
 it.each(["name", "lifetime"] as const)(

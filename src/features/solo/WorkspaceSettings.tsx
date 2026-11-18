@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import { WorkspaceNameConflict } from "../relay/sidebar-edits";
-import type { KitEntry, Lineup } from "../channel-templates/model";
+import type { Lineup } from "../channel-templates/model";
+import { useChannelTemplates } from "../channel-templates/local";
+import { useTemplateAgents } from "../channel-templates/useTemplateAgents";
+import { TemplateAgentsStatus } from "../channel-templates/TemplateAgentsStatus";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -17,6 +20,7 @@ import {
   projectTemplate,
   workspaceCanvas,
   type Workspace,
+  appliedTemplate,
 } from "./workspace";
 import { useLifetime } from "./Lifetime";
 import {
@@ -51,8 +55,7 @@ export function WorkspaceSettings({
   const [raw, setRaw] = useState<string>();
   const [base, setBase] = useState<string>();
   const [recipeId, setRecipeId] = useState("");
-  const [lineup, setLineup] = useState<Lineup>(emptyLineup);
-  const [entries, setEntries] = useState<readonly KitEntry[]>([]);
+  const [savedLineup, setLineup] = useState<Lineup>(emptyLineup);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loadingCanvas, setLoadingCanvas] = useState(false);
@@ -60,7 +63,20 @@ export function WorkspaceSettings({
   const [status, setStatus] = useState("");
   const [canvasError, setCanvasError] = useState(false);
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState("");
+  // Untouched until a choice here; until then the list shows the applied one.
+  const [selectedTemplate, setSelectedTemplate] = useState<string>();
+  const [appliedTemplateId] = useState(() =>
+    target.kind === "project"
+      ? appliedTemplate.read(session.scope, target.id)
+      : "",
+  );
+  const templates = useChannelTemplates();
+  const chosen = templates.find(({ id }) => id === selectedTemplate);
+  const templateSetup = useTemplateAgents(session, chosen);
+  // A chosen channel template replaces the saved agents with its own here.
+  const lineup: Lineup = chosen
+    ? { teamIds: [], agents: templateSetup.agents, canvas: savedLineup.canvas }
+    : savedLineup;
   const [projectName, setProjectName] = useState(target.name);
   const [nameConflict, setNameConflict] = useState(false);
   const confirmedName = useRef(target.name);
@@ -148,7 +164,6 @@ export function WorkspaceSettings({
           groups?.legacyTemplates?.[target.id],
         );
         setRecipeId(id);
-        setEntries(kit.entries);
         defaults = template ?? emptyLineup();
         setLineup(defaults);
         content = template?.canvas ?? "";
@@ -416,6 +431,8 @@ export function WorkspaceSettings({
             ? "Workspace defaults are confirmed, but the saved draft couldn’t be cleared on this device."
             : "Changes are confirmed, but the saved draft couldn’t be cleared on this device. Retry to finish without resending confirmed changes.",
         );
+      if (target.kind === "project" && selectedTemplate !== undefined)
+        appliedTemplate.write(session.scope, target.id, selectedTemplate);
       close();
     } catch (reason) {
       if (active()) {
@@ -431,14 +448,6 @@ export function WorkspaceSettings({
       if (alive.current) setBusy(false);
     }
   };
-  const templates = entries.flatMap((entry) =>
-    !entry.record.deleted &&
-    entry.record.value.type === "template" &&
-    !entry.record.value.id.startsWith("session-section-") &&
-    !entry.record.value.id.startsWith("me-section-")
-      ? [entry.record.value]
-      : [],
-  );
   return (
     <ChatSettingsDialog
       finalFocus={finalFocus}
@@ -457,6 +466,7 @@ export function WorkspaceSettings({
       saveLoading={busy || lifetime.busy || loadingCanvas}
       saveDisabled={
         loadingCanvas ||
+        templateSetup.pending ||
         !!signal?.aborted ||
         (!loaded && !lifetime.eligible) ||
         !!nameError ||
@@ -512,7 +522,12 @@ export function WorkspaceSettings({
             <Select
               label="Start from a template"
               variant="field"
-              value={selectedTemplate}
+              value={
+                selectedTemplate ??
+                (templates.some(({ id }) => id === appliedTemplateId)
+                  ? appliedTemplateId
+                  : "")
+              }
               groups={[
                 {
                   label: "",
@@ -529,15 +544,13 @@ export function WorkspaceSettings({
                 const template = templates.find(
                   (template) => template.id === id,
                 );
-                if (template) {
-                  setLineup(template);
-                  adopt(template.canvas);
-                }
+                if (template) adopt(template.canvas);
                 if (!id) setLineup(emptyLineup());
                 setSelectedTemplate(id);
               }}
             />
           )}
+          <TemplateAgentsStatus setup={templateSetup} />
           <ChatInstructions
             workspace={workspace}
             onWorkspaceChange={setWorkspace}

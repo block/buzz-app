@@ -2,7 +2,7 @@ import { test, expect } from "./fixture.mjs";
 import { openPage, settleShellToggle } from "./navigation.mjs";
 
 // Browser hit testing is required: jsdom cannot detect overflowing filter text.
-test("New options remains clickable in the Solo heading with enlarged text", async ({
+test("the floating New button remains clickable with enlarged text", async ({
   page,
   app,
 }) => {
@@ -19,14 +19,11 @@ test("New options remains clickable in the Solo heading with enlarged text", asy
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
     .click();
-  const solo = page.locator('[data-sidebar-section="solo"]');
-  const trigger = solo.getByRole("button", {
+  const trigger = page.getByRole("button", {
     name: "New options",
     exact: true,
   });
-  await solo.locator("summary").hover();
   await expect(trigger).toBeInViewport();
-  await expect(trigger.locator("..")).toHaveCSS("opacity", "1");
   const selected = page.locator('button[data-channel-id="alpha"]');
   await expect(selected).toHaveAttribute("aria-current", "page");
   await trigger.click();

@@ -1,5 +1,6 @@
 import { workspaceMessageTarget } from "../../features/channel-navigation/new-message-route";
 import { WorkspaceNewMenu } from "./WorkspaceNewMenu";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { visibleSoloRegions } from "./SoloRegions";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { ContributionReader } from "../../features/conversation/contracts";
@@ -47,7 +48,10 @@ import {
   useSoloDraftProjects,
 } from "../../features/solo/draft-projects";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
+import {
+  SIDEBAR_PAGES_SECTION,
+  workspaceSectionOrder,
+} from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -199,7 +203,7 @@ export function ChannelInventory({
   sidebarRows: contributedRows,
   chatIcons,
   chatMenus,
-  creationAction,
+  pages,
   render,
 }: {
   relay: RelayData;
@@ -220,7 +224,8 @@ export function ChannelInventory({
   sidebarRows?: SidebarRows | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
-  creationAction?: ReactNode;
+  /** Sidebar-placed pages, shown as one orderable Plugins section. */
+  pages?: ReactNode;
   render(inventory: Inventory): ReactNode;
 }) {
   const registeredSections = useSyncExternalStore(
@@ -459,6 +464,7 @@ export function ChannelInventory({
         return next;
       });
   }, []);
+  const hasPages = !!pages;
   const sections = useMemo(
     () =>
       startup.ready
@@ -469,9 +475,11 @@ export function ChannelInventory({
             chatsOnly,
             new Set<string>(JSON.parse(activeDraftSections)),
             regions.managed,
+            hasPages,
           )
         : [],
     [
+      hasPages,
       startup.ready,
       sidebarChannels,
       preferences.data,
@@ -1062,6 +1070,18 @@ export function ChannelInventory({
     const ids = groupIds.filter((id) => id !== sectionId);
     ids.splice(to, 0, sectionId);
     void preferences.reorderSections(sectionId, ids).catch(() => {});
+  };
+  const sectionMove = (key: string) => {
+    if (!orderWritable) return undefined;
+    const index = visibleGroupIds.indexOf(key);
+    const previous = visibleGroupIds[index - 1];
+    const next = visibleGroupIds[index + 1];
+    return {
+      up: previous
+        ? () => moveGroup(key, groupIds.indexOf(previous))
+        : undefined,
+      down: next ? () => moveGroup(key, groupIds.indexOf(next)) : undefined,
+    };
   };
   const setSectionSort = (key: string, mode: SidebarSortMode) => {
     void preferences
@@ -1815,398 +1835,388 @@ export function ChannelInventory({
               defaultPosition: index,
               element: (
                 <TeamSidebarSection
-                  render={() => (
-                    <DroppableSidebarSection
-                      key={section.key}
-                      createSectionTarget={
-                        section.key === firstChannelSection
-                          ? preferences.sectionCreationWritable
-                            ? "available"
-                            : "unavailable"
-                          : undefined
-                      }
-                      groupIndex={groupIds.indexOf(section.key)}
-                      disabled={
-                        !placementWritable ||
-                        !sidebarDropRowKinds(section.key).length
-                      }
-                      accepts={sidebarDropRowKinds(section.key)}
-                      reorderable={orderWritable}
-                      move={
-                        orderWritable
-                          ? (() => {
-                              const index = visibleGroupIds.indexOf(
-                                section.key,
-                              );
-                              const previous = visibleGroupIds[index - 1];
-                              const next = visibleGroupIds[index + 1];
-                              return {
-                                up: previous
-                                  ? () =>
-                                      moveGroup(
-                                        section.key,
-                                        groupIds.indexOf(previous),
-                                      )
-                                  : undefined,
-                                down: next
-                                  ? () =>
-                                      moveGroup(
-                                        section.key,
-                                        groupIds.indexOf(next),
-                                      )
-                                  : undefined,
-                              };
-                            })()
-                          : undefined
-                      }
-                      sectionKey={section.key}
-                      title={section.title}
-                      icon={section.icon}
-                      session={queries}
-                      open={
-                        !sidebar.collapsed.includes(section.key) ||
-                        renamingSection === section.key
-                      }
-                      onToggle={(open) =>
-                        sidebar.toggle(
-                          section.key,
-                          renamingSection === section.key
-                            ? sidebar.collapsed.includes(section.key)
-                            : open,
-                        )
-                      }
-                      channelCount={section.allRows.length}
-                      filter={
-                        preferences.data
-                          ? {
-                              value:
-                                preferences.data.filters?.[
-                                  section.key.startsWith("group:")
-                                    ? `section:${section.key.slice(6)}`
-                                    : section.key
-                                ] ?? "all",
-                              disabled: !preferences.filterWritable,
-                              activeWindowSeconds:
-                                preferences.data.activeWindowSeconds?.[
-                                  section.key.startsWith("group:")
-                                    ? `section:${section.key.slice(6)}`
-                                    : section.key
-                                ],
-                              change: (mode, seconds) =>
-                                setSectionFilter(section.key, mode, seconds),
-                              dismissError: () =>
-                                preferences.dismissFilterError(
-                                  section.key.startsWith("group:")
-                                    ? `section:${section.key.slice(6)}`
-                                    : section.key,
-                                ),
-                            }
-                          : undefined
-                      }
-                      channels={{
-                        rows: section.hiddenRows,
-                        selected: preserveSidebar ? undefined : current?.id,
-                        select,
-                      }}
-                      onRemove={
-                        preferences.removeSectionWritable &&
-                        section.key.startsWith("group:")
-                          ? async () => {
-                              await preferences.removeSection(
-                                section.key.slice(6),
-                              );
-                              sidebar.toggle(section.key, true);
-                            }
-                          : undefined
-                      }
-                      menuActions={
-                        section.key.startsWith("group:")
-                          ? (dismiss, trigger) => (
-                              <>
-                                <MenuItem
-                                  onClick={() => {
-                                    dismiss();
-                                    requestAnimationFrame(() => {
-                                      if (mounted.current)
-                                        setWorkspaceSettings({
-                                          id: section.key.slice(6),
-                                          name: section.title,
-                                          icon: section.icon,
-                                          trigger,
-                                        });
-                                    });
-                                  }}
-                                >
-                                  Workspace settings
-                                </MenuItem>
-                                <MenuItem
-                                  onClick={() => {
-                                    dismiss();
-                                    newChat(section.key.slice(6));
-                                  }}
-                                >
-                                  New chat
-                                </MenuItem>
-                                {handoff && (
-                                  <MenuItem
-                                    disabled={
-                                      !queries.channelLifecycle.available ||
-                                      !!handoff.inactiveRun ||
-                                      handoff.inactiveRuns.length > 0 ||
-                                      !!handoff.lifecycleDialog
-                                    }
-                                    onClick={() => {
-                                      dismiss();
-                                      const id = section.key.slice(6);
-                                      requestAnimationFrame(() => {
-                                        if (mounted.current)
-                                          handoff.archiveInactive({
-                                            action: "archive",
-                                            workspaceId: id,
-                                            ids: sidebarChannels
-                                              .filter(
-                                                (channel) =>
-                                                  channel.channelType ===
-                                                    "solo" &&
-                                                  preferences.data?.assignments[
-                                                    channel.id
-                                                  ] === id,
-                                              )
-                                              .map(({ id }) => id),
-                                          });
-                                      });
-                                    }}
-                                  >
-                                    Archive inactive chats
-                                  </MenuItem>
-                                )}
-                              </>
-                            )
-                          : undefined
-                      }
-                      headerActions={
-                        section.key.startsWith("group:")
-                          ? workspaceNewAction(
-                              section.key.slice(6),
-                              section.title,
-                            )
-                          : section.key === "solo"
-                            ? (creationAction ?? (
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  onClick={() => newChat()}
-                                >
-                                  New chat
-                                </Button>
-                              ))
-                            : null
-                      }
-                      removalFocus={() =>
-                        sidebar.list.current?.querySelector<HTMLButtonElement>(
-                          '[data-sidebar-section="channels"] button',
-                        )
-                      }
-                      createChannel={
-                        section.key === "starred" || section.key === "channels"
-                          ? {
-                              available: queries.channelCreation.available,
-                              open: (trigger) => {
-                                createChannelTrigger.current = trigger;
-                                setInitialStarred(section.key === "starred");
-                                setInitialGroup("");
-                                setCreateChannelOpen(true);
-                              },
-                            }
-                          : undefined
-                      }
-                      createSection={
-                        section.key === "channels"
-                          ? {
-                              available: preferences.sectionCreationWritable,
-                              open: (trigger) => {
-                                createSectionTrigger.current = trigger;
-                                requestAnimationFrame(() => {
-                                  if (mounted.current) setCreatingSection(true);
-                                });
-                              },
-                            }
-                          : undefined
-                      }
-                      newMessage={
-                        section.key === "dms"
-                          ? () => {
-                              if (
-                                viewer &&
-                                relay.snapshot().session === queries
-                              )
-                                void navigator.open({
-                                  version: 1,
-                                  kind: "page",
-                                  pluginId: "buzz.channels",
-                                  pageId: "channels",
-                                  scope: {
-                                    viewer,
-                                    communityOrigin: scope.slice(
-                                      0,
-                                      -(viewer.length + 1),
-                                    ),
-                                  },
-                                  route: { version: 1, params: "new-message" },
-                                });
-                            }
-                          : undefined
-                      }
-                      sort={
-                        preferences.sortWritable
-                          ? {
-                              value: sectionSort(section.key),
-                              modes: rowSortModes,
-                              change: (mode) =>
-                                setSectionSort(section.key, mode),
-                            }
-                          : undefined
-                      }
-                    >
-                      <ChannelSidebarRows
+                  render={() =>
+                    section.key === SIDEBAR_PAGES_SECTION ? (
+                      <DroppableSidebarSection
+                        key={section.key}
+                        groupIndex={groupIds.indexOf(section.key)}
+                        // A section drop target that accepts no rows.
+                        disabled={false}
+                        accepts={[]}
+                        reorderable={orderWritable}
+                        move={sectionMove(section.key)}
+                        sectionKey={section.key}
+                        title={section.title}
+                        hideMoreActions={!orderWritable}
+                        open={!sidebar.collapsed.includes(section.key)}
+                        onToggle={(open) => sidebar.toggle(section.key, open)}
+                      >
+                        {pages}
+                      </DroppableSidebarSection>
+                    ) : (
+                      <DroppableSidebarSection
+                        key={section.key}
+                        createSectionTarget={
+                          section.key === firstChannelSection
+                            ? preferences.sectionCreationWritable
+                              ? "available"
+                              : "unavailable"
+                            : undefined
+                        }
+                        groupIndex={groupIds.indexOf(section.key)}
+                        disabled={
+                          !placementWritable ||
+                          !sidebarDropRowKinds(section.key).length
+                        }
+                        accepts={sidebarDropRowKinds(section.key)}
+                        reorderable={orderWritable}
+                        move={sectionMove(section.key)}
+                        sectionKey={section.key}
+                        title={section.title}
+                        icon={section.icon}
+                        session={queries}
                         open={
                           !sidebar.collapsed.includes(section.key) ||
                           renamingSection === section.key
                         }
+                        onToggle={(open) =>
+                          sidebar.toggle(
+                            section.key,
+                            renamingSection === section.key
+                              ? sidebar.collapsed.includes(section.key)
+                              : open,
+                          )
+                        }
+                        channelCount={section.allRows.length}
+                        filter={
+                          preferences.data
+                            ? {
+                                value:
+                                  preferences.data.filters?.[
+                                    section.key.startsWith("group:")
+                                      ? `section:${section.key.slice(6)}`
+                                      : section.key
+                                  ] ?? "all",
+                                disabled: !preferences.filterWritable,
+                                activeWindowSeconds:
+                                  preferences.data.activeWindowSeconds?.[
+                                    section.key.startsWith("group:")
+                                      ? `section:${section.key.slice(6)}`
+                                      : section.key
+                                  ],
+                                change: (mode, seconds) =>
+                                  setSectionFilter(section.key, mode, seconds),
+                                dismissError: () =>
+                                  preferences.dismissFilterError(
+                                    section.key.startsWith("group:")
+                                      ? `section:${section.key.slice(6)}`
+                                      : section.key,
+                                  ),
+                              }
+                            : undefined
+                        }
+                        channels={{
+                          rows: section.hiddenRows,
+                          selected: preserveSidebar ? undefined : current?.id,
+                          select,
+                        }}
+                        onRemove={
+                          preferences.removeSectionWritable &&
+                          section.key.startsWith("group:")
+                            ? async () => {
+                                await preferences.removeSection(
+                                  section.key.slice(6),
+                                );
+                                sidebar.toggle(section.key, true);
+                              }
+                            : undefined
+                        }
+                        menuActions={
+                          section.key.startsWith("group:")
+                            ? (dismiss, trigger) => (
+                                <>
+                                  <MenuItem
+                                    onClick={() => {
+                                      dismiss();
+                                      requestAnimationFrame(() => {
+                                        if (mounted.current)
+                                          setWorkspaceSettings({
+                                            id: section.key.slice(6),
+                                            name: section.title,
+                                            icon: section.icon,
+                                            trigger,
+                                          });
+                                      });
+                                    }}
+                                  >
+                                    Workspace settings
+                                  </MenuItem>
+                                  {handoff && (
+                                    <MenuItem
+                                      disabled={
+                                        !queries.channelLifecycle.available ||
+                                        !!handoff.inactiveRun ||
+                                        handoff.inactiveRuns.length > 0 ||
+                                        !!handoff.lifecycleDialog
+                                      }
+                                      onClick={() => {
+                                        dismiss();
+                                        const id = section.key.slice(6);
+                                        requestAnimationFrame(() => {
+                                          if (mounted.current)
+                                            handoff.archiveInactive({
+                                              action: "archive",
+                                              workspaceId: id,
+                                              ids: sidebarChannels
+                                                .filter(
+                                                  (channel) =>
+                                                    channel.channelType ===
+                                                      "solo" &&
+                                                    preferences.data
+                                                      ?.assignments[
+                                                      channel.id
+                                                    ] === id,
+                                                )
+                                                .map(({ id }) => id),
+                                            });
+                                        });
+                                      }}
+                                    >
+                                      Archive inactive chats
+                                    </MenuItem>
+                                  )}
+                                </>
+                              )
+                            : undefined
+                        }
+                        headerActions={
+                          section.key.startsWith("group:") ? (
+                            workspaceNewAction(
+                              section.key.slice(6),
+                              section.title,
+                            )
+                          ) : section.key === "solo" ? (
+                            <IconButton
+                              size="compact"
+                              aria-label={`New chat in ${section.title}`}
+                              title="New chat"
+                              icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                              onClick={() => newChat()}
+                            />
+                          ) : null
+                        }
+                        removalFocus={() =>
+                          sidebar.list.current?.querySelector<HTMLButtonElement>(
+                            '[data-sidebar-section="channels"] button',
+                          )
+                        }
+                        createChannel={
+                          section.key === "starred" ||
+                          section.key === "channels"
+                            ? {
+                                available: queries.channelCreation.available,
+                                open: (trigger) => {
+                                  createChannelTrigger.current = trigger;
+                                  setInitialStarred(section.key === "starred");
+                                  setInitialGroup("");
+                                  setCreateChannelOpen(true);
+                                },
+                              }
+                            : undefined
+                        }
+                        createSection={
+                          section.key === "channels"
+                            ? {
+                                available: preferences.sectionCreationWritable,
+                                open: (trigger) => {
+                                  createSectionTrigger.current = trigger;
+                                  requestAnimationFrame(() => {
+                                    if (mounted.current)
+                                      setCreatingSection(true);
+                                  });
+                                },
+                              }
+                            : undefined
+                        }
+                        newMessage={
+                          section.key === "dms"
+                            ? () => {
+                                if (
+                                  viewer &&
+                                  relay.snapshot().session === queries
+                                )
+                                  void navigator.open({
+                                    version: 1,
+                                    kind: "page",
+                                    pluginId: "buzz.channels",
+                                    pageId: "channels",
+                                    scope: {
+                                      viewer,
+                                      communityOrigin: scope.slice(
+                                        0,
+                                        -(viewer.length + 1),
+                                      ),
+                                    },
+                                    route: {
+                                      version: 1,
+                                      params: "new-message",
+                                    },
+                                  });
+                              }
+                            : undefined
+                        }
+                        sort={
+                          preferences.sortWritable
+                            ? {
+                                value: sectionSort(section.key),
+                                modes: rowSortModes,
+                                change: (mode) =>
+                                  setSectionSort(section.key, mode),
+                              }
+                            : undefined
+                        }
                       >
-                        {[
-                          ...(composedChatSections.has(section.key)
-                            ? []
-                            : sectionDrafts(section.key)),
-                          ...section.rows.map((channel) => {
-                            if (channel.id === renamingChat)
+                        <ChannelSidebarRows
+                          open={
+                            !sidebar.collapsed.includes(section.key) ||
+                            renamingSection === section.key
+                          }
+                        >
+                          {[
+                            ...(composedChatSections.has(section.key)
+                              ? []
+                              : sectionDrafts(section.key)),
+                            ...section.rows.map((channel) => {
+                              if (channel.id === renamingChat)
+                                return (
+                                  <SoloChatName
+                                    key={channel.id}
+                                    session={queries}
+                                    id={channel.id}
+                                    title={channel.name}
+                                    className={styles.unifiedChatName}
+                                    onAbandon={() => {
+                                      const ids = section.rows.map(
+                                        ({ id }) => id,
+                                      );
+                                      const index = ids.indexOf(channel.id);
+                                      const neighbors = [
+                                        ...ids.slice(index + 1),
+                                        ...ids.slice(0, index).reverse(),
+                                      ];
+                                      const rows = activeChannelRows(
+                                        sidebar.list.current,
+                                      );
+                                      const target = neighbors
+                                        .map((id) =>
+                                          rows.find(
+                                            (row) =>
+                                              row.dataset.channelId === id,
+                                          ),
+                                        )
+                                        .find(Boolean);
+                                      (
+                                        target ??
+                                        sidebar.list.current?.querySelector<HTMLElement>(
+                                          `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
+                                        )
+                                      )?.focus({ preventScroll: true });
+                                    }}
+                                    close={(focus) => {
+                                      renameFocus.current = focus
+                                        ? {
+                                            id: channel.id,
+                                            from: document.activeElement,
+                                          }
+                                        : undefined;
+                                      setRenamingChat(undefined);
+                                    }}
+                                  />
+                                );
+                              const selected =
+                                !preserveSidebar && current?.id === channel.id
+                                  ? current.id
+                                  : undefined;
+                              // Every row offers Copy link; build items only for the open
+                              // menu. useChannelRowMenu closes a menu left with none.
+                              const menuOpen =
+                                rowMenu?.channelId === channel.id &&
+                                rowMenu.sectionKey === section.key;
                               return (
-                                <SoloChatName
+                                <ChannelSidebarItem
+                                  profile={
+                                    channel.channelType === "dm" &&
+                                    channel.participants?.length === 1
+                                      ? dmProfiles.get(
+                                          channel.participants[0] ?? "",
+                                        )
+                                      : undefined
+                                  }
                                   key={channel.id}
+                                  channel={channel}
+                                  chatIcon={
+                                    channel.channelType === "solo"
+                                      ? chatIcon
+                                      : undefined
+                                  }
+                                  rowContributions={rowContributions}
+                                  onHiddenChange={setRowHidden}
                                   session={queries}
-                                  id={channel.id}
-                                  title={channel.name}
-                                  className={styles.unifiedChatName}
-                                  onAbandon={() => {
-                                    const ids = section.rows.map(
-                                      ({ id }) => id,
-                                    );
-                                    const index = ids.indexOf(channel.id);
-                                    const neighbors = [
-                                      ...ids.slice(index + 1),
-                                      ...ids.slice(0, index).reverse(),
-                                    ];
-                                    const rows = activeChannelRows(
-                                      sidebar.list.current,
-                                    );
-                                    const target = neighbors
-                                      .map((id) =>
-                                        rows.find(
-                                          (row) => row.dataset.channelId === id,
-                                        ),
-                                      )
-                                      .find(Boolean);
-                                    (
-                                      target ??
-                                      sidebar.list.current?.querySelector<HTMLElement>(
-                                        `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
-                                      )
-                                    )?.focus({ preventScroll: true });
-                                  }}
-                                  close={(focus) => {
-                                    renameFocus.current = focus
-                                      ? {
-                                          id: channel.id,
-                                          from: document.activeElement,
-                                        }
-                                      : undefined;
-                                    setRenamingChat(undefined);
-                                  }}
+                                  working={workingChannels.has(channel.id)}
+                                  selected={
+                                    composingMessage ? undefined : selected
+                                  }
+                                  onSelect={select}
+                                  onShareChat={shareChat}
+                                  navigation={navigator}
+                                  pendingClick={pendingChatClick}
+                                  onRename={
+                                    channel.channelType === "solo" &&
+                                    !renamingChat &&
+                                    canEditLifetime(queries, channel)
+                                      ? renameChat
+                                      : undefined
+                                  }
+                                  onOpenThread={openActivityThread}
+                                  onOpenMessage={openActivityMessage}
+                                  onOpenWorkingAgent={openWorkingAgent}
+                                  onOpenAgentActivity={openAgentActivity}
+                                  menuEnabled
+                                  sectionKey={section.key}
+                                  selectFrame={
+                                    regions.managed.has(channel.id)
+                                      ? undefined
+                                      : DraggableChannel
+                                  }
+                                  onOpenMenu={openRowMenu}
+                                  menuOpen={menuOpen}
+                                  menuAnchor={
+                                    menuOpen ? rowMenu.anchor : undefined
+                                  }
+                                  menuContent={
+                                    menuOpen ? (
+                                      <>
+                                        {rowActions(channel, section.key)}
+                                        {readWrite?.pending && (
+                                          <p role="status">Saving…</p>
+                                        )}
+                                        {readWrite?.error && (
+                                          <p role="alert">{readWrite.error}</p>
+                                        )}
+                                      </>
+                                    ) : undefined
+                                  }
+                                  onCloseMenu={closeRowMenu}
+                                  onMenuClosed={rowMenuClosed}
+                                  menuFinalFocus={rowMenuFinalFocus}
                                 />
                               );
-                            const selected =
-                              !preserveSidebar && current?.id === channel.id
-                                ? current.id
-                                : undefined;
-                            // Every row offers Copy link; build items only for the open
-                            // menu. useChannelRowMenu closes a menu left with none.
-                            const menuOpen =
-                              rowMenu?.channelId === channel.id &&
-                              rowMenu.sectionKey === section.key;
-                            return (
-                              <ChannelSidebarItem
-                                profile={
-                                  channel.channelType === "dm" &&
-                                  channel.participants?.length === 1
-                                    ? dmProfiles.get(
-                                        channel.participants[0] ?? "",
-                                      )
-                                    : undefined
-                                }
-                                key={channel.id}
-                                channel={channel}
-                                chatIcon={
-                                  channel.channelType === "solo"
-                                    ? chatIcon
-                                    : undefined
-                                }
-                                rowContributions={rowContributions}
-                                onHiddenChange={setRowHidden}
-                                session={queries}
-                                working={workingChannels.has(channel.id)}
-                                selected={
-                                  composingMessage ? undefined : selected
-                                }
-                                onSelect={select}
-                                onShareChat={shareChat}
-                                navigation={navigator}
-                                pendingClick={pendingChatClick}
-                                onRename={
-                                  channel.channelType === "solo" &&
-                                  !renamingChat &&
-                                  canEditLifetime(queries, channel)
-                                    ? renameChat
-                                    : undefined
-                                }
-                                onOpenThread={openActivityThread}
-                                onOpenMessage={openActivityMessage}
-                                onOpenWorkingAgent={openWorkingAgent}
-                                onOpenAgentActivity={openAgentActivity}
-                                menuEnabled
-                                sectionKey={section.key}
-                                selectFrame={
-                                  regions.managed.has(channel.id)
-                                    ? undefined
-                                    : DraggableChannel
-                                }
-                                onOpenMenu={openRowMenu}
-                                menuOpen={menuOpen}
-                                menuAnchor={
-                                  menuOpen ? rowMenu.anchor : undefined
-                                }
-                                menuContent={
-                                  menuOpen ? (
-                                    <>
-                                      {rowActions(channel, section.key)}
-                                      {readWrite?.pending && (
-                                        <p role="status">Saving…</p>
-                                      )}
-                                      {readWrite?.error && (
-                                        <p role="alert">{readWrite.error}</p>
-                                      )}
-                                    </>
-                                  ) : undefined
-                                }
-                                onCloseMenu={closeRowMenu}
-                                onMenuClosed={rowMenuClosed}
-                                menuFinalFocus={rowMenuFinalFocus}
-                              />
-                            );
-                          }),
-                        ]}
-                      </ChannelSidebarRows>
-                    </DroppableSidebarSection>
-                  )}
+                            }),
+                          ]}
+                        </ChannelSidebarRows>
+                      </DroppableSidebarSection>
+                    )
+                  }
                 />
               ),
             })),
@@ -2267,6 +2277,8 @@ export function ChannelInventory({
     ),
     content: (
       <>
+        {/* Pages stay reachable until their orderable section can render. */}
+        {!startup.ready && pages}
         {!startup.ready && (
           <p className={styles.empty} role="status">
             Loading your sidebar…

@@ -19,6 +19,12 @@ import {
   type Template,
 } from "../channel-templates/model";
 import { NewWorkspace } from "./NewWorkspace";
+import { createRelaySession } from "../relay/session";
+// Template agent checks read these; no case here applies a template's agents.
+const templateSession = (({ agentChoices, channels }) => ({
+  agentChoices,
+  channels,
+}))(createRelaySession(null).session);
 
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 afterEach(() => {
@@ -38,6 +44,7 @@ it("keeps a workspace draft editable while preferences recover and restores focu
   };
   const create = vi.fn(async () => {});
   const session = {
+    ...templateSession,
     scope: "https://relay.example.test:viewer",
     sidebarPreferences: {
       get sectionCreationWritable() {
@@ -82,7 +89,12 @@ function mount() {
       create={vi.fn(async () => {})}
       close={close}
       onCreated={vi.fn()}
-      session={{ scope: "https://relay.example.test:viewer" } as RelaySession}
+      session={
+        {
+          ...templateSession,
+          scope: "https://relay.example.test:viewer",
+        } as unknown as RelaySession
+      }
     />,
   );
   return {
@@ -104,6 +116,7 @@ it.each(["add a folder", "turn worktree off"])(
         onCreated={vi.fn()}
         session={
           {
+            ...templateSession,
             scope: "https://relay.example.test:viewer",
             channelKit: {
               refresh: async () => {},
@@ -185,6 +198,7 @@ it.each(["Close", "Retry"])(
         onCreated={vi.fn()}
         session={
           {
+            ...templateSession,
             scope: "https://relay.example.test:viewer",
             channelKit: {
               refresh: async () => {},
@@ -272,7 +286,12 @@ it("rejects oversized defaults with their real community envelope before creatin
       create={create}
       close={vi.fn()}
       onCreated={vi.fn()}
-      session={{ scope: "https://relay.example.test:viewer" } as RelaySession}
+      session={
+        {
+          ...templateSession,
+          scope: "https://relay.example.test:viewer",
+        } as unknown as RelaySession
+      }
     />,
   );
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
@@ -317,6 +336,7 @@ it.each(["Escape", "Close"])(
         onCreated={vi.fn()}
         session={
           {
+            ...templateSession,
             scope: "https://relay.example.test:viewer",
             channelKit: {
               refresh: async () => {},

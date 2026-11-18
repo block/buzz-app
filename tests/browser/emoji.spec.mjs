@@ -763,6 +763,16 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         }),
       ).toBe(true);
     }
+    // At an intermediate width only 7 cells fit, but the popup still has room
+    // for the category bar it showed before the cells grew.
+    await page.locator("main").evaluate((el) => {
+      el.style.width = "386px";
+    });
+    await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
+      "width",
+      "350px",
+    );
+    await expect(page.locator("em-emoji-picker nav")).toBeVisible();
     await page.locator("main").evaluate((el) => {
       el.style.width = "800px";
     });

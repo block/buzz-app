@@ -111,6 +111,16 @@ export function EmojiPicker({
       emojiSize: 28,
       slot: 40,
     });
+  // The category bar spans the popup, so its room is the popup's width, not
+  // the grid's: wider cells must not hide it in a pane where it still fits.
+  const popupWidth = Math.min(
+    availableWidth,
+    perLine * slot + PICKER_CHROME * scale + 2,
+  );
+  const spacious = spaciousGrid(
+    popupWidth - PICKER_COLUMN_CHROME * scale,
+    scale * 16,
+  );
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -287,6 +297,7 @@ export function EmojiPicker({
           perLine,
           emojiSize,
           emojiButtonSize: slot,
+          navigation: spacious,
           search: search.current,
           searchSelection,
           searchChange: (value) => {
@@ -337,6 +348,7 @@ export function EmojiPicker({
     perLine,
     emojiSize,
     slot,
+    spacious,
     tab,
     host,
     colorMode,
@@ -346,7 +358,7 @@ export function EmojiPicker({
     openAddEmoji &&
     createPortal(
       <span slot={PREVIEW_ACTION_SLOT}>
-        {!spaciousGrid(perLine * slot, scale * 16) ? (
+        {!spacious ? (
           <IconButton
             size="sm"
             variant="ghost"
@@ -562,10 +574,7 @@ export function EmojiPicker({
         id={externalTrigger?.id}
         aria-label="Emoji picker"
         style={{
-          width: Math.min(
-            availableWidth,
-            perLine * slot + PICKER_CHROME * scale + 2,
-          ),
+          width: popupWidth,
           overflow: "hidden",
         }}
         finalFocus={

@@ -108,6 +108,7 @@ function fixture(
   let thread = 0;
   const sent: Wire[] = [];
   const modelIds: [string, string] = ["test-model", "deep-model"];
+  const voiceCatalog = { v3: ["cove", "maple"] as string[] | undefined };
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
   const failures = new Map<string, string>();
@@ -158,6 +159,8 @@ function fixture(
       let result: unknown = {};
       if (request.method === "initialize")
         result = { userAgent: "fixture buzz-protection-v2" };
+      if (request.method === "thread/realtime/listVoices")
+        result = { voices: voiceCatalog };
       if (request.method === "model/list")
         result = {
           data: [
@@ -686,6 +689,7 @@ function fixture(
     process,
     sent,
     modelIds,
+    voiceCatalog,
     failing,
     failures,
     held,
@@ -6470,9 +6474,13 @@ it("keeps interrupting an idle existing conversation a no-op", async () => {
 });
 
 describe("voice seats", () => {
-  async function seated(overrides: Partial<AgentVoiceSeat> = {}) {
+  async function seated(
+    overrides: Partial<AgentVoiceSeat> = {},
+    configure: (f: ReturnType<typeof fixture>) => void = () => {},
+  ) {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
+    configure(f);
     f.huddleChannels.add("channel");
     const delivery = f.delivery("hello");
     const abort = new AbortController();
@@ -6513,6 +6521,109 @@ describe("voice seats", () => {
       params: { threadId: "thread-1", turn: { id: "late" } },
     });
     expect(thinking).not.toHaveBeenCalled();
+  });
+  it.each(["cove", "maple"])(
+    "uses the resolved seat voice %s",
+    async (voice) => {
+      const f = await seated({
+        config: { workspace: "/tmp/voices", voice },
+        synced: { voice },
+      });
+      expect(vi.mocked(openVoice).mock.calls.at(-1)?.[7]).toBe(voice);
+      await f.connection.close();
+    },
+  );
+  it.each(
+    ["unsupported", "missing", "failed"].flatMap((state) =>
+      [true, false].map((synced) => ({ state, synced })),
+    ),
+  )(
+    "refuses an unchecked saved voice: $state, synced=$synced",
+    async ({ state, synced }) => {
+      const before = vi.mocked(openVoice).mock.calls.length;
+      const started = seated(
+        {
+          config: { workspace: "/tmp/voices", voice: "maple" },
+          ...(synced ? { synced: { voice: "maple" } } : {}),
+        },
+        (f) => {
+          if (state === "unsupported") f.voiceCatalog.v3 = ["cove"];
+          if (state === "missing") f.voiceCatalog.v3 = undefined;
+          if (state === "failed") f.failing.add("thread/realtime/listVoices");
+        },
+      );
+      try {
+        await expect(started).rejects.toThrow(
+          state === "unsupported"
+            ? /voice "maple".*Settings/
+            : /Couldn't check.*voice "maple".*Try again/,
+        );
+        expect(vi.mocked(openVoice).mock.calls.length).toBe(before);
+      } finally {
+        await started.then(
+          (f) => f.connection.close(),
+          () => {},
+        );
+      }
+    },
+  );
+  it("releases a cancelled seat while voice verification is pending", async () => {
+    const f = fixture();
+    vi.stubGlobal("RTCPeerConnection", class {});
+    f.huddleChannels.add("channel");
+    const gate = deferred<void>();
+    f.held.set("thread/realtime/listVoices", gate.promise);
+    const delivery = f.delivery("hello");
+    const abort = new AbortController();
+    const seat = {
+      config: { workspace: "/tmp/voices", voice: "maple" },
+      agent: { ...delivery.agent, config: delivery.config } as unknown as Agent,
+      conversation: { channelId: "channel" },
+      signal: abort.signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    };
+    const opening = f.runtime.voice(seat, delivery.agent);
+    let cancelled = false;
+    const rejected = expect(opening)
+      .rejects.toThrow()
+      .then(() => {
+        cancelled = true;
+      });
+    try {
+      await vi.waitFor(() =>
+        expect(
+          f.sent.some((wire) => wire.method === "thread/realtime/listVoices"),
+        ).toBe(true),
+      );
+      abort.abort();
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      await rejected;
+      const connection = await f.runtime.voice(
+        {
+          ...seat,
+          config: { workspace: "/tmp/voices" },
+          signal: new AbortController().signal,
+        },
+        delivery.agent,
+      );
+      await connection.close();
+    } finally {
+      gate.resolve();
+      await rejected;
+    }
+  });
+  it("opens media after verifying an offered synced voice", async () => {
+    const f = await seated({
+      config: { workspace: "/tmp/voices", voice: "maple" },
+      synced: { voice: "maple" },
+    });
+    expect(
+      f.sent.some((wire) => wire.method === "thread/realtime/listVoices"),
+    ).toBe(true);
+    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[7]).toBe("maple");
+    await f.connection.close();
   });
   it("uses resolved seat config and team instead of the local agent config", async () => {
     const f = await seated({

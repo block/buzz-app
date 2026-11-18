@@ -66,6 +66,21 @@ test("Team offers empty-workspace creation with keyboard focus, emoji and confir
   await expect(dialog).toBeVisible();
   await expect(placeholder).toBeFocused();
   await placeholder.click();
+  await search.fill("exclamation");
+  await page.getByRole("button", { name: "❗", exact: true }).click();
+  await expect(search).toHaveCount(0);
+  const exclamation = dialog.getByRole("button", {
+    name: "Change section emoji, currently ❗",
+  });
+  await expect(exclamation).toBeFocused();
+  await expectIconCentered(dialog);
+  await exclamation.press("Enter");
+  await expect(search).toBeFocused();
+  await expectIconCentered(dialog);
+  await search.press("Escape");
+  await expect(exclamation).toBeFocused();
+  await expectIconCentered(dialog);
+  await exclamation.click();
   await search.fill("bus");
   await page.getByRole("button", { name: "🚌", exact: true }).click();
   await expect(search).toHaveCount(0);
@@ -396,8 +411,26 @@ async function expectIconCentered(dialog) {
       if (!artwork || !input) throw new Error("Section emoji geometry missing");
       const control = button.getBoundingClientRect();
       const icon = artwork.getBoundingClientRect();
+      // The fixed slot can be centered while its implicit grid track overflows.
+      // Range measures text advance, not the painted emoji's optical bounds.
+      const range = document.createRange();
+      range.selectNodeContents(artwork);
+      const content =
+        artwork.firstChild?.nodeType === Node.TEXT_NODE
+          ? range.getBoundingClientRect()
+          : (
+              artwork.querySelector("img, svg") ?? artwork
+            ).getBoundingClientRect();
       const name = input.getBoundingClientRect();
       return {
+        // The modest CSS nudge is Unicode-only, not a universal ink-centering gate.
+        unicode: artwork.firstChild?.nodeType === Node.TEXT_NODE,
+        nudge: new DOMMatrixReadOnly(
+          getComputedStyle(artwork.parentElement).transform,
+        ).m41,
+        contentX: Math.abs(
+          control.x + control.width / 2 - (content.x + content.width / 2),
+        ),
         x: Math.abs(control.x + control.width / 2 - (icon.x + icon.width / 2)),
         y: Math.abs(
           control.y + control.height / 2 - (icon.y + icon.height / 2),
@@ -407,6 +440,8 @@ async function expectIconCentered(dialog) {
         ),
       };
     });
+  expect(metrics.nudge).toBe(metrics.unicode ? 0.5 : 0);
+  expect(metrics.contentX).toBeLessThanOrEqual(1);
   expect(metrics.x).toBeLessThanOrEqual(1);
   expect(metrics.y).toBeLessThanOrEqual(1);
   expect(metrics.nameY).toBeLessThanOrEqual(1);

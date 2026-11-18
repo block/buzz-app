@@ -1618,11 +1618,11 @@ are also deferred; opt in when the contribution's static title is sufficient unt
 selection.
 
 A plugin panel, which cannot import host modules, names its tab with
-`ctx.panels.useTabTitle(label)`, a React hook called in the panel component (for
+`ctx.panels.useTabTitle(label, icon?)`, a React hook called in the panel component (for
 example `ctx.panels.useTabTitle("#12554892")` for a build opened from a link). The
 label replaces the static `title` while the component is mounted and the static
-`title` returns when it unmounts; outside a panel tab the call does nothing. It
-takes a label only, no icon. Hosts that predate it lack the hook, so plugins that
+`title` returns when it unmounts; outside a panel tab the call does nothing. The
+optional `icon` is a React node. Hosts that predate it lack the hook, so plugins that
 support them test `typeof ctx.panels.useTabTitle === "function"` first.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its

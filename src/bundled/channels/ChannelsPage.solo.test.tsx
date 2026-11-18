@@ -494,6 +494,10 @@ function fixture({
       <ChannelsPage
         relay={relay}
         panels={{
+          ui: {
+            Workspace: () => null,
+            useSplit: vi.fn(),
+          },
           ...contribution,
           register() {},
           resolve: () => undefined,

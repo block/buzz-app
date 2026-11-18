@@ -1857,7 +1857,13 @@ function Composer({
     terminator?: string,
   ) {
     const separated = /^[ \t]/.test(valueRef.current.text.slice(at));
-    if (!insert(separated ? text : `${text} `, undefined, range, terminator))
+    const start = range?.start ?? input.current?.selectionStart ?? at;
+    const value =
+      /^:\d{1,64}:/.test(text) &&
+      /\d/.test(valueRef.current.text[start - 1] ?? "")
+        ? ` ${text}`
+        : text;
+    if (!insert(separated ? value : `${value} `, undefined, range, terminator))
       return false;
     const field = input.current;
     const end = field?.selectionEnd ?? 0;

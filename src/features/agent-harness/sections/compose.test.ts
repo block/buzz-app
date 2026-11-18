@@ -63,6 +63,14 @@ describe("composeBase", () => {
     for (const id of ids) expect(id).toMatch(/^[a-z]+(-[a-z]+)*$/);
   });
 
+  it("gives the Session Model of the session's scope, or none", () => {
+    const model = (scope?: "thread" | "channel") =>
+      composeBase(scope ? { scope } : {}).text.split("## Session Model")[1];
+    expect(model("thread")).toContain("each thread gets its own independent");
+    expect(model("channel")).toContain("You are one per-channel session");
+    expect(model()).toBeUndefined();
+  });
+
   it("names the workspace exactly as given", () => {
     // `$&` and `$1` mean something to a string replacement.
     const { text } = composeBase({ ownFolder: "/home/$&/$1/ws" });

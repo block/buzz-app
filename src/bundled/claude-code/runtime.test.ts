@@ -47,7 +47,7 @@ import {
   PROCESS_LIMIT,
   withRoom,
 } from "./sessions";
-import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import { composeBase } from "../../features/agent-harness/sections/compose";
 import {
   assignConversationFolder,
   conversationKey,
@@ -1150,7 +1150,7 @@ it("gives each turn of a kept session the plugins' instructions as they are now"
   expect(second).toContain("Run dibs_watch first.");
   expect(second).not.toContain("Run dibs_check first.");
   expect(third).not.toContain("<plugin-instructions");
-  expect(BASE_PROMPT).toContain(
+  expect(composeBase().text).toContain(
     "a turn without any means no plugin instructions apply now",
   );
 });

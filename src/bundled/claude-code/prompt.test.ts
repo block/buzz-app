@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 import { quoted } from "../../features/agent-harness/turn-records";
 import type { ConversationWake } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { mentionSection } from "../../features/agent-harness/base-prompt";
 import threadHandoff from "./session_handoff_thread.md?raw";
 import {
@@ -188,7 +187,8 @@ it("builds the harness system prompt with instructions and core memory", () => {
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
-  expect(prompt).toContain(BUZZ_PROMPT);
+  expect(prompt).toContain("## Posting Conventions");
+  expect(prompt).toContain("## Product help");
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
     "<workspace>\nCurrent working directory: ~/.buzz\n</workspace>",
@@ -513,7 +513,7 @@ it("keeps a wake's text from forging an event record", () => {
 
 it("always includes the Buzz tools' guidance, and leaves attention's to its tools", () => {
   const prompt = systemPrompt({ scope: "thread", cwd: "/w" });
-  expect(prompt).toContain(BUZZ_PROMPT);
+  expect(prompt).toContain("## Posting Conventions");
   expect(prompt).not.toContain("## Attention");
 });
 

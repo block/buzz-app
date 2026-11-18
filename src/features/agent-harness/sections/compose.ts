@@ -8,6 +8,8 @@ export function composeBase(facts: Facts = {}) {
       ? section.text
       : section.text(facts)
     ).trim(),
-  ).join("\n\n");
+  )
+    .filter(Boolean)
+    .join("\n\n");
   return { text };
 }

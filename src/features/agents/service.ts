@@ -5047,9 +5047,7 @@ export class AgentsService extends Service implements Agents {
       scope === "community";
     return {
       channelId: source.channelId,
-      ...(type.sessionControls?.scope(agent) === "community"
-        ? { community: true }
-        : {}),
+      ...(scope === "community" ? { community: true } : {}),
       ...(!whole && source.root ? { root: source.root } : {}),
     };
   }
@@ -5266,14 +5264,12 @@ export class AgentsService extends Service implements Agents {
       throw new Error("No such local agent on this device");
     const scope = ownerReads(this.relay(key), pubkeyOf(key))?.scope;
     if (!scope) throw new Error("The agent's community is not connected");
-    if (
-      purpose === "folder" &&
-      type?.sessionControls?.scope(agent) === "community"
-    )
+    const session = type?.sessionControls?.scope(agent);
+    if (purpose === "folder" && session === "community")
       throw new Error(
         "A community session uses the agent workspace, not a conversation folder",
       );
-    const channel = type?.sessionControls?.scope(agent) === "channel";
+    const channel = session === "channel";
     return {
       scope,
       agent,

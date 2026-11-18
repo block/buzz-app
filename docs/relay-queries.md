@@ -425,7 +425,8 @@ If the directory fails, an in-flight provisional lookup can still supply rows
 before the error; a stalled lookup then waits for its existing transport timeout.
 Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
-word runs, then letters in order), so `buzz community` finds `buzz-community`.
+word runs, then every typed word in any order), so `buzz community` finds
+`buzz-community`.
 The best eight are resolved through the same exact `resolve` path as message
 hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays

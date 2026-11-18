@@ -828,12 +828,12 @@ it("ranks pages by match when no community is connected", async () => {
     );
     await user.click(screen.getByRole("button", { name: "Search Buzz" }));
     const input = await screen.findByRole("combobox", { name: "Search Buzz" });
-    // "ses" starts Sessions, appears inside Processes, and only fuzzily
-    // matches Settings.
+    // "ses" starts Sessions and appears inside Processes. Settings only holds
+    // its letters scattered, so it does not match.
     await user.type(input, "ses");
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
-    ).toEqual(["Sessions", "Processes", "Settings"]);
+    ).toEqual(["Sessions", "Processes"]);
     await user.keyboard("{Enter}");
     expect(select).toHaveBeenCalledExactlyOnceWith("test/sessions");
   } finally {

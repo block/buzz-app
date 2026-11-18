@@ -3213,7 +3213,7 @@ channel metadata, which the store reuses while the viewer types. While the next
 lookup runs, the previous one's still-matching rows stay. Names match by the
 channel pickers' rule (`matchName`): exact, prefix, word start, substring,
 then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
-alphabetical ties. Its last rank, letters merely in order, is left out, because
+alphabetical ties. Its last rank, typed words in any order, is left out, because
 Enter and Tab pick the first row while the viewer writes prose. The same rule
 applies to open channels from the lookup. Open channels follow joined ones, as in
 Command-K, so a late search result never moves the first row; when joined

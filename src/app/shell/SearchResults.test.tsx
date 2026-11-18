@@ -693,7 +693,7 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
   }
 });
 
-it("fuzzy-matches channel names after substring matches, word starts first", async () => {
+it("matches channel names by substring, then word-start letter runs, not scattered letters", async () => {
   const relay = keypair();
   const viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -732,19 +732,14 @@ it("fuzzy-matches channel names after substring matches, word starts first", asy
       />,
     );
     const channels = await screen.findByRole("group", { name: "Channels" });
-    // The substring match leads. Initials ("b"uzz-"g"ithub-"p"rs) come next,
-    // then names that merely hold the letters in order. "general" has no "b".
+    // The substring match leads, then initials ("b"uzz-"g"ithub-"p"rs). Names
+    // that merely hold the letters in order (big-grape, debug-pr) do not match.
     await waitFor(() =>
       expect(
         within(channels)
           .getAllByRole("option")
           .map((option) => option.textContent?.split(/[A-Z]/)[0]),
-      ).toEqual([
-        "ops-bgp",
-        "buzz-github-prs",
-        expect.stringMatching(/^(big-grape|debug-pr)$/),
-        expect.stringMatching(/^(big-grape|debug-pr)$/),
-      ]),
+      ).toEqual(["ops-bgp", "buzz-github-prs"]),
     );
     // The matched letters are underlined, and only those letters.
     const marks = (name: string) =>
@@ -755,7 +750,6 @@ it("fuzzy-matches channel names after substring matches, word starts first", asy
       ].map((mark) => mark.textContent);
     expect(marks("ops-bgp")).toEqual(["bgp"]);
     expect(marks("buzz-github-prs")).toEqual(["b", "g", "p"]);
-    expect(marks("debug-pr")).toEqual(["b", "g", "p"]);
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(open).toHaveBeenCalledExactlyOnceWith("ops-bgp");

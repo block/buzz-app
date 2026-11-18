@@ -1211,7 +1211,7 @@ export function SearchResults({
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = rankName(label) ?? MatchRank.inOrder + 1;
+    const rank = rankName(label) ?? MatchRank.words + 1;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */

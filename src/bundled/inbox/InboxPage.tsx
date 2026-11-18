@@ -669,7 +669,7 @@ function InboxList({
       ...authorIds,
       ...reactionItems.slice(0, 50).flatMap((item) =>
         rowProfileIds(
-          {},
+          { previewMentions: item.message },
           list.channels.find((entry) => entry.id === item.channelId),
         ),
       ),
@@ -1230,7 +1230,7 @@ function InboxList({
                         <InboxRowButton
                           item={item}
                           identity={identity}
-                          media={session.media}
+                          session={session}
                           feed={feed}
                           time={relativeTimestamp(item.createdAt)}
                           previewId={`${previewId}-${item.id}`}

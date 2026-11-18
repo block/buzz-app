@@ -23,6 +23,7 @@ import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
 import rowStyles from "../../features/messages/MessageListRow.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
+import { PreviewText, mentionedIds } from "../../features/messages/PreviewText";
 
 type ResolveName = (
   key: string,
@@ -83,12 +84,14 @@ export function rowIdentity(
   return { sender, context, profile };
 }
 
-/** Profiles a row names: its sender or workflow owner and up to three DM participants. */
+/** Profiles a row names: its sender or workflow owner, the people its preview
+ * mentions and up to three DM participants. */
 export const rowProfileIds = (
-  item: Pick<InboxItem, "workflowOwnerId">,
+  item: Partial<Pick<InboxItem, "workflowOwnerId" | "previewMentions">>,
   channel: ChannelSummary | undefined,
 ): string[] => [
   ...(item.workflowOwnerId ? [item.workflowOwnerId] : []),
+  ...(item.previewMentions ? mentionedIds(item.previewMentions) : []),
   ...(channel?.channelType === "dm"
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),
@@ -98,7 +101,7 @@ export const rowProfileIds = (
 export function InboxRowButton({
   item,
   identity: { sender, context, profile },
-  media,
+  session,
   feed,
   time,
   previewId,
@@ -106,7 +109,7 @@ export function InboxRowButton({
 }: {
   item: InboxItem;
   identity: ReturnType<typeof rowIdentity>;
-  media: RelaySession["media"];
+  session: RelaySession;
   feed: InboxFeedSnapshot;
   time: ReactNode;
   previewId?: string | undefined;
@@ -131,7 +134,7 @@ export function InboxRowButton({
           src={
             item.workflowOwnerId
               ? undefined
-              : avatarMedia(profile?.picture, media)
+              : avatarMedia(profile?.picture, session.media)
           }
           shape={
             item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
@@ -148,8 +151,17 @@ export function InboxRowButton({
       unread={unread}
       previewId={previewId}
       preview={
-        incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ??
-        rowPreview(item.preview)
+        incompletePreview(feed, [
+          item.previewMessageId,
+          ...item.messageIds,
+        ]) ?? (
+          <PreviewText
+            text={rowPreview(item.preview)}
+            mentions={item.previewMentions}
+            session={session}
+            channelId={item.channelId}
+          />
+        )
       }
     />
   );
@@ -257,7 +269,12 @@ export function ReactionRowButton({
             </time>
           </span>
           <span className={`text-body text-subtle ${styles.reactionPreview}`}>
-            {preview}
+            <PreviewText
+              text={preview}
+              mentions={item.message}
+              session={session}
+              channelId={item.message.channelId}
+            />
           </span>
           <span className={`text-caption ${rowStyles.source}`}>
             in {context}

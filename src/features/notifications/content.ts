@@ -50,14 +50,22 @@ type PreviewOptions = Readonly<{
   storedPreview?: boolean;
   /** The most characters kept; 200 unless given. */
   limit?: number;
+  /** Content its caller already cut at `sourceEnd`, and whether that cut
+   * anything, so text added to it does not move the cut. */
+  presliced?: Readonly<{ truncated: boolean }>;
 }>;
+
+/** Where flattening cuts a source: on a whole code point, never between a
+ * surrogate pair. */
+export const sourceEnd = (content: string) =>
+  /[\uD800-\uDBFF]/.test(content.charAt(4095)) ? 4095 : 4096;
 
 /** Flattened, bounded prose; empty when nothing displayable remains.
  * Stored previews have lost code/escape provenance and may have been cut. */
 export function plainText(content: string, options: PreviewOptions = {}) {
-  // Cut the source on a whole code point, never between a surrogate pair.
-  const end = /[\uD800-\uDBFF]/.test(content.charAt(4095)) ? 4095 : 4096;
-  let bounded = content.slice(0, end);
+  const end = sourceEnd(content);
+  const truncated = options.presliced?.truncated ?? content.length > end;
+  let bounded = options.presliced ? content : content.slice(0, end);
   // Old flattened text cannot distinguish a real closing delimiter from
   // literal pipes inside the hidden text. Hide everything after its first
   // possible opener; newly saved redacted previews contain no such delimiter.
@@ -81,7 +89,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
   for (const offset of [...prepared.spoilerDelimiters].reverse())
     source = source.slice(0, offset) + delimiter + source.slice(offset + 2);
   const { tree, tooDeep } = scanMarkdown(source);
-  if (!tooDeep) remarkSpoilers(delimiter, content.length > end)(tree);
+  if (!tooDeep) remarkSpoilers(delimiter, truncated)(tree);
   return tooDeep ? "" : shortText(prose(tree), options.limit ?? 200);
 }
 

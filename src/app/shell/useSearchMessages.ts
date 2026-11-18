@@ -13,6 +13,7 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import type { Profile } from "../../features/relay/contracts";
@@ -48,6 +49,8 @@ export type SearchMessage = Readonly<{
   preview: string;
   /** The searchable text, whitespace kept, for snippets and previews. */
   text: string;
+  /** The message's signed mentions, which its chips bind. */
+  mentioned: PreviewMentions;
 }>;
 
 /** Message kinds search returns: chat, agent and diff messages. Ranked
@@ -65,6 +68,27 @@ export function eventText(event: { kind: number; content: string }) {
  * spoilers hidden, for snippets and previews. */
 export function searchText(event: { kind: number; content: string }) {
   return plainText(eventText(event), { limit: 4000 });
+}
+
+/** An indexed event's body and signed mentions, read from its tags as a
+ * message reads them: `p` recipients and two-field `mention` references. */
+export function eventMentions(event: {
+  kind: number;
+  content: string;
+  tags: readonly (readonly string[])[];
+}): PreviewMentions {
+  const keys = (pick: (tag: readonly string[]) => boolean) => [
+    ...new Set(
+      event.tags.flatMap((tag) =>
+        pick(tag) && tag[1] && isHexPubkey(tag[1]) ? [tag[1]] : [],
+      ),
+    ),
+  ];
+  return {
+    content: eventText(event),
+    mentions: keys(([name]) => name === "p"),
+    mentionReferences: keys((tag) => tag.length === 2 && tag[0] === "mention"),
+  };
 }
 type Result = {
   owner: object;
@@ -124,6 +148,7 @@ async function readPage(
         createdAt: event.created_at,
         preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
         text,
+        mentioned: eventMentions(event),
       },
     ];
   });

@@ -206,7 +206,9 @@ function InboxPreviewCard({
           ? row.item.events.map((event) => event.pubkey)
           : [row.item.authorId]),
         ...rowProfileIds(
-          row.kind === "reaction" ? {} : row.item,
+          row.kind === "reaction"
+            ? { previewMentions: row.item.message }
+            : row.item,
           channelOf(row.item.channelId),
         ),
       ]),
@@ -420,7 +422,7 @@ function InboxPreviewCard({
                       <InboxRowButton
                         item={row.item}
                         identity={identity}
-                        media={session.media}
+                        session={session}
                         feed={feed}
                         time={shortAge(item.createdAt)}
                         onClick={() => open(row)}

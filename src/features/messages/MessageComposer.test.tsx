@@ -14877,7 +14877,7 @@ function mountSoloAgents(
   return { h, ada, bea, sendingTo };
 }
 
-it("typing a mention then deleting it falls back to the main agent, not the remembered pair", async () => {
+it("a draft that opens with a tag is for that agent alone, and deleting the tag brings the pill's agents back", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => h.commands().audience?.only([ada, bea]));
   expect(sendingTo("Ada, Bea")).toBeInTheDocument();
@@ -14885,18 +14885,97 @@ it("typing a mention then deleting it falls back to the main agent, not the reme
     h.commands().insertMention(bea);
     h.commands().insertText("hello");
   });
-  // The mentioned agent is the recipient; the remembered pair steps aside.
+  // The mentioned agent is the recipient; the pill's pair steps aside.
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.commands().recipients).toEqual([bea]);
   expect(h.commands().audience?.named).toBe(true);
-  // Deleting the mention gives the main agent, not the pair.
+  // Deleting the mention gives the pair back, as the pill showed it.
   h.fill("hello");
   expect(h.commands().recipients).toEqual([]);
-  expect(sendingTo("Ada")).toBeInTheDocument();
-  // A send with no mention goes to the main agent; the text carries no tag.
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([
+    ada.pubkey,
+    bea.pubkey,
+  ]);
+});
+
+it("a tag further in the draft joins the pill's agent", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Plan this, then ask @Bea to build it",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 20, end: 24 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.named).toBe(false);
+  // Both show as avatars: Ada from the pill, Bea from the text.
+  expect(
+    screen.getByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: `Remove mention Bea ${bea.pubkey}` }),
+  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "Sending to" })).toBeVisible();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([
+    ada.pubkey,
+    bea.pubkey,
+  ]);
+  // The pill keeps both for the follow-up.
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+});
+
+it("with a tag further in, removing the pill's last agent sends to the tag alone, and removing the tag too brings the main agent", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Only @Bea this time",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  await h.user.click(
+    screen.getByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  );
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(h.input()).toHaveFocus();
+  // Not refilled while the tag addresses the draft.
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.commands().recipients).toEqual([]);
+  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+});
+
+it("with a tag further in that the pill also holds, removing its avatar removes it from both", () => {
+  writeView("scope", "draft:channel", {
+    text: "Then @Bea again",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  act(() => h.commands().audience?.only([ada, bea]));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.commands().recipients).toEqual([]);
+  expect(sendingTo("Ada")).toBeInTheDocument();
+});
+
+it("with a tag further in, the pill's last agent can go and the send reaches the tag alone", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Only @Bea this time",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  act(() => h.commands().audience?.toggle(ada));
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // A menu pick adds to the pill again, and the tag still joins.
+  act(() => h.commands().audience?.toggle(ada));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
 });
 
 it("a pill-only agent that is compacting holds the send", () => {
@@ -14974,7 +15053,7 @@ it("a menu toggle removes a typed tag while another tagged agent is archived", (
   expect(h.input()).toHaveValue("@Ada hello");
 });
 
-it("a mention typed before the chat's agents were known still falls back to the main agent", () => {
+it("a mention typed before the chat's agents were known gives way to the remembered agent once deleted", () => {
   setDefaultAgent("scope", first.pubkey);
   const viewer = "e".repeat(64);
   const third = "f".repeat(64);
@@ -15013,11 +15092,11 @@ it("a mention typed before the chat's agents were known still falls back to the 
       [third, { name: "Cal", isAgent: true }],
     ]),
   );
-  // Deleting the typed tag falls back to the main agent, not the history.
+  // Deleting the typed tag gives the agent the viewer last sent to.
   act(() => h.input().removeRecipient(first.pubkey));
   h.fill("hello");
   expect(
-    screen.getByRole("status", { name: "Sending to Ada. Change agents" }),
+    screen.getByRole("status", { name: "Sending to Bea. Change agents" }),
   ).toBeInTheDocument();
 });
 
@@ -15065,7 +15144,7 @@ it("a deleted typed mention falls back to the chat's own agent when the main age
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([first.pubkey]);
 });
 
-it("after sending to two agents, a different typed mention deleted again gives the main agent, and a menu pick restores menu-driven state", async () => {
+it("after sending to two agents, an opening tag deleted again gives the pair back, and a menu pick sets the pill", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => h.commands().audience?.only([ada, bea]));
   h.fill("both");
@@ -15084,8 +15163,8 @@ it("after sending to two agents, a different typed mention deleted again gives t
   });
   expect(sendingTo("Bea")).toBeInTheDocument();
   h.fill("hello");
-  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
-  // A menu pick sets the pill directly and clears the replaced state.
+  await waitFor(() => expect(sendingTo("Ada, Bea")).toBeInTheDocument());
+  // A menu pick sets the pill directly.
   act(() => h.commands().audience?.only([bea]));
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.commands().audience?.named).toBe(false);
@@ -15140,7 +15219,7 @@ it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden l
     bea.pubkey,
   ]);
   expect(h.input()).toHaveValue("@Bea hello");
-  // Deleting the last tag falls back to the main agent, untouched by picks.
+  // Deleting the last tag gives back the pill's Ada, untouched by picks.
   h.fill("hello");
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
@@ -15157,7 +15236,7 @@ it("while a typed tag decides, a Solo team pick replaces the tags", () => {
   ]);
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.input()).toHaveValue("@Bea hello");
-  // Deleting the tag falls back to the main agent, not a hidden pick.
+  // Deleting the tag gives back the pill's Ada, not a hidden pick.
   h.fill("hello");
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
@@ -15283,10 +15362,9 @@ it("seeding the pill from the latest message ignores the remember-agents prefere
   }
 });
 
-it("an inline mention in the middle of the text replaces the pill's fallback", async () => {
+it("an inline mention that opens the text replaces the pill's remembered agents", async () => {
   const h = mountSoloHistory();
   act(() => {
-    h.commands().insertText("Please ask ");
     h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
     h.commands().insertText("about it");
   });

@@ -31,16 +31,17 @@ export type ComposerToolProps = Readonly<{
   /** Read-only: who the draft mentions, in draft order. The tool re-renders when
    * this changes; the array keeps its identity while only the prose changes. */
   recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-  /** Solo, alone with agents: who hears the message. Inline mentions decide
-   * when there are any; otherwise the toolbar's agents stand in. `only`
-   * replaces those stand-ins with a non-empty list and `toggle` adds or
-   * removes one, never the last; they also follow each send. While inline
-   * mentions decide, `toggle` adds or removes that mention instead. Absent
-   * elsewhere, where mentions alone decide. */
+  /** Solo, alone with agents: who hears the message. A draft that opens with
+   * an inline mention is for whoever its mentions name; otherwise its
+   * mentions join the toolbar's agents. `only` replaces those agents with a
+   * non-empty list and `toggle` adds or removes one, never the last unless a
+   * mention remains; they also follow each send. `toggle` removes a mention
+   * from the text, and while mentions decide, `only` and `toggle` edit the
+   * mentions instead. Absent elsewhere, where mentions alone decide. */
   audience?:
     | Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-        /** True while inline mentions in the text decide, so picks only change the stand-ins. */
+        /** True while inline mentions alone decide, as when the draft opens with one, so picks edit them. */
         named: boolean;
         only(
           recipients: readonly Readonly<{ pubkey: string; name: string }>[],

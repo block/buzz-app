@@ -669,14 +669,15 @@ Quitting Buzz also turns it off.
   among the rows loaded on entry, below a message you read by reaching the
   bottom of the channel or marking the channel read. The same rule applies to
   a channel whose messages load as you enter it, such as the first time you
-  open it after starting Buzz. When the unread messages start above the rows
-  loaded on entry, the divider goes above the oldest unread message Buzz found
-  and appears once scrolling up loads it together with the read message just
-  above it. If Buzz's check of older history did not reach a message you read
-  that way, or older rows show messages it had not checked, there is no
-  divider. When the unread messages start at the first loaded row, or the
-  messages above them were only read one by one as you scrolled past, there is
-  no divider for that visit, even if older rows load later. While Buzz is
+  open it after starting Buzz. When the unread messages start at the first row
+  loaded on entry or further up, the divider goes above the oldest unread
+  message Buzz found and appears once scrolling up loads the read message just
+  above it. If new messages arrive while Buzz is in the background before you
+  scroll up that far, the divider goes above those instead. If Buzz's check of
+  older history did not reach a message you read that way, or older rows show
+  messages it had not checked, there is no divider. When the messages above
+  the unread ones were only read one by one as you scrolled past, there is no
+  divider for that visit, even if older rows load later. While Buzz is
   still checking such a channel's older history for unread messages, the
   channel waits to mark anything read, so opening it then does not hide its
   own divider; if that check fails, there

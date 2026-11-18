@@ -892,6 +892,68 @@ it("does not place the entry line above a message that arrives while entry waits
   mounted.unmount();
 });
 
+it("places the line above the first entry row when unread exactly fills the entry page, drawn once paging loads the read message above it", async () => {
+  const h = boundaryFixture();
+  const read = h.row(message(h.peer, "c", "Read above the unread run", 1));
+  const own = h.row(message(h.viewer, "c", "Own message above the page", 2));
+  const entryRows = [
+    h.row(message(h.peer, "c", "Oldest unread, first in entry page", 3)),
+    h.row(message(h.peer, "c", "Newest unread in entry page", 4)),
+  ];
+  for (const row of entryRows) h.unreadIds.add(row.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", entryRows, true));
+  await h.completeEntry();
+  expect(h.unread.snapshot({ kind: "channel", channelId: "c" })).toMatchObject({
+    oldestUnreadId: entryRows[0]?.id,
+    readBeforeOldestUnreadId: read.id,
+  });
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  // The viewer's own message between them cannot be unread.
+  mounted.rerender(h.tree("c", [read, own, ...entryRows]));
+  h.publish();
+  const placed = divider();
+  expect(
+    screen.getAllByRole("separator", { name: "New messages" }),
+  ).toHaveLength(1);
+  expect(precedes(screen.getByText("Own message above the page"), placed)).toBe(
+    true,
+  );
+  expect(
+    precedes(placed, screen.getByText("Oldest unread, first in entry page")),
+  ).toBe(true);
+  mounted.unmount();
+});
+
+it("does not draw the line above an arrival the store knew before the window showed it, below an entry page of own messages", async () => {
+  // The viewer's own rows cannot be unread, so they never break the run
+  // between the read message and the arrival: only entry order rejects it.
+  const h = boundaryFixture();
+  const read = h.row(message(h.peer, "c", "Read above the entry page", 1));
+  const entryRows = [
+    h.row(message(h.viewer, "c", "Own message in entry page", 2)),
+    h.row(message(h.viewer, "c", "Newest own message in entry page", 3)),
+  ];
+  const arrival = h.row(message(h.peer, "c", "Arrival not yet shown", 4));
+  h.unreadIds.add(arrival.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", entryRows, true));
+  await h.completeEntry();
+  expect(h.unread.snapshot({ kind: "channel", channelId: "c" })).toMatchObject({
+    oldestUnreadId: arrival.id,
+    readBeforeOldestUnreadId: read.id,
+  });
+
+  mounted.rerender(h.tree("c", [read, ...entryRows, arrival]));
+  h.publish();
+  expect(screen.getByText("Arrival not yet shown")).not.toBeNull();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  mounted.unmount();
+});
+
 it.each([{ olderUnread: false }, { olderUnread: true }])(
   "waits for the unread repair before placing a boundary inside incomplete history: %j",
   async ({ olderUnread }) => {
@@ -4040,6 +4102,124 @@ it("keeps an entry line in place through blur, arrivals and refocus", async () =
       screen.getAllByRole("separator", { name: "New messages" }),
     ).toHaveLength(1);
     expect(precedes(divider(), screen.getByText("Unread at entry"))).toBe(true);
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("places the line above an arrival while away when the line above the entry page never drew, and keeps only that one", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const h = boundaryFixture({ reading: true });
+  const read = h.row(message(h.peer, "c", "Read above the unread run", 1));
+  const first = h.row(message(h.peer, "c", "First unread above the page", 2));
+  const entryRows = [
+    h.row(message(h.peer, "c", "Unread in entry page", 3)),
+    h.row(message(h.peer, "c", "Newest unread in entry page", 4)),
+  ];
+  for (const row of [first, ...entryRows]) h.unreadIds.add(row.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", entryRows, true));
+  try {
+    await h.completeEntry();
+    expect(
+      h.unread.snapshot({ kind: "channel", channelId: "c" })
+        .readBeforeOldestUnreadId,
+    ).toBe(read.id);
+    await h.focusReader();
+    await h.dwell();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+
+    // Reading at the bottom reads the whole channel; the reader never pages
+    // up to the line fixed above the entry page.
+    h.unreadIds.clear();
+    h.advanceReadRevision();
+    h.publish();
+    setDocumentActive(false);
+    const arrival = h.row(message(h.peer, "c", "Arrived while away", 5));
+    h.unreadIds.add(arrival.id);
+    h.publish();
+    mounted.rerender(h.tree("c", [...entryRows, arrival], true));
+    await h.dwell();
+    setDocumentActive(true);
+    await h.dwell();
+    expect(
+      screen.getAllByRole("separator", { name: "New messages" }),
+    ).toHaveLength(1);
+    expect(precedes(divider(), screen.getByText("Arrived while away"))).toBe(
+      true,
+    );
+    expect(
+      precedes(screen.getByText("Newest unread in entry page"), divider()),
+    ).toBe(true);
+
+    // Paging up later does not bring back the line above the entry page.
+    mounted.rerender(h.tree("c", [read, first, ...entryRows, arrival]));
+    h.publish();
+    expect(
+      screen.getAllByRole("separator", { name: "New messages" }),
+    ).toHaveLength(1);
+    expect(precedes(divider(), screen.getByText("Arrived while away"))).toBe(
+      true,
+    );
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a line above the entry page once paging drew it, through blur, arrivals and refocus", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const h = boundaryFixture({ reading: true });
+  const read = h.row(message(h.peer, "c", "Read above the unread run", 1));
+  const first = h.row(message(h.peer, "c", "First unread above the page", 2));
+  const entryRows = [
+    h.row(message(h.peer, "c", "Unread in entry page", 3)),
+    h.row(message(h.peer, "c", "Newest unread in entry page", 4)),
+  ];
+  for (const row of [first, ...entryRows]) h.unreadIds.add(row.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", entryRows, true));
+  try {
+    await h.completeEntry();
+    await h.focusReader();
+    await h.dwell();
+    h.unreadIds.clear();
+    h.advanceReadRevision();
+    h.publish();
+    const paged = [read, first, ...entryRows];
+    mounted.rerender(h.tree("c", paged));
+    h.publish();
+    expect(
+      precedes(divider(), screen.getByText("First unread above the page")),
+    ).toBe(true);
+
+    // The window drops the older page again: the line stays placed.
+    mounted.rerender(h.tree("c", entryRows, true));
+    h.publish();
+    setDocumentActive(false);
+    const arrival = h.row(message(h.peer, "c", "Arrived while away", 5));
+    h.unreadIds.add(arrival.id);
+    h.publish();
+    mounted.rerender(h.tree("c", [...entryRows, arrival], true));
+    await h.dwell();
+    setDocumentActive(true);
+    await h.dwell();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    mounted.rerender(h.tree("c", [...paged, arrival]));
+    h.publish();
+    expect(
+      screen.getAllByRole("separator", { name: "New messages" }),
+    ).toHaveLength(1);
+    expect(
+      precedes(divider(), screen.getByText("First unread above the page")),
+    ).toBe(true);
   } finally {
     mounted.unmount();
     vi.useRealTimers();

@@ -582,17 +582,19 @@ function Timeline({
           : { ready: true };
       const oldest = unreadSnapshot.oldestUnreadId;
       if (!oldest) return { ready: true };
-      if (!baseline.messageIds?.has(oldest)) {
-        // More unread than the entry page holds: the oldest unread message is
-        // not loaded, and a read message sits above it in the store's
-        // evidence. The line is fixed above it now, from entry evidence, and
-        // draws only once paging loads both with nothing between them. A
-        // loaded row that is not an entry row (an arrival or an older page)
-        // never defines the boundary.
+      // At least as much unread as the entry page holds: the oldest unread
+      // message is not loaded, or it is the first entry row that could be
+      // unread, so no entry row above it shows a read. A read message sits
+      // above it in the store's evidence. The line is fixed above it now,
+      // from entry evidence, and draws only once paging loads that read
+      // message with nothing between them. A loaded row that is not an entry
+      // row (an arrival or an older page) never defines the boundary.
+      const entryRow = baseline.messageIds?.has(oldest) ?? false;
+      if (!entryRow || entryAttention[0]?.row.id === oldest) {
         const readAbove = unreadSnapshot.readBeforeOldestUnreadId;
         return readAbove &&
           !chronologicalRows.some(
-            (row) => row.id === oldest || row.id === readAbove,
+            (row) => row.id === readAbove || (!entryRow && row.id === oldest),
           )
           ? { ready: true, messageId: oldest, readAboveId: readAbove }
           : { ready: true };
@@ -687,13 +689,44 @@ function Timeline({
     visitToken,
     newMessageBoundary,
   ]);
+  // A line fixed above the entry page draws once a contiguous page proves it:
+  // the read message directly above it, with no row that could be unread
+  // between them, and the line either on an entry row or above them all, so
+  // an arrival never takes it.
+  const boundaryProven = (() => {
+    const { messageId, readAboveId } = newMessageBoundary;
+    if (!readAboveId || !messageId) return true;
+    const at = chronologicalRows.findIndex((row) => row.id === messageId);
+    const above = chronologicalRows.findIndex((row) => row.id === readAboveId);
+    const entry = chronologicalRows.findIndex((row) =>
+      baseline.messageIds?.has(row.id),
+    );
+    return (
+      above >= 0 &&
+      above < at &&
+      (entry < 0 || at < entry || !!baseline.messageIds?.has(messageId)) &&
+      !chronologicalRows.slice(above + 1, at).some(classifiable)
+    );
+  })();
+  // Once proven, the line is placed like any other and never moves, even if
+  // the rows that proved it later leave the window. Until then it is not
+  // placed, so an arrival while away can still take the visit's one line.
+  if (
+    boundaryMatchesVisit &&
+    newMessageBoundary.readAboveId &&
+    boundaryProven
+  ) {
+    const { readAboveId: _, ...placed } = newMessageBoundary;
+    setNewMessageBoundary(placed);
+  }
   // The away baseline is what the reader had when attention left: the entry
   // rows while entry is still settling (or the visit began away), else the
   // loaded rows. A placed line never moves, so only a visit with no line uses it.
   const lineCaptured =
     boundaryMatchesVisit &&
     newMessageBoundary.captured &&
-    !!newMessageBoundary.messageId;
+    !!newMessageBoundary.messageId &&
+    boundaryProven;
   const returnCandidate = (() => {
     if (!awayPending || !away || !documentActive) return undefined;
     if (lineCaptured || messageVisit?.active !== true || messageVisit.failed)
@@ -769,30 +802,15 @@ function Timeline({
     });
   } else if (returnCandidate?.ready) {
     setAway(undefined);
-    if (returnCandidate.messageId)
+    if (returnCandidate.messageId) {
+      // An arrival replaces a line still waiting on its proof.
+      const { readAboveId: _, ...boundary } = newMessageBoundary;
       setNewMessageBoundary({
-        ...newMessageBoundary,
+        ...boundary,
         messageId: returnCandidate.messageId,
       });
+    }
   }
-  // A line fixed above the entry page draws once a contiguous page proves it:
-  // the read message directly above it, with no row that could be unread
-  // between them, all above the entry rows.
-  const boundaryProven = (() => {
-    const { messageId, readAboveId } = newMessageBoundary;
-    if (!readAboveId) return true;
-    const at = chronologicalRows.findIndex((row) => row.id === messageId);
-    const above = chronologicalRows.findIndex((row) => row.id === readAboveId);
-    const entry = chronologicalRows.findIndex((row) =>
-      baseline.messageIds?.has(row.id),
-    );
-    return (
-      above >= 0 &&
-      above < at &&
-      (entry < 0 || at < entry) &&
-      !chronologicalRows.slice(above + 1, at).some(classifiable)
-    );
-  })();
   const newMessageBoundaryId =
     boundaryMatchesVisit &&
     newMessageBoundary.captured &&

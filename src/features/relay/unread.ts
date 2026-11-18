@@ -1267,14 +1267,7 @@ export function createUnread({
         view.visible(messageId, view.ids.has(messageId)),
     );
     const state = reads.state();
-    const prefixRead =
-      Math.max(
-        state.frontiers[channelId] ?? -1,
-        timeline(entry, dm)
-          ? (state.frontiers[`activity:${channelId}`] ?? -1)
-          : -1,
-        reads.floor(),
-      ) >= event.created_at;
+    const prefixRead = prefixReads(channelId, entry, state, dm);
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -1290,6 +1283,26 @@ export function createUnread({
       viewing,
       ...(prefixRead ? { prefixRead: true as const } : {}),
     });
+  }
+  // A channel-wide read reaches this row: the channel frontier, catch-up's
+  // activity: mark for an ordinary timeline row, or the retention floor.
+  // `attention` reports it as `prefixRead`, and the channel snapshot uses it
+  // for `readBeforeOldestUnreadId`, so both must agree.
+  function prefixReads(
+    channelId: string,
+    entry: Evidence,
+    state: ReadState,
+    dm: boolean,
+  ) {
+    return (
+      Math.max(
+        state.frontiers[channelId] ?? -1,
+        timeline(entry, dm)
+          ? (state.frontiers[`activity:${channelId}`] ?? -1)
+          : -1,
+        reads.floor(),
+      ) >= entry.event.created_at
+    );
   }
   function compute(target: ReadTarget): UnreadSnapshot {
     const key = targetKey(target);
@@ -1359,11 +1372,6 @@ export function createUnread({
     // that a channel-wide read reaches, as `attention` reports `prefixRead`.
     let readBefore: RelayEvent | undefined;
     if (oldest) {
-      const prefix = Math.max(
-        state.frontiers[target.channelId] ?? -1,
-        reads.floor(),
-      );
-      const caughtUp = state.frontiers[`activity:${target.channelId}`] ?? -1;
       for (const entry of byChannel.get(target.channelId) ?? []) {
         const event = entry.event;
         if (
@@ -1372,8 +1380,7 @@ export function createUnread({
           !entry.quiet &&
           order(event, oldest) < 0 &&
           (!readBefore || order(event, readBefore) > 0) &&
-          (prefix >= event.created_at ||
-            (timeline(entry, dm) && caughtUp >= event.created_at))
+          prefixReads(target.channelId, entry, state, dm)
         )
           readBefore = event;
       }

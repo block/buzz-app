@@ -1106,6 +1106,74 @@ it("the channel snapshot names the newest message a channel-wide read reaches be
   expect(h.snapshot().readBeforeOldestUnreadId).toBeUndefined();
 });
 
+it("the read message before the oldest unread one counts the retention floor, and skips quiet rows and replies the timeline does not show", () => {
+  const h = setup({ readStateFloor: () => 13 });
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 10);
+  // "Also send to channel": the timeline shows it, so it can be the read one.
+  const broadcast = message(h.alice, "room", "broadcast reply", 11, [
+    ["e", root.id, "", "reply"],
+    ["broadcast", "1"],
+  ]);
+  const quiet = message(h.alice, "room", "agent coordination", 12, [
+    ["audience", "agents"],
+  ]);
+  const reply = message(h.alice, "room", "thread reply", 13, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const unread = message(h.alice, "room", "after the floor", 14);
+  h.emit([root, broadcast, quiet, reply, unread]);
+  expect(h.snapshot()).toMatchObject({
+    oldestUnreadId: unread.id,
+    readBeforeOldestUnreadId: broadcast.id,
+  });
+  expect(h.session.unread.attention("room", broadcast.id).prefixRead).toBe(
+    true,
+  );
+});
+
+it("the read message before the oldest unread one counts a catch-up mark for ordinary rows, and a change to it alone notifies the channel", async () => {
+  // An `activity:` mark, as an earlier catch-up wrote it, reads ordinary
+  // top-level messages only.
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { ...journal.state, frontiers: { "activity:room": 20 } },
+  }));
+  h.grant("room");
+  const ordinary = message(h.alice, "room", "ordinary", 10);
+  // A mention is attention, which the mark never reads.
+  const late = message(h.alice, "room", "late mention", 15, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([channelMetadata(h, "stream"), ordinary, late]);
+  // Saved read state loads asynchronously.
+  await flush();
+  expect(h.snapshot()).toMatchObject({
+    oldestUnreadId: late.id,
+    readBeforeOldestUnreadId: ordinary.id,
+  });
+  expect(h.session.unread.attention("room", ordinary.id).prefixRead).toBe(true);
+  expect(
+    h.session.unread.attention("room", late.id).prefixRead,
+  ).toBeUndefined();
+
+  const changed = vi.fn();
+  const stop = h.session.unread.subscribe(h.target, changed);
+  try {
+    // Delivered late, but older than catch-up's mark, so already read.
+    const closer = message(h.alice, "room", "late ordinary", 13);
+    h.emit([closer]);
+    await flush();
+    expect(h.snapshot()).toMatchObject({
+      oldestUnreadId: late.id,
+      readBeforeOldestUnreadId: closer.id,
+    });
+    expect(changed).toHaveBeenCalled();
+  } finally {
+    stop();
+  }
+});
+
 it("the channel snapshot says sampled once a repair finishes, keeps it through later repairs and regains it after a cache clear; sampling until then", async () => {
   const h = setup();
   const rows = Array.from({ length: 30 }, (_, i) =>

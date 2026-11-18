@@ -53,6 +53,7 @@ export function NewWorkspace({
   const [icon, setIcon] = useState("");
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(true);
   const [error, setError] = useState("");
   // Once publication starts, retries must use the same project and defaults.
   const [submitted, setSubmitted] = useState(false);
@@ -137,7 +138,7 @@ export function NewWorkspace({
           );
       }
       await onCreated(id);
-      close();
+      setOpen(false);
     } catch (reason) {
       refocusAfterFailure.current = true;
       setError(
@@ -162,11 +163,14 @@ export function NewWorkspace({
       workspace.canvas.trim() !== "");
   return (
     <Dialog
-      open
+      open={open}
+      onOpenChangeComplete={(next) => {
+        if (!next) close();
+      }}
       onOpenChange={(open) => {
         if (open) return;
         if (dirty) setConfirmDiscard(true);
-        else close();
+        else setOpen(false);
       }}
       preventClose={busy}
       // A partly created workspace keeps its retry state; never drop it on a stray click.
@@ -178,7 +182,7 @@ export function NewWorkspace({
       finalFocus={finalFocus}
       actions={
         <>
-          <Button disabled={busy} onClick={close}>
+          <Button disabled={busy} onClick={() => setOpen(false)}>
             {submitted ? "Close" : "Cancel"}
           </Button>
           {!conflict && (
@@ -252,7 +256,7 @@ export function NewWorkspace({
         <DiscardChanges
           description="Your new workspace has unsaved changes."
           onKeep={() => setConfirmDiscard(false)}
-          onDiscard={close}
+          onDiscard={() => setOpen(false)}
         />
       )}
     </Dialog>

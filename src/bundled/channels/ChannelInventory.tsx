@@ -1403,19 +1403,23 @@ export function ChannelInventory({
           : (rowFocusTarget(channelId) ?? false),
     [rowFocusTarget],
   );
-  useLayoutEffect(() => {
-    if (!rowFocus || !slotsMounted) return;
-    (
-      rowFocusTarget(rowFocus) ??
+  const sidebarFocusFallback = useCallback(
+    () =>
       activeChannelRows(sidebar.list.current).find(
         (row) => row.getClientRects().length,
       ) ??
       sidebar.list.current
         ?.closest("aside")
-        ?.querySelector<HTMLButtonElement>("button")
-    )?.focus({ preventScroll: true });
+        ?.querySelector<HTMLButtonElement>("button"),
+    [sidebar.list],
+  );
+  useLayoutEffect(() => {
+    if (!rowFocus || !slotsMounted) return;
+    (rowFocusTarget(rowFocus) ?? sidebarFocusFallback())?.focus({
+      preventScroll: true,
+    });
     setRowFocus(undefined);
-  }, [rowFocus, rowFocusTarget, sidebar.list, slotsMounted]);
+  }, [rowFocus, rowFocusTarget, sidebarFocusFallback, slotsMounted]);
   const [groupFocus, setGroupFocus] = useState<string>();
   // Group recovery removes its focused notice; return focus to the group header.
   useLayoutEffect(() => {
@@ -2532,14 +2536,16 @@ export function ChannelInventory({
               });
             }}
             onCreated={(id) => sidebar.toggle(`group:${id}`, true)}
+            finalFocus={() =>
+              creatingFor.surface
+                ? false
+                : (rowFocusTarget(creatingFor.channel.id) ??
+                  sidebarFocusFallback() ??
+                  false)
+            }
             close={() => {
-              const { surface, channel } = creatingFor;
               setCreatingFor(undefined);
-              requestAnimationFrame(() => {
-                if (!mounted.current) return;
-                if (surface) surface.focus();
-                else focusChannelPlacement(channel.id);
-              });
+              if (mounted.current) creatingFor.surface?.focus();
             }}
           />
         )}

@@ -34,7 +34,6 @@
     position: absolute;
     inset-inline-end: var(--channel-row-fill-end, 0%);
     opacity: 0;
-    pointer-events: none;
   }
 }
 .row:is(:hover, :has([data-context-menu-present])):not(

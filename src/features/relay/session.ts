@@ -2024,7 +2024,8 @@ export function createRelaySession(
         combined,
         consistency,
       );
-    const loadingLegacy = readLegacyWorkspaces(combined);
+    // The main read can be cancelled before it reaches the decoder.
+    const loadingLegacy = readLegacyWorkspaces(combined).catch(() => undefined);
     const current = await readSidebarPreferences(
       preferenceReader,
       transport.viewer,

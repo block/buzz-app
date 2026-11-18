@@ -23,6 +23,7 @@ import {
 } from "./discovery";
 import {
   channelIdentity,
+  ChannelScanIncomplete,
   channelIdentityUnsupported,
   channelLabelTags,
   compareChannelAge,
@@ -190,6 +191,9 @@ const PUBLIC_CHANNEL_RESERVE_BYTES = 8 * 1024 * 1024;
 const PUBLIC_CHANNEL_DIRECTORY = 20_000;
 /** One creator's channels with one label: a small answer, within one `resolve`. */
 const LABELED_CHANNEL_PAGE = 100;
+/** Pages of readable system channels a label-only lookup scans before it
+ * gives up as incomplete. */
+const SYSTEM_CHANNEL_PAGES = 10;
 /** How long name search reuses the public channel metadata once read. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
@@ -228,6 +232,22 @@ const MAX_NOTICES = 2000;
 /** Relay query order: time descending, then ID ascending at ties. */
 const newestFirst = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
+/** The `(until, before_id)` cursor past the last event of a page, or
+ * undefined when it would not move past `cursor`. */
+function nextCursor(
+  page: readonly RelayEvent[],
+  cursor?: { until: number; before_id: string },
+): { until: number; before_id: string } | undefined {
+  const last = [...page].sort(newestFirst).at(-1);
+  if (
+    !last ||
+    (cursor &&
+      (last.created_at > cursor.until ||
+        (last.created_at === cursor.until && last.id <= cursor.before_id)))
+  )
+    return undefined;
+  return { until: last.created_at, before_id: last.id };
+}
 /** Rows a page read can reach again, which notices are not. */
 const rowIds = (state: WindowState) =>
   new Set(
@@ -2682,18 +2702,8 @@ export function createChannelStore(
       if (page.length < publicDirectoryPage) return { partial: false };
       if (events.length >= maxPublicDirectory) return { partial: true };
       landed();
-      // Relay query order is time descending, then ID ascending (also at ties).
-      const last = [...page]
-        .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
-        .at(-1);
-      if (
-        !last ||
-        (cursor &&
-          (last.created_at > cursor.until ||
-            (last.created_at === cursor.until && last.id <= cursor.before_id)))
-      )
-        throw new Error("Public channel search did not advance");
-      cursor = { until: last.created_at, before_id: last.id };
+      cursor = nextCursor(page, cursor);
+      if (!cursor) throw new Error("Public channel search did not advance");
     }
   }
   /** The shared directory read for this epoch: the one in flight, a
@@ -3254,6 +3264,79 @@ export function createChannelStore(
       })
       .sort(compareChannelAge);
   }
+  /** NIP-CL lookup of the system channels the viewer can read that carry
+   * `label`, whoever made them, oldest first. A label alone does not ask for
+   * system channels, so this pages through `#t:["system"]` and matches the
+   * label itself. Matches become readable through `get`; they never enter
+   * list(). */
+  async function findSystemLabeled(
+    label: string,
+    settings?: ChannelReadOptions,
+  ): Promise<readonly ChannelSummary[]> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    if (!transport.channelIdentity) throw channelIdentityUnsupported();
+    channelLabelTags([label]);
+    const generation = epoch;
+    const found = new Set<string>();
+    let cursor: { until: number; before_id: string } | undefined;
+    for (let page = 0; ; page++) {
+      const events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            ...(settings?.consistency
+              ? { consistency: settings.consistency }
+              : {}),
+            authors: [transport.relayAuthor],
+            "#t": ["system"],
+            limit: LABELED_CHANNEL_PAGE,
+            ...cursor,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+      settings?.signal?.throwIfAborted();
+      if (disposed || generation !== epoch)
+        throw new DOMException("Stale channel lookup", "AbortError");
+      for (const event of events) {
+        const identity = channelIdentity(event);
+        if (
+          event.kind === 39000 &&
+          event.pubkey === transport.relayAuthor &&
+          identity.type === "system" &&
+          identity.labels.includes(label)
+        ) {
+          const id = tag(event, "d");
+          if (id) found.add(id);
+        }
+      }
+      if (events.length < LABELED_CHANNEL_PAGE) break;
+      cursor = nextCursor(events, cursor);
+      if (!cursor || page + 1 >= SYSTEM_CHANNEL_PAGES)
+        throw new ChannelScanIncomplete();
+    }
+    const ids = [...found];
+    for (let start = 0; start < ids.length; start += 128) {
+      await resolve(
+        ids.slice(start, start + 128),
+        { ...settings, viewerLookup: true },
+        true,
+      );
+    }
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel lookup", "AbortError");
+    return ids
+      .flatMap((id) => {
+        const channel = discovery.get(id);
+        return channel &&
+          channel.channelType === "system" &&
+          channel.labels?.includes(label)
+          ? [channel]
+          : [];
+      })
+      .sort(compareChannelAge);
+  }
   /** An open channel's current read-only preview, as name search admits it. */
   function previewable(id: string) {
     const channel = discovery?.get(id);
@@ -3711,6 +3794,7 @@ export function createChannelStore(
     resolve,
     searchPublic,
     findLabeled,
+    findSystemLabeled,
     matchPublic,
     readDirectory,
     anyChannel,

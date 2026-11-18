@@ -12,6 +12,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | Shared frontend/native build: HTTPS origin of the Apps control plane for the configured login origin, for deployments the built-in public table does not list; no runtime override. |
+| `BUZZ_COMMUNITY_PLUGIN_INDEX_URL` | Shared frontend/native build: HTTPS URL of the community plugin `index.json` the bundled Community plugins page reads. Unset or empty means no index and no requests. See [below](#community-plugin-index). |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Native build: default [repository access rules](repository-access.md#default-rules), in `repository-access.json`'s schema. Unset means none. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | Native build: `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy). The desktop app fetches it and keeps the last good copy, used when no `managed-plugins.json` exists. It only recommends. Unset in OSS builds. |
@@ -186,6 +187,64 @@ the phone restores it), the mobile Settings card says to install the app and
 sign in with Builderlab, with a link and QR code for each listing that is set. With neither
 set it gives the same instructions without links. Other identities keep the
 pairing flow.
+
+## Community plugin index
+
+The bundled Community plugins plugin (`buzz.community-plugins`, on by
+default) lists plugins people publish in public Git repositories from a public,
+static plugin index. Set `BUZZ_COMMUNITY_PLUGIN_INDEX_URL` to the full HTTPS URL
+of the index's `index.json`, such as
+`https://raw.githubusercontent.com/block/buzz-plugins/index/index.json`, in
+repository-root `.env.local` or the build process environment; the process
+wins, including empty. The URL needs a path and no credentials or fragment; a
+query string is kept as written. The native build grants the plugin the URL's
+origin and `https://api.github.com`, and the page fetches the URL as given.
+Unset or empty, the plugin gets no network access and shows "No community index
+configured". Any other value fails the build.
+
+Installs go through the usual plugin review. Install counts and upvotes never
+go to the index: they stay in the selected community. Each community keeps them
+in one open NIP-CL system channel labeled `buzz-marketplace`. A relay can
+provision that channel itself and reserve the label; a channel the relay created
+is used first. Otherwise it's the oldest open, unarchived one, whoever created
+it. When a complete lookup finds none, the first member's Buzz to need it
+creates it, and joins it to write.
+
+The plugin records the installed plugins the index lists, wherever they were
+installed from: the page, a Git repository or a local folder. Plugins the index
+doesn't list, and bundled plugins, aren't recorded. In the background, at
+startup, whenever the installed set changes, whenever another community is
+selected and every 10 minutes, it brings the member's records in that community
+in line: it adds missing ones and withdraws those for removed or delisted
+plugins. It writes only what differs, in batches of 50 until it's done. The page
+and the recorder share one index read, so a refresh that shows a plugin is
+delisted also withdraws its records. If the index can't be read, nothing is
+withdrawn. A member's install or upvote is one NIP-AR artifact (type
+`buzz.plugin.install` or `buzz.plugin.vote`) with the plugin's manifest id in a
+`plugin` tag and the writer in an `installer` tag. An install also records the
+kind of source in a `source` tag, `git` or `local`, never the repository, which
+could be private. Its `d` is derived from the member's
+key and the plugin id, so counts take each member once per plugin and an upvote
+only from someone with an install record. Index listings are counted by
+manifest id. Counts are read from current revisions. Anyone the relay lets read that
+community can read the records, including who installed what; on a relay that
+doesn't require community membership, that is any authenticated user. **Record
+my plugins in this community** on the page keeps one choice per community on
+the device; turning it off publishes an `on: false` revision of each of the
+member's records there, and earlier revisions stay in the artifact history. A
+build without an index records nothing. A community without NIP-CL or NIP-AR
+shows no counts and gets no records.
+
+**Add your plugin** on the page lets an author list a plugin. It checks
+anonymously through `https://api.github.com` that the repository is public and
+has a built `manifest.json` and `plugin.js`, then shows the plugin's
+`sources.txt` line with two links that open in the browser: a prefilled
+`list-plugin.yml` issue form, and GitHub's editor for `sources.txt` on `main`,
+which opens a pull request. The index repository's checks verify the line and
+a maintainer merges it; Buzz itself sends nothing to the index. The listing
+repository is the `<owner>/<repo>` of an index URL on
+`https://raw.githubusercontent.com/<owner>/<repo>/...`. For an index hosted
+anywhere else the button is hidden.
 
 ## Builderlab URL build input
 

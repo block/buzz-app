@@ -223,6 +223,14 @@ it("routes HTTPS requests with plugin identity and rejects browser requests", as
   await expect(plugin.host.request(request)).rejects.toThrow(/desktop plugin/);
 });
 
+it("reports whether host requests can run here", () => {
+  const { root, plugin } = pluginContext();
+  expect(plugin.host.canRequest?.()).toBe(true);
+  expect(root.host.canRequest?.()).toBe(false);
+  vi.mocked(isTauri).mockReturnValue(false);
+  expect(plugin.host.canRequest?.()).toBe(false);
+});
+
 it.each(["request", "upload"] as const)(
   "normalizes native %s string failures and preserves existing Errors",
   async (operation) => {

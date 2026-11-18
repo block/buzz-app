@@ -13,6 +13,16 @@ export function channelIdentityUnsupported(): Error {
   );
 }
 
+/** A system-channel scan stopped before it reached the oldest channel, so a
+ * channel it did not return may still exist. Callers must not read the
+ * absence of a match from it. */
+export class ChannelScanIncomplete extends Error {
+  constructor() {
+    super("The community has too many system channels to search them all.");
+    this.name = "ChannelScanIncomplete";
+  }
+}
+
 /** A label must not equal a channel type, so it cannot make a channel look like another type. */
 export function validChannelLabel(value: unknown): value is string {
   return (

@@ -78,6 +78,7 @@ import { nativeBuilderlab } from "../bundled/builderlab/session";
 import { builderlabPhone } from "../features/identity/builderlab-account";
 import { conversationFeatures } from "./conversation-features";
 import { PluginDevelopmentService } from "../features/plugin-development/service";
+import { PluginInventoryService } from "../features/plugin-inventory/service";
 import { createPluginManager } from "../plugins/manager";
 import {
   createPluginInstallCore,
@@ -106,6 +107,7 @@ export function createServices() {
     builtIn: conversationFeatures,
   });
   new PluginDevelopmentService(ctx, () => plugins);
+  new PluginInventoryService(ctx, () => plugins);
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);

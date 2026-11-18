@@ -8,6 +8,7 @@ import {
   LightningIcon,
   RobotIcon,
   SendIcon,
+  StorefrontIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
@@ -59,6 +60,7 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
   ["buzz.relay-notes/notes", NoteIcon],
+  ["buzz.community-plugins/community-plugins", StorefrontIcon],
 ]);
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {

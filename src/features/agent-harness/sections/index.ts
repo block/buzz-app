@@ -54,8 +54,12 @@ export type Facts = Readonly<{
 }>;
 
 export type Section = Readonly<{
-  /** Never changes once released. */
+  /** What saved choices name the section by. A released id is never given
+   * to another section: a rename lists it in `aliases`. */
   id: string;
+  /** The ids it had before a rename. A choice saved under one applies to
+   * the section. */
+  aliases?: readonly string[];
   /** The heading the host prints. Only the opening lines have none. */
   title?: string;
   /** The owner can turn the section off or give their own text. */

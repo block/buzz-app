@@ -446,6 +446,24 @@ it("keeps one agent's two communities' storage apart, each under its membership'
   );
 });
 
+it("builds a turn's instructions with the owner's base section choices", async () => {
+  const { host, deliver, agent } = setup();
+  Object.assign(agent, {
+    promptSections: () => ({
+      owner: {
+        etiquette: { mode: "custom", text: "Be brief." },
+        progress: { mode: "off" },
+      },
+    }),
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const instructions = String(host.requests("deliver")[0]?.params.instructions);
+  expect(instructions).toContain(
+    '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
+  );
+  expect(instructions).not.toContain("## Progress");
+});
+
 it("hands a conversation its own community repositories without changing its workspace", async () => {
   const repositories = vi.fn(
     () => "<community-repositories>/code/own</community-repositories>",

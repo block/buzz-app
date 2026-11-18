@@ -91,6 +91,9 @@ export type SessionsOptions = Readonly<{
   /** Told of each new session, never a resumed one, with the prompt it was
    * started with, and the label of the one-off turn it was started for. */
   started?(sessionId: string, systemPrompt: string, once?: string): void;
+  /** Told of each session a new process resumes, with the prompt it now
+   * runs on. */
+  resumed?(sessionId: string, systemPrompt: string): void;
   /** Called when a conversation's process starts, is sent a message, or
    * stops. */
   onChange?(): void;
@@ -737,7 +740,8 @@ export class AgentSessions {
       ? await ClaudeProcess.start(spawn, { ...launch, resume })
       : await this.fresh(launch, spawn, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed) {
-      if (!resume && process.sessionId)
+      if (resume) this.options.resumed?.(resume, launch.systemPrompt);
+      else if (process.sessionId)
         this.options.started?.(process.sessionId, launch.systemPrompt, once);
       return { process, fingerprint, used: this.now() };
     }

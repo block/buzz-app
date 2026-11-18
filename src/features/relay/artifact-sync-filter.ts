@@ -1,6 +1,8 @@
 import type { VerifiedEvent } from "nostr-tools";
+import { artifactTypeName } from "./artifact-community.ts";
 
-// Wire contract only: no imports beyond types, so the browser broker can load it.
+// Wire contract only: no imports beyond types and other wire contracts, so the
+// browser broker can load it.
 /** NIP-AR sync (docs/nips/NIP-AR.md "Sync" in block/buzz): a REQ with one
  * `"artifact": "current"` filter. A channel sync needs `#h`; a community sync
  * (`"scope": "community"`) needs exactly one `#type` and no `#h`. Paging keys
@@ -94,6 +96,8 @@ export function artifactSyncFilter(input: unknown): ArtifactSyncFilter {
   if (out.scope) {
     if (channels || (out["#type"] as string[] | undefined)?.length !== 1)
       throw new Error("Community artifact sync needs one #type and no #h");
+    if (!artifactTypeName((out["#type"] as [string])[0]))
+      throw new Error("Invalid artifact sync tag values for #type");
   } else if (!Array.isArray(channels) || !channels.length)
     throw new Error("Artifact sync needs #h with at least one channel");
   else if (channels.length > ARTIFACT_SYNC_MAX_CHANNELS)

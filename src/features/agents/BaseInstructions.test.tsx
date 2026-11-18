@@ -57,6 +57,46 @@ const choose = async (
 const editor = (title: string) =>
   screen.getByRole("textbox", { name: `Your text for ${title}` });
 
+it("shows defaults read-only and keeps the custom draft when switching modes", async () => {
+  const user = userEvent.setup();
+  const store = memory();
+  render(<BaseInstructions store={store} />);
+  for (const section of SECTIONS.filter((section) => section.owner)) {
+    const preview = screen.getByRole("textbox", {
+      name: `Default text for ${section.title}`,
+    });
+    expect(preview).toHaveValue(defaultOf(section.id));
+    expect(preview).toHaveAttribute("readonly");
+    expect(preview).toBeEnabled();
+    expect(preview).toHaveAccessibleDescription("Choose Custom to edit.");
+  }
+  const preview = () =>
+    screen.getByRole("textbox", { name: "Default text for Progress" });
+  await user.click(preview());
+  await user.keyboard("Changed");
+  expect(preview()).toHaveValue(defaultOf("progress"));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+
+  await choose(user, "Progress", "Custom");
+  expect(editor("Progress")).not.toHaveAttribute("readonly");
+  await user.clear(editor("Progress"));
+  await user.type(editor("Progress"), "Report milestones.");
+  await choose(user, "Progress", "Default");
+  expect(preview()).toHaveValue(defaultOf("progress"));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await choose(user, "Progress", "Off");
+  expect(
+    screen.queryByRole("textbox", { name: /text for Progress/ }),
+  ).not.toBeInTheDocument();
+  await choose(user, "Progress", "Custom");
+  expect(editor("Progress")).toHaveValue("Report milestones.");
+  expect(ownerChoices(store)).toEqual({});
+});
+
 it("offers Default, Off and Custom for each section the owner can configure", async () => {
   const user = userEvent.setup();
   render(<BaseInstructions store={memory()} />);
@@ -416,6 +456,7 @@ it("holds the form while a save is in flight", async () => {
     }),
   };
   render(<BaseInstructions store={held} />);
+  await choose(user, "Etiquette", "Custom");
   await choose(user, "Progress", "Off");
   await user.click(screen.getByRole("button", { name: "Save" }));
   try {
@@ -424,6 +465,10 @@ it("holds the form while a save is in flight", async () => {
     // is not, though jsdom lets one.
     expect(choice("Progress")).toHaveAttribute("aria-readonly", "true");
     expect(choice("Progress")).toBeEnabled();
+    expect(editor("Etiquette")).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Default text for Publishing" }),
+    ).toBeEnabled();
     await user.click(choice("Progress"));
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();

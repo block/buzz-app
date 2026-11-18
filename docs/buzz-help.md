@@ -1660,7 +1660,8 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   agent on this device before the agent's own instructions, one section per
   topic. For Publishing, Progress, Etiquette, Agent Memory, Engineering
   Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
-  **Custom** with your own text of up to 4 KiB, then **Save**. The other
+  **Custom** with your own text of up to 4 KiB, then **Save**. Default shows
+  the section's text to read and copy; choose Custom to edit it. The other
   sections are always on, or Buzz sets them for the conversation; **All
   sections** shows the default text of each. A plugin that is on can declare
   sections that it replaces in the chats it manages: its install review lists

@@ -279,10 +279,12 @@ export function BaseInstructions({
                       })
                     }
                   />
-                  {mode === "custom" && (
+                  {mode !== "off" && (
                     <Field
-                      label={`Your text for ${title}`}
-                      description={count}
+                      label={`${mode === "default" ? "Default text" : "Your text"} for ${title}`}
+                      description={
+                        mode === "default" ? "Choose Custom to edit." : count
+                      }
                       error={
                         problem && bytes(text) > SECTION_TEXT_BYTES
                           ? `${problem} ${count}.`
@@ -292,8 +294,9 @@ export function BaseInstructions({
                       <Textarea
                         appearance="outlined"
                         rows={6}
-                        value={text}
-                        disabled={saving}
+                        value={mode === "default" ? defaultText(section) : text}
+                        readOnly={mode === "default"}
+                        disabled={mode === "custom" && saving}
                         onChange={(event) =>
                           change(section.id, { text: event.target.value })
                         }

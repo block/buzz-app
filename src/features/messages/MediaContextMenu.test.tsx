@@ -11,14 +11,17 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { writeClipboardText } from "../../shared/clipboard";
 import { copyImageToClipboard } from "./image-copy";
 import { MediaContextMenu } from "./MediaContextMenu";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  isTauri: vi.fn(() => false),
+}));
 vi.mock("../../shared/clipboard", () => ({ writeClipboardText: vi.fn() }));
 vi.mock("./image-copy", () => ({
   copyImageToClipboard: vi.fn(),
@@ -28,10 +31,13 @@ vi.mock("./image-copy", () => ({
 const url = `https://relay.test/media/${"a".repeat(64)}.png`;
 const source = `buzz-media://localhost/${encodeURIComponent(url)}`;
 const proxy = `/api/relay/primary/media?url=${encodeURIComponent(url)}`;
+const artwork = "/assets/buzzies-1.png";
+const artworkUrl = "https://cdn.test/avatars/buzzies-1.png";
 const props = { url, source, name: "photo.png", kind: "image" as const };
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
+  vi.mocked(isTauri).mockReset().mockReturnValue(false);
   vi.mocked(writeClipboardText).mockReset().mockResolvedValue(undefined);
   vi.mocked(copyImageToClipboard).mockReset().mockResolvedValue(undefined);
   vi.stubGlobal(
@@ -220,6 +226,69 @@ it("uses the browser download link for proxy media", async () => {
     screen.getByRole("menuitem", { name: "Download image" }),
   ).toHaveAttribute("download", "photo.png");
 });
+
+it("serves the app's own artwork through the app's paths", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve(new Response(new Blob(["art"], { type: "image/png" }))),
+    ),
+  );
+  render(menu({ url: artworkUrl, source: artwork, name: "buzzies-1.png" }));
+  await open();
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Copy image URL" }),
+  );
+  await waitFor(() =>
+    expect(writeClipboardText).toHaveBeenCalledWith(artworkUrl),
+  );
+  await open();
+  await userEvent.click(screen.getByRole("menuitem", { name: "Copy image" }));
+  expect(copyImageToClipboard).toHaveBeenCalledWith(
+    screen.getByAltText("Original"),
+  );
+  await open();
+  const download = screen.getByRole("menuitem", { name: "Download image" });
+  expect(download).not.toHaveAttribute("href");
+  await userEvent.click(download);
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(
+      "file_download",
+      expect.any(Uint8Array),
+      { headers: { "x-buzz-file-name": encodeURIComponent("buzzies-1.png") } },
+    ),
+  );
+});
+
+it.each([
+  {
+    label: "public HTTPS art",
+    url: artworkUrl,
+    source: artworkUrl,
+    tauri: true,
+  },
+  {
+    label: "same-origin art in a browser",
+    url: artworkUrl,
+    source: artwork,
+    tauri: false,
+  },
+] as const)(
+  "keeps the native menu for $label",
+  async ({ url, source, tauri }) => {
+    vi.mocked(isTauri).mockReturnValue(tauri);
+    render(menu({ url, source }));
+    // An uncancelled event is what lets WebKit show its own image menu.
+    expect(
+      fireEvent.contextMenu(screen.getByAltText("Original"), {
+        clientX: 40,
+        clientY: 50,
+      }),
+    ).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+  },
+);
 
 it("opens media actions over playback controls instead of bubbling to a message menu", async () => {
   const outer = vi.fn();

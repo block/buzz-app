@@ -14,7 +14,10 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { MediaAttachment } from "./MediaAttachment";
 
 // No media listener: `media_stream_base` reports none.
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async () => null),
+  isTauri: () => false,
+}));
 
 afterEach(() => {
   cleanup();

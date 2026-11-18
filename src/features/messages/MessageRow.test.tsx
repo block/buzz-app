@@ -56,6 +56,7 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { attestedOwner } from "../agents/owner-attestation";
+import { agentAvatars } from "../agents/avatar-packs";
 
 // Real verification, observed so tests can wait for its verdict.
 vi.mock("../agents/owner-attestation", async (original) => {
@@ -1084,6 +1085,79 @@ it("requests a small profile image without downsizing message attachments", () =
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+});
+
+it("serves the avatar's bundled pack artwork from the app menu", async () => {
+  vi.stubGlobal("isTauri", true);
+  const pack = agentAvatars[0];
+  if (!pack) throw new Error("Missing avatar fixtures");
+  const view = renderMessage({
+    profile: { name: "Bo", picture: pack.url },
+    media: (url) => url,
+  });
+  try {
+    const image = view.container.querySelector("img");
+    expect(image).toHaveAttribute("src", pack.url);
+    fireEvent.contextMenu(image as HTMLImageElement, {
+      clientX: 10,
+      clientY: 10,
+    });
+    const menu = await screen.findByRole("menu");
+    for (const item of ["Copy image", "Copy image URL", "Download image"]) {
+      expect(
+        within(menu).getByRole("menuitem", { name: item }),
+      ).toBeInTheDocument();
+    }
+  } finally {
+    view.unmount();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("serves the avatar's relay artwork from the app menu", async () => {
+  const picture = `https://relay.test/media/${"a".repeat(64)}.png`;
+  const view = renderMessage({
+    profile: { name: "Bo", picture },
+    media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+  });
+  try {
+    const image = view.container.querySelector("img");
+    expect(image).toHaveAttribute(
+      "src",
+      `buzz-media://localhost/${encodeURIComponent(picture)}`,
+    );
+    fireEvent.contextMenu(image as HTMLImageElement, {
+      clientX: 10,
+      clientY: 10,
+    });
+    const menu = await screen.findByRole("menu");
+    for (const item of ["Copy image", "Copy image URL", "Download image"]) {
+      expect(
+        within(menu).getByRole("menuitem", { name: item }),
+      ).toBeInTheDocument();
+    }
+  } finally {
+    view.unmount();
+  }
+});
+
+it("keeps the native menu for the avatar's public HTTPS artwork", () => {
+  const view = renderMessage({
+    profile: { name: "Bo", picture: "https://image.test/person.png" },
+    media: (url) => url,
+  });
+  try {
+    // An uncancelled event is what lets WebKit show its own image menu.
+    expect(
+      fireEvent.contextMenu(view.container.querySelector("img") as Element, {
+        clientX: 10,
+        clientY: 10,
+      }),
+    ).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+  } finally {
+    view.unmount();
+  }
 });
 
 it("renders proxy audio attachments with an inline player", () => {

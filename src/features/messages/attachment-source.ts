@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+
 /** Only the URLs emitted by convertFileSrc(relayMediaUrl, "buzz-media"). */
 export function isNativeMediaSource(source: string): boolean {
   try {
@@ -58,6 +60,22 @@ export function safeOpenUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Artwork the app itself serves, on the page's own origin and outside the
+ * relay proxies: the bundled pack avatars, and any other asset the app ships.
+ * Only in the desktop app — a browser's image menu can fetch its page's own
+ * assets — because WebKit's menu fetches such a URL in its network process,
+ * which cannot load the app's private origin, so its image actions do
+ * nothing there. The app serves them instead. */
+export function isAppArtworkSource(source: string): boolean {
+  if (!isTauri()) return false;
+  try {
+    const url = new URL(source, window.location.href);
+    return url.origin === window.location.origin && !isProxySource(url.href);
   } catch {
     return false;
   }

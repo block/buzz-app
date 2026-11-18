@@ -363,8 +363,27 @@ function AvatarStackSpecimen() {
 }
 
 function AvatarSpecimen() {
+  const [failedAlternate, setFailedAlternate] = useState(false);
   return (
     <div className="component-specimen-stack">
+      <SpecimenGroup
+        label="Retained still during alternate-image failure"
+        code={`<Avatar src={alternateUrl} fallbackSrc={avatarUrl} alt="Agent" fallback="Agent" shape="squircle" />`}
+      >
+        <div className="component-specimen-row">
+          <Avatar
+            src={failedAlternate ? "data:image/png;base64,broken" : avatarUrl}
+            fallbackSrc={avatarUrl}
+            alt="Agent with retained still artwork"
+            fallback="Agent"
+            shape="squircle"
+            size="large"
+          />
+          <Button onClick={() => setFailedAlternate(!failedAlternate)}>
+            {failedAlternate ? "Return to still" : "Try a broken alternate"}
+          </Button>
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup
         label="Identity shape: circles for humans, squircles for agents"
         code={`<div className="flex flex-wrap items-center gap-4">

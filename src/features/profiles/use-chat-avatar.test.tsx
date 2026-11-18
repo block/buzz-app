@@ -1,11 +1,54 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useChatAvatar } from "./use-chat-avatar";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("does not reuse loaded animation on the first commit after motion is disabled while idle", () => {
+  const url = `https://community.test/media/${"c".repeat(64)}.webp`;
+  const media = (source: string, size?: "small") =>
+    size ? "still" : `protected:${source}`;
+  let motion = true;
+  vi.stubGlobal("matchMedia", () => ({
+    get matches() {
+      return motion;
+    },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const loads: Array<{ onload?: (() => void) | null }> = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      onload = null;
+      constructor() {
+        loads.push(this);
+      }
+    },
+  );
+  const commits: Array<string | undefined> = [];
+  function Portrait({ responding }: { responding: boolean }) {
+    const src = useChatAvatar(url, media, responding);
+    useLayoutEffect(() => {
+      commits.push(src);
+    });
+    return null;
+  }
+  const view = render(<Portrait responding />);
+  act(() => loads[0]?.onload?.());
+  expect(commits.at(-1)).toBe(`protected:${url}`);
+  view.rerender(<Portrait responding={false} />);
+  motion = false;
+  commits.length = 0;
+  view.rerender(<Portrait responding />);
+  expect(commits.length).toBeGreaterThan(0);
+  expect(commits.every((src) => src === "still")).toBe(true);
+  expect(loads).toHaveLength(1);
 });
 
 it.each(["webp", "gif", "png"])(

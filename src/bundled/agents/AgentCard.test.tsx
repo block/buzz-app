@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { communityMedia } from "../../features/profiles/avatar-upload";
 import { AgentPortrait } from "./AgentCard";
@@ -56,16 +62,22 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
     expect(container.querySelector("img")).toHaveAttribute("src", thumbnail),
   );
   expect(loads).toHaveLength(1);
+  const poster = container.querySelector("img");
+  if (!poster) throw new Error("Expected still portrait");
+  fireEvent.load(poster);
   act(() => loads[0]?.onload?.());
-  expect(container.querySelector("img")).toHaveAttribute(
-    "src",
-    media(agent.picture),
-  );
+  expect(
+    container.querySelector("img[data-avatar-foreground]"),
+  ).toHaveAttribute("src", media(agent.picture));
+  expect(container.querySelector("img")).toBe(poster);
+  expect(poster).toHaveAttribute("data-loaded", "true");
   act(() => {
     motion = false;
     for (const change of listeners) change();
   });
   expect(container.querySelector("img")).toHaveAttribute("src", thumbnail);
+  expect(container.querySelectorAll("img")).toHaveLength(1);
+  expect(container.querySelector("img")).toBe(poster);
   rerender(<AgentPortrait agent={agent} community="https://community.test" />);
   expect(container.querySelector("img")).toHaveAttribute("src", thumbnail);
   unmount();

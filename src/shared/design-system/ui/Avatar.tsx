@@ -21,40 +21,44 @@ function AvatarArtwork({
   src,
   fallback,
   loading,
+  foreground = false,
 }: {
   src: string;
   fallback: ReactNode;
   loading: "eager" | "lazy" | undefined;
+  foreground?: boolean;
 }) {
   const { status, failing, image } = useReadyImage(src, loading);
   const [late, setLate] = useState(false);
   useEffect(() => {
-    if (status !== "loading") return;
+    if (status !== "loading" || foreground) return;
     const timer = window.setTimeout(() => setLate(true), 150);
     return () => window.clearTimeout(timer);
-  }, [status]);
+  }, [status, foreground]);
   // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
   const initial = (
     <span aria-hidden="true" data-avatar-fallback="">
       {fallback}
     </span>
   );
-  if (status === "failed") return initial;
+  if (status === "failed") return foreground ? null : initial;
   return (
     <>
       <img
         {...image}
+        data-avatar-foreground={foreground || undefined}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         referrerPolicy="no-referrer"
       />
-      {status === "loading" && (failing || late) ? initial : null}
+      {status === "loading" && !foreground && (failing || late) ? initial : null}
     </>
   );
 }
 
 export function Avatar({
   src,
+  fallbackSrc,
   alt,
   fallback,
   fallbackContent,
@@ -65,6 +69,8 @@ export function Avatar({
   loading,
 }: {
   src?: string | null | undefined;
+  /** Keep this still image mounted while alternate artwork loads or fails. */
+  fallbackSrc?: string | undefined;
   alt: string;
   fallback: string;
   fallbackContent?: ReactNode;
@@ -80,6 +86,7 @@ export function Avatar({
   const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
+  const hasStill = !!src && !!fallbackSrc && fallbackSrc !== src;
   return (
     <span
       className="buzz-avatar-status"
@@ -99,20 +106,32 @@ export function Avatar({
         }
         aria-hidden={!alt || undefined}
       >
-        {artwork ??
-          (src ? (
-            <AvatarArtwork
-              key={src}
-              src={src}
-              fallback={content}
-              loading={loading}
-            />
-          ) : (
-            // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
-            <span aria-hidden="true" data-avatar-fallback="">
-              {content}
-            </span>
-          ))}
+        {artwork ?? (
+          <>
+            {hasStill && (
+              <AvatarArtwork
+                key={fallbackSrc}
+                src={fallbackSrc}
+                fallback={content}
+                loading={loading}
+              />
+            )}
+            {src ? (
+              <AvatarArtwork
+                key={src}
+                src={src}
+                fallback={content}
+                loading={loading}
+                foreground={hasStill}
+              />
+            ) : (
+              // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
+              <span aria-hidden="true" data-avatar-fallback="">
+                {content}
+              </span>
+            )}
+          </>
+        )}
       </BaseAvatar.Root>
       {statusBadge && (
         <span className="buzz-avatar-status-dot" aria-hidden="true" />

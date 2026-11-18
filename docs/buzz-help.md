@@ -205,7 +205,8 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   The title includes the count. Each row’s **…** menu offers **Copy key**.
   Uploaded animated avatars play during responses and in the expanded agent profile.
   Cards, sidebar entries and completed replies use a still portrait. Reduce Motion
-  keeps uploaded avatars still in both places.
+  keeps uploaded avatars still in both places. The still portrait stays visible
+  while an animation loads or if it cannot load.
   Saved agents show their community avatar and open their **Agents** pane when
   clicked, with **View Agent** also available in the menu. **In Agents** marks
   these available panes. **Configured** means Builderlab reports Active with a valid

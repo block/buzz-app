@@ -417,6 +417,29 @@ const turns=requests.slice(later).filter(r=>!summary(r.body));
 assert.ok(turns.length>0&&requests.slice(later).findIndex(r=>summary(r.body))>requests.slice(later).indexOf(turns[0]));
 for(const r of turns)assert.equal(msg(r.headers),'b2');
 result.background=true;
+// A gateway turn's background compaction that outlives its input, its
+// retry asleep, keeps an ordinary turn out until it ends: the ordinary turn
+// starts after the summary, and the gateway never sees its input.
+{const key='chan/tasks';
+ for(const request of ['k0a','k0b','k0'])assert.equal((await run(pi,request,{key,text:'word '.repeat(30000)})).status,'done');
+ summaries=false;summarized.length=0;replies.push(send(90000),say('done'));
+ assert.equal((await run(pi,'k1',{key})).status,'done');
+ await until(()=>summarized.length>0);
+ const {submissions,tasks}=await harness.inspect(context);
+ assert.equal(submissions.filter(s=>s.type==='input').length,0);
+ assert.ok(tasks.some(t=>t.record.background&&t.record.trace?.buzz==='k1'));
+ const own=[];faux.setResponses([c=>{own.push(JSON.stringify(c));return fauxAssistantMessage('ordinary after');}]);
+ let handed=false;
+ const o=pi.rpc('deliver',turn('k2',{key,provider:'faux',model:'faux-1',gatewayTurn:undefined,text:'ordinary task work',steer:'ordinary task work'})).then(v=>{handed=true;return v;});
+ await new Promise(r=>setTimeout(r,300));
+ assert.equal(handed,false);assert.deepEqual(own,[]);
+ summaries=true;
+ await until(()=>summarized.some(s=>s.ok));
+ const {submission}=await within(o,'an ordinary turn after a gateway compaction');
+ assert.equal((await pi.rpc('wait',{agent,submission,request:'k2'})).text,'ordinary after');
+ for(const {headers} of summarized)assert.equal(msg(headers),'k1');
+ assert.ok(requests.every(r=>!JSON.stringify(r.body).includes('ordinary task work')));}
+result.taskBoundary=true;
 // A crash between a reset's intent and its write: the next turn does it, then binds the reset.
 crashReset=true;
 await assert.rejects(pi.rpc('session',{agent,key:'chan/root',action:'new'}),/crashed before the reset/);
@@ -1027,6 +1050,7 @@ it.skipIf(!deps)(
             "manualCompaction",
             "queued",
             "provenance",
+            "taskBoundary",
             "background",
             "resetCrash",
             "restart",

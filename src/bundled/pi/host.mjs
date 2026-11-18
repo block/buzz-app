@@ -575,6 +575,9 @@ const TEST_TIMEOUT_MS = 30_000;
 /** How long a turn waits by default for a run in the other mode to show
  * progress before it fails. */
 const PARK_MS = 15 * 60_000;
+/** How often a turn waiting only for the other mode's tasks reads them
+ * again: Pi offers no wait for a task's end. */
+const TASK_POLL_MS = 1_000;
 /** How long a gateway refusal waits for the plugin to take it. */
 const DENY_MS = 5_000;
 /** Entries a transcript reads at a time. */
@@ -1876,7 +1879,7 @@ export function serve({
   }
 
   /** Waits until the conversation holds no unfinished input in the other
-   * mode than `bound`, read from Pi's storage, as Pi may hold one that no
+   * mode than `bound`, and no live task of that mode, read from Pi's storage, as Pi may hold one that no
    * run it has been seen to start has yet. WITHDRAWN once an Interrupt or
    * Stop came for it. Woken when such an input settles; its
    * own wait for each asks Pi for progress, which continues work a restart
@@ -1897,22 +1900,34 @@ export function serve({
       });
       if (opened.closing) throw closed();
       if (waiting.interrupted) return WITHDRAWN;
-      let other;
+      let other, tasks;
       try {
-        const { submissions } = await opened.harness.inspect(context);
-        const inputs = submissions.filter(
+        const inspection = await opened.harness.inspect(context);
+        const inputs = inspection.submissions.filter(
           (s) => s.type === "input" && s.conversationId === conversation.id,
         );
-        if (!inputs.length) return;
+        // A task can outlive its input, as a background compaction whose
+        // retry sleeps does, and still make model requests. One Pi can't
+        // run makes none.
+        const live = inspection.tasks.filter(
+          ({ record, state }) =>
+            record.conversationId === conversation.id &&
+            state.kind !== "blocked",
+        );
+        if (!inputs.length && !live.length) return;
         // Its mode is its requests': each one the gateway bound has a record.
+        // A task's request is the one its trace carries.
         const { requests = {} } =
           (await opened.harness.snapshot(GatewayRuns, context)) ?? {};
         other = inputs.filter((s) => Boolean(requests[s.requestId]) !== bound);
+        tasks = live.filter(
+          ({ record }) => Boolean(requests[record.trace?.buzz]) !== bound,
+        );
       } catch (error) {
         // Closed while it read: the close is the reason, not the storage.
         throw opened.closing ? closed() : error;
       }
-      if (!other.length) return;
+      if (!other.length && !tasks.length) return;
       if (waiting.interrupted) return WITHDRAWN;
       // The bound runs only while no run works in the conversation.
       if (state.busy || state.events !== seen) {
@@ -1928,7 +1943,10 @@ export function serve({
       await Promise.race([
         ended,
         new Promise((resolve) => {
-          timer = setTimeout(resolve, left);
+          timer = setTimeout(
+            resolve,
+            tasks.length ? Math.min(left, TASK_POLL_MS) : left,
+          );
         }),
         ...other
           .filter((input) => !waited.has(input.id))

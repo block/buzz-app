@@ -116,7 +116,9 @@ provider and model, as a blocked turn does.
 
 A turn steers only a run in its own mode, through the gateway or not. A turn
 in the other mode waits until Pi holds no work in that mode, read from Pi's
-storage. Its own wait for that work continues work a stopped host left. It
+storage: no unfinished input, and no live task, such as a background
+compaction whose retry sleeps after its input settled. A task's mode is that
+of the request its trace carries. Its own wait for that work continues work a stopped host left. It
 fails visibly ("The previous run didn't finish") once no run works in the
 conversation and that work shows no progress for 15 minutes; a run that works
 silently, such as a long tool call, never fails it. In a conversation with

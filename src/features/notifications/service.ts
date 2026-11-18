@@ -107,7 +107,8 @@ export class NotificationsService extends Service implements Notifications {
   private generation = 0;
   private permissionGeneration = 0;
   private permissionRequest: Promise<void> | undefined;
-  private askedOnArrival = false;
+  private entered = false;
+  private askedAutomatically = false;
   private scheduled = false;
   private state: NotificationSnapshot;
   constructor(
@@ -119,6 +120,10 @@ export class NotificationsService extends Service implements Notifications {
       !("scope" in target && target.scope),
     private readonly playSound: (name: SoundName) => void = (name) =>
       void playNotificationSound(name),
+    private readonly present: () => boolean = () =>
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus(),
   ) {
     super(ctx, "notifications");
     this.contributions =
@@ -220,11 +225,19 @@ export class NotificationsService extends Service implements Notifications {
       const permission = await this.platform.permission();
       if (generation === this.permissionGeneration) {
         this.publish({ permission });
+        if (permission === "default") this.requestAutomatically();
         this.schedule();
       }
     } catch (error) {
       if (generation === this.permissionGeneration) this.reportError(error);
     }
+  }
+  /** The person is in the app with a community. Only records that: the one
+   * automatic system prompt follows from this read or a later window focus. */
+  requestOnEntry() {
+    if (this.entered || !this.platform.requestsAutomatically) return;
+    this.entered = true;
+    void this.refreshPermission();
   }
   /** `quiet` is the automatic request: nobody acted, so an ignored system
    * prompt (a native timeout) is not reported and no shown error is cleared. */
@@ -241,12 +254,16 @@ export class NotificationsService extends Service implements Notifications {
         .then((permission) => {
           if (generation === this.permissionGeneration)
             this.publish({ permission });
-          this.schedule();
         })
         .catch(report)
         .finally(() => {
           this.permissionRequest = undefined;
           this.publish({ requesting: false });
+          // Allow is answered with Buzz in front, and the Dock dot otherwise
+          // re-reads its permission only at the next window focus.
+          void this.indicator.refresh();
+          // Alerts held for the answer are examined once nothing is in flight.
+          this.schedule();
         });
     } catch (error) {
       report(error);
@@ -254,19 +271,21 @@ export class NotificationsService extends Service implements Notifications {
     }
     return this.permissionRequest ?? Promise.resolve();
   }
-  /** Sends the one automatic system prompt per device; true when this alert
-   * became it. An explicit request already in flight keeps its own alerts. */
-  private requestOnFirstAlert() {
+  /** Sends the one automatic system prompt per device. Its caller has a
+   * status the OS itself just reported as not yet asked. A person who is not
+   * looking, or who has alerts off, is asked at a later window focus. */
+  private requestAutomatically() {
     if (
-      this.askedOnArrival ||
-      this.permissionRequest ||
-      !this.platform.requestsOnArrival
+      !this.entered ||
+      this.askedAutomatically ||
+      this.state.developmentPaused ||
+      !this.state.preferences.enabled ||
+      !this.present()
     )
-      return false;
-    this.askedOnArrival = true;
-    if (!this.preferences.claimAutomaticRequest()) return false;
-    void this.requestPermission({ quiet: true });
-    return true;
+      return;
+    this.askedAutomatically = true;
+    if (this.preferences.claimAutomaticRequest())
+      void this.requestPermission({ quiet: true });
   }
   private allowed(item: Candidate) {
     return (
@@ -484,15 +503,10 @@ export class NotificationsService extends Service implements Notifications {
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        // Not yet asked holds the alert for an explicit Allow. The first alert
-        // the OS itself just reported as not yet asked is instead replaced by
-        // the system prompt: it is dropped, and nothing awaits the answer.
-        if (
-          permission !== "default" ||
-          (probed === "default" &&
-            item.eligible() === true &&
-            this.requestOnFirstAlert())
-        )
+        // Not yet asked holds the alert for an Allow, and so does a request
+        // in flight: macOS reports its unanswered prompt as denied. An alert
+        // never asks by itself.
+        if (permission !== "default" && !this.permissionRequest)
           this.pending.delete(item);
         return;
       }

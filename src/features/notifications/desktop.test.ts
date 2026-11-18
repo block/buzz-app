@@ -46,19 +46,23 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   native.value = true;
 });
-function setup(storage?: Window) {
+function setup(storage?: Window, present?: () => boolean) {
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
   ctx.effect(() => () => runtime.dispose());
   const navigation = provideNavigation(ctx).navigation;
   // Exercise the production default, not an injected adapter. This Node host
-  // has no storage of its own; a test that needs it supplies only that.
+  // has no storage or document of its own; a test that needs one supplies
+  // only that.
   const service = new NotificationsService(
     ctx,
     navigation,
     undefined,
     storage && createNotificationPreferences(storage),
+    undefined,
+    undefined,
+    present,
   );
   service.selectViewer("a".repeat(64));
   const submit = (sourceKey: string) =>
@@ -109,7 +113,12 @@ it("macOS banner permission reads the native authorization independently of Dock
   expect(sdk.bannerPermission).toHaveBeenCalled();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
   expect(sdk.show).not.toHaveBeenCalled();
-  expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
+  // The Dock setting is only read, at startup and again once the banner
+  // request settles. A banner request never requests it.
+  expect(sdk.permission.mock.calls).toEqual([
+    [{ request: false }],
+    [{ request: false }],
+  ]);
   expect(service.indicator.snapshot().permission).toBe("enabled");
   expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({ unread: false });
   await submit("first");
@@ -136,27 +145,42 @@ it("macOS first-run Delivery exposes an explicit authorization action", async ()
   expect(service.snapshot().permission).toBe("granted");
 });
 
-it("a macOS first-run arrival asks the system once in place of its banner", async () => {
+it("entering the app on a macOS first run asks the system once; an arriving alert alone never does", async () => {
   sdk.bannerPermission.mockResolvedValue("default");
+  sdk.bannerRequest.mockImplementationOnce(async () => {
+    sdk.bannerPermission.mockResolvedValue("granted");
+    return "granted";
+  });
   const values = new Map<string, string>();
-  const { service, submit } = setup({
-    localStorage: {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => void values.set(key, value),
-    },
-    addEventListener() {},
-    removeEventListener() {},
-  } as unknown as Window);
-  await flush();
-  expect(sdk.bannerRequest).not.toHaveBeenCalled();
+  const { service, submit } = setup(
+    {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => void values.set(key, value),
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as Window,
+    () => true,
+  );
   await submit("first");
   await flush();
+  expect(sdk.bannerRequest).not.toHaveBeenCalled();
+  expect(sdk.show).not.toHaveBeenCalled();
+  service.requestOnEntry();
+  await flush();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+  // Allowed: the alert held meanwhile is shown, and nothing asks again.
+  expect(sdk.show).toHaveBeenCalledOnce();
+  service.requestOnEntry();
   await submit("second");
   await flush();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
-  expect(sdk.show).not.toHaveBeenCalled();
-  expect(service.snapshot()).toMatchObject({ requesting: false, error: null });
+  expect(service.snapshot()).toMatchObject({
+    permission: "granted",
+    requesting: false,
+    error: null,
+  });
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {

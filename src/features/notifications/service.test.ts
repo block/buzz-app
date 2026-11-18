@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 function setup(
   options: {
-    requestsOnArrival?: boolean;
+    requestsAutomatically?: boolean;
     permission?: NotificationPermissionState;
     values?: Map<string, string>;
   } = {},
@@ -48,11 +48,23 @@ function setup(
   const clicks: (() => void)[] = [];
   const failures: ((error: Error) => void)[] = [];
   let permission = options.permission ?? "granted";
+  let present = true;
+  let asking = 0;
+  let held: Promise<NotificationPermissionState> | undefined;
   const platform: NotificationPlatform = {
     label: "Test",
-    ...(options.requestsOnArrival ? { requestsOnArrival: true } : {}),
-    permission: vi.fn(async () => permission),
-    requestPermission: vi.fn(async () => permission),
+    ...(options.requestsAutomatically ? { requestsAutomatically: true } : {}),
+    // As macOS 27 does: an unanswered request reads as denied, not as not yet
+    // asked.
+    permission: vi.fn(async () => (asking ? "denied" : permission)),
+    requestPermission: vi.fn(async () => {
+      asking++;
+      try {
+        return (await held) ?? permission;
+      } finally {
+        asking--;
+      }
+    }),
     show: vi.fn(async (_item, activate, failed) => {
       clicks.push(activate);
       failures.push(failed);
@@ -67,6 +79,7 @@ function setup(
     preferences,
     undefined,
     (name) => plays.push(name),
+    () => present,
   );
   service.selectViewer(viewer);
   return {
@@ -82,6 +95,33 @@ function setup(
     plays,
     permission(value: NotificationPermissionState) {
       permission = value;
+    },
+    /** Whether the window is visible and focused. */
+    present(value: boolean) {
+      present = value;
+    },
+    /** Keeps system requests unanswered until the returned gate settles them. */
+    holdRequest() {
+      const gate = deferred<NotificationPermissionState>();
+      held = gate.promise;
+      // A test that fails before settling must not leave an unhandled rejection.
+      gate.promise.catch(() => {});
+      return {
+        /** The person answers; the OS reports that answer from then on. */
+        answer(value: NotificationPermissionState) {
+          held = undefined;
+          permission = value;
+          gate.resolve(value);
+        },
+        /** Nobody answers: the native wait gives up and the OS keeps reporting denied. */
+        timeout() {
+          held = undefined;
+          permission = "denied";
+          gate.reject(
+            new Error("Timed out waiting for notification permission"),
+          );
+        },
+      };
     },
     submit(id = "event", eligible: () => boolean | "wait" = () => true) {
       return service.admit(
@@ -115,20 +155,22 @@ async function flush() {
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }
 const askedKey = "buzz-notification-permission-asked.v1";
-/** A fresh install on a platform that may ask on arrival: the OS reports not yet asked. */
+/** A fresh install on a platform that may ask on its own: the OS reports not yet asked. */
 function firstRun(values?: Map<string, string>) {
   return setup({
-    requestsOnArrival: true,
+    requestsAutomatically: true,
     permission: "default",
     ...(values ? { values } : {}),
   });
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 it("deduplicates in this running session and routes clicks through existing navigation", async () => {
   const t = setup();
@@ -150,178 +192,141 @@ it("more than 256 sequential alerts do not fill a persistent inbox or pause deli
   expect(t.service.snapshot().error).toBeNull();
   expect(Object.keys(t.service.snapshot())).not.toContain("records");
 });
-it("a platform that cannot ask on arrival retains a fresh candidate for explicit permission", async () => {
-  const t = setup();
-  t.permission("default");
+it.each([
+  ["a platform that cannot ask on its own", false, true],
+  ["a platform whose window is not in front", true, false],
+])(
+  "an arriving alert never asks on %s, and is shown after an explicit Allow",
+  async (_name, requestsAutomatically, present) => {
+    const t = setup({ requestsAutomatically, permission: "default" });
+    t.present(present);
+    t.service.requestOnEntry();
+    await t.service.refreshPermission();
+    await t.submit();
+    await flush();
+    expect(t.platform.requestPermission).not.toHaveBeenCalled();
+    expect(t.values.has(askedKey)).toBe(false);
+    expect(t.platform.show).not.toHaveBeenCalled();
+    t.permission("granted");
+    await t.service.requestPermission();
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(1);
+  },
+);
+it("without entering the app, nothing asks: not the first read, a window focus or an alert", async () => {
+  const t = firstRun();
+  await flush();
+  expect(t.service.snapshot().permission).toBe("default");
+  await t.service.refreshPermission();
   await t.submit();
   await flush();
+  // The construction read, the focus read and the alert's own probe all ran.
+  expect(t.platform.permission).toHaveBeenCalledTimes(3);
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
   expect(t.values.has(askedKey)).toBe(false);
   expect(t.platform.show).not.toHaveBeenCalled();
-  t.permission("granted");
-  await t.service.requestPermission();
-  await flush();
-  expect(t.platform.show).toHaveBeenCalledTimes(1);
 });
-it("simultaneous and later first-run alerts send one system request, which replaces the first alert", async () => {
+it("entering the app while present sends one system request; later entries and focuses send none", async () => {
   const t = firstRun();
-  const answer = deferred<NotificationPermissionState>();
-  vi.mocked(t.platform.requestPermission).mockReturnValueOnce(answer.promise);
+  const request = t.holdRequest();
   try {
-    await Promise.all(["one", "two", "three"].map((id) => t.submit(id)));
+    t.service.requestOnEntry();
     await flush();
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
     expect(t.service.snapshot().requesting).toBe(true);
     expect(t.values.get(askedKey)).toBe("1");
-    await t.submit("later");
+    t.service.requestOnEntry();
+    await t.service.refreshPermission();
     await flush();
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
-    expect(t.platform.show).not.toHaveBeenCalled();
   } finally {
-    t.permission("granted");
-    answer.resolve("granted");
+    // The adversarial answer: the OS still reports not yet asked.
+    request.answer("default");
     await flush();
   }
   expect(t.service.snapshot()).toMatchObject({
     requesting: false,
-    permission: "granted",
+    permission: "default",
   });
-  // The prompt replaced the alert that triggered it; the others were held as
-  // any alert is while the OS has not been asked.
-  expect(t.platform.show).toHaveBeenCalledTimes(3);
+  // Nor does this run ask again once the device record is gone.
+  t.values.delete(askedKey);
+  t.service.requestOnEntry();
+  await t.service.refreshPermission();
+  await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.values.has(askedKey)).toBe(false);
 });
-it("allowing the automatic prompt does not bring back the alert it replaced", async () => {
+it("entering while the window is not in front waits, unspent, for the focus that finds it there", async () => {
   const t = firstRun();
-  vi.mocked(t.platform.requestPermission).mockImplementationOnce(async () => {
-    t.permission("granted");
-    return "granted";
-  });
-  await t.submit();
+  t.present(false);
+  t.service.requestOnEntry();
+  await t.service.refreshPermission();
+  await flush();
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+  t.present(true);
+  await t.service.refreshPermission();
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
-  expect(t.service.snapshot()).toMatchObject({
-    requesting: false,
-    permission: "granted",
-  });
-  expect(t.platform.show).not.toHaveBeenCalled();
-  await t.submit("next");
-  await flush();
-  expect(t.platform.show).toHaveBeenCalledTimes(1);
+  expect(t.values.get(askedKey)).toBe("1");
 });
 it.each(["denied", "unknown", "unsupported"] as const)(
-  "%s permission never asks on arrival",
+  "%s permission never asks on entry",
   async (permission) => {
-    const t = setup({ requestsOnArrival: true, permission });
-    await t.submit();
+    const t = setup({ requestsAutomatically: true, permission });
+    // Entered before any read completes: the unread initial state is no status.
+    t.service.requestOnEntry();
     await flush();
-    // The construction read and this alert's own probe both completed.
-    expect(t.platform.permission).toHaveBeenCalledTimes(2);
+    await t.service.refreshPermission();
+    expect(t.service.snapshot().permission).toBe(permission);
     expect(t.platform.requestPermission).not.toHaveBeenCalled();
     expect(t.values.has(askedKey)).toBe(false);
-    expect(t.platform.show).toHaveBeenCalledTimes(
-      permission === "unknown" ? 1 : 0,
-    );
   },
 );
-it("a stale not-yet-asked reading never asks once the OS itself reports a denial", async () => {
+it("a superseded not-yet-asked reading never asks once the OS itself reports a denial", async () => {
   const t = firstRun();
   await flush();
   expect(t.service.snapshot().permission).toBe("default");
-  const probe = deferred<NotificationPermissionState>();
-  const refresh = deferred<NotificationPermissionState>();
-  vi.mocked(t.platform.permission)
-    .mockReturnValueOnce(probe.promise)
-    .mockReturnValueOnce(refresh.promise);
+  const stale = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.permission).mockReturnValueOnce(stale.promise);
+  t.permission("denied");
   try {
-    await t.submit();
-    await flush();
-    // A newer read supersedes the alert's probe, which then falls back to the
-    // last published state: still "default".
-    void t.service.refreshPermission();
+    t.service.requestOnEntry();
+    // A newer read supersedes the entry's own, which is still outstanding.
+    await t.service.refreshPermission();
     expect(t.platform.permission).toHaveBeenCalledTimes(3);
-    probe.resolve("denied");
-    await flush();
-    expect(t.platform.requestPermission).not.toHaveBeenCalled();
-    expect(t.values.has(askedKey)).toBe(false);
+    expect(t.service.snapshot().permission).toBe("denied");
   } finally {
-    t.permission("denied");
-    probe.resolve("denied");
-    refresh.resolve("denied");
+    stale.resolve("default");
     await flush();
   }
   expect(t.service.snapshot().permission).toBe("denied");
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
-  expect(t.platform.show).not.toHaveBeenCalled();
-});
-it.each<[string, (t: ReturnType<typeof setup>) => Promise<unknown>]>([
-  [
-    "alerts turned off",
-    (t) => {
-      t.service.updatePreferences({ enabled: false });
-      return t.submit();
-    },
-  ],
-  [
-    "a disabled category",
-    (t) => {
-      t.service.updatePreferences({ categories: { mention: false } });
-      return t.submit();
-    },
-  ],
-  ["unknown read readiness", (t) => t.submit("waiting", () => "wait")],
-  ["a conversation in view", (t) => t.submit("seen", () => false)],
-  [
-    "a plugin gate",
-    async (t) => {
-      t.install({
-        inject: ["notifications"],
-        apply(ctx) {
-          ctx.notifications.gate({ id: "solo", allows: () => false });
-        },
-      });
-      await vi.waitFor(() => expect(t.service.gated(target)).toBe(false));
-      return t.submit();
-    },
-  ],
-])("%s never asks on arrival", async (_name, arrive) => {
-  const t = firstRun();
-  await arrive(t);
-  await flush();
-  expect(t.platform.requestPermission).not.toHaveBeenCalled();
   expect(t.values.has(askedKey)).toBe(false);
 });
-it("the development pause never asks on arrival", async () => {
+it("the development pause never asks on entry", async () => {
   vi.stubEnv("VITE_BUZZ_NOTIFICATIONS_PAUSED", "1");
   const t = firstRun();
   expect(t.service.snapshot().developmentPaused).toBe(true);
-  expect(await t.submit()).toBe(false);
+  t.service.requestOnEntry();
   await flush();
+  expect(t.platform.permission).toHaveBeenCalledTimes(2);
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
   expect(t.values.has(askedKey)).toBe(false);
 });
-it("an alert that stops being eligible during its permission probe never asks", async () => {
+it("Desktop alerts turned off never ask on entry; the focus after they are turned back on does", async () => {
   const t = firstRun();
+  t.service.updatePreferences({ enabled: false });
+  t.service.requestOnEntry();
+  await t.service.refreshPermission();
   await flush();
-  const probe = deferred<NotificationPermissionState>();
-  vi.mocked(t.platform.permission).mockReturnValueOnce(probe.promise);
-  let eligible: boolean | "wait" = true;
-  try {
-    await t.submit("opened", () => eligible);
-    await flush();
-    expect(t.platform.permission).toHaveBeenCalledTimes(2);
-    eligible = "wait";
-  } finally {
-    probe.resolve("default");
-    await flush();
-  }
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
   expect(t.values.has(askedKey)).toBe(false);
-  // Still the first alert that would have shown: it asks once eligible again.
-  eligible = true;
-  t.service.revalidate();
+  t.service.updatePreferences({ enabled: true });
+  await t.service.refreshPermission();
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.values.get(askedKey)).toBe("1");
 });
 it("an ignored automatic request is not reported, retried or repeated, and keeps a shown error", async () => {
   const t = firstRun();
@@ -329,15 +334,16 @@ it("an ignored automatic request is not reported, retried or repeated, and keeps
   vi.mocked(t.platform.requestPermission).mockRejectedValueOnce(
     new Error("Timed out waiting for notification permission"),
   );
-  await t.submit();
+  t.service.requestOnEntry();
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   expect(t.service.snapshot()).toMatchObject({
     requesting: false,
     error: "Earlier failure",
   });
-  await t.submit("next");
-  t.service.revalidate();
+  t.service.requestOnEntry();
+  await t.service.refreshPermission();
+  await t.submit();
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   expect(t.platform.show).not.toHaveBeenCalled();
@@ -351,19 +357,21 @@ it("an ignored automatic request is not reported, retried or repeated, and keeps
 });
 it("the automatic request is remembered on this device across runs and accounts; explicit Allow still asks", async () => {
   const first = firstRun();
-  await first.submit();
+  first.service.requestOnEntry();
   await flush();
   expect(first.platform.requestPermission).toHaveBeenCalledTimes(1);
   await first.ctx.fiber.dispose();
-  // A later run whose OS still reports not yet asked (an ignored banner), as
-  // another account on the same device.
+  // A later run as another account on the same device. macOS reports a prompt
+  // it has shown as allowed or denied, neither of which asks; a status of not
+  // yet asked is the one case left for the device record to stop.
   const next = firstRun(first.values);
   next.service.selectViewer("b".repeat(64));
+  next.service.requestOnEntry();
   await next.submit();
   await flush();
   expect(next.platform.requestPermission).not.toHaveBeenCalled();
   expect(next.platform.show).not.toHaveBeenCalled();
-  // Its alert is held, not replaced, and the explicit request ignores the flag.
+  // Its alert is held, and the explicit request ignores the record.
   next.permission("granted");
   await next.service.requestPermission();
   await flush();
@@ -375,6 +383,7 @@ it("a device that cannot record the automatic request never sends it", async () 
   vi.spyOn(t.host.localStorage, "setItem").mockImplementation(() => {
     throw new Error("disk");
   });
+  t.service.requestOnEntry();
   await t.submit();
   await flush();
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
@@ -386,22 +395,73 @@ it("a device that cannot record the automatic request never sends it", async () 
 });
 it("an alert arriving during an explicit request is kept for its answer and spends no automatic request", async () => {
   const t = firstRun();
-  const answer = deferred<NotificationPermissionState>();
-  vi.mocked(t.platform.requestPermission).mockReturnValueOnce(answer.promise);
+  const request = t.holdRequest();
   const allow = t.service.requestPermission();
   try {
+    t.service.requestOnEntry();
     await t.submit();
     await flush();
+    // The construction read and the alert's own probe, which read denied.
     expect(t.platform.permission).toHaveBeenCalledTimes(2);
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
     expect(t.values.has(askedKey)).toBe(false);
+    expect(t.platform.show).not.toHaveBeenCalled();
   } finally {
-    t.permission("granted");
-    answer.resolve("granted");
+    request.answer("granted");
     await allow;
     await flush();
   }
   expect(t.platform.show).toHaveBeenCalledTimes(1);
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+});
+it.each<[string, NotificationPermissionState | undefined, number]>([
+  ["is shown after Allow", "granted", 1],
+  ["is dropped after Don't Allow", "denied", 0],
+  ["is not shown after the request times out", undefined, 0],
+])(
+  "an alert arriving while the automatic request is unanswered %s",
+  async (_name, answer, shown) => {
+    const t = firstRun();
+    const request = t.holdRequest();
+    try {
+      t.service.requestOnEntry();
+      await flush();
+      expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+      await t.submit();
+      await flush();
+      // The construction read, the entry read and the alert's own probe, which
+      // read denied.
+      expect(t.platform.permission).toHaveBeenCalledTimes(3);
+      expect(t.platform.show).not.toHaveBeenCalled();
+    } finally {
+      if (answer) request.answer(answer);
+      else request.timeout();
+      await flush();
+    }
+    expect(t.service.snapshot().requesting).toBe(false);
+    expect(t.platform.show).toHaveBeenCalledTimes(shown);
+    // Settled: a permission granted later brings nothing back.
+    t.permission("granted");
+    await t.service.refreshPermission();
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(shown);
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  },
+);
+it("the Dock indicator re-reads its permission when a request settles", async () => {
+  const t = setup({ permission: "default" });
+  const refresh = vi.spyOn(t.service.indicator, "refresh");
+  const request = t.holdRequest();
+  const allow = t.service.requestPermission();
+  try {
+    await flush();
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+    expect(refresh).not.toHaveBeenCalled();
+  } finally {
+    request.answer("granted");
+    await allow;
+  }
+  expect(refresh).toHaveBeenCalledTimes(1);
 });
 it("an off/on transition during a permission probe cancels the old candidate", async () => {
   const t = setup();

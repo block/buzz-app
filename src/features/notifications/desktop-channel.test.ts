@@ -59,7 +59,7 @@ it.each(["Win32", "Linux x86_64"])(
     vi.stubGlobal("navigator", { platform: os });
     const platform = createNotifications();
     expect(platform.systemManaged).toBe(true);
-    expect(platform.requestsOnArrival).toBe(false);
+    expect(platform.requestsAutomatically).toBe(false);
     expect(await platform.permission()).toBe("unknown");
     expect(await platform.requestPermission()).toBe("unknown");
     expect(invoke).not.toHaveBeenCalled();

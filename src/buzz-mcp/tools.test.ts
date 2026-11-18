@@ -4621,10 +4621,27 @@ it("hands off to the agent in another of its conversations it can see", async ()
   );
   await wake({ channel: "chan", root }, { channel: "solo" });
   await wake({}, { channel: "chan", thread: root });
+  // Where the host says the channel's threads have sessions of their own, a
+  // conversation with no thread there is apart from them and can wake one; a
+  // session marked whole still cannot, nor can one where the host says no.
+  client.threadsApart = vi.fn((channel: string) => channel === "chan");
+  await wake({ channel: "chan" }, { channel: "chan", thread: nested });
+  expect(client.threadsApart).toHaveBeenCalledWith("chan");
+  await expect(
+    wake(
+      { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+      { channel: "chan", thread: nested },
+    ),
+  ).rejects.toThrow("That is this conversation.");
+  vi.mocked(client.threadsApart).mockReturnValue(false);
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
   expect(vi.mocked(client.handoff).mock.calls).toEqual([
     [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
     [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],
     [{ channel: "chan", root, text: "carry on", from: {} }],
+    [{ channel: "chan", root, text: "carry on", from: { channel: "chan" } }],
   ]);
 });
 it("reads agents and teams and drafts team changes without members", async () => {

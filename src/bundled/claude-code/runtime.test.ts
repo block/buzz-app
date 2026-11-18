@@ -3472,6 +3472,54 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
 
+it("hands a channel-level wake into a thread only where the host says threads have their own sessions", async () => {
+  const root = message("7", "a thread in the channel");
+  const metadata = message("8", "", { kind: 39000, tags: [["d", channel]] });
+  for (const scope of ["thread", "channel"] as const) {
+    const f = setup([], { hold: true });
+    f.agent.query.mockImplementation(async (...args: unknown[]) => {
+      const [[filter] = []] = args as { ids?: string[]; kinds?: number[] }[][];
+      if (filter?.ids?.includes(root.id)) return [root];
+      if (filter?.kinds?.includes(39000)) return [metadata];
+      return [];
+    });
+    const handoff = vi.fn();
+    // The host answers from the agent's session scope, as Agents does.
+    const threadsApart = () => scope === "thread";
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      {
+        agent: {
+          ...f.agent,
+          handoff,
+          threadsApart,
+        } as unknown as Delivery["agent"],
+        config: { ...DEFAULT_CONFIG, scope },
+      },
+    );
+    await flush(10);
+    const claude = f.claudes().find((process) => process.prompts.length);
+    const result = (await mcp(claude, 1, "tools/call", {
+      name: "self_handoff",
+      arguments: { channel, thread: root.id, text: "answer there" },
+    })) as { isError?: boolean; content: { text: string }[] } | undefined;
+    if (scope === "thread") {
+      expect(result?.isError).toBeFalsy();
+      expect(handoff).toHaveBeenCalledWith(
+        expect.objectContaining({ channel, root: root.id }),
+      );
+    } else {
+      // One session per channel: the threads share this conversation.
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ text: "That is this conversation." }],
+      });
+      expect(handoff).not.toHaveBeenCalled();
+    }
+    f.runtime.dispose();
+  }
+});
+
 it("refreshes Attention instructions after Claude starts", async () => {
   let release!: () => void;
   const starting = new Promise<void>((resolve) => {

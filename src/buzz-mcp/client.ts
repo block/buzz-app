@@ -136,6 +136,10 @@ export interface BuzzClient {
       from: Readonly<{ channel?: string; root?: string }>;
     }>,
   ): void;
+  /** Whether the agent's threads in `channel` have sessions of their own,
+   * apart from its channel-level conversation there. Where the host cannot
+   * tell, a conversation with no thread is the whole channel. */
+  threadsApart?(channel: string): boolean;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
@@ -202,7 +206,8 @@ export interface BuzzClient {
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps
  * this channel's messages out of threads. With no `root`, or with
- * `wholeChannel`, its session is the whole channel. */
+ * `wholeChannel`, its session is the whole channel, unless the client's
+ * `threadsApart` says the channel's threads have sessions of their own. */
 export type Context = Readonly<{
   session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;

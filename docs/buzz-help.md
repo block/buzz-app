@@ -1229,6 +1229,8 @@ available rather than silently discarding it.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.
+  An agent set to one session per thread can also hand off from a
+  channel-level watch or timer turn into one of that channel's threads.
   Message tools refuse self-mentions. A successful handoff receipt means the
   host queued the work. It does not confirm execution or completion.
 - A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved

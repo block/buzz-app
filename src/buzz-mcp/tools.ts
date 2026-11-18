@@ -567,10 +567,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!event && !soloChannelMetadata(metadata as RelayEvent))
       throw new Error("thread is required outside a Solo chat.");
     const root = event && rootOf(event);
-    if (
-      channel === context.channel &&
-      (!context.root || context.wholeChannel || root === context.root)
-    )
+    // A conversation with no thread is the whole channel, unless the host
+    // says this channel's threads have sessions of their own.
+    const whole =
+      context.wholeChannel ||
+      (!context.root && !client.threadsApart?.(channel));
+    if (channel === context.channel && (whole || root === context.root))
       throw new Error("That is this conversation.");
     const { channel: from, root: fromRoot } = context;
     client.handoff({

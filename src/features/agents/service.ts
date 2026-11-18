@@ -567,6 +567,10 @@ export type AgentHandle = Readonly<{
   /** On a run's handle only: wakes this agent in another of its
    * conversations, as `Agents.wake` would, telling it the wake is its own. */
   handoff?(handoff: AgentHandoff): void;
+  /** On a run's handle only: whether this agent's threads in `channel` have
+   * sessions of their own, apart from its channel-level conversation there,
+   * so a handoff from that conversation into a thread reaches another. */
+  threadsApart?(channel: string): boolean;
   /** Rechecks an operation lifetime after channel startup, before signing. */
   publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
@@ -2712,6 +2716,7 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      threadsApart: (agent, channelId) => this.threadsApart(agent, channelId),
       instructions: (agent) => this.turnInstructions(agent),
       conversationInstructions: (agent, channelId, root) =>
         this.turnConversationInstructions(agent, channelId, root),
@@ -4989,6 +4994,21 @@ export class AgentsService extends Service implements Agents {
       runtime: agent.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
+  }
+  /** Whether the agent's threads in the channel have sessions of their own,
+   * apart from its channel-level conversation: only where its type says it
+   * runs one session per thread, outside a DM or Solo chat. Any type that
+   * offers session controls gets this; one that does not, or a channel not
+   * known yet, keeps the channel one conversation. */
+  private threadsApart(agent: Agent, channelId: string) {
+    const type = this.types().find((kind) => kind.key === agent.type);
+    if (type?.sessionControls?.scope(agent) !== "thread") return false;
+    const summary = this.channelOf(agent, { tags: [["h", channelId]] });
+    return (
+      !!summary &&
+      summary.channelType !== "dm" &&
+      summary.channelType !== "solo"
+    );
   }
   private sessionPlace(
     agent: Agent,

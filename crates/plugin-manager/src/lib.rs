@@ -392,6 +392,8 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
     "v3/beekeeper/get-model-catalog",
     "v3/beekeeper/cancel-agent-turn",
     "v3/beekeeper/get-agent-turn-status",
+    "v3/beekeeper/list-agent-sessions",
+    "v3/beekeeper/get-agent-session-messages",
     "GET v1/auth/me",
     "v1/buzz/nostr-identities/current",
     "v1/buzz/nostr-identities/delete",
@@ -411,6 +413,21 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
 ];
 /// The matching Builderlab API base path, or empty when unconfigured.
 pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
+/// The `BUZZ_AGENT_GATEWAY` descriptor's gateway origin, or empty when
+/// gateway routing is off in this build.
+pub const AGENT_GATEWAY_ORIGIN: &str = env!("BUZZ_AGENT_GATEWAY_ORIGIN");
+/// The bundled Agents plugin, which may reach the agent gateway for its
+/// access check: that origin and nothing more.
+fn agents_manifest(gateway: &str) -> Manifest {
+    let mut agents: Manifest =
+        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
+            .expect("agents manifest");
+    if !gateway.is_empty() {
+        let host = agents.host.as_mut().expect("agents host grants");
+        host.network_origins.push(gateway.into());
+    }
+    agents
+}
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
@@ -452,14 +469,16 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
-            .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mermaid/manifest.json"))
             .expect("bundled mermaid manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/charts/manifest.json"))
             .expect("bundled charts manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/file-viewer/manifest.json"
+        ))
+        .expect("bundled file viewer manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
@@ -496,8 +515,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
-            .expect("agents manifest"),
+        agents_manifest(AGENT_GATEWAY_ORIGIN),
         serde_json::from_str(include_str!("../../../src/bundled/watching/manifest.json"))
             .expect("watching manifest"),
         serde_json::from_str(include_str!(
@@ -2752,6 +2770,31 @@ mod tests {
     }
 
     #[test]
+    fn agents_reach_only_the_agent_gateway_origin() {
+        assert!(super::agents_manifest("")
+            .host
+            .unwrap()
+            .network_origins
+            .is_empty());
+        let host = super::agents_manifest("https://gateway.example")
+            .host
+            .unwrap();
+        assert_eq!(host.network_origins, ["https://gateway.example"]);
+        assert!(host.mcp && host.files && host.federated_identity.is_none());
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let grants = manager.host_grants("buzz.agents", "bundled").unwrap();
+        assert_eq!(
+            grants.network_origins,
+            if super::AGENT_GATEWAY_ORIGIN.is_empty() {
+                vec![]
+            } else {
+                vec![super::AGENT_GATEWAY_ORIGIN.to_owned()]
+            }
+        );
+    }
+
+    #[test]
     fn apps_deploy_to_the_sign_in_tenant_only() {
         assert_eq!(
             super::apps_control_plane("https://app.builderlab.xyz"),
@@ -2789,6 +2832,10 @@ mod tests {
             assert!(operations.contains(&format!("GET {base}v1/auth/me")));
             assert!(operations.contains(&format!("POST {base}v3/beekeeper/register-agent")));
             assert!(operations.contains(&format!("POST {base}v3/beekeeper/get-agent-turn-status")));
+            assert!(operations.contains(&format!("POST {base}v3/beekeeper/list-agent-sessions")));
+            assert!(operations.contains(&format!(
+                "POST {base}v3/beekeeper/get-agent-session-messages"
+            )));
             assert!(operations.contains(&format!("POST {base}v1/buzz/nsec-backups/status")));
             assert_eq!(operations.len(), super::BUILDERLAB_FI_ROUTES.len());
         }
@@ -2903,7 +2950,7 @@ mod tests {
 
     #[test]
     fn optional_plugins_default_off_and_preserve_explicit_overrides() {
-        let id = "buzz.todos";
+        let id = "buzz.usage";
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
         let enabled = |manager: &Manager| {
@@ -2992,7 +3039,7 @@ mod tests {
             let registry = serde_json::json!({
                 "version": 1,
                 "bundledEnabled": true,
-                "bundledOverrides": { "buzz.todos": true },
+                "bundledOverrides": { "buzz.usage": true },
                 "installed": installed,
             });
             fs::write(profile.join("registry.json"), registry.to_string()).unwrap();
@@ -3017,7 +3064,7 @@ mod tests {
                 let (_temp, manager) =
                     open(serde_json::json!({ (*id): installed(id, was_enabled) }));
                 assert_eq!(enabled(&manager, id), was_enabled);
-                assert!(enabled(&manager, "buzz.todos"), "other overrides survive");
+                assert!(enabled(&manager, "buzz.usage"), "other overrides survive");
                 manager.change("enable", id).unwrap();
                 assert!(enabled(&manager, id));
                 manager.change("disable", id).unwrap();

@@ -326,7 +326,7 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       "React to selected message",
       "React to latest message",
       "Reply in thread to selected message",
-      "Mark unread from selected message",
+      "Mark as unread from selected message",
       "Delete selected message",
       "Quote selected text",
       "Reload Buzz",

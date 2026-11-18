@@ -5,6 +5,7 @@ import {
 } from "../../features/agents/activity-transcript";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { pubkeyOf } from "../../features/agents/membership";
+import { PROMPTS_PREFIX } from "../../features/agents/session-prompts";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -14,6 +15,8 @@ import type {
   StandaloneTurn,
 } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -75,6 +78,7 @@ function setup(
   /** Channels that are the owner's own Solo chats; the owner is the viewer. */
   const solo = new Set<string>();
   const session = {
+    workflowAuthority: undefined as string | undefined,
     read: vi.fn(async () => [root]),
     agentMemories: {
       read: vi.fn(async () => ({
@@ -473,6 +477,30 @@ it("shows a conversation only the messages it was not shown, nor its own replies
   expect(text).not.toContain("Earlier from Pi");
 });
 
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const { host, deliver, session } = setup();
+  const relay = keypair();
+  session.workflowAuthority = relay.pubkey;
+  const turn = deliver({
+    type: "mention",
+    event: eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+  });
+  await turn.run;
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(host.processes).toEqual([]);
+});
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({
@@ -643,7 +671,9 @@ it("hands off from Pi to another of its conversations", async () => {
       arguments: { channel: "chan-2", thread: thread.id, text: "carry on" },
     })
   )?.result;
-  expect(JSON.stringify(result)).toContain(`Handed off to thread ${thread.id}`);
+  expect(JSON.stringify(result)).toContain(
+    `Queued self-handoff to chan-2, thread ${thread.id}`,
+  );
   expect(agent.handoff).toHaveBeenCalledWith({
     channel: "chan-2",
     root: thread.id,
@@ -763,6 +793,43 @@ const pluginWake = (root?: string, where = channel) => ({
   id: WAKE_ID,
   at: 200_000,
 });
+
+it.each([true, false])(
+  "rechecks guarded Pi input after native queue waits (current=%s)",
+  async (valid) => {
+    const waiting = deferred();
+    const ready = deferred();
+    let current = true;
+    const accepted = vi.fn();
+    const f = setup({
+      deliver: async (params, process) => {
+        ready.resolve();
+        await waiting.promise;
+        const response = await process.tool(
+          { agent: self, request: params.request },
+          "prompt",
+        );
+        return response.result
+          ? { submission: 1, conversation: CONVERSATION }
+          : false;
+      },
+    });
+    const turn = f.deliver(pluginWake(root.id), {
+      accepted,
+      current: () => current,
+    });
+    await ready.promise;
+    expect(accepted).not.toHaveBeenCalled();
+    try {
+      current = valid;
+    } finally {
+      waiting.resolve();
+    }
+    await turn.run;
+    expect(accepted).toHaveBeenCalledTimes(valid ? 1 : 0);
+    expect(f.host.requests("deliver")[0]?.params.refresh).toBe(true);
+  },
+);
 
 it("takes a plugin's wake in its thread's conversation as the plugin's, and reports its failure at the thread's root", async () => {
   const { host, deliver, settled, published } = setup({
@@ -1884,6 +1951,91 @@ it("runs a standalone turn in a one-off conversation", async () => {
   expect(host.requests("deliver")).toEqual([]);
   // A wake's answer is for Pi alone; it acts with its tools.
   expect(published).toEqual([]);
+});
+
+/** A standalone turn run for `timer/t1` whose answer comes at `answered`
+ * (by when it started), and the agent's usage since `since` (likewise) after
+ * every saved prompt is dropped. */
+async function standaloneUsage(
+  answered: (started: number) => number,
+  since: (started: number) => number,
+) {
+  const started = Date.now();
+  const answer = {
+    id: 1,
+    kind: "pi.assistant",
+    model: [
+      {
+        role: "assistant",
+        content: [],
+        timestamp: answered(started),
+        model: "claude-x",
+        responseId: "resp-1",
+        usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 },
+      },
+    ],
+  };
+  const kept = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => void kept.set(key, value),
+    removeItem: (key: string) => void kept.delete(key),
+    key: (index: number) => [...kept.keys()][index] ?? null,
+    get length() {
+      return kept.size;
+    },
+  });
+  const { runtime, runOnce } = setup({
+    wait: () => ({ status: "done", answer: 5, text: "" }),
+    places: () => ({ places: [] }),
+    recorded: () => ({ models: {} }),
+    entries: ({ conversation }) => ({
+      entries: conversation === 99 ? [answer] : [],
+    }),
+  });
+  try {
+    runtime.sync([
+      { key: self, pubkey: self, config: DEFAULT_CONFIG },
+    ] as never);
+    await runOnce("timer/t1", "Run t1");
+    // Later sessions push every saved prompt out; the turn stays the agent's.
+    for (const key of [...kept.keys()])
+      if (key.startsWith(PROMPTS_PREFIX)) kept.delete(key);
+    return await runtime.usage(
+      self,
+      since(started),
+      new AbortController().signal,
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+}
+
+it("reads a standalone turn's conversation as the agent's usage, with no channel", async () => {
+  const sessions = await standaloneUsage(
+    (started) => started,
+    () => 0,
+  );
+  expect(sessions.map((session) => session.id)).toEqual(["99"]);
+  expect(sessions[0]).not.toHaveProperty("channelId");
+  expect(sessions[0]?.observations).toHaveLength(1);
+});
+
+it("reads a standalone turn begun before the cutoff by when it answered", async () => {
+  // Begun before the cutoff, it answered after it: that answer is counted.
+  const crossing = await standaloneUsage(
+    (started) => started + 2000,
+    (started) => started + 1000,
+  );
+  expect(crossing.map((session) => session.id)).toEqual(["99"]);
+  expect(crossing[0]?.observations).toHaveLength(1);
+  // One that last answered before the cutoff is not.
+  expect(
+    await standaloneUsage(
+      (started) => started,
+      (started) => started + 1000,
+    ),
+  ).toEqual([]);
 });
 
 it("starts no standalone turn once its prompt is no longer wanted", async () => {

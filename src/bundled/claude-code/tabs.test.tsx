@@ -46,7 +46,7 @@ import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
-import { ClaudeAuth } from "./auth";
+import { ClaudeAuth, KEY_ONCE } from "./auth";
 import { ClaudeDefaults } from "./defaults";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -195,7 +195,11 @@ function applied({
   storage,
   channels,
   remote = false,
+  own = {},
 }: {
+  /** What `claude auth status` reports: the person's own setup, signed out
+   * unless `status` is set; it answers once `held` settles, when set. */
+  own?: { status?: object; held?: Promise<void> };
   /** Agent storage; this page's localStorage without it. */
   storage?: AgentStore;
   remote?: boolean;
@@ -261,6 +265,8 @@ function applied({
     const exited = new Promise<number | null>((resolve) => {
       if (name === "install" || streaming || args === "auth login")
         kill = () => resolve(null);
+      else if (args === "auth status --json" && own.held)
+        void own.held.then(() => resolve(0));
       else setTimeout(() => resolve(missing ? 127 : 0), 0);
     });
     queueMicrotask(() =>
@@ -273,7 +279,9 @@ function applied({
               ? "Darwin arm64\n"
               : args === "--version"
                 ? `${version} (Claude Code)\n`
-                : "",
+                : args === "auth status --json"
+                  ? JSON.stringify(own.status ?? { loggedIn: false })
+                  : "",
       ),
     );
     return {
@@ -941,7 +949,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   await user.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -952,9 +960,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Fable 5.1",
-    ),
+    expect(screen.getByTitle("Fable 5.1 · Default")).toBeVisible(),
   );
   expect(save).not.toHaveBeenCalled();
 });
@@ -970,7 +976,7 @@ it("keeps the saved default and shows the error while a default could not be sav
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   const pick = async () => {
     fireEvent.click(control);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -982,7 +988,9 @@ it("keeps the saved default and shows the error while a default could not be sav
   await pick();
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
   error.mockRestore();
-  expect(control).toHaveTextContent("Opus 5.5");
+  expect(control).toHaveAccessibleName(
+    "Claude default model: Default · Follows Claude Code settings, Automatic",
+  );
   expect(storage.get("buzz.claude-code.provider-defaults.v1")).toBeNull();
   // The same choice can be saved again.
   failing = false;
@@ -1016,11 +1024,7 @@ it("asks for an API key and is ready once one is saved", async () => {
   render(<Setup onClose={onClose} />);
   const user = userEvent.setup();
   // The key's form takes the dialog over, saying once is enough.
-  expect(
-    await screen.findByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once.",
-    ),
-  ).toBeVisible();
+  expect(await screen.findByText(KEY_ONCE)).toBeVisible();
   expect(
     screen.queryByText("Claude 2.1.292 needs an Anthropic API key."),
   ).toBeNull();
@@ -1043,6 +1047,65 @@ it("asks for an API key and is ready once one is saved", async () => {
   expect(JSON.stringify(spawn.mock.calls)).not.toContain("sk-ant-api03-pasted");
   // The key is all the dialog edits, so saving it closes the dialog.
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("refreshes to find a setup made with the Claude CLI instead of a key", async () => {
+  const own: { status?: object } = {};
+  const { type } = installed({ keySaved: false, own });
+  const Setup = providerSetup(type);
+  render(<Setup onClose={vi.fn()} />);
+  const user = userEvent.setup();
+  expect(await screen.findByText(KEY_ONCE)).toBeVisible();
+  own.status = { loggedIn: true, apiProvider: "bedrock" };
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(type.provider?.snapshot()).toEqual({ readiness: "ready" }),
+  );
+  // Ready, without naming the setup it found.
+  expect(screen.queryByText(/Bedrock/)).toBeNull();
+  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+});
+
+it("keeps keyboard focus on Refresh while a held check finds no setup", async () => {
+  const own: { status?: object; held?: Promise<void> } = {};
+  const { type } = installed({ keySaved: false, own });
+  const Setup = providerSetup(type);
+  render(<Setup onClose={vi.fn()} />);
+  const user = userEvent.setup();
+  expect(await screen.findByText(KEY_ONCE)).toBeVisible();
+  let release!: () => void;
+  own.held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  await user.click(refresh);
+  // Natively disabled, a browser would blur it out of the dialog.
+  await waitFor(() => expect(refresh).toHaveAttribute("aria-disabled", "true"));
+  expect(refresh).not.toHaveAttribute("disabled");
+  expect(refresh).toHaveFocus();
+  release();
+  await waitFor(() =>
+    expect(refresh).toHaveAttribute("aria-disabled", "false"),
+  );
+  expect(screen.getByRole("button", { name: "Refresh" })).toHaveFocus();
+});
+
+it("keeps keyboard focus in the dialog when Refresh finds a setup", async () => {
+  const own: { status?: object } = {};
+  const { type } = installed({ keySaved: false, own });
+  const Setup = providerSetup(type);
+  render(<Setup onClose={vi.fn()} />);
+  const user = userEvent.setup();
+  expect(await screen.findByText(KEY_ONCE)).toBeVisible();
+  own.status = { loggedIn: true };
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  // Clicking focuses it, as a keyboard user's focus would be.
+  await user.click(refresh);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull(),
+  );
+  expect(await screen.findByRole("button", { name: "Done" })).toHaveFocus();
 });
 
 it("closes the configuration once a replacement key is saved", async () => {
@@ -1321,11 +1384,14 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Default",
-      description: "Best for everyday, complex tasks",
+      name: "Default",
+      description: "Follows Claude Code settings",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
   expect(screen.getByLabelText("Instructions Optional")).toHaveValue("Triage.");
   fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Plan." },
@@ -1546,7 +1612,7 @@ it("returns Claude create-time effort to Default when the inherited model change
     name: /^Claude default model:/,
   });
   await waitFor(() => {
-    expect(providerModel).toHaveTextContent("Opus 5.5");
+    expect(providerModel).toHaveTextContent("Default");
     expect(providerModel).toBeEnabled();
   });
   fireEvent.click(providerModel);
@@ -1823,11 +1889,7 @@ it("offers Set up Claude beside Harness when Claude is picked, then its models",
 
   await user.click(screen.getByRole("button", { name: "Add Claude API key" }));
   const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
-  expect(
-    within(dialog).getByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once.",
-    ),
-  ).toBeVisible();
+  expect(within(dialog).getByText(KEY_ONCE)).toBeVisible();
   expect(within(dialog).queryByRole("button", { name: "Sign in" })).toBeNull();
   await user.type(
     within(dialog).getByLabelText("Anthropic API key"),
@@ -2301,7 +2363,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   expect(control).toHaveTextContent("Automatic");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -2344,19 +2406,20 @@ it("retries failed model discovery from the defaults row", async () => {
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Claude default model:/ }),
-    ).toHaveTextContent("Opus 5.5"),
+    ).toBeEnabled(),
   );
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("keeps the model inherited when changing the default model's effort", async () => {
+it("pins the named model when choosing its effort from the defaults menu", async () => {
   const Control = installed().type.provider?.DefaultControl;
   if (!Control) throw new Error("Missing default control");
   render(<Control onConfigure={vi.fn()} />);
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5 · Default"));
+  await waitFor(() => expect(control).toBeEnabled());
+  expect(control).toHaveTextContent("Default");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -2364,10 +2427,14 @@ it("keeps the model inherited when changing the default model's effort", async (
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
-    model: "",
+    model: "opus",
     effort: "high",
   });
-  expect(control).toHaveTextContent("· Default");
+  await waitFor(() =>
+    expect(control).toHaveAccessibleName(
+      "Claude default model: Opus 5.5, High",
+    ),
+  );
 });
 
 it("keeps keyboard focus through Claude defaults discovery retries", async () => {
@@ -2556,9 +2623,9 @@ it("uses target model settings for remote Claude without a local catalog or a ta
   const save = vi.fn(async () => {});
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Follows the target computer's settings"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(
@@ -2592,9 +2659,9 @@ it("refreshes mounted Claude Settings after an execution binding changes", async
     />,
   );
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Follows the target computer's settings"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(f.execution).not.toHaveBeenCalled();
@@ -3022,4 +3089,61 @@ it("places separate conflict choices beside their fields and shows the competing
     },
     base: { settings: "s0", instructions: "i0" },
   });
+});
+
+it("follows the recommended setup in Settings until a manual choice", async () => {
+  // A synthetic candidate Claude lists.
+  vi.stubEnv(
+    "VITE_BUZZ_RECOMMENDED_AGENT",
+    JSON.stringify([
+      {
+        harness: "claude-code",
+        model: "sonnet",
+        effort: "high",
+        label: "Model S",
+      },
+    ]),
+  );
+  // Whether Claude offers a candidate is index.test.ts's concern.
+  vi.spyOn(ClaudeSetup.prototype, "offers").mockResolvedValue(true);
+  try {
+    const Settings = tab(installed().type, 0);
+    const save = vi.fn(async () => undefined);
+    render(
+      <Settings
+        agent={agent({ ...DEFAULT_CONFIG, preset: "recommended" } as Config)}
+        save={save}
+      />,
+    );
+    const aiSettings = screen.getByRole("combobox", { name: "AI setup" });
+    expect(aiSettings).toHaveTextContent("Automatic");
+    expect(screen.queryByText("Model S · High")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(aiSettings);
+    expect(await screen.findByText("Model S · High")).toBeInTheDocument();
+    expect(aiSettings).toHaveAccessibleDescription(
+      "Set to Model S (recommended)",
+    );
+    await user.keyboard("{Escape}");
+    // The model rows wait for Manual.
+    const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
+    expect(
+      screen.queryByRole("combobox", { name: "Thinking" }),
+    ).not.toBeInTheDocument();
+    await choose("AI setup", "Custom");
+    expect(thinking().closest("[inert]")).toBeNull();
+    // Manual starts from what Automatic ran on.
+    expect(thinking()).toHaveTextContent("High");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenCalledWith(
+      {
+        ...DEFAULT_CONFIG,
+        model: "sonnet",
+        effort: "high",
+      },
+      expect.anything(),
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

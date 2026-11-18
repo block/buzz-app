@@ -363,7 +363,7 @@ export function createIdentityArchives(
   }
   /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
    * when that delta is a well-formed archive delta. Callers show it only while
-   * `state(pubkey)` is "archived". Presentation only, never access.
+   * the current snapshot lists `pubkey`. Presentation only, never access.
    * Older relays stamp deltas to the second, and concurrent publishers can
    * share one, so deltas tied at the newest second count only when they all
    * give the same answer, and a full page of them names no replacement. */

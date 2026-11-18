@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useIdentityNames } from "../../features/identity-names/react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PanelProps } from "../../features/panels/service";
 import { profileTarget } from "../../features/profiles/target";
-import { selectProfiles } from "../../features/relay/profile-selection";
-import { useProfileGeneration } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
-import { formatPublicKey } from "../../shared/identity/public-key";
+import { useProfileName } from "./useProfileName";
 
 /** Says that this identity is archived in this community and, when the
  * relay's archive delta names one, links its replacement key. Presentation
@@ -54,9 +51,12 @@ export function ProfileArchiveNotice({
   // Each snapshot read, also one that keeps its event, retries a lookup that
   // an interruption or a failure left unanswered.
   const readAt = snapshot.readAt;
+  // A reread in progress answers again when it lands, so a lookup now would
+  // be read twice.
+  const loading = snapshot.status === "loading";
   useEffect(() => {
     void readAt;
-    if (!archived) return;
+    if (!archived || loading) return;
     const controller = new AbortController();
     void archives.replacement(pubkey, controller.signal).then(
       (key) => {
@@ -66,7 +66,7 @@ export function ProfileArchiveNotice({
       () => {},
     );
     return () => controller.abort();
-  }, [archives, archived, pubkey, eventId, readAt]);
+  }, [archives, archived, loading, pubkey, eventId, readAt]);
   if (!archived) return null;
   const successor =
     replacement?.of === pubkey && replacement.snapshot === eventId
@@ -107,29 +107,11 @@ function SuccessorLink({
   context: PanelProps["context"];
   open: ((target: string) => void) | undefined;
 }) {
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, [successor]),
-    [session.profiles, successor],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const profileGeneration = useProfileGeneration(session.profiles);
-  useEffect(() => {
-    void profileGeneration;
-    void session.profiles.ensure([successor], "background").catch(() => {});
-  }, [session, successor, profileGeneration]);
-  const identityName = useIdentityNames(session.names);
-  const name = identityName(
-    successor,
-    profiles.get(successor)?.name ?? formatPublicKey(successor) ?? successor,
-  );
+  const name = useProfileName(session, successor);
   const target = profileTarget(successor);
   return target && context?.canOpen(target) ? (
     <Button
-      size="inline"
+      size="text"
       variant="link"
       aria-label={`Open new key profile: ${name}`}
       onClick={() => (open ?? context.push ?? context.open)(target)}

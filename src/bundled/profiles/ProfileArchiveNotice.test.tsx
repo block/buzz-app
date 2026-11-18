@@ -245,21 +245,44 @@ describe("ignores a relay delta NIP-IA says to ignore", () => {
         ],
       },
     ],
-  ])("%s", async (_, options) => {
-    mount([
-      ...people,
-      snapshot([old.pubkey]),
-      delta(old.pubkey, replaced, options),
-    ]);
-    await waitFor(() =>
+    [
+      "two consent tags",
+      {
+        base: [
+          ["-"],
+          ["p", old.pubkey],
+          ["consent", "self", old.pubkey],
+          ["consent", "admin", relayKey.pubkey],
+        ],
+      },
+    ],
+    ["two replacements", { tags: [...replaced, ...replaced] }],
+    ["a replacement that is not a key", { tags: [["replaced-by", "NEW"]] }],
+    [
+      "the archived key as its own replacement",
+      { tags: [["replaced-by", old.pubkey]] },
+    ],
+    ["a replacement on an unarchive delta", { kind: 8003 }],
+  ] as [string, Parameters<typeof delta>[2] & { tags?: string[][] }][])(
+    "%s",
+    async (_, { tags = replaced, ...options }) => {
+      const { archives } = mount([
+        ...people,
+        snapshot([old.pubkey]),
+        delta(old.pubkey, tags, options),
+      ]);
+      await waitFor(() =>
+        expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+          "This key is archived in this community.",
+        ),
+      );
+      // The notice says the same before its lookup answers, so ask directly.
+      await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
       expect(screen.getByTestId("profile-archived")).toHaveTextContent(
         "This key is archived in this community.",
-      ),
-    );
-    expect(
-      screen.queryByRole("button", { name: /new key profile/ }),
-    ).toBeNull();
-  });
+      );
+    },
+  );
   it("a newer unarchive delta", async () => {
     mount([
       ...people,
@@ -439,6 +462,32 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
   expect(open).not.toHaveBeenCalled();
 });
 
+it("hides an owned agent's notice while its name is edited", async () => {
+  mount(
+    [
+      ...people,
+      snapshot([old.pubkey]),
+      delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    ],
+    [],
+    { ownedBy },
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  await screen.findByRole("textbox", { name: "Agent name" });
+  expect(screen.getByTestId("profile-archived")).not.toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("profile-archived")).toBeVisible(),
+  );
+});
+
 it("adds nothing to an owned agent's profile when its key is not archived", async () => {
   mount([...people, snapshot([])], [], { ownedBy });
   const name = await screen.findByRole("heading", { name: "Old Agent" });
@@ -448,6 +497,31 @@ it("adds nothing to an owned agent's profile when its key is not archived", asyn
   // An empty element would still take a gap in the hero's flex column.
   expect(name.parentElement?.nextElementSibling).not.toBeEmptyDOMElement();
   expect(screen.queryByTestId("profile-archived")).toBeNull();
+});
+
+it("reads an archived key's deltas once per opening", async () => {
+  const { query, reopen } = mount([
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ]);
+  const reads = (kind: number) =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(kind)).length;
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await waitFor(() => expect(reads(8002)).toBe(1));
+  const snapshots = reads(13535);
+  reopen();
+  await waitFor(() => expect(reads(13535)).toBe(snapshots + 1));
+  await waitFor(() => expect(reads(8002)).toBe(2));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  expect(reads(8002)).toBe(2);
+  expect(
+    screen.getByRole("button", { name: "Open new key profile: New Key" }),
+  ).toBeVisible();
 });
 
 it("reads the archive again when a profile opens, in both directions", async () => {

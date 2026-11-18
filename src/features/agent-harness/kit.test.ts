@@ -6,7 +6,6 @@ import { eventDto, type EventData, type RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
 import { harnessKit } from "./kit";
-import { saved } from "./sections/fixtures/saved";
 
 const self = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -396,8 +395,9 @@ describe("harnessKit.systemPrompt", () => {
     expect(text).toContain("~/work");
     expect(text).toContain(`<repos for="https://kit.example:${alice}"/>`);
     expect(text).not.toContain("<buzz-tools-unavailable>");
-    // Byte for byte what it was before the base prompt had sections.
-    expect(`${text}\n`).toBe(saved("kit.thread"));
+    await expect(text).toMatchFileSnapshot(
+      "./sections/snapshots/kit.thread.txt",
+    );
   });
 
   it("tells a session without tools that its final message is its reply", async () => {

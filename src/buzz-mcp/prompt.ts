@@ -1,10 +1,12 @@
 // What the Buzz tools tell an agent outside their own descriptions: the
 // product help line, and the turn instructions the tools' routing depends
-// on. The posting conventions are a section of the base prompt
+// on. How to post is in the base prompt's sections
 // (features/agent-harness/sections).
+import productHelp from "../features/agent-harness/sections/product-help.md?raw";
 
-export const BUZZ_HELP_PROMPT =
-  "When someone asks how to use Buzz, read buzz_help for product guidance bundled with this version. Check available tools and context before promising a capability.";
+/** The base prompt's Product help section, which a client that connects
+ * without the base prompt gets as the server's instructions. */
+export const BUZZ_HELP_PROMPT = productHelp.trim();
 
 /** The turn instruction for a conversation whose messages stay at the
  * channel's top level; the tools refuse a reply into a thread there. */

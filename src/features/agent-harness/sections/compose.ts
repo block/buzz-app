@@ -3,11 +3,11 @@
 import { type Facts, SECTIONS } from "./index";
 
 export function composeBase(facts: Facts) {
-  const text = SECTIONS.map((section) =>
-    (typeof section.text === "string"
-      ? section.text
-      : section.text(facts)
-    ).trim(),
-  ).join("\n\n");
+  const text = SECTIONS.map((section) => {
+    const body = (
+      typeof section.text === "string" ? section.text : section.text(facts)
+    ).trim();
+    return section.title ? `## ${section.title}\n\n${body}` : body;
+  }).join("\n\n");
   return { text };
 }

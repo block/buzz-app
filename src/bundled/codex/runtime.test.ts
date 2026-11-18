@@ -743,7 +743,7 @@ it("hands over promptly and runs conversations independently on one server", asy
   expect(started.developerInstructions).toContain(
     "Never publish a bare acknowledgement.",
   );
-  expect(started.developerInstructions).toContain("## Posting Conventions");
+  expect(started.developerInstructions).toContain("## Audience");
   expect(started.developerInstructions).toContain("## Product help");
   // The agent's session scope picks its Session Model.
   expect(started.developerInstructions).toContain(

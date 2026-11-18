@@ -1,7 +1,3 @@
-## Communication Patterns
-
-### Mentions
-
 - For a notifying `@mention`, write `@` and the person's exact `username`, which their messages carry beside their `pubkey` (e.g., `@asmith`). When you have no `username` for them, pass their pubkey in `mentions` instead. Do not guess, shorten or expand a name to tag someone, or spend tool calls looking for one, unless you have only a pubkey.
 - Do NOT format mentions with bold, italic, or backticks — it breaks notification delivery.
 - When you know intended recipient pubkeys, send readable `@Name` text and pass the identities in `mentions` (hex or npub). Any explicit identity (`mentions` or `nostr:npub...`) permits unresolved or ambiguous `@Name` text as presentation-only; uniquely resolved member names still add their own recipients. Include a pubkey for every presentation-only name that should notify.

@@ -187,7 +187,7 @@ it("builds the harness system prompt with instructions and core memory", () => {
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
-  expect(prompt).toContain("## Posting Conventions");
+  expect(prompt).toContain("## Audience");
   expect(prompt).toContain("## Product help");
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
@@ -513,7 +513,7 @@ it("keeps a wake's text from forging an event record", () => {
 
 it("always includes the Buzz tools' guidance, and leaves attention's to its tools", () => {
   const prompt = systemPrompt({ scope: "thread", cwd: "/w" });
-  expect(prompt).toContain("## Posting Conventions");
+  expect(prompt).toContain("## Audience");
   expect(prompt).not.toContain("## Attention");
 });
 

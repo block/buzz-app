@@ -1,16 +1,25 @@
 // The base prompt's sections, in prompt order. Each is one topic with a
 // stable id and its text in a file beside this one: `<id>.md`, and
 // `<id>.<variant>.md` for each other text the host can pick.
-import { BUZZ_HELP_PROMPT } from "../../../buzz-mcp/prompt";
+//
+// A text may name a tag, a tool, a file, or a locked section by its title.
+// It must not name another section or say "above" or "below": a section that
+// is not locked can be off or replaced, so the reference could point at
+// nothing.
+import audience from "./audience.md?raw";
 import autonomy from "./autonomy.md?raw";
 import callbacks from "./callbacks.md?raw";
+import commitIdentity from "./commit-identity.md?raw";
 import engineering from "./engineering.md?raw";
-import general from "./general.md?raw";
+import etiquette from "./etiquette.md?raw";
 import intro from "./intro.md?raw";
 import memory from "./memory.md?raw";
 import mentions from "./mentions.md?raw";
-import posting from "./posting.md?raw";
+import productHelp from "./product-help.md?raw";
+import progress from "./progress.md?raw";
+import publishing from "./publishing.md?raw";
 import repoConventions from "./repo-conventions.md?raw";
+import routing from "./routing.md?raw";
 import sessionModelChannel from "./session-model.channel.md?raw";
 import sessionModelCommunity from "./session-model.community.md?raw";
 import sessionModelInChannel from "./session-model.in-channel.md?raw";
@@ -20,7 +29,10 @@ import sessionModelStandalone from "./session-model.standalone.md?raw";
 import sessionModelThread from "./session-model.thread.md?raw";
 import threading from "./threading.md?raw";
 import tools from "./tools.md?raw";
+import trust from "./trust.md?raw";
 import turnContract from "./turn-contract.md?raw";
+import waiting from "./waiting.md?raw";
+import workingLocation from "./working-location.md?raw";
 import workspaceLayout from "./workspace-layout.md?raw";
 import workspaceLayoutOwnFolder from "./workspace-layout.own-folder.md?raw";
 
@@ -41,36 +53,92 @@ export type Facts = Readonly<{
 }>;
 
 export type Section = Readonly<{
+  /** Never changes once released. */
   id: string;
-  /** The section's text. A function is a host variant section: the facts
-   * pick a complete text. A string is locked: nothing replaces or removes
-   * it. */
+  /** The heading the host prints. Only the opening lines have none. */
+  title?: string;
+  /** The owner can turn the section off or give their own text. */
+  owner?: true;
+  /** A plugin can give its own text in a conversation it manages. */
+  plugin?: true;
+  /** The default text. A function is a host variant section: the facts pick
+   * a complete text. */
   text: string | ((facts: Facts) => string);
 }>;
 
 export const SECTIONS: readonly Section[] = [
   { id: "intro", text: intro },
-  { id: "turn-contract", text: turnContract },
-  { id: "tools", text: tools },
-  { id: "mentions", text: mentions },
-  { id: "callbacks", text: callbacks },
-  { id: "threading", text: threading },
-  { id: "general", text: general },
+  { id: "turn-contract", title: "Incoming Turn Contract", text: turnContract },
+  { id: "trust", title: "Trust", text: trust },
+  { id: "tools", title: "Buzz Tools", text: tools },
+  { id: "mentions", title: "Mentions", text: mentions },
+  {
+    id: "callbacks",
+    title: "Callback Mentions",
+    plugin: true,
+    text: callbacks,
+  },
+  { id: "threading", title: "Threading", text: threading },
+  { id: "routing", title: "Routing", plugin: true, text: routing },
+  {
+    id: "publishing",
+    title: "Publishing",
+    owner: true,
+    plugin: true,
+    text: publishing,
+  },
+  {
+    id: "progress",
+    title: "Progress",
+    owner: true,
+    plugin: true,
+    text: progress,
+  },
+  { id: "waiting", title: "Waiting", text: waiting },
+  { id: "etiquette", title: "Etiquette", owner: true, text: etiquette },
+  { id: "audience", title: "Audience", text: audience },
   {
     id: "workspace-layout",
+    title: "Workspace Layout",
     text: ({ ownFolder }) =>
       ownFolder
         ? workspaceLayoutOwnFolder.replace("{workspace}", () => ownFolder)
         : workspaceLayout,
   },
-  { id: "memory", text: memory },
-  { id: "engineering", text: engineering },
-  { id: "repo-conventions", text: repoConventions },
-  { id: "autonomy", text: autonomy },
-  { id: "posting", text: posting },
-  { id: "product-help", text: `## Product help\n\n${BUZZ_HELP_PROMPT}` },
+  { id: "memory", title: "Agent Memory", owner: true, text: memory },
+  {
+    id: "engineering",
+    title: "Engineering Discipline",
+    owner: true,
+    text: engineering,
+  },
+  {
+    id: "repo-conventions",
+    title: "Working in the Repo",
+    text: repoConventions,
+  },
+  {
+    id: "commit-identity",
+    title: "Commit identity",
+    owner: true,
+    text: commitIdentity,
+  },
+  {
+    id: "working-location",
+    title: "Working location",
+    plugin: true,
+    text: workingLocation,
+  },
+  {
+    id: "autonomy",
+    title: "Autonomy",
+    owner: true,
+    plugin: true,
+    text: autonomy,
+  },
   {
     id: "session-model",
+    title: "Session Model",
     text: ({ scope, place }) =>
       scope === "community"
         ? sessionModelCommunity
@@ -86,4 +154,10 @@ export const SECTIONS: readonly Section[] = [
                 ? sessionModelInThread
                 : sessionModelInConversation,
   },
+  { id: "product-help", title: "Product help", text: productHelp },
 ];
+
+/** Whether no setting, API or plugin can replace or remove the section's
+ * text. */
+export const locked = (section: Section) =>
+  typeof section.text === "string" && !section.owner && !section.plugin;

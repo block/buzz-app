@@ -15163,6 +15163,80 @@ it("unchecking the pill's only agent, which the text also tags, changes nothing"
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
 });
 
+it("unchecking the pill's only agent, which the opening tag also names, changes nothing", async () => {
+  writeView("scope", "draft:channel", {
+    text: "@Ada hi",
+    recipients: [{ pubkey: first.pubkey, name: "Ada", start: 0, end: 4 }],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const { h, ada, sendingTo } = mountSoloAgents({ unpicked: true });
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  expect(h.input()).toHaveValue("@Ada hi");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[1]).toBe("@Ada hi");
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+});
+
+it("removing an agent from opening tags that still open the draft takes it out of the pill for good", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea @Cam hi",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 5, end: 9 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  const { h, ada, bea, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.input()).toHaveValue("@Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  // With the tags gone, the pill's agents come back without Bea.
+  h.fill("hi");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+});
+
+it("a person who joins before Send stops the pill's agents from going along with a later tag", async () => {
+  const person = "e".repeat(64);
+  writeView("scope", "draft:channel", {
+    text: "hi @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 3, end: 7 }],
+  });
+  const { h, sendingTo } = mountSoloAgents({
+    refreshed: [first.pubkey, second.pubkey, person],
+  });
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  h.submit();
+  expect(
+    await screen.findByText("Someone joined this chat. Tag an agent to send."),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("an outside agent that joins before Send can't take a full pill past 32 recipients", async () => {
   const many = Array.from({ length: 33 }, (_, index) => ({
     pubkey: index.toString(16).padStart(64, "c"),

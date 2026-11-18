@@ -164,7 +164,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       ]),
       result("r", "3 messages"),
       send("s1", "Looks good."),
-      result("s1", "sent"),
+      result("s1", `sent ${"a".repeat(64)}`),
       send("n1", "Nested.", "reply_in_subthread"),
       result("n1", "sent"),
       send("s2", "One more thing."),
@@ -182,6 +182,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       type: "message",
       text: "Looks good.",
       posted: true,
+      messageId: "a".repeat(64),
     }),
     expect.objectContaining({ type: "message", text: "Nested.", posted: true }),
     expect.not.objectContaining({ posted: true }),
@@ -949,7 +950,12 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
   // The runtime's own method, with only what it reads.
   const latest = (held: readonly TranscriptTurn[]) =>
     ClaudeRuntime.prototype.latestTurns.call(
-      { spawn, reads: () => undefined, prompts: () => prompts } as never,
+      {
+        spawn,
+        reads: () => undefined,
+        prompts: () => prompts,
+        place: (_agent: string, _key: string, workspace: string) => workspace,
+      } as never,
       conversation,
       "~/.buzz",
       false,

@@ -85,7 +85,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         plugin.enabledByDefault,
         ![
           "buzz.pi",
-          "buzz.todos",
           "buzz.usage",
           "buzz.relay-notes",
           "buzz.reminders",
@@ -93,6 +92,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.mesh-compute",
           "buzz.focus",
           "buzz.charts",
+          "buzz.file-viewer",
           "buzz.drafts-and-sent",
           "buzz.changesets",
         ].includes(plugin.manifest.id),
@@ -228,38 +228,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.pairing/mobile"),
       pairingCard,
     );
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    const canvas = services.relay.snapshot().session.canvas;
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos")
-          ?.channelLauncher,
-      ),
-    );
-    const firstTodos = services.panels
-      .snapshot()
-      .find((p) => p.pluginId === "buzz.todos");
-    await services.plugins.change("disable", "buzz.todos");
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    assert.equal(services.relay.snapshot().session.canvas, canvas);
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      ),
-    );
-    assert.notEqual(
-      services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      firstTodos,
-    );
-    await services.plugins.change("disable", "buzz.todos");
     assert.deepEqual(
       services.settingsCards
         .snapshot()

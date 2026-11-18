@@ -45,6 +45,20 @@ if (outbox?.supports(9)) {
 }
 ```
 
+When work keyed by the new event's ID must finish before the event publishes,
+use `outbox.sendHeld(input, hold, recovery?, active?)`. Each delivery attempt in
+this window calls `hold(id)` after signing and publishes only after it resolves.
+Only that event waits, and it takes no delivery slot while it waits. In a chat
+this device is starting, local agents also get the message only after the hold.
+The hold counts toward the attempt's delivery deadline (10 seconds by default).
+A rejected hold, or one still pending at the deadline, fails the delivery
+without publishing; Retry calls the hold again. The entry is saved as `held`.
+After a reload its hold is gone, so a plain `retry(id)` throws and the app's
+Retry controls say to retry from the plugin that sent it. The plugin retries
+with `outbox.retry(id, active, hold)`, which publishes only after the new hold
+resolves. Older hosts omit the method: check `outbox.sendHeld` before calling
+it.
+
 `session.read(filters, { signal })` is a finite read merged with matching local
 operations at completion. `session.observe(filters)` additionally subscribes to
 outbox changes, exposing immutable `{ status, events, error }` snapshots. Own the
@@ -98,8 +112,8 @@ against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable
 rosters still fail closed. Standalone recipe saves use writer-backed exact-ID
 confirmation; recipe head and catalog reads remain replica-eligible. For
-writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
-the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
+writer-backed Canvas editor reads and replica-eligible template copies, see
+the [Canvas/outbox contract](plugin-architecture.md#canvas-saves).
 
 ## Managed-agent registration (kind 30177)
 
@@ -489,6 +503,10 @@ A channel-only link (`buzz://channel/<id>`) shows what the reader may see about
 that channel. `channels.describe(id)` answers from local evidence and never
 reads: `found` with the name and flags, `withheld`, or `unknown`. `joined`
 comes from the viewer in the roster, so a channel restored from cache counts.
+An unreadable `found` reference has `answered: true` only when a completed
+lookup admitted no readable channel. Missing `looking` alone does not establish
+an answer: it also occurs before demand and during an initial failure's backoff.
+The answer resets with access/cache state and is retained during rechecks.
 A public channel the viewer left is `found` from its signed open metadata; that
 names it but does not restore member reads. `channels.refer(id)` demands a
 background lookup once the list is ready, until the returned release; a
@@ -870,8 +888,10 @@ a fresh hash of signed fields and the exact previously verified signature. It
 still returns newly owned frozen data and performs every HTTP read and access
 check. It is not an event/query cache or authorization proof. Live subscriptions
 retain up to 16,384 proofs across reconnects; direct `eventDto` calls are uncached.
-Desktop finite reads and live events send signature batches to the existing Rust
-libsecp256k1 verifier off the renderer thread. JavaScript still checks wire shape
+Desktop finite reads, live events, and cached channel discovery/history/profile
+restoration send signature checks to the existing Rust libsecp256k1 verifier off
+the renderer thread. Cached restoration retains JavaScript verification as a
+fallback if the host is unavailable or rejects the cached batch. JavaScript still checks wire shape
 and content hashes. Live EVENT/EOSE/CLOSED delivery stays ordered, with bounded
 pending work; overflow or host failure reconnects from before unprocessed frames.
 Browser and broker callers retain JavaScript signature verification.

@@ -475,3 +475,98 @@ it("disconnect during a coalesced cache clear does not reconnect", async () => {
   expect(data.snapshot().status).toBe("disconnected");
   expect(connections).toHaveLength(1);
 });
+it.each([
+  ["at once", false],
+  ["after its first attempt times out", true],
+])(
+  "reload reads a fresh saved head from the relay again %s",
+  async (_, timesOut) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const relay = keypair();
+    const { data, connections, source, restored } = setup({ relay });
+    const author = keypair();
+    await restored();
+    connections[0]?.resolve(source);
+    await vi.waitFor(() =>
+      expect(data.snapshot()).toMatchObject({ status: "ready" }),
+    );
+    expect(data.snapshot().cached).toBeUndefined();
+    const before = data.snapshot();
+    // The saved head is fresh, so the live session showed it without asking.
+    expect(before.session.channels.window("alpha").rows[0]?.content).toBe(
+      "Saved history",
+    );
+    const headQuery = vi.mocked(source.query);
+    headQuery.mockImplementation(async (filters) =>
+      filters.some((f) => f.kinds?.includes(39002))
+        ? [
+            roster(relay, "alpha", [source.viewer]),
+            metadata(relay, "alpha", "Alpha"),
+          ]
+        : filters.some((f) => f["#h"]?.includes("alpha"))
+          ? [
+              message(author, "alpha", "Relay reply", 30),
+              bounds(relay, "alpha", "head", {
+                has_more: false,
+                next_cursor: null,
+              }),
+            ]
+          : [],
+    );
+
+    data.reload();
+    expect(data.snapshot()).toMatchObject({
+      status: "connecting",
+      reloading: true,
+    });
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    expect(data.snapshot().restoring).toBeUndefined();
+    expect(data.snapshot().generation).toBeGreaterThan(before.generation);
+    if (timesOut) {
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(data.snapshot()).toMatchObject({
+        status: "error",
+        retrying: true,
+        reloading: true,
+      });
+      // Its automatic retry is still the reload.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(data.snapshot()).toMatchObject({
+        status: "connecting",
+        reloading: true,
+      });
+      await vi.waitFor(() => expect(connections).toHaveLength(3));
+    }
+    connections.at(-1)?.resolve(source);
+    await vi.waitFor(() =>
+      expect(
+        data.snapshot().session.channels.window("alpha").rows[0]?.content,
+      ).toBe("Relay reply"),
+    );
+    expect(data.snapshot()).toMatchObject({ status: "ready" });
+    expect(data.snapshot().reloading).toBeUndefined();
+    expect(data.snapshot().session).not.toBe(before.session);
+  },
+);
+it("reload keeps its state through a denial until disconnected, and does nothing once disconnected", async () => {
+  const { data, connections, source, restored } = setup();
+  await restored();
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  data.reload();
+  await vi.waitFor(() => expect(connections).toHaveLength(2));
+  connections.at(-1)?.reject(new ReadError("denied", "Removed"));
+  await vi.waitFor(() =>
+    expect(data.snapshot()).toMatchObject({
+      status: "error",
+      denied: true,
+      reloading: true,
+    }),
+  );
+  data.disconnect();
+  expect(data.snapshot().reloading).toBeUndefined();
+  const count = connections.length;
+  data.reload();
+  expect(data.snapshot().status).toBe("disconnected");
+  expect(connections).toHaveLength(count);
+});

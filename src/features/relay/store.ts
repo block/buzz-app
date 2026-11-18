@@ -141,6 +141,9 @@ export type ChannelStoreOptions = {
   initialChannelId?: string | undefined;
   /** Warm every roster channel's head in the background before it is opened. */
   warm?: boolean;
+  /** Reads everything from the relay again: skips the saved startup roster,
+   * and no head saved before this store counts as fresh. */
+  revalidate?: boolean;
   persistence?: HeadPersistence;
   maxDiscoveryBytes?: number;
   maxHeadBytes?: number;
@@ -393,6 +396,12 @@ export function createChannelStore(
   const directoryListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
   let intent: string | undefined = options.initialChannelId;
+  /** Heads saved before a revalidating store opened are never fresh. */
+  const freshAfter = options.revalidate ? now() : -Infinity;
+  const fresh = (head: { cached: boolean; savedAt: number }) =>
+    !head.cached &&
+    head.savedAt >= freshAfter &&
+    now() - head.savedAt < FRESH_FOR;
   let current: string | undefined;
   const mediaIntents: string[] = [];
   let hydration: Promise<void> | undefined;
@@ -3461,7 +3470,7 @@ export function createChannelStore(
         if (!transport || !authorized(channelId)) continue;
         if (windows.has(channelId)) continue; // An open channel is demand-owned.
         const head = heads.peek(channelId);
-        if (head && !head.cached && now() - head.savedAt < FRESH_FOR) continue;
+        if (head && fresh(head)) continue;
         await requestHead(channelId, "background").catch(() => {});
       }
     } finally {
@@ -3665,7 +3674,8 @@ export function createChannelStore(
     };
   }
   function restore() {
-    if (!prepared || !persistence?.readStartup) return Promise.resolve();
+    if (!prepared || !persistence?.readStartup || options.revalidate)
+      return Promise.resolve();
     startup ??= restoreStartup();
     return startup;
   }
@@ -3810,12 +3820,7 @@ export function createChannelStore(
           const previous = heads.peek(channelId);
           // Revalidate a retained head on revisit after its freshness lease. Do not
           // replace a paged history reader with a new head merely because time passed.
-          if (
-            previous &&
-            state.atHead &&
-            !state.controller &&
-            (previous.cached || now() - previous.savedAt >= FRESH_FOR)
-          )
+          if (previous && state.atHead && !state.controller && !fresh(previous))
             void loadPage(state, null);
         }
         return;
@@ -3825,7 +3830,7 @@ export function createChannelStore(
         adoptHead(state, head);
         prepareMedia(channelId);
       }
-      if (head && !head.cached && now() - head.savedAt < FRESH_FOR) return;
+      if (head && fresh(head)) return;
       if (!head) setWindow(state, { status: "loading", error: undefined });
       void loadPage(state, null);
     },
@@ -3841,11 +3846,7 @@ export function createChannelStore(
       intent = channelId;
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
-      if (
-        saveData() ||
-        preparing ||
-        (head && !head.cached && now() - head.savedAt < FRESH_FOR)
-      ) {
+      if (saveData() || preparing || (head && fresh(head))) {
         relayDebug(
           "prepare skip",
           channelId.slice(0, 8),

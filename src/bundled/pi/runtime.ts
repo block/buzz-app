@@ -1109,7 +1109,7 @@ export class PiRuntime {
     const receipts = [
       ...(entry?.active.get(call.conversation)?.values() ?? []),
     ];
-    const client =
+    const client = () =>
       entry?.handle &&
       appClient(entry.handle, {
         protectionContext: () =>

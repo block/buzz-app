@@ -1886,7 +1886,7 @@ export class ClaudeRuntime {
       (cwd: string): ToolServer =>
       async (conversation, message, signal, check) => {
         const handle = entry.handle;
-        const client =
+        const client = () =>
           handle &&
           appClient(handle, {
             // Its PreToolUse hook reviews every tool, Buzz's included.

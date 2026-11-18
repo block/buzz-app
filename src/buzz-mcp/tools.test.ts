@@ -157,7 +157,8 @@ it.each([false, true])(
         // The shared session gate checks these optional hooks before dispatch.
         if (property === "protect")
           return protectedSession ? protect : undefined;
-        if (property === "nativeToolGate") return undefined;
+        if (property === "nativeToolGate" || property === "settle")
+          return undefined;
         // The tool list checks whether settings and the Bestie can change here.
         if (property === "settings" || property === "bestie") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);

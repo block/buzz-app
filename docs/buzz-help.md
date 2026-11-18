@@ -939,7 +939,10 @@ and are asked to sign in again in Buzz.
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
   U marks it unread, and Delete deletes your own message.
   With message text selected, Q quotes it into the draft.
-  ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
+  ⌘1–9 switch communities, and ⇧Esc marks everything read. ⌘R (Ctrl+R)
+  reloads Buzz in place: every community reconnects and reads its
+  conversations from the relay again, and running agents keep working. ⇧⌘R
+  (Ctrl+Shift+R) reloads the whole app, which restarts running agents. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings.

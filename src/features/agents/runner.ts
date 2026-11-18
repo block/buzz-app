@@ -480,6 +480,11 @@ export type RunnerHost = {
   watchReadFailuresChanged(): void;
   /** The agent, while its community is live to run it in. */
   ready(key: AgentKey): Agent | undefined;
+  /** Whether the agent's community is reloading in place: it starts nothing
+   * new until ready, but keeps custody and its turn meanwhile. */
+  reloading?(key: AgentKey): boolean;
+  /** Waits while the agent's community reloads in place (`AgentHandle.settle`). */
+  settle?(agent: Agent, signal: AbortSignal): Promise<void>;
   /** A running agent, in any community. */
   agent(key: AgentKey): Agent | undefined;
   /** The membership's saved Attention, even while it is disconnected. */
@@ -1060,7 +1065,10 @@ export class AgentRunners {
   handle(key: AgentKey, pluginId?: string, run = false) {
     const held = () => {
       const runner = this.runners.get(key);
-      const agent = this.host.ready(key);
+      // A reload in place keeps the handle; its calls wait for the session.
+      const agent =
+        this.host.ready(key) ??
+        (this.host.reloading?.(key) ? this.host.agent(key) : undefined);
       return runner?.type &&
         (pluginId === undefined || runner.type.pluginId === pluginId) &&
         !runner.transitioning &&
@@ -2901,6 +2909,8 @@ export class AgentRunners {
       const agent = this.host.ready(runner.key);
       const type = runner.type;
       const run = type?.run;
+      // A reload pauses new starts; custody and queued work wait for it.
+      if (!agent && type && run && this.host.reloading?.(runner.key)) break;
       // An agent this copy cannot run is left to another copy of the app.
       if (!agent || !type || !run) {
         if (agent) {
@@ -3445,6 +3455,8 @@ export class AgentRunners {
           this.host.remembered(agent.key, slug, body);
           return event;
         },
+        settle: async (signal: AbortSignal) =>
+          this.host.settle?.(agent, AbortSignal.any([lifetime, signal])),
         agentTypes: () => this.host.agentTypes(),
         // Drafts outlive the run's handover deadline, as a turn still working may
         // submit one, but not the agent or its type.

@@ -415,6 +415,7 @@ async function setup({
     fail: fake.fail,
     relay: fake.relay,
     reconnecting: fake.reconnecting,
+    reload: fake.reload,
     recover: fake.recover,
     unrouted: fake.unrouted,
     learned: fake.learned,
@@ -23232,4 +23233,118 @@ it("retries a proposal after saving a synced settings revision and failing to re
   } finally {
     await ctx.fiber.dispose();
   }
+});
+
+describe("reload in place", () => {
+  it("keeps custody and the working turn through a reload that times out, retries and is ready", async () => {
+    const { service, run, emit, native, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    let finish: () => void = () => {};
+    run.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    emit({
+      events: [
+        event("1", { tags: [["p", bot]] }),
+        event("2", { tags: [["p", bot]] }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    reload();
+    await settle();
+    // Its attempt timed out, and its automatic retry is still the reload.
+    reload({});
+    await settle();
+    reload();
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    connect(true);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    finish();
+    // The queued mention starts once the community is ready again.
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(native.release).not.toHaveBeenCalled();
+  });
+
+  it("keeps custody through a reload that fails for good, until disconnected", async () => {
+    const { service, native, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+    reload();
+    reload({ denied: true });
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    connect(false);
+    await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+  });
+
+  it("releases custody when a reload is disconnected", async () => {
+    const { service, native, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+    reload();
+    await settle();
+    connect(false);
+    await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+  });
+
+  it("holds a mem_get during a reload and answers it from the new session", async () => {
+    const { service, plugin, relay, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Expected active handle");
+    const before = relay.snapshot().session;
+    const build = () => {
+      // What a harness reads when it builds its client.
+      const session = relay.snapshot().session;
+      return appClient(handle, {
+        read: vi.fn(),
+        memories: async () => ({
+          entries: [
+            {
+              slug: session === before ? "old" : "new",
+              body: "",
+              createdAt: 1,
+            },
+          ],
+          partial: false,
+        }),
+      });
+    };
+    reload();
+    let answered: unknown;
+    const call = callSessionTool(build, {}, "mem_get", {}).then(
+      (reply) => (answered = reply),
+    );
+    await settle();
+    expect(answered).toBeUndefined();
+    connect(true);
+    await call;
+    expect(String(answered)).toMatch(/^new /);
+  });
+
+  it("rejects a mem_get waiting on a reload when its call is canceled", async () => {
+    const { service, plugin, reload } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Expected active handle");
+    const canceled = new AbortController();
+    reload();
+    const call = callSessionTool(
+      () =>
+        appClient(handle, {
+          read: vi.fn(),
+          callSignal: canceled.signal,
+          memories: async () => ({ entries: [], partial: false }),
+        }),
+      {},
+      "mem_get",
+      {},
+    );
+    canceled.abort(new Error("canceled"));
+    await expect(call).rejects.toThrow("canceled");
+  });
 });

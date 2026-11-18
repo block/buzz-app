@@ -103,6 +103,9 @@ export interface BuzzClient {
    * host only supplies a lifetime signal. Keep it across waits. */
   readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
+  /** Waits while the agent's community reloads in place; a call built from a
+   * client builder is built again after it. */
+  settle?(): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */
   readonly nativeToolGate?: true;
   readonly pubkey: string;

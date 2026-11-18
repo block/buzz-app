@@ -109,7 +109,7 @@ import {
   type AgentHookContext,
   type AgentHookDispatchOptions,
 } from "./hooks";
-import { ownerReads } from "./reads";
+import { ownerReads, readyOwnerReads } from "./reads";
 import { createToolOperation, type AgentToolProvider } from "./tool-operation";
 import {
   assignConversationFolder as assignFolder,
@@ -581,6 +581,10 @@ export type AgentHandle = Readonly<{
   relay: string;
   name: string;
   owner: string;
+  /** Waits while its community reloads in place, until ready again; at once
+   * otherwise. Resolves when the reload fails too, so the call fails as on
+   * any reconnect. */
+  settle?(signal: AbortSignal): Promise<void>;
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
@@ -1952,6 +1956,9 @@ const CLEANUP_TIMEOUT_MS = 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
+/** How long a tool call waits for a reloading community; past the 8-second
+ * connection deadline, so a failed reload reports its own error. */
+const RELOAD_WAIT_MS = 10_000;
 /** How often agents are said to be online; the relay keeps it 180 seconds. */
 const PRESENCE_MS = 60_000;
 /** The most agents one presence event names. */
@@ -2583,6 +2590,16 @@ export class AgentsService extends Service implements Agents {
       },
       watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
       ready: (key) => this.ready(key),
+      reloading: (key) => this.reloading(key),
+      settle: async (agent, signal) => {
+        if (!this.reloading(agent.key)) return;
+        await readyOwnerReads(
+          this.relay(agent.key),
+          agent,
+          AbortSignal.any([signal, AbortSignal.timeout(RELOAD_WAIT_MS)]),
+        ).catch(() => {});
+        signal.throwIfAborted();
+      },
       agent: (key) => this.agent(key),
       savedAttention: (key) => this.records[key]?.attention ?? EMPTY,
       member: (agent, event) => this.member(agent, event),
@@ -2957,34 +2974,54 @@ export class AgentsService extends Service implements Agents {
         }));
       },
       soloWorkspaces: (agent) => {
-        const binding = this.bindingOf(agent);
-        if (!binding) return undefined;
-        const check = (signal: AbortSignal) => {
-          signal.throwIfAborted();
-          binding.controller.signal.throwIfAborted();
-          if (this.bindingOf(agent) !== binding || !this.liveMember(agent.key))
+        if (!this.bindingOf(agent)) return undefined;
+        // Each operation acts in the session live when it starts, which a
+        // reload replaces; its later reads and writes stay fenced to it.
+        const operation = () => {
+          const binding = this.bindingOf(agent);
+          if (!binding)
             throw new Error(
               "The requesting agent's community is no longer connected",
             );
+          return { binding, ...fenced(binding) };
         };
-        const list = async (signal: AbortSignal) => {
-          check(signal);
-          if (!binding.session.snapshotRead || !binding.session.relayAuthor)
-            throw new Error("Solo workspace authority is unavailable");
-          const preferences = binding.session.sidebarPreferences;
-          await preferences.refresh();
-          check(signal);
-          const state = preferences.snapshot();
-          if (state.status !== "ready" || state.cached || !preferences.writable)
-            throw new Error(state.error ?? "Solo workspaces are unavailable");
-          return (state.data?.sections ?? []).map(({ id, name }) => ({
-            id,
-            name,
-          }));
+        const fenced = (binding: Binding) => {
+          const check = (signal: AbortSignal) => {
+            signal.throwIfAborted();
+            binding.controller.signal.throwIfAborted();
+            if (
+              this.bindingOf(agent) !== binding ||
+              !this.liveMember(agent.key)
+            )
+              throw new Error(
+                "The requesting agent's community is no longer connected",
+              );
+          };
+          const list = async (signal: AbortSignal) => {
+            check(signal);
+            if (!binding.session.snapshotRead || !binding.session.relayAuthor)
+              throw new Error("Solo workspace authority is unavailable");
+            const preferences = binding.session.sidebarPreferences;
+            await preferences.refresh();
+            check(signal);
+            const state = preferences.snapshot();
+            if (
+              state.status !== "ready" ||
+              state.cached ||
+              !preferences.writable
+            )
+              throw new Error(state.error ?? "Solo workspaces are unavailable");
+            return (state.data?.sections ?? []).map(({ id, name }) => ({
+              id,
+              name,
+            }));
+          };
+          return { check, list };
         };
         return {
-          list,
+          list: async (signal: AbortSignal) => operation().list(signal),
           prepare: async (workspace, members, signal) => {
+            const { binding, check, list } = operation();
             if (!members.includes(binding.viewer))
               throw new Error(
                 "Include your owner in members to file a Solo chat",
@@ -7737,6 +7774,16 @@ export class AgentsService extends Service implements Agents {
   private agent(key: AgentKey) {
     return this.state.running.find((agent) => agent.key === key);
   }
+  /** Whether the running agent's community is reloading in place. */
+  private reloading(key: AgentKey) {
+    const agent = this.agent(key);
+    const origin = agent && originOf(agent.relay);
+    return (
+      !!origin &&
+      agent.owner === this.communities.snapshot().viewer &&
+      !!this.bound.get(origin)?.relay.snapshot().reloading
+    );
+  }
   /** The agent, while its community's session is live to run it in. */
   private ready(key: AgentKey) {
     const agent = this.agent(key);
@@ -8202,9 +8249,12 @@ export class AgentsService extends Service implements Agents {
       this.notify();
       notified = true;
     }
+    // A community reloading in place keeps its agents held meanwhile.
     this.runners.resume(
       new Set(
-        running.filter((agent) => this.bindingOf(agent)).map((a) => a.key),
+        running
+          .filter((agent) => this.bindingOf(agent) || this.reloading(agent.key))
+          .map((a) => a.key),
       ),
     );
     this.announce();

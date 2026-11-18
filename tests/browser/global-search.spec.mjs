@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
+import { closeSettings } from "./navigation.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 // The palette scales in and its content slides in after a delay. Both hold
@@ -778,4 +779,77 @@ test("inline search exposes selected grid rows and hands focus to the destinatio
       target.evaluate((node) => node.contains(document.activeElement)),
     )
     .toBe(true);
+});
+
+test("search result keys follow a saved rebind, leave free arrows to the text and update the hints", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const apple = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform),
+  );
+  // ⌃K and ⌃J on a Mac; elsewhere Ctrl+K opens search, so previous is Ctrl+P.
+  const previousKey = apple ? "k" : "p";
+  const modifier = apple ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  const region = page.getByRole("region", { name: "Shortcuts", exact: true });
+  for (const [title, chord] of [
+    ["Previous search result", `Control+${previousKey}`],
+    ["Next search result", "Control+j"],
+  ]) {
+    const row = region.getByRole("article", { name: title, exact: true });
+    await button(row, `Change shortcut for ${title}`).click();
+    await page
+      .getByRole("textbox", { name: `New shortcut for ${title}` })
+      .press(chord);
+    await expect(row.getByText("Modified")).toBeVisible();
+  }
+  await closeSettings(page);
+  await page.reload();
+  const trigger = button(page, "Search Buzz");
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  await entered(dialog);
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+  await expect(input).toBeFocused();
+  const hints = dialog.locator(".search-peek-keys kbd");
+  await expect(hints.nth(0)).toHaveText(
+    apple ? "⌃K" : `Ctrl+${previousKey.toUpperCase()}`,
+  );
+  await expect(hints.nth(1)).toHaveText(apple ? "⌃J" : "Ctrl+J");
+  const first = dialog
+    .locator(
+      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
+    )
+    .locator("[data-search-result]");
+  const second = dialog
+    .locator(
+      '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
+    )
+    .locator("[data-search-result]")
+    .first();
+  await expect(second).toBeVisible();
+  // Down is no longer a result key.
+  await input.press("ArrowDown");
+  await expect(input).not.toHaveAttribute("aria-activedescendant");
+  for (const [chord, result] of [
+    ["Control+j", first],
+    ["Control+j", second],
+    [`Control+${previousKey}`, first],
+  ]) {
+    await input.press(chord);
+    await expect(input).toBeFocused();
+    await expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      await result.getAttribute("id"),
+    );
+  }
+  await page.screenshot({ path: test.info().outputPath("rebound.png") });
+  // Unmatched keys still edit: Up moves the caret to the start.
+  await input.fill("lpha");
+  await input.press("ArrowUp");
+  await input.press("a");
+  await expect(input).toHaveValue("alpha");
 });

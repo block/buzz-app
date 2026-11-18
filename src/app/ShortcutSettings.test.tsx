@@ -317,6 +317,8 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       "Reset interface size",
       "Search Buzz",
       "Search this conversation",
+      "Previous search result",
+      "Next search result",
       "Open Settings",
       "Show keyboard shortcuts",
       "Set a status",
@@ -674,9 +676,9 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
     );
     const title = "Open Settings";
     await user.click(change(title));
-    fireEvent.keyDown(capture(title), { key: "a", ctrlKey: true });
+    fireEvent.keyDown(capture(title), { key: "a" });
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Include Command or Option so ordinary typing keeps working.",
+      "Include Command, Control or Option so ordinary typing keeps working.",
     );
     // ⌥⇧⌘V is the browser plain paste; Option makes the key ◊ on Apple layouts.
     fireEvent.keyDown(capture(title), {
@@ -706,6 +708,14 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
     );
     expect(fireEvent.keyDown(document.body, chord)).toBe(false);
     expect(h.runs.settings).toHaveBeenCalledOnce();
+    // Control alone is a chord there too, such as ⌃J.
+    await user.click(change(title));
+    fireEvent.keyDown(capture(title), { key: "j", ctrlKey: true });
+    expect(h.bindings.resolve("settings")).toEqual([{ key: "j", ctrl: true }]);
+    expect(fireEvent.keyDown(document.body, { key: "j", ctrlKey: true })).toBe(
+      false,
+    );
+    expect(h.runs.settings).toHaveBeenCalledTimes(2);
   } finally {
     await h.dispose();
   }

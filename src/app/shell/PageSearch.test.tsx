@@ -15,7 +15,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { BestieConversationContext } from "./bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
-import { createShortcutBindings } from "../../features/shortcuts/preferences";
+import {
+  createShortcutBindings,
+  SHORTCUT_BINDINGS_KEY,
+} from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { createRelaySession } from "../../features/relay/session";
@@ -1507,6 +1510,7 @@ function memorySearch() {
       expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
     );
   return {
+    bindings,
     navigate,
     field,
     closed,
@@ -1590,6 +1594,55 @@ it("keeps its place for under five minutes away, and starts fresh from five", as
     expect(t.field()).toHaveValue("");
   } finally {
     vi.useRealTimers();
+    await t.dispose();
+  }
+});
+
+it("moves through results with the person's own keys, saved, and leaves other arrows to the text", async () => {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "MacIntel",
+  });
+  const t = memorySearch();
+  try {
+    await t.open();
+    const rows = await t.recentRows();
+    const hints = () =>
+      [...document.querySelectorAll(".search-peek-keys kbd")]
+        .slice(0, 2)
+        .map((key) => key.textContent);
+    expect(hints()).toEqual(["↑", "↓"]);
+    act(() => {
+      t.bindings.set("search-previous-result", { key: "k", ctrl: true });
+      t.bindings.set("search-next-result", { key: "j", ctrl: true });
+    });
+    expect(hints()).toEqual(["⌃K", "⌃J"]);
+    expect(
+      JSON.parse(localStorage.getItem(SHORTCUT_BINDINGS_KEY) ?? "null"),
+    ).toEqual({
+      "search-previous-result": { key: "k", ctrl: true },
+      "search-next-result": { key: "j", ctrl: true },
+    });
+    const restored = createShortcutBindings(window);
+    expect(restored.resolve("search-next-result")).toEqual([
+      { key: "j", ctrl: true },
+    ]);
+    restored.dispose();
+    // Down is no longer a result key, so it stays with the text.
+    const down = fireEvent.keyDown(t.field(), { key: "ArrowDown" });
+    expect(down).toBe(true);
+    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
+    await userEvent.keyboard("{Control>}j{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    await userEvent.keyboard("{Control>}j{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    await userEvent.keyboard("j");
+    expect(t.field()).toHaveValue("j");
+  } finally {
+    localStorage.removeItem(SHORTCUT_BINDINGS_KEY);
+    Reflect.deleteProperty(navigator, "platform");
     await t.dispose();
   }
 });

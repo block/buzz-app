@@ -373,9 +373,9 @@ export function ShortcutSettings({
       return refuse(
         "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
       );
-    if (!binding.mod && !binding.alt)
+    if (!binding.mod && !binding.ctrl && !binding.alt)
       return refuse(
-        `Include ${apple ? "Command or Option" : "Control or Alt"} so ordinary typing keeps working.`,
+        `Include ${apple ? "Command, Control or Option" : "Control or Alt"} so ordinary typing keeps working.`,
       );
     // Apple's ⌥⇧⌘V browser paste types a layout-specific key, so match the physical V.
     const applePlainPaste =

@@ -97,6 +97,48 @@ describe("readyOwnerReads", () => {
     expect(c.relay.retry).not.toHaveBeenCalled();
   });
 
+  it("waits out a cached ready snapshot until the live session is ready", async () => {
+    const restored = session("ready", "c".repeat(64));
+    const c = community(ready(restored, { cached: true }));
+    const settled = vi.fn();
+    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
+    void reads.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    const live = session("ready", "c".repeat(64));
+    c.publish(ready(live, { generation: 2 }));
+    expect((await reads).connection).toBe(live);
+    expect(c.listeners.size).toBe(0);
+  });
+
+  it("stops listening to a loading channel list on abort", async () => {
+    const first = session("loading");
+    const c = community(ready(first));
+    const deadline = new AbortController();
+    const reads = readyOwnerReads(c.relay, agent, deadline.signal);
+    expect(first.listeners.size).toBe(1);
+    deadline.abort();
+    await expect(reads).rejects.toThrow("did not reconnect");
+    expect(first.listeners.size).toBe(0);
+    expect(c.listeners.size).toBe(0);
+  });
+
+  it("moves its channel-list listener to the session that replaces the one it waited on", async () => {
+    const first = session("loading");
+    const c = community(ready(first));
+    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
+    expect(first.listeners.size).toBe(1);
+    const replacement = session("loading");
+    c.publish(ready(replacement, { generation: 2 }));
+    expect(first.listeners.size).toBe(0);
+    expect(replacement.listeners.size).toBe(1);
+    // The old session's list settling answers nothing.
+    first.listed();
+    replacement.listed();
+    expect((await reads).connection).toBe(replacement);
+    expect(replacement.listeners.size).toBe(0);
+  });
+
   it("waits through a reconnect for the replacing session of the same community and owner", async () => {
     const c = community(connecting);
     const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);

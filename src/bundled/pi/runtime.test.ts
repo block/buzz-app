@@ -543,6 +543,41 @@ it("checks a workflow mention with the reads it waited for", async () => {
   expect(host.processes).toEqual([]);
 });
 
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const { host, deliver, runtime } = setup();
+  const relay = keypair();
+  let live = true;
+  Object.assign(runtime, {
+    readyReads: async () => {
+      live = false;
+      return acquiredReads(relay.pubkey);
+    },
+  });
+  const turn = deliver(
+    {
+      type: "mention",
+      event: eventDto(
+        signed(relay, {
+          kind: 9,
+          content: "@Agent workflow",
+          tags: [
+            ["h", channel],
+            ["p", self],
+            ["buzz:workflow", "true"],
+            ["buzz:workflow-owner", alice],
+            ["buzz:workflow-mention", self],
+          ],
+        }),
+      ),
+    },
+    { current: () => live },
+  );
+  await turn.run;
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(turn.workingUntil).not.toHaveBeenCalled();
+  expect(host.processes).toEqual([]);
+});
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({

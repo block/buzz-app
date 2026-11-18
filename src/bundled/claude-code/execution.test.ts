@@ -16,6 +16,10 @@ import type {
   Agents,
 } from "../../features/agents/service";
 import type { AgentReads } from "../../features/agents/reads";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
+
+type ClaudeReady = ConstructorParameters<typeof ClaudeRuntime>[13];
 
 async function guestFixture() {
   const directory = await mkdtemp(join(tmpdir(), "buzz-claude-execution-"));
@@ -187,7 +191,7 @@ it("carries Claude tools, hooks and Stop over guest stdio with guest authenticat
   }
 });
 
-async function remoteFixture() {
+async function remoteFixture(readyReads?: ClaudeReady) {
   const guest = await guestFixture();
   const readRemote = vi
     .spyOn(guest.guest, "readFile")
@@ -276,6 +280,9 @@ async function remoteFixture() {
         return { provider: "test/remote" };
       },
       () => control.bound,
+      undefined,
+      undefined,
+      readyReads,
     );
   let runtime = create();
   runtime.sync([agent]);
@@ -311,6 +318,8 @@ async function remoteFixture() {
     ...guest,
     agent,
     handle,
+    reads,
+    waits,
     sessions,
     disposed,
     control,
@@ -382,6 +391,51 @@ it("resumes a saved target before its first post-restart compaction and gives Ne
     await f.deliver();
     expect(f.sessions[2]?.key).not.toBe(f.sessions[0]?.key);
     expect(f.sessions[2]?.intent).toBe("new");
+    expect(f.local).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("waits for a workflow mention's community on the execution target too", async () => {
+  const relay = keypair();
+  const readyReads = vi.fn<NonNullable<ClaudeReady>>();
+  const f = await remoteFixture(readyReads);
+  readyReads.mockImplementation(async () => ({
+    ...f.reads,
+    workflowAuthority: () => relay.pubkey,
+    profiles: async () => {},
+    profile: () => undefined,
+  }));
+  try {
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", "room"],
+          ["p", f.agent.pubkey],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", f.agent.owner],
+          ["buzz:workflow-mention", f.agent.pubkey],
+        ],
+      }),
+    );
+    const ignored = vi.fn();
+    await f.runtime.run({
+      agent: f.handle,
+      config: DEFAULT_CONFIG,
+      channelId: "room",
+      trigger: { type: "mention", event },
+      signal: new AbortController().signal,
+      ignored,
+      workingUntil: (work: Promise<unknown>) => void f.waits.push(work),
+    } as unknown as Delivery);
+    await Promise.all(f.waits.splice(0));
+    // Once here, and once in the runtime on the target.
+    expect(readyReads).toHaveBeenCalledTimes(2);
+    expect(ignored).not.toHaveBeenCalled();
+    expect(f.sessions).toHaveLength(1);
     expect(f.local).not.toHaveBeenCalled();
   } finally {
     await f.cleanup();

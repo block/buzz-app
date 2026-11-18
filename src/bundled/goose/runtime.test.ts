@@ -1862,6 +1862,31 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(f.goose()).toBeUndefined();
 });
 
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  // The community is ready, so the wait ends at once; the agent is gone by then.
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    ),
+    { ignored, current: () => false },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.goose()).toBeUndefined();
+});
+
 it("takes a wake with no thread only in a Solo chat", async () => {
   const ignored = vi.fn();
   const stream = setup();

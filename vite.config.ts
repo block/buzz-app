@@ -229,6 +229,11 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),
+      "import.meta.env.VITE_BUZZ_COMPATIBLE_RELAY_SOFTWARE": JSON.stringify(
+        command === "build"
+          ? (env.BUZZ_COMPATIBLE_RELAY_SOFTWARE?.trim() ?? "")
+          : "",
+      ),
       "import.meta.env.VITE_BUZZ_MOBILE_APP_IOS_URL": JSON.stringify(mobileIos),
       "import.meta.env.VITE_BUZZ_MOBILE_APP_ANDROID_URL":
         JSON.stringify(mobileAndroid),

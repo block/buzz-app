@@ -7393,6 +7393,45 @@ it("waits for remote turn and target cleanup when an agent retires", async () =>
   expect(target.signal.aborted).toBe(true);
 });
 
+it("waits for a workflow mention's community on the execution target too", async () => {
+  const guest = fixture();
+  const f = fixture([], undefined, false, {}, undefined, undefined, async () =>
+    guestTarget(guest),
+  );
+  const relay = keypair();
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  // Only the community the wait ends on knows the workflow key.
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const readyReads = vi.fn(async () => ownerReads(replacement, pubkey));
+  Object.assign(f.runtime, { readyReads });
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  // Once here, and once in the runtime on the target.
+  await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+  expect(readyReads).toHaveBeenCalledTimes(2);
+  expect(ignored).not.toHaveBeenCalled();
+  await guest.complete();
+  await f.runtime.retire(pubkey);
+});
+
 it("gives each conversation a durable target key and rotates only its New session", async () => {
   vi.useFakeTimers();
   const guests: ReturnType<typeof fixture>[] = [];

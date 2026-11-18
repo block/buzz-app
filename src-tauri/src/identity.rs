@@ -16,7 +16,12 @@ use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, String>;
 const INVALID: &str = "Enter a valid nsec private key";
+// The renderer matches this text (`MALFORMED_IDENTITY` in
+// src/features/identity/service.ts) to offer removing the key.
 const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
+// Keyring only. Not MALFORMED: deleting refuses too, so removing the key can't work here.
+#[cfg(not(test))]
+const AMBIGUOUS: &str = "More than one saved identity matches in secure storage, so Buzz can't tell which to use; nothing was changed. Remove the extra Buzz entries with your keyring app, then retry.";
 
 // Batch-local conversation keys avoid repeating ECDH for every self-encrypted slot.
 // Callers enforce their encoded-payload budget before reaching this helper.
@@ -182,9 +187,10 @@ fn read_saved(
     match read() {
         Ok(value) => Ok(Some(value)),
         Err(credentials::Error::Absent) => Ok(None),
-        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; no identity was created.".into()),
+        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; nothing was changed.".into()),
         Err(credentials::Error::Busy) => Err("Another Buzz app is accessing secure storage. Retry shortly.".into()),
         Err(credentials::Error::Corrupt) => Err(MALFORMED.into()),
+        Err(credentials::Error::Ambiguous) => Err(AMBIGUOUS.into()),
         Err(_) => Err("Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.".into()),
     }
 }
@@ -264,6 +270,7 @@ mod keyring_platform {
             Error::Denied => "Secure storage access was denied. Allow access and retry; no identity was created.",
             Error::Busy => "Another Buzz app is accessing secure storage. Retry shortly.",
             Error::Corrupt => MALFORMED,
+            Error::Ambiguous => AMBIGUOUS,
             _ => "Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.",
         }.into()
     }
@@ -1236,8 +1243,9 @@ pub struct BuilderlabChallenge {
 }
 impl BuilderlabChallenge {
     /// block/buzz's `nostr_bind` checks and kind 24243 tags, pinned to production
-    /// Builderlab or the `BUZZ_BUILDERLAB_URL` build origin; never another origin.
-    fn template(self, now: u64, configured: &str) -> Result<EventTemplate> {
+    /// Builderlab or a configured origin (the `BUZZ_BUILDERLAB_URL` build origin,
+    /// each sign-in server's identity origin); never another origin.
+    fn template(self, now: u64, configured: &[String]) -> Result<EventTemplate> {
         let nonce_ok = self.nonce.len() == 43
             && self
                 .nonce
@@ -1251,8 +1259,7 @@ impl BuilderlabChallenge {
             || !nonce_ok
             || self.verification_code.len() != 6
             || !self.verification_code.bytes().all(|b| b.is_ascii_digit())
-            || (self.origin != BUILDERLAB_ORIGIN
-                && (configured.is_empty() || self.origin != configured))
+            || (self.origin != BUILDERLAB_ORIGIN && !configured.contains(&self.origin))
             || expires <= i64::try_from(now).unwrap_or(i64::MAX)
         {
             return Err("Invalid Nostr identity challenge".into());
@@ -1282,6 +1289,7 @@ impl BuilderlabChallenge {
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
+    federated_identity: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     challenge: BuilderlabChallenge,
     legacy: Option<bool>,
 ) -> Result<serde_json::Value> {
@@ -1289,7 +1297,11 @@ pub async fn identity_sign_builderlab_binding(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    let event = challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?;
+    let mut configured = federated_identity.identity_origins();
+    if !buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty() {
+        configured.push(buzzodz_plugins::BUILDERLAB_ORIGIN.into());
+    }
+    let event = challenge.template(now, &configured)?;
     if legacy == Some(true) {
         with_identity(host.inner().clone(), move |identity| {
             identity

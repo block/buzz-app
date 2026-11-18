@@ -2,12 +2,18 @@ import {
   ChannelLifecycleDialog,
   lifecycleNoun,
 } from "../../bundled/channels/ChannelLifecycleDialog";
+import {
+  ArchiveInactiveChats,
+  inactiveChat,
+  type InactiveChatsRun,
+} from "../../bundled/channels/ArchiveInactiveChats";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   createContext,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useContext,
   useMemo,
@@ -20,7 +26,7 @@ import {
 import { useRelayConnection } from "../relay/react";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 
 /** The session owns writes/recovery; each menu owns its focus and read status. */
@@ -63,7 +69,12 @@ export function useChannelMenuActions() {
   );
 }
 
-type LifecycleCallbacks = { close(): void; completed(): void };
+type LifecycleCallbacks = {
+  close(): void;
+  /** Submission checks the originating visit; confirmed deletion checks the
+   * current destination, including a reopened visit to the deleted chat. */
+  depart(visit: "origin" | "current"): void;
+};
 
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
@@ -80,11 +91,30 @@ type State = {
         callbacks?: LifecycleCallbacks | undefined;
         /** Chosen from an Undo toast: runs without confirmation. */
         confirmed?: true;
+        /** The viewer confirmed it; the relay may be applying it. */
+        submitted?: true;
       }
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
+  /** The bulk archive of a workspace's inactive chats, or its Undo, now
+   * holding the lifecycle gate. The session owns it, so a sidebar remount
+   * cannot drop it. */
+  inactiveRun: InactiveChatsRun | undefined;
+  /** Bulk runs waiting for the gate, oldest first. */
+  inactiveRuns: readonly InactiveChatsRun[];
+  /** The viewer's own Leave or Delete that completed, or failed unconfirmed
+   * so the relay may still apply it; its loss of access is then not someone
+   * else's doing. Each is kept until the relay answers for its channel (see
+   * `answered`). One that failed before publishing is not recorded. */
+  ownLosses: readonly OwnLoss[];
 };
+type OwnLoss = Readonly<{
+  channelId: string;
+  /** `ChannelList.rosterAsOf` when it ended: the last complete roster read,
+   * which may predate the request. */
+  rosterAsOf: number | undefined;
+}>;
 type ActivityThread = {
   channelId: string;
   messageId: string;
@@ -105,11 +135,12 @@ type Handoff = State & {
   muteRecovery: RefObject<
     { focus(channelId: string): void; closeMenu(): void } | undefined
   >;
-  lifecycleCallbacks: RefObject<
-    { close(): void; completed(): void } | undefined
-  >;
+  lifecycleCallbacks: RefObject<LifecycleCallbacks | undefined>;
   /** The Solo sidebar's shown chats nearest one, nearest first. */
   soloNeighbors: RefObject<((channelId: string) => string[]) | undefined>;
+  /** Opens where leaving a channel lands: its nearest shown sidebar
+   * neighbor, else the empty channels route. Published by the sidebar. */
+  openSuccessor: RefObject<((channelId: string) => void) | undefined>;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   prepareDm(members: readonly string[]): void;
@@ -125,6 +156,13 @@ type Handoff = State & {
   closeLifecycle(): void;
   /** Unarchives through the same gate as every lifecycle action. */
   undoArchive(channel: ChannelSummary): void;
+  /** Queues a workspace's inactive-chat archive, or its Undo. */
+  archiveInactive(run: Omit<InactiveChatsRun, "key">): void;
+  /** The Solo sidebar's check that a chat is still inactive in its workspace,
+   * including chat placement and the open chat. Published by the sidebar. */
+  inactiveIn: RefObject<
+    ((workspaceId: string, channelId: string) => boolean) | undefined
+  >;
 };
 const ChannelNavigationContext = createContext<Handoff | undefined>(undefined);
 export const useChannelNavigation = () => useContext(ChannelNavigationContext);
@@ -146,12 +184,17 @@ export function ChannelNavigationProvider({
   >(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: retire all sidebar callbacks when the relay session or scope changes.
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
-  const lifecycleCallbacks = useRef<
-    { close(): void; completed(): void } | undefined
-  >(undefined);
+  const lifecycleCallbacks = useRef<LifecycleCallbacks | undefined>(undefined);
   const soloNeighbors = useRef<((channelId: string) => string[]) | undefined>(
     undefined,
   );
+  const openSuccessor = useRef<((channelId: string) => void) | undefined>(
+    undefined,
+  );
+  const inactiveIn = useRef<
+    ((workspaceId: string, channelId: string) => boolean) | undefined
+  >(undefined);
+  const inactiveRunKey = useRef(0);
   const [failure, setFailure] = useState<{
     session: RelaySession;
     title: string;
@@ -184,11 +227,16 @@ export function ChannelNavigationProvider({
   }, [update]);
   // The relay runs one lifecycle action per session, so an Undo waits for the
   // action holding the gate instead of colliding with it.
-  const queuedUndo = !state.lifecycleDialog ? state.queuedUndos[0] : undefined;
+  const queuedUndo =
+    !state.lifecycleDialog && !state.inactiveRun
+      ? state.queuedUndos[0]
+      : undefined;
   useLayoutEffect(() => {
     if (!queuedUndo) return;
     update((previous) =>
-      previous.lifecycleDialog || previous.queuedUndos[0] !== queuedUndo
+      previous.lifecycleDialog ||
+      previous.inactiveRun ||
+      previous.queuedUndos[0] !== queuedUndo
         ? previous
         : {
             ...previous,
@@ -201,7 +249,31 @@ export function ChannelNavigationProvider({
           },
     );
   }, [queuedUndo, update]);
+  // A bulk run takes the gate once no single-chat action holds it.
+  const queuedRun =
+    !state.lifecycleDialog && !state.inactiveRun
+      ? state.inactiveRuns[0]
+      : undefined;
+  useLayoutEffect(() => {
+    if (!queuedRun) return;
+    update((previous) =>
+      previous.lifecycleDialog ||
+      previous.inactiveRun ||
+      previous.inactiveRuns[0] !== queuedRun
+        ? previous
+        : {
+            ...previous,
+            inactiveRun: queuedRun,
+            inactiveRuns: previous.inactiveRuns.slice(1),
+          },
+    );
+  }, [queuedRun, update]);
   const lifecycleOrigin = state.lifecycleDialog?.origin;
+  // Navigation is presentation, not evidence of deletion. Keep the session's
+  // write owner and listed chat until the relay confirms removal.
+  const departOnSubmit =
+    state.lifecycleDialog?.channel.channelType === "solo" &&
+    state.lifecycleDialog.action === "delete";
   useLayoutEffect(() => {
     if (!lifecycleOrigin) return;
     const retire = () =>
@@ -214,6 +286,28 @@ export function ChannelNavigationProvider({
     else lifecycleOrigin.addEventListener("abort", retire, { once: true });
     return () => lifecycleOrigin.removeEventListener("abort", retire);
   }, [lifecycleOrigin, update]);
+  // Settled losses go, so a failed or partial roster read long after cannot
+  // make another loss of the same channel look like the viewer's own.
+  const ownLosses = state.ownLosses;
+  const channels = connection.session.channels;
+  useEffect(() => {
+    if (!ownLosses.length) return;
+    const settle = () => {
+      const list = channels.list();
+      const settled = ownLosses.filter((loss) => answered(loss, list));
+      if (!settled.length) return;
+      update((previous) => {
+        const kept = previous.ownLosses.filter(
+          (loss) => !settled.includes(loss),
+        );
+        return kept.length === previous.ownLosses.length
+          ? previous
+          : { ...previous, ownLosses: kept };
+      });
+    };
+    settle();
+    return channels.subscribeList(settle);
+  }, [channels, ownLosses, update]);
   const value = useMemo<Handoff>(
     () => ({
       ...state,
@@ -222,8 +316,17 @@ export function ChannelNavigationProvider({
       muteRecovery,
       lifecycleCallbacks,
       soloNeighbors,
+      openSuccessor,
+      inactiveIn,
       activityThread,
       activityAgent,
+      archiveInactive(run) {
+        const key = ++inactiveRunKey.current;
+        update((previous) => ({
+          ...previous,
+          inactiveRuns: [...previous.inactiveRuns, { ...run, key }],
+        }));
+      },
       prepareDm(members) {
         // Capture before the caller starts opening the DM, not in a deferred updater.
         const existing = new Set(
@@ -268,6 +371,7 @@ export function ChannelNavigationProvider({
         );
       },
       beginLifecycle() {
+        if (relay.snapshot().session !== connection.session) return;
         // A confirmed operation belongs to the session, not its originating visit.
         update((previous) =>
           previous.lifecycleDialog
@@ -276,17 +380,22 @@ export function ChannelNavigationProvider({
                 lifecycleDialog: {
                   ...previous.lifecycleDialog,
                   origin: undefined,
+                  submitted: true,
                 },
               }
             : previous,
         );
+        if (departOnSubmit)
+          (
+            state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
+          )?.depart("origin");
       },
       closeLifecycle() {
         update((previous) => ({ ...previous, lifecycleDialog: undefined }));
       },
       undoArchive(channel) {
         update((previous) =>
-          previous.lifecycleDialog
+          previous.lifecycleDialog || previous.inactiveRun
             ? {
                 ...previous,
                 queuedUndos: [
@@ -314,9 +423,39 @@ export function ChannelNavigationProvider({
       connection.viewer,
       update,
       clearPreparingDm,
+      departOnSubmit,
+      relay,
     ],
   );
   const archived = state.lifecycleDialog?.channel;
+  // Closes the dialog; a Leave or Delete the relay applied, or may have,
+  // becomes the viewer's own loss.
+  const endLifecycle = (
+    dialog: State["lifecycleDialog"],
+    published: boolean,
+  ) => {
+    const loss =
+      published &&
+      dialog &&
+      (dialog.action === "leave" || dialog.action === "delete")
+        ? {
+            channelId: dialog.channel.id,
+            rosterAsOf: connection.session.channels.list().rosterAsOf,
+          }
+        : undefined;
+    update((previous) => ({
+      ...previous,
+      lifecycleDialog: undefined,
+      ...(loss && {
+        ownLosses: [
+          ...previous.ownLosses.filter(
+            ({ channelId }) => channelId !== loss.channelId,
+          ),
+          loss,
+        ],
+      }),
+    }));
+  };
   return (
     <ChannelNavigationContext value={value}>
       {children}
@@ -388,15 +527,45 @@ export function ChannelNavigationProvider({
             completed={() => {
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
-              )?.completed();
-              value.closeLifecycle();
+              )?.depart(departOnSubmit ? "current" : "origin");
+              endLifecycle(state.lifecycleDialog, true);
             }}
-            failed={(title, message) => {
-              setFailure({ session: connection.session, title, message });
-              value.closeLifecycle();
+            failed={(title, message, unconfirmed) => {
+              setFailure({
+                session: connection.session,
+                title,
+                message: departOnSubmit
+                  ? `${state.lifecycleDialog?.channel.name}: ${message}`
+                  : message,
+              });
+              endLifecycle(state.lifecycleDialog, unconfirmed);
             }}
           />
         )}
+      {state.session === connection.session && state.inactiveRun && (
+        <ArchiveInactiveChats
+          key={state.inactiveRun.key}
+          session={connection.session}
+          run={state.inactiveRun}
+          eligible={(id) => {
+            const run = state.inactiveRun;
+            const channel = connection.session.channels
+              .list()
+              .channels.find((channel) => channel.id === id);
+            // Between sidebar mounts, the session's own evidence still applies.
+            return (
+              !!run &&
+              !!channel &&
+              (inactiveIn.current?.(run.workspaceId, id) ??
+                inactiveChat(connection.session, channel, Date.now() / 1000))
+            );
+          }}
+          undo={value.archiveInactive}
+          close={() =>
+            update((previous) => ({ ...previous, inactiveRun: undefined }))
+          }
+        />
+      )}
       {failure?.session === connection.session && (
         <ToastNotice
           title={failure.title}
@@ -407,6 +576,15 @@ export function ChannelNavigationProvider({
     </ChannelNavigationContext>
   );
 }
+/** Whether the relay has answered for an own loss: a ready list no longer
+ * has its channel, or a complete roster read since it ended still lists it.
+ * Live events and exact reads commit the list too, but only a complete read
+ * proves the request did not take effect. */
+function answered(loss: OwnLoss, list: ChannelList) {
+  if (list.status !== "ready") return false;
+  if (!list.channels.some(({ id }) => id === loss.channelId)) return true;
+  return list.rosterAsOf !== undefined && list.rosterAsOf !== loss.rosterAsOf;
+}
 function restore(session: RelaySession, scope: string): State {
   return {
     session,
@@ -414,5 +592,8 @@ function restore(session: RelaySession, scope: string): State {
     preparingDm: undefined,
     lifecycleDialog: undefined,
     queuedUndos: [],
+    inactiveRun: undefined,
+    inactiveRuns: [],
+    ownLosses: [],
   };
 }

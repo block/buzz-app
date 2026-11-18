@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent } from "nostr-tools";
-import { browserReadPublisherLock, createReadState } from "./read-state";
+import {
+  browserReadPublisherLock,
+  CapturedReadNotRetainedError,
+  createReadState,
+} from "./read-state";
 import { effectiveFrontier, overrideActive } from "./read-state-model";
 import {
   newReadJournal,
@@ -11,6 +15,7 @@ import {
 import { keypair, scriptedTransport } from "./testing";
 import { createRelayReader } from "./reader";
 import { eventDto, type RelayEvent } from "./events";
+import { READ_RESERVE_KEYS, retainRead } from "./read-state-retention";
 // Test the real host codec with ephemeral identities, never a bypass signer.
 import {
   decodeReadState,
@@ -2389,6 +2394,211 @@ describe("durable read-state owner", () => {
     await restarted.ready;
     expect(restarted.floor()).toBe(floor);
   });
+  it("rejects a captured reply when retention drops its mark despite a retained thread frontier", async () => {
+    const f = fixture();
+    const rootId = (READ_RESERVE_KEYS - 1).toString(16).padStart(64, "0");
+    const selectedKey = `msg:${"e".repeat(64)}`;
+    const selectedAt = 6000;
+    const overrideKey = "manual";
+    const override = { [overrideKey]: { set: 2, clear: 0, baseline: 0 } };
+    const journal = newReadJournal();
+    let channels: Record<string, number> = {};
+    for (let n = 0; n < 1000; n++) {
+      const key = `c${n}`.padEnd(128, "x");
+      try {
+        channels = retainRead(
+          [{ frontiers: { ...channels, [key]: 100 }, overrides: override }],
+          {},
+          journal.clientId,
+        ).state.frontiers;
+      } catch {
+        break;
+      }
+    }
+    const reserve = Object.fromEntries(
+      Array.from({ length: READ_RESERVE_KEYS }, (_, n) => [
+        `thread:${n.toString(16).padStart(64, "0")}`,
+        n === READ_RESERVE_KEYS - 1 ? selectedAt : 100 + n,
+      ]),
+    );
+    f.setJournal({
+      ...journal,
+      revision: 1,
+      state: {
+        frontiers: channels,
+        overrides: override,
+      },
+      localUnread: { [selectedKey]: 1 },
+      reserve,
+    });
+    const owner = f.make();
+    await owner.ready;
+    const before = f.journal();
+
+    await expect(
+      owner.readMessages(
+        [
+          {
+            key: selectedKey,
+            timestamp: selectedAt,
+            channelId: "target-room",
+            rootId,
+          },
+        ],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [selectedKey],
+        { preserveCapturedSet: true },
+      ),
+    ).rejects.toBeInstanceOf(CapturedReadNotRetainedError);
+
+    expect(f.journal()).toEqual(before);
+    expect(owner.floor()).toBe(0);
+    expect(owner.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(owner.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
+    expect(owner.localUnread(selectedKey)).toBe(1);
+
+    owner.dispose();
+    const reloaded = f.make();
+    await reloaded.ready;
+    expect(reloaded.localUnread(selectedKey)).toBe(1);
+    expect(reloaded.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(reloaded.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
+  });
+  it("captured Undo survives the publication debounce when only local receipts changed", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    await vi.advanceTimersByTimeAsync(60000);
+    await result.undo();
+    expect(owner.state().frontiers[key]).toBeUndefined();
+    expect(f.host.publish).not.toHaveBeenCalled();
+    expect(result.sync).toBe("local-only");
+    expect(owner.snapshot().status).toBe("local");
+  });
+  it("captured local receipts preserve earlier pending publication work", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    await owner.read("room", 20, () => true);
+    const result = await owner.readMessages(
+      [{ key: "msg:selected", timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set(["msg:selected"]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    expect(result.sync).toBe("local-only");
+    expect(owner.snapshot().status).toBe("pending");
+    await vi.advanceTimersByTimeAsync(60000);
+    await owner.flush();
+    expect(f.published()).toEqual({ room: 20 });
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+  });
+  it("another shared-storage owner's startup expires captured Undo without changing revision", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    const revision = f.journal()?.revision;
+    const other = f.make();
+    await other.ready;
+    expect(f.journal()?.revision).toBe(revision);
+    const afterStartup = f.journal();
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterStartup);
+    expect(other.state().frontiers[key]).toBe(30);
+  });
+  it("captured Undo restores receipt retention and expires on equal-valued peer ingest without a new revision", async () => {
+    const f = fixture();
+    const key = "msg:selected";
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 }, floor: 3 });
+    const owner = f.make();
+    await owner.ready;
+    const before = owner.state();
+    const capture = () =>
+      owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [key],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => true },
+        },
+      );
+    const result = await capture();
+    assert(result.undo);
+    await result.undo();
+    expect(owner.state()).toEqual(before);
+    expect(owner.floor()).toBe(3);
+    expect(owner.localUnread(key)).toBeUndefined();
+
+    const newer = await capture();
+    assert(newer.undo);
+    const revision = f.journal()?.revision;
+    // A legacy peer can affirm the exact same msg receipt without changing revision.
+    f.addRemote(
+      signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts: { [key]: 30 } },
+        },
+        f.key.secret,
+        100,
+      ),
+    );
+    await owner.refresh();
+    expect(f.journal()?.revision).toBe(revision);
+    const afterIngest = f.journal();
+    await expect(newer.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterIngest);
+    expect(owner.state().frontiers[key]).toBe(30);
+  });
   it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
     const f = fixture();
     f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
@@ -2605,6 +2815,29 @@ describe("durable read-state owner", () => {
       readJournal({ ...newReadJournal(), homes: { [id]: 5 } }, f.key.pubkey),
     ).toThrow("mark channels");
   });
+  it.each([undefined, "a".repeat(32)])(
+    "round-trips journals with an optional captured Undo token (%s)",
+    (capturedReadUndo) => {
+      const f = fixture();
+      const saved = readJournal(
+        { ...newReadJournal(), capturedReadUndo },
+        f.key.pubkey,
+      );
+      expect(saved.capturedReadUndo).toBe(capturedReadUndo);
+      expect(
+        readJournal(JSON.parse(JSON.stringify(saved)), f.key.pubkey),
+      ).toEqual(saved);
+    },
+  );
+  it.each([null, "", "not-a-slot", 42])(
+    "rejects a malformed captured Undo token (%s)",
+    (capturedReadUndo) => {
+      const f = fixture();
+      expect(() =>
+        readJournal({ ...newReadJournal(), capturedReadUndo }, f.key.pubkey),
+      ).toThrow("Invalid saved read state");
+    },
+  );
   it.each([1, 5001])(
     "loads old journals and round-trips valid overlap metadata (%i records)",
     (count) => {

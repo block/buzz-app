@@ -9,6 +9,7 @@ import type {
 declare global {
   interface Window {
     fixtureSoloRegion?: {
+      state(): SoloRegionProps["state"];
       classify(id: string): Promise<void>;
       createWorkspace(): Promise<void>;
       present(removed: string[], hidden: string[]): void;
@@ -66,6 +67,16 @@ export const soloRegionFixture: BundledPlugin = {
       const composing = new URL(location.href).searchParams.has(
         "compose-workspaces",
       );
+      const stateFixture = new URL(location.href).searchParams.has(
+        "region-state-fixture",
+      );
+      function SavedState({ state }: Pick<SoloRegionProps, "state">) {
+        const value = useSyncExternalStore(
+          state.subscribe,
+          () => JSON.stringify(state.get()) ?? "absent",
+        );
+        return <output aria-label="Region state">{value}</output>;
+      }
       const handle = ctx.soloNavigation.registerSource({
         ...(composing ? { composeWorkspaces: true } : {}),
         id: "work",
@@ -73,7 +84,11 @@ export const soloRegionFixture: BundledPlugin = {
         icon: null,
         bind(next) {
           binding = next;
-          snapshot = { status: "ready", binding, revision: 1 };
+          snapshot = {
+            status: stateFixture ? "loading" : "ready",
+            binding,
+            revision: 1,
+          };
         },
         read: () => snapshot,
         subscribe(listener) {
@@ -82,8 +97,9 @@ export const soloRegionFixture: BundledPlugin = {
             notify = () => {};
           };
         },
-        component: ({ ui, live, binding }) => (
+        component: ({ ui, live, binding, state }) => (
           <>
+            {stateFixture && <SavedState state={state} />}
             {hitTargets && <Workspaces ui={ui} binding={binding} />}
             {[...live]
               .filter((id) => !removed.includes(id))
@@ -110,6 +126,7 @@ export const soloRegionFixture: BundledPlugin = {
       });
       let disposeTransient = async () => {};
       window.fixtureSoloRegion = {
+        state: () => handle.state(binding),
         createWorkspace: () =>
           navigation.workspaces.create(binding, {
             id: "fixture-workspace",

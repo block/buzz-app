@@ -935,6 +935,20 @@ describe("profiles", () => {
       nameIsFallback: true,
     });
   });
+
+  it("drops an ill-formed emoji avatar and keeps the rest of the profile", () => {
+    // Old Buzz's emoji template around a lone surrogate, which cannot be encoded.
+    const picture = `data:image/svg+xml,${encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">',
+    )}\ud83d${encodeURIComponent("</text></svg>")}`;
+    const profiles = foldProfiles([
+      profile(alice, { name: "Alice", about: "Skates", picture }),
+    ]);
+    expect(profiles.get(alice.pubkey)).toEqual({
+      name: "Alice",
+      about: "Skates",
+    });
+  });
 });
 
 describe("discovery", () => {

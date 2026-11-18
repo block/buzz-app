@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
   transportOrigin,
@@ -33,6 +34,10 @@ export type RelaySnapshot = Readonly<{
   origin?: string;
   session: RelaySession;
   viewer?: string;
+  /** The community UUID this session's transport read from the relay's NIP-11
+   * document when it was created, if it advertised one. A socket reconnect
+   * keeps it; a new session reads it again. */
+  communityId?: string;
   error?: string;
   /** A usable device snapshot while the real transport is connecting/unavailable. */
   cached?: true;
@@ -48,9 +53,17 @@ export type RelaySnapshot = Readonly<{
 export type RelayData = {
   snapshot(): RelaySnapshot;
   subscribe(listener: () => void): () => void;
+  /** Reconnects. Automatic callers (timers, network hints) use this. */
   retry(): void;
+  /** A person's Try again: asks the community's sign-in server again (it
+   * may have changed its answer since this session cached a refusal), then
+   * retries what failed. Never call it automatically (NIP-FA). */
+  tryAgain(): void;
   disconnect(): void;
   clearCache(): Promise<void>;
+  /** The selected community's origin, known before it connects; undefined
+   * with none selected. */
+  selected?(): string | undefined;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -69,12 +82,19 @@ export function provideRelay(
   resume?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
   verifyStored?: ReadTransport["verifyStored"],
+  /** Forgets the sign-in server's cached refusals for a community. */
+  askAgain?: (relay: string) => Promise<void>,
 ) {
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
   let clearing: Promise<void> | undefined;
+  /** This community's origin, once a connection named it; a reconnect's
+   * snapshot does not until it is ready again. */
+  let origin: string | undefined;
+  /** What the next connection attempt asks first: a person's Try again. */
+  let asking: (() => Promise<void>) | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let store = createRelaySession(null, { identityNames });
   let snapshot: RelaySnapshot = Object.freeze({
@@ -92,6 +112,7 @@ export function provideRelay(
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
   const publish = ({ retrying: _retrying, ...next }: RelaySnapshot) => {
+    if (next.origin) origin = next.origin;
     if (next.status !== "error") transientFailure = false;
     snapshot = Object.freeze(
       transientFailure && !disposed
@@ -124,7 +145,8 @@ export function provideRelay(
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
-      const saved = (await persistence.readStartup?.())?.discovery;
+      const startup = await persistence.readStartup?.();
+      const saved = startup?.discovery;
       if (
         !saved ||
         !/^[0-9a-f]{64}$/.test(saved.relayAuthor) ||
@@ -138,6 +160,9 @@ export function provideRelay(
           viewer: resume.viewer,
           scope: resume.scope,
           relayAuthor: saved.relayAuthor,
+          verifiedProfiles: savedVerifiedProfileAuthority(
+            startup?.verifiedProfiles,
+          ),
           query: () =>
             Promise.reject(
               new ReadError(
@@ -254,7 +279,17 @@ export function provideRelay(
       };
     },
     retry() {
-      if (disposed || !connect || connecting || clearing) return;
+      // A person's Try again asks the sign-in server within this attempt.
+      const ask = asking;
+      asking = undefined;
+      if (disposed || !connect) return;
+      if (connecting || clearing) {
+        // A press joins the attempt under way (or the one after a clear)
+        // but still asks now, so that attempt or the next one doesn't
+        // repeat a cached refusal. Asking twice only forgets twice.
+        void ask?.().catch(() => {});
+        return;
+      }
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -293,6 +328,8 @@ export function provideRelay(
       }, 8_000);
       deadline = timer;
       void Promise.resolve()
+        // Asking again is best effort: the attempt still connects.
+        .then(() => ask?.().catch(() => {}))
         .then(() => connect(signal))
         .then(async (transport) => {
           clearTimeout(timer);
@@ -365,6 +402,9 @@ export function provideRelay(
             origin: transportOrigin(transport),
             scope: transportPartition(transport),
             session: store.session,
+            ...(transport.readState?.communityId
+              ? { communityId: transport.readState.communityId }
+              : {}),
           });
           ready = true;
           store.session.channels.ensureList();
@@ -399,6 +439,24 @@ export function provideRelay(
       if (disposed) return;
       if (snapshot.status === "error") service.retry();
       else store.session.recovery?.retryAll();
+    },
+    tryAgain() {
+      if (disposed) return;
+      const relay = snapshot.origin ?? origin ?? resume?.scope;
+      const ask = relay && askAgain ? () => askAgain(relay) : undefined;
+      if (snapshot.status === "ready" && !snapshot.cached) {
+        // Nothing reconnects: retry each failed read and the live socket.
+        void Promise.resolve(ask?.())
+          .catch(() => {})
+          .finally(() => {
+            if (!disposed) store.session.recovery?.retryAll();
+          });
+        return;
+      }
+      // Reconnect at once, so callers see the attempt under way; it asks
+      // first.
+      asking = ask;
+      service.retry();
     },
     disconnect() {
       if (disposed) return;

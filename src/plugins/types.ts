@@ -37,7 +37,12 @@ export type ManagementAction =
   | "disable-update-checks";
 
 export type ManagedState = "missing" | "current" | "outdated" | "other";
-export type ManagedGitEntry = {
+/** Version 2 policies only; absent means "recommend" and "review". */
+export type ManagedModes = {
+  install?: "recommend" | "automatic" | "manual";
+  update?: "review" | "automatic";
+};
+export type ManagedGitEntry = ManagedModes & {
   id: string;
   repository: string;
   reference: string;
@@ -46,7 +51,7 @@ export type ManagedGitEntry = {
   state: ManagedState;
 };
 /** A single plugin artifact pinned by SHA-256, for people without Git access. */
-export type ManagedUrlEntry = {
+export type ManagedUrlEntry = ManagedModes & {
   id: string;
   url: string;
   sha256: string;
@@ -65,7 +70,17 @@ export type ManagedPlugins =
       source: string;
       plugins: ManagedEntry[];
       problems: string[];
+      /** The build's policy signer signed it; only then do automatic modes apply. */
+      signed?: true;
+      /** What Buzz installed or updated on its own while the app has run. */
+      automatic?: ManagedChange[];
     };
+export type ManagedChange = {
+  id: string;
+  name: string;
+  revision: string;
+  action: "installed" | "updated";
+};
 
 // Reading configuration either succeeds or provides a recovery path.
 // Pausing external code is a launch option, not part of the saved catalog.
@@ -99,6 +114,10 @@ export type ImportFile = { path: string } & (
   | { text: string; base64?: never }
   | { base64: string; text?: never }
 );
+export type GitScope = {
+  commit?: string | undefined;
+  path?: string | undefined;
+};
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
   checkFolder(id: string): Promise<PluginRelease>;
@@ -106,13 +125,14 @@ export type PluginImports = {
   files(source: string, files: ImportFile[]): Promise<ImportPreview | null>;
   /**
    * `authorization` is a NIP-98 token signed for exactly `repository`. `commit`
-   * refuses a reference that does not resolve to exactly that commit.
+   * is read directly and refused unless it is on `reference`. `path` lists only
+   * that repository folder; candidate paths stay relative to the repository root.
    */
   git(
     repository: string,
     reference: string,
     authorization?: string,
-    commit?: string,
+    scope?: GitScope,
   ): Promise<ImportPreview | null>;
   /** Downloads one plugin artifact; refused unless it hashes to `sha256`. */
   url(url: string, sha256: string): Promise<ImportPreview | null>;
@@ -121,6 +141,7 @@ export type PluginImports = {
     repository: string,
     reference: string,
     authorization?: string,
+    scope?: GitScope,
   ): Promise<ImportPreview | null>;
   install(token: string, path: string): Promise<StorageResult>;
   discard(token: string): Promise<void>;

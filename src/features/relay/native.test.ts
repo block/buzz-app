@@ -25,6 +25,7 @@ import { keypair, message, nativeSignatureChecks, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
 import { createRelaySession } from "./session";
+import { NeedsHistoryChoice } from "./direct-messages";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -311,6 +312,15 @@ it("publishes config artifacts straight to the relay, re-sending identical bytes
     .publish(event, signal)
     .catch((error: unknown) => error);
   expect(refused).toBeInstanceOf(PublishRejected);
+  expect(transport.configArtifacts.isNotSent?.(refused)).toBe(true);
+  expect(
+    transport.configArtifacts.isNotSent?.(
+      new Error((refused as Error).message),
+    ),
+  ).toBe(false);
+  expect(
+    transport.configArtifacts.isNotSent?.(new PublishRejected("denied")),
+  ).toBe(false);
   expect((refused as Error).message).toBe(
     "rate-limited: quota exceeded; retry in 9s",
   );
@@ -863,7 +873,9 @@ it.each(["message", "reaction"] as const)(
 
 it("exposes workflow history over the purpose-bound native route and workflow write kinds", async () => {
   const transport = await connectNativeTransport(community);
-  expect(nativeWriteKinds).toEqual(expect.arrayContaining([30620, 46020, 5]));
+  expect(nativeWriteKinds).toEqual(
+    expect.arrayContaining([30620, 46020, 5, 48103]),
+  );
   expect(transport.writer?.kinds).toEqual(nativeWriteKinds);
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
@@ -1217,6 +1229,49 @@ it("opens direct messages through a purpose-bound command and validates the resu
   ).rejects.toThrow("invalid direct message");
 });
 
+it("hands the command's refusal words to every caller as an Error, so an addition can ask", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.openDirectMessage);
+  const channel = "11111111-1111-4111-8111-111111111111";
+  // The Tauri command rejects with a plain string.
+  vi.mocked(invoke).mockRejectedValueOnce("needs-choice: history");
+  const refusal = await transport
+    .openDirectMessage([relay.pubkey], new AbortController().signal, {
+      channelId: channel,
+      includeHistory: "ask",
+    })
+    .catch((error: unknown) => error);
+  expect(refusal).toBeInstanceOf(Error);
+  expect((refusal as Error).message).toBe("needs-choice: history");
+  const owner = createRelaySession(transport, {
+    outboxStorage: { load: () => [], save: () => {} },
+  });
+  try {
+    const { directMessages } = owner.session;
+    // The command words an old relay's refusal of "ask" as this question too.
+    vi.mocked(invoke).mockRejectedValueOnce("needs-choice: history");
+    await expect(
+      directMessages.add(
+        channel,
+        [relay.pubkey],
+        "ask",
+        new AbortController().signal,
+      ),
+    ).rejects.toBeInstanceOf(NeedsHistoryChoice);
+    vi.mocked(invoke).mockRejectedValueOnce("Couldn’t add them. Try again.");
+    await expect(
+      directMessages.add(
+        channel,
+        [relay.pubkey],
+        "ask",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Couldn’t add them. Try again.");
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("discards a pending observer decode after disconnect and reconnect", async () => {
   const sockets: Socket[] = [];
   class Socket {
@@ -1257,6 +1312,8 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
     }
     return original?.(command, args);
   });
+  // Draw no reconnect spread when the authenticated connection drops.
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
   const transport = await connectNativeTransport(community);
   const observer = vi.fn();
   const traffic = transport.subscribe?.({
@@ -1333,6 +1390,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
     expect(observer.mock.calls[0]?.[0].id).toBe(fresh.id);
   } finally {
     traffic.dispose();
+    random.mockRestore();
   }
 });
 
@@ -2251,4 +2309,64 @@ it.each([
   );
   await expect(work).rejects.toBeInstanceOf(ArtifactIncrementalError);
   await expect(work).rejects.toMatchObject({ code });
+});
+
+it.each([
+  ["sign-in", 401, "authentication required\n"],
+  ["access", 403, "authorization denied\n"],
+  ["access", 403, JSON.stringify({ error: "relay_membership_required" })],
+])(
+  "a refused response reports its %s refusal to the community's observer without the window event",
+  async (kind, status, body) => {
+    // This test environment has no Tauri window, so the event listener never
+    // installs: only the response itself can report the refusal.
+    const transport = await connectNativeTransport(community);
+    const refusals: string[] = [];
+    const stop = transport.observeRefusal?.((refusal) =>
+      refusals.push(refusal),
+    );
+    const answer = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+      command === "relay_http" && (args as Request).path === "/query"
+        ? { status, headers: {}, body }
+        : answer?.(command, args, options),
+    );
+    await expect(
+      transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+    ).rejects.toThrow();
+    expect(refusals).toEqual([kind]);
+    stop?.();
+  },
+);
+
+it("an ordinary 403 reports no community refusal", async () => {
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  respond = () => ({
+    status: 403,
+    body: { error: "restricted: not a channel member" },
+  });
+  await expect(
+    transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+  ).rejects.toThrow();
+  expect(refusals).toEqual([]);
+  stop?.();
+});
+
+it("a refused unsigned GET reports no community refusal", async () => {
+  // Native signs only POST and reports refusals only for signed requests.
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+    command === "relay_http" && (args as Request).method === "GET"
+      ? { status: 401, headers: {}, body: "authentication required\n" }
+      : answer?.(command, args, options),
+  );
+  const response = await nativeRelayRequest(community, "/gated");
+  expect(response.status).toBe(401);
+  expect(refusals).toEqual([]);
+  stop?.();
 });

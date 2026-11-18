@@ -52,6 +52,7 @@ function fakeStates(initial?: PullState | "failed") {
       };
     }),
     get: () => value,
+    observe: () => () => {},
     readAt: () => undefined,
     read: () => Promise.reject(new Error("Links do not read")),
     unwatch,
@@ -204,6 +205,7 @@ function renderers() {
     relay: {},
     agents: { addTool: () => {} },
     inject: () => {},
+    provide: () => {},
   } as never);
   const [links, github] = found;
   if (!links || !github) throw new Error("expected both renderers");
@@ -229,7 +231,7 @@ const message = (
     </ToastProvider>,
   );
 
-it("takes pull request and issue links from Links, which keeps the rest of GitHub and stands in without it", async () => {
+it("takes repository, pull request, issue and commit links from Links, which keeps the rest of GitHub and stands in without it", async () => {
   const { links, github } = renderers();
   expect(resolveLink(pull, [links, github])).toBe(github);
   for (const url of [issue, `${issue}?q=1`, `${issue}/`, issueCased])
@@ -240,6 +242,11 @@ it("takes pull request and issue links from Links, which keeps the rest of GitHu
   for (const url of [
     "https://github.com/block/buzz-app",
     "https://github.com/block/buzz-app/commit/abcdef1",
+  ])
+    expect(resolveLink(url, [links, github])).toBe(github);
+  for (const url of [
+    "https://github.com/block",
+    "https://github.com/block/buzz-app/blob/main/README.md",
     `${issue}#issuecomment-1`,
     `${issue}/timeline`,
   ])

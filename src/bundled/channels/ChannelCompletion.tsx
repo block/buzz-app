@@ -225,9 +225,12 @@ export function ChannelCompletion({
       });
     };
     const unsubscribe = session.channels.subscribeList(update);
+    // Workspaces can load after `#` opens.
+    const unsubscribeWorkspaces = preferences?.subscribe(update);
     update();
     return () => {
       unsubscribe();
+      unsubscribeWorkspaces?.();
       if (withdraw) withdraw();
     };
   }, [

@@ -626,7 +626,8 @@ async fn only_a_builderlab_401_ends_the_sign_in_and_none_touch_the_key() {
 /// An FI build's sign-in at the test server, with that session's revision.
 fn federated_at(url: &str) -> (FederatedIdentity, String) {
     let origin = url.trim_end_matches("/decide").to_owned();
-    let fi = crate::federated_identity::testing::signed_in_at(origin);
+    // The build's server, which covers the requests' community.
+    let fi = crate::federated_identity::testing::signed_in_covering(origin, "buzz.example.org");
     let revision = fi.with_session(|_, current, _| current.to_owned()).unwrap();
     (fi, revision)
 }
@@ -737,11 +738,17 @@ async fn an_fi_call_uses_the_sign_in_server_of_its_community() {
 }
 
 #[tokio::test]
-async fn an_fi_call_without_a_community_sends_nothing() {
+async fn an_fi_call_without_a_covered_community_sends_nothing() {
     let (url, seen) = server(vec![]).await;
     let (fi, revision) = federated_at(&url);
     let (_, keys) = keys(None);
-    for community in [None, Some("not a relay".to_owned())] {
+    // No sign-in server covers the last one, so the build's own server,
+    // which `server_for` falls back to, must not answer it either.
+    for community in [
+        None,
+        Some("not a relay".to_owned()),
+        Some("wss://other.example".to_owned()),
+    ] {
         let mut request = yes_no_in_community();
         request.community = community;
         assert_eq!(

@@ -234,6 +234,93 @@ it("offers Builderlab while signed in, ready only while the account may use deci
   expect(decide).not.toHaveBeenCalled();
 });
 
+it("waits for a restoring sign-in instead of sending a chosen Builderlab's decisions to TypeSafe", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const decisions = new DecisionsService(root, undefined);
+  const answered = {
+    outcome: "answered" as const,
+    model: "test",
+    answers: { a: { type: "yes_no" as const, probability: 0.7 } },
+  };
+  const typesafe = vi.fn(async () => answered);
+  const fallback = root
+    .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProvider({
+        id: "typesafe",
+        label: "TypeSafe",
+        description: "Your key.",
+        status: () => "ready",
+        subscribe: () => () => {},
+        decide: typesafe,
+      }),
+    );
+  // A saved sign-in being restored at launch, as the native session
+  // reports it, until `restored` signs in.
+  const signedIn = createTestSession(async () => ({
+    ...credential("restored"),
+    account: {
+      ...credential("restored").account,
+      canUseBuilderlabDecisions: true,
+    },
+  }));
+  let restoring = true;
+  // One snapshot object, as a store's snapshot must be.
+  const RESTORING = Object.freeze({
+    status: "pending" as const,
+    checking: true,
+  });
+  const listeners = new Set<() => void>();
+  const session = {
+    ...signedIn,
+    snapshot: () => (restoring ? RESTORING : signedIn.snapshot()),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      const stop = signedIn.subscribe(listener);
+      return () => {
+        listeners.delete(listener);
+        stop();
+      };
+    },
+  } as unknown as BuilderlabSession;
+  const native = vi.fn<BuilderlabDecide>(async () => answered);
+  const builderlab = root
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, native));
+  await Promise.all([fallback.await(), builderlab.await()]);
+  await flush();
+  const BUILDERLAB = "block.builderlab/builderlab";
+  decisions.setBackend(BUILDERLAB, COMMUNITY);
+  expect(decisions.backend(COMMUNITY)).toBe(BUILDERLAB);
+  expect(decisions.status(COMMUNITY)).toBe("checking");
+  // Settings leaves it to the row, which says it is checking.
+  const Settings = decisions.providers()[0]?.Settings;
+  if (!Settings) throw new Error("Builderlab has settings");
+  const view = render(<Settings active={() => true} community={COMMUNITY} />);
+  expect(screen.queryByRole("status")).toBeNull();
+  view.unmount();
+  const reply = decisions.decide({ ...request, community: COMMUNITY });
+  await flush();
+  expect(typesafe).not.toHaveBeenCalled();
+  expect(native).not.toHaveBeenCalled();
+  // The restore finishes signed in, with no browser step in between.
+  await signedIn.signIn();
+  expect(typesafe).not.toHaveBeenCalled();
+  restoring = false;
+  for (const listener of [...listeners]) listener();
+  await expect(reply).resolves.toMatchObject({
+    outcome: "answered",
+    backend: BUILDERLAB,
+  });
+  expect(native).toHaveBeenCalledOnce();
+  expect(typesafe).not.toHaveBeenCalled();
+  await Promise.all([builderlab.dispose(), fallback.dispose()]);
+});
+
 it("answers each community with its own sign-in server's account, and leaves the rest to TypeSafe", async () => {
   const root = new Context();
   root.provide("pluginStatus", {

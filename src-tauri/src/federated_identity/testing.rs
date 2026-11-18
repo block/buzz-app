@@ -16,6 +16,13 @@ pub(crate) fn signed_in(adapter_base: String, relay: &str, required: bool) -> Fe
 pub(crate) fn signed_in_at(origin: String) -> FederatedIdentity {
     signed_in_with(origin, |_| {})
 }
+/// As `signed_in_at`, for a build's server that covers the community at
+/// `host`.
+pub(crate) fn signed_in_covering(origin: String, host: &str) -> FederatedIdentity {
+    signed_in_with(origin, |inner| {
+        inner.config.as_mut().unwrap().community_hosts = vec![host.into()];
+    })
+}
 /// The build's server signed in at `first_origin`, as `signed_in_at`, with a
 /// compiled peer signed in at `peer_origin` that covers `peer_host`. Returns
 /// both.

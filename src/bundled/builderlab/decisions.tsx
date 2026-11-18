@@ -18,6 +18,7 @@ import type {
   BuilderlabSession,
   CommunitySessions,
   Credential,
+  LoginSnapshot,
 } from "./session";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { coversCommunity } from "../../features/federated-identity/community-hosts";
@@ -142,8 +143,12 @@ export function offerBuilderlabDecisions(
     openSettings,
     communities,
   );
-  const signedIn = (each: BuilderlabSession | undefined) =>
-    each?.snapshot().status === "signed-in";
+  // A saved sign-in being restored stays registered, so a choice of
+  // Builderlab waits for it rather than going to TypeSafe.
+  const signedIn = (each: BuilderlabSession | undefined) => {
+    const state = each?.snapshot();
+    return state?.status === "signed-in" || restoring(state);
+  };
   let withdraw: (() => void) | undefined;
   const update = () => {
     const allowed =
@@ -187,12 +192,16 @@ export function builderlabProvider(
   // Only an explicit yes enables them; otherwise no call goes to Builderlab.
   const permitted = (credential: Credential) =>
     credential.account.canUseBuilderlabDecisions;
-  // A sign-in in progress cannot answer yet. Permissions being re-read
-  // are waited for only when the cached ones refuse: a grant may be new.
+  // A browser sign-in in progress cannot answer yet. A saved sign-in being
+  // restored is waited for, so a chosen Builderlab's decisions never go to
+  // TypeSafe meanwhile. Permissions being re-read are waited for only when
+  // the cached ones refuse: a grant may be new.
   const statusIn = (
     each: BuilderlabSession | undefined,
   ): DecisionProviderStatus => {
     const credential = signedIn(each);
+    if (native && each && !credential && restoring(each.snapshot()))
+      return "checking";
     if (!native || !each || !credential) return "needs-setup";
     if (permitted(credential)) return "ready";
     return each.snapshot().checkingPermissions ? "checking" : "needs-setup";
@@ -292,6 +301,8 @@ function BuilderlabDecisionsState({
   const state = useSyncExternalStore(session?.subscribe ?? noSubscription, () =>
     session?.snapshot(),
   );
+  // The row says it is checking.
+  if (restoring(state)) return null;
   if (state?.status !== "signed-in")
     return (
       <p role="status" className="m-0 text-body-sm text-secondary">
@@ -321,3 +332,7 @@ function BuilderlabDecisionsState({
 }
 
 const noSubscription = () => () => {};
+
+/** Restoring a saved sign-in or reading its account, with no browser step. */
+const restoring = (state: LoginSnapshot | undefined) =>
+  state?.status === "pending" && state.checking === true;

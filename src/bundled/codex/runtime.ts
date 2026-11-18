@@ -2981,11 +2981,13 @@ export class CodexRuntime {
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
     const answering = active ? [...active.requests] : [];
+    const requestId =
+      typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
     const request =
       active?.reply.settings.scope === "community" &&
       (call.tool === "send" || call.tool === "reply_in_subthread") &&
-      typeof args.request === "string"
-        ? (answering.find((pending) => pending.event?.id === args.request) ??
+      requestId
+        ? (answering.find((pending) => pending.event?.id === requestId) ??
           active.reply)
         : active?.reply;
     const owner = request ?? (once as Once);

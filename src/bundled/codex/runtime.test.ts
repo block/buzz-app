@@ -8203,9 +8203,7 @@ it("steers a working community thread with a Solo message and replies to both re
   });
   await f.tool("send", {
     audience: "everyone",
-    channel: "other",
-    reply: root,
-    request: thread.trigger.event.id,
+    request: ` ${thread.trigger.event.id.toUpperCase()} `,
     text: "CHANNEL ANSWER",
     final: true,
   });

@@ -1962,24 +1962,9 @@ export function SearchResults({
         combined={combined}
         onTry={(example) => {
           const chip = exampleChip(example);
-          if (!chip) return addFilter(example, true);
-          const kind = chip.operand.slice(0, chip.operand.indexOf(":"));
-          // One author and one conversation; dates intersect.
-          setChipQuery(
-            [
-              ...chips.filter(
-                (other) =>
-                  other.operand !== chip.operand &&
-                  !(
-                    (kind === "from" || kind === "in") &&
-                    other.operand.startsWith(`${kind}:`)
-                  ),
-              ),
-              chip,
-            ],
-            visibleQuery,
-          );
-          input.current?.focus();
+          // As a picker would: it replaces a typed filter of its kind.
+          if (chip) selectChip(query.length, query.length, chip);
+          else addFilter(example, true);
         }}
       />
     ) : null;

@@ -6357,6 +6357,18 @@ it("opens a filter guide from Filters or ?, adds a filter for its picker, and cl
     expect(
       screen.getByRole("button", { name: "Remove date during:7d" }),
     ).toHaveTextContent("during:7d");
+    // A tried author replaces a typed one, which the parser would read last.
+    fireEvent.change(field, {
+      target: { value: `deploy from:${"a".repeat(64)}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Preview" })).getByRole(
+        "button",
+        { name: /from:me/ },
+      ),
+    );
+    expect(change).toHaveBeenLastCalledWith("during:7d from:me deploy ");
   } finally {
     cleanup();
     owner.dispose();

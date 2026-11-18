@@ -346,20 +346,17 @@ function ScopedSidebar({
             after,
             dialogs,
           }) => (
-            <MessagesSidebarEnvironment
-              value={{
-                session,
-                scope,
-                navigator: props.navigator,
-                target: props.target,
-                sidebar,
-                filter,
-                soloTitle,
-                active: () => true,
-                chatIcons: props.chatIcons,
-                chatMenus: props.chatMenus,
-                sidebarRows: props.sidebarRows,
-              }}
+            <SidebarEnvironment
+              session={session}
+              scope={scope}
+              navigator={props.navigator}
+              target={props.target}
+              sidebar={sidebar}
+              filter={filter}
+              soloTitle={soloTitle}
+              chatIcons={props.chatIcons}
+              chatMenus={props.chatMenus}
+              sidebarRows={props.sidebarRows}
             >
               {props.renderSections({
                 settled: sourcesSettled,
@@ -456,7 +453,7 @@ function ScopedSidebar({
                   );
                 },
               })}
-            </MessagesSidebarEnvironment>
+            </SidebarEnvironment>
           )}
         />
       ) : (
@@ -629,5 +626,55 @@ function RestrictionBanner({
     <OwnedContribution entry={entry} registry={registry} fallback={null}>
       {({ banner: Banner }) => <Banner />}
     </OwnedContribution>
+  );
+}
+
+const alwaysActive = () => true;
+/** A new environment value makes React search every memoized sidebar subtree
+ * that skips rendering for its consumers, so keep it while its fields hold. */
+function SidebarEnvironment({
+  session,
+  scope,
+  navigator,
+  target,
+  sidebar,
+  filter,
+  soloTitle,
+  chatIcons,
+  chatMenus,
+  sidebarRows,
+  children,
+}: Omit<MessagesSidebarState, "active"> & { children: ReactNode }) {
+  const value = useMemo(
+    () => ({
+      session,
+      scope,
+      navigator,
+      target,
+      sidebar,
+      filter,
+      soloTitle,
+      active: alwaysActive,
+      chatIcons,
+      chatMenus,
+      sidebarRows,
+    }),
+    [
+      session,
+      scope,
+      navigator,
+      target,
+      sidebar,
+      filter,
+      soloTitle,
+      chatIcons,
+      chatMenus,
+      sidebarRows,
+    ],
+  );
+  return (
+    <MessagesSidebarEnvironment value={value}>
+      {children}
+    </MessagesSidebarEnvironment>
   );
 }

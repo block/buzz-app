@@ -250,9 +250,13 @@ assignments, section order, and removal markers. The first edit saves the
 combined legacy projection. Older desktop and mobile clients read their
 original coordinates. Their writes cannot replace the unified record. An
 upgraded client can import previously unseen workspaces and filings. A saved
-unified placement or removal takes precedence. The fallback stops adding
+unified placement or removal takes precedence, including when the legacy client
+already removed that entry before the unified save. The fallback stops adding
 legacy data when the unified record reaches 200 workspaces or 2,000 filings,
-respectively. Excess entries stay available in the original legacy records.
+respectively. Excess entries stay available in the original legacy records. A
+confirmed deletion attempts to clear its filing in the background. If that
+fails, a later filing can reuse the slot while this session still has proof of
+the deletion.
 The relay selects one whole record when same-account writers race, so
 confirmation can precede a later replacement of the same edit.
 

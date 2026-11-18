@@ -801,7 +801,7 @@ it("removes a section through native signing and readback without touching other
     removedSections: string[];
     unfiled: string[];
   };
-  expect(saved.removedSections).toBeUndefined();
+  expect(saved.removedSections).toEqual(["work"]);
   expect(saved.unfiled).toBeUndefined();
 });
 

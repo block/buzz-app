@@ -2074,6 +2074,9 @@ export function createRelaySession(
   }
   const removeWorkspace = workspaceWrite(transport?.removeSidebarSection);
   const assignWorkspace = workspaceWrite(transport?.writeSidebarAssignment);
+  // A missing roster row can also mean access was lost. Keep only confirmed
+  // deletes for reclamation when their immediate cleanup cannot save.
+  const deletedWorkspaceFilings = new Set<string>();
   async function writeWorkspaceAssignment(
     intent: SidebarAssignmentIntent,
     signal: AbortSignal,
@@ -2087,31 +2090,52 @@ export function createRelaySession(
       intent.channelId &&
       (intent.sectionId || intent.createSection) &&
       assignments &&
-      Object.keys(assignments).length >= MAX_WORKSPACE_ASSIGNMENTS &&
-      roster.status === "ready"
+      Object.keys(assignments).length >= MAX_WORKSPACE_ASSIGNMENTS
     ) {
-      const archived = roster.channels.find(
-        (channel) =>
-          channel.channelType === "solo" &&
-          channel.archived &&
-          Object.hasOwn(assignments, channel.id),
+      const deleted = [...deletedWorkspaceFilings].find((id) =>
+        Object.hasOwn(assignments, id),
       );
-      const sectionId = archived && assignments[archived.id];
-      if (archived && sectionId)
+      const archived =
+        !deleted &&
+        roster.status === "ready" &&
+        !roster.coverage &&
+        channels.roster().state === "verified"
+          ? roster.channels.find(
+              (channel) =>
+                channel.channelType === "solo" &&
+                channel.archived &&
+                Object.hasOwn(assignments, channel.id),
+            )?.id
+          : undefined;
+      const channelId = deleted ?? archived;
+      const sectionId = channelId && assignments[channelId];
+      if (channelId && sectionId)
         return assignWorkspace(
-          { ...intent, reclaim: { channelId: archived.id, sectionId } },
+          { ...intent, reclaim: { channelId, sectionId } },
           signal,
         );
     }
     return assignWorkspace(intent, signal);
   }
   function forgetDeletedFiling(id: string) {
-    const preferences = sidebarPreferences.queries;
+    const { snapshot } = sidebarPreferences.queries;
     if (
-      transport?.workspaceMigration &&
-      preferences.snapshot().data?.assignments[id]
+      !transport?.workspaceMigration ||
+      !Object.hasOwn(snapshot().data?.assignments ?? {}, id)
     )
-      void preferences.assign(id).catch(() => {});
+      return;
+    if (deletedWorkspaceFilings.size >= MAX_WORKSPACE_ASSIGNMENTS) {
+      const oldest = deletedWorkspaceFilings.values().next().value;
+      if (oldest !== undefined) deletedWorkspaceFilings.delete(oldest);
+    }
+    deletedWorkspaceFilings.add(id);
+    void sidebarPreferences
+      .forgetDeletedFiling(id)
+      .then(() => {
+        if (!Object.hasOwn(snapshot().data?.assignments ?? {}, id))
+          deletedWorkspaceFilings.delete(id);
+      })
+      .catch(() => {});
   }
   async function deleteWorkspaceSettings(id: string) {
     const kit = channelKit.capability;
@@ -4208,6 +4232,7 @@ export function createRelaySession(
         sidebarHeads.clear();
         legacyWorkspaceCache = undefined;
         invalidateLegacyWorkspaces();
+        deletedWorkspaceFilings.clear();
         sidebarPreferences.clear();
         channelKit.clear();
         lifecycle.clear();

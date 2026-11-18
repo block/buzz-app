@@ -719,6 +719,17 @@ export function createSidebarPreferencesStore({
   };
   return {
     ready,
+    async forgetDeletedFiling(channelId: string) {
+      // A confirmed deletion supersedes any retry for this conversation.
+      latestMove.delete(channelId);
+      if (failedMoves.delete(channelId)) publish(snapshot);
+      if (!writable() || snapshot.cached || !write) return;
+      const failure = "Deleted filing cleanup is unavailable";
+      await writeGroups(failure, (signal) => {
+        if (!writable()) throw new Error(failure);
+        return write({ channelId }, signal);
+      });
+    },
     invalidate,
     reconnect(continuous = false) {
       if (!continuous) invalidate();

@@ -254,6 +254,30 @@ it("defers new legacy workspaces and filings when the upgraded layout is full", 
   expect(workspacePayloadForSigning(merged, legacy).sections).toHaveLength(200);
 });
 
+it("keeps an explicit unfile or removal when the legacy entry is already absent", () => {
+  const groups: SidebarGroups = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { [channel]: "work" },
+  };
+  const current = workspaceBaseRecord(groups);
+  const unfiled = workspaceRecordForWrite(
+    editSidebarAssignment(current, 0, { channelId: channel }),
+    { ...groups, assignments: {} },
+    current,
+  );
+  expect(unfiled.unfiled).toEqual([channel]);
+  expect(importWorkspaceFallback(unfiled, groups)).toEqual(unfiled);
+
+  const removed = workspaceRecordForWrite(
+    editSidebarSectionRemoval(current, 0, "work"),
+    { sections: [], assignments: {} },
+    current,
+  );
+  expect(removed.removedSections).toEqual(["work"]);
+  expect(removed.unfiled).toBeUndefined();
+  expect(importWorkspaceFallback(removed, groups)).toEqual(removed);
+});
+
 it("only reclaims an unchanged archived filing when a new filing needs room", () => {
   const groups = legacyWithFilings(2000, 12);
   const source = workspaceBaseRecord(groups);

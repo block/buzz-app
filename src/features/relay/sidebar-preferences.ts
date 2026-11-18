@@ -127,18 +127,37 @@ export function workspaceRecordForWrite(
     workspaceTombstones(previous, "removedSections"),
   );
   const previousUnfiled = new Set(workspaceTombstones(previous, "unfiled"));
+  const previousSections = new Set(
+    (previous.sections as SidebarGroups["sections"] | undefined)?.map(
+      ({ id }) => id,
+    ),
+  );
+  const previousAssignments = previous.assignments as
+    | SidebarGroups["assignments"]
+    | undefined;
   const removedSections = workspaceTombstones(
     payload,
     "removedSections",
   ).filter(
     (id) =>
-      previousRemovals.has(id) || !legacySections || legacySections.has(id),
+      previousRemovals.has(id) ||
+      previousSections.has(id) ||
+      !legacySections ||
+      legacySections.has(id),
   );
   const removed = new Set(removedSections);
   const unfiled = workspaceTombstones(payload, "unfiled").filter((id) => {
     if (previousUnfiled.has(id) || !legacy) return true;
-    const target = legacy.assignments[id];
-    return target && !removed.has(target);
+    const prior =
+      previousAssignments && Object.hasOwn(previousAssignments, id)
+        ? previousAssignments[id]
+        : undefined;
+    const target = Object.hasOwn(legacy.assignments, id)
+      ? legacy.assignments[id]
+      : undefined;
+    // One section marker covers its removed filings. A standalone unfile
+    // still needs its marker even if the old client already cleared the row.
+    return (prior && !removed.has(prior)) || (target && !removed.has(target));
   });
   const result = {
     ...groups,

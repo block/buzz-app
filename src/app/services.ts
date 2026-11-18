@@ -35,6 +35,7 @@ import {
   notificationAuthorized,
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
+import { NewMenuService } from "../features/new-menu/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { DecisionsService } from "../features/decisions/service";
 import { AgentsService } from "../features/agents/service";
@@ -129,6 +130,7 @@ export function createServices() {
   const backdrops = new BackdropsService(ctx);
   new SubjectLiftService(ctx);
   const accountActions = new AccountActionsService(ctx);
+  const newMenu = new NewMenuService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
@@ -447,6 +449,7 @@ export function createServices() {
     decisions,
     agents,
     accountActions,
+    newMenu,
     shortcutBindings,
     conversation,
     artifactStorage,

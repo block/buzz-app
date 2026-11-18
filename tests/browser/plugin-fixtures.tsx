@@ -276,6 +276,36 @@ export const fixturePlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: {
+      id: "fixture.new-menu",
+      name: "New menu fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["pages", "navigation"],
+      apply(ctx) {
+        ctx.pages.register({
+          id: "start",
+          title: "New chat from Linear",
+          component: () => <h1>Start a chat from a Linear issue</h1>,
+        });
+        ctx.reflect.get("newMenu")?.register({
+          id: "linear",
+          title: "New chat from Linear",
+          group: "solo",
+          run: () =>
+            void ctx.navigation.open({
+              version: 1,
+              kind: "plugin",
+              pluginId: "fixture.new-menu",
+              pageId: "start",
+            }),
+        });
+      },
+    },
+  },
+  {
+    manifest: {
       id: "fixture.page-placement",
       name: "Page placement fixture",
       apiVersion: 1,

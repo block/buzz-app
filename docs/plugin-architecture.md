@@ -18,9 +18,9 @@ across versions yet, and the author types are `0.0.0-preview.1`.
   panel is steady, but placement is not.
 - **Borderline:** decisions, and link and code-block renderers.
 - **Likely to break:** the relay session read model; conversation contributions;
-  sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
-  targets and the harness kit; artifact storage, the installer, federated identity
-  and the browser view; and other navigation `open` targets.
+  sidebar sections and rows, the Solo region, New menu items and backdrops; agent
+  hooks, execution targets and the harness kit; artifact storage, the installer,
+  federated identity and the browser view; and other navigation `open` targets.
 
 ## The first two authoring experiences
 
@@ -846,6 +846,28 @@ and teardown remove it too, so a restriction can never outlive its plugin. A
 banner that throws renders nothing and leaves the sidebar usable. It changes
 only the sidebar: links, search and alert clicks still open any conversation.
 Focus is the first caller and registers its restriction only while Focus is on.
+
+### New menu items
+
+A plugin may add items to the sidebar **+** (New) menu. Read the capability with
+`ctx.reflect.get("newMenu")` instead of adding it to required `inject`, so the
+plugin still activates on hosts without it.
+
+```ts
+ctx.reflect.get("newMenu")?.register({
+  id: "new-chat",
+  title: "New chat from Linear",
+  group: "solo",
+  run: openStart,
+});
+```
+
+`group` is `"solo"` or `"team"`. The host lists contributed items after the
+built-in items in that group, in registration order, and owns the menu's
+order, focus and dismissal. Choosing an item closes the menu and calls `run`
+with no arguments; open a page, panel or dialog from there. A throwing or
+rejecting `run` is logged and leaves the menu usable. Registration lasts for the
+plugin's Cordis scope, so disabling or replacing the plugin removes its items.
 
 ### Decorating host sidebar rows and adding sort modes
 

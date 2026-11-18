@@ -31,6 +31,7 @@ import {
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
+import type { NewMenuItems } from "../../features/new-menu/service";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -54,6 +55,7 @@ export function fixture(
     federatedIdentity?: FederatedIdentity;
     sidebarScope?: SidebarScope;
     sidebarRows?: SidebarRows;
+    newMenu?: NewMenuItems;
   } = {},
 ) {
   const owner = createRelaySession(host.transport ?? null);
@@ -259,6 +261,7 @@ export function fixture(
             relay={relay}
             navigator={navigator}
             agents={agents}
+            items={host.newMenu}
           >
             {(creationAction) =>
               sidebarVisible && (

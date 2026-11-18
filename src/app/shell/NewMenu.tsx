@@ -1,6 +1,10 @@
 import { createPortal } from "react-dom";
 import { useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
+import type {
+  NewMenuItems,
+  RegisteredNewMenuItem,
+} from "../../features/new-menu/service";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
@@ -37,6 +41,7 @@ type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  items?: NewMenuItems | undefined;
   triggerContainer?: HTMLElement | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -55,11 +60,24 @@ export function NewMenu(props: Props) {
 }
 
 const noSubscription = () => () => {};
+const noItems: readonly RegisteredNewMenuItem[] = [];
+const noItemsSnapshot = () => noItems;
+
+function runItem(item: RegisteredNewMenuItem) {
+  const fail = (error: unknown) =>
+    console.error(`New menu item failed: ${item.key}`, error);
+  try {
+    void Promise.resolve(item.run()).catch(fail);
+  } catch (error) {
+    fail(error);
+  }
+}
 
 function ReadyNewMenu({
   relay,
   navigator,
   agents,
+  items,
   session,
   available,
   triggerContainer,
@@ -89,6 +107,23 @@ function ReadyNewMenu({
   const [draftFocus, setDraftFocus] = useState<HTMLElement | null>(null);
   const scope = splitPartition(session.scope);
   const current = () => relay.snapshot().session === session;
+  const contributed = useSyncExternalStore(
+    items?.subscribe ?? noSubscription,
+    items?.snapshot ?? noItemsSnapshot,
+  );
+  const contributedTo = (group: RegisteredNewMenuItem["group"]) =>
+    contributed
+      .filter((item) => item.group === group)
+      .map((item) => (
+        <MenuItem
+          key={item.key}
+          onClick={() => {
+            if (current()) runItem(item);
+          }}
+        >
+          {item.title}
+        </MenuItem>
+      ));
   const menuTrigger = (
     <MenuTrigger
       render={
@@ -156,6 +191,7 @@ function ReadyNewMenu({
             >
               New workspace
             </MenuItem>
+            {contributedTo("solo")}
           </MenuGroup>
           <MenuSeparator />
           <MenuGroup>
@@ -192,6 +228,7 @@ function ReadyNewMenu({
             >
               New section
             </MenuItem>
+            {contributedTo("team")}
           </MenuGroup>
         </MenuPopup>
       </MenuRoot>

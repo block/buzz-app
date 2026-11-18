@@ -117,10 +117,11 @@ for (const density of ["default", "compact"])
           layout === "timeline" &&
           browserName === "chromium"
         ) {
-          const button = page
-            .locator('[data-message-id="b"] [data-message-actions]')
-            .getByRole("button", { name: "More message actions" });
-          const box = await button.boundingBox();
+          const row = page.locator('[data-message-id="b"]');
+          const bar = row.locator("[data-message-actions]");
+          const bubble = await row
+            .locator("[data-message-action-anchor]")
+            .boundingBox();
           expect(
             await page.evaluate(
               () => matchMedia("(hover: hover) and (pointer: fine)").matches,
@@ -129,17 +130,26 @@ for (const density of ["default", "compact"])
           // Native touch on a fine-pointer desktop needs the Chromium input protocol.
           const cdp = await context.newCDPSession(page);
           try {
-            await cdp.send("Input.dispatchTouchEvent", {
-              type: "touchStart",
-              touchPoints: [
-                { x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 },
-              ],
-            });
-            await cdp.send("Input.dispatchTouchEvent", {
-              type: "touchEnd",
-              touchPoints: [],
-            });
-            await page.clock.runFor(16);
+            const tap = async ({ x, y, width, height }) => {
+              await cdp.send("Input.dispatchTouchEvent", {
+                type: "touchStart",
+                touchPoints: [{ x: x + width / 2, y: y + height / 2, id: 1 }],
+              });
+              await cdp.send("Input.dispatchTouchEvent", {
+                type: "touchEnd",
+                touchPoints: [],
+              });
+              await page.clock.runFor(16);
+            };
+            await tap(bubble);
+            await expect
+              .poll(() => bar.evaluate((n) => n.matches(":popover-open")))
+              .toBe(true);
+            await tap(
+              await bar
+                .getByRole("button", { name: "More message actions" })
+                .boundingBox(),
+            );
             await expect(page.getByRole("menu")).toBeVisible();
           } finally {
             await cdp.detach();

@@ -88,15 +88,22 @@ function hoverOwner(document: Document) {
     }
   };
   const update = (event: PointerEvent, immediate = false) => {
+    const point = { x: event.clientX, y: event.clientY };
     if (event.pointerType === "touch") {
-      if (event.target instanceof Node && current?.bar.contains(event.target))
+      const { target } = event;
+      if (
+        target instanceof Node &&
+        (current?.bar.contains(target) ||
+          (current?.row.contains(target) && current.retain(target, point)))
+      ) {
         cancel();
-      else select(undefined);
+      } else {
+        select(undefined);
+      }
       return;
     }
     const target =
       event.type === "pointerout" ? event.relatedTarget : event.target;
-    const point = { x: event.clientX, y: event.clientY };
     pointers.set(document, { target, point });
     if (current?.hit(target)) {
       cancel();

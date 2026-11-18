@@ -32,18 +32,17 @@ function setup() {
     );
     bar.getBoundingClientRect = () => new DOMRect(180, 100, 100, 40);
     const changed = vi.fn();
+    const hit = (target: EventTarget | null) =>
+      target instanceof Element &&
+      !target.closest("[data-message-reactions], [data-media-timecode]") &&
+      (content.contains(target) || bar.contains(target));
     cleanups.push(
       observeMessageActionHover(
         {
           row: node,
           bar,
-          hit: (target) =>
-            target instanceof Element &&
-            !target.closest(
-              "[data-message-reactions], [data-media-timecode]",
-            ) &&
-            (content.contains(target) || bar.contains(target)),
-          retain: (target) => target === node,
+          hit,
+          retain: (target) => hit(target) || target === node,
           changed,
         },
         false,
@@ -221,6 +220,30 @@ it("keeps a shown toolbar through a touch tap, then releases on touch elsewhere"
     close();
   }
 });
+
+it.each(["content", "node"] as const)(
+  "keeps the shown toolbar through a touch on the current row's %s",
+  (surface) => {
+    vi.useFakeTimers();
+    const { a, b, close } = setup();
+    try {
+      fireEvent.pointerMove(b.content, point(150, 160));
+      const touch = { ...point(100, 200), pointerType: "touch" };
+      fireEvent.pointerOver(a[surface], touch);
+      fireEvent.pointerDown(a[surface], touch);
+      fireEvent.pointerUp(a[surface], touch);
+      fireEvent.pointerOut(a[surface], { ...touch, relatedTarget: null });
+      vi.advanceTimersByTime(MESSAGE_ACTION_TRAVEL_IDLE_MS);
+      expect(a.changed).toHaveBeenLastCalledWith(true);
+      expect(b.changed).not.toHaveBeenCalled();
+      fireEvent.pointerDown(b.content, touch);
+      expect(a.changed).toHaveBeenLastCalledWith(false);
+      expect(b.changed).not.toHaveBeenCalled();
+    } finally {
+      close();
+    }
+  },
+);
 
 it("keeps a press in the current row's retained space and switches on another row", () => {
   const { a, b, close } = setup();

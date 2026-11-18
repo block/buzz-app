@@ -38,6 +38,7 @@ import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge, ordinaryUnread, useConfirmedMute } from "./UnreadBadge";
+import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
@@ -215,6 +216,17 @@ function ChannelSidebarItemCore({
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      title={
+        channel.channelType === "solo" ? (
+          // Incoming renames animate; a rename saved here shows at once.
+          <SoloChatTitle
+            key={channel.id}
+            channelId={channel.id}
+            title={channel.name}
+            details={session.channelDetails}
+          />
+        ) : undefined
+      }
       menuAction={
         menuEnabled &&
         channel.channelType === "solo" && (

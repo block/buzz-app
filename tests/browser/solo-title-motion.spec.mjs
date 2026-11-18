@@ -24,8 +24,8 @@ test("Solo rename animates both titles without interrupting typing or overflowin
 }) => {
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const row = sidebar.locator(`[data-solo-channel-id="${chat}"]`);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const row = sidebar.locator(`[data-solo-destination-id="${chat}"]`);
   await row.click();
   const composer = page.getByRole("textbox", { name: "Message your agents" });
   await expect(composer).toBeFocused();
@@ -260,7 +260,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
     "Handoff notes",
   ]);
 
-  await sidebar.locator(`[data-solo-channel-id="${other}"]`).click();
+  await sidebar.locator(`[data-solo-destination-id="${other}"]`).click();
   const nextTitle = header("Beta").locator(titleSelector);
   await expect(nextTitle).toHaveText("Beta");
   expect(

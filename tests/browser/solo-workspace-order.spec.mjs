@@ -34,6 +34,8 @@ async function createWorkspace(page, id, name) {
 }
 
 async function pull(page, from, to) {
+  // Keep the header clear of the sidebar's floating New button.
+  await from.evaluate((node) => node.scrollIntoView({ block: "center" }));
   const start = await from.boundingBox();
   const end = await to.boundingBox();
   if (!start || !end) throw new Error("Missing workspace header");

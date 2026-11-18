@@ -21,6 +21,7 @@ export function ChannelSidebarRow({
   channel,
   icon,
   nameAccessory,
+  title,
   badge,
   working = false,
   ordinary = false,
@@ -42,6 +43,8 @@ export function ChannelSidebarRow({
   channel: ChannelSummary;
   icon: ReactNode;
   nameAccessory?: ReactNode;
+  /** Rendered in place of the channel name, which stays its text. */
+  title?: ReactNode;
   badge?: ReactNode;
   /** Agents are working here; the badge reserves its own trailing space. */
   working?: boolean;
@@ -142,7 +145,9 @@ export function ChannelSidebarRow({
           className={styles.nameContent}
           data-name-accessory={muted || nameAccessory ? "" : undefined}
         >
-          <FadingLabel className={styles.label}>{channel.name}</FadingLabel>
+          <FadingLabel className={styles.label}>
+            {title ?? channel.name}
+          </FadingLabel>
           {muted && (
             <span className={styles.muted} role="img" aria-label="Muted">
               <BellSlashIcon size={14} />

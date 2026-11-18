@@ -19,7 +19,7 @@ for (const density of ["default", "compact"])
       await server.listen();
       try {
         await page.goto(
-          `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/toolbar-investigation.html`,
+          `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/toolbar-travel.html`,
         );
         await page.waitForFunction(() => !!window.toolbarFixture);
         for (const own of [true, false])
@@ -148,7 +148,7 @@ test("Compact media actions remain clickable with a scrolled byline and enlarged
   try {
     await page.setViewportSize({ width: 390, height: 900 });
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/toolbar-investigation.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/toolbar-travel.html`,
     );
     await page.waitForFunction(() => !!window.toolbarFixture);
     const options = {

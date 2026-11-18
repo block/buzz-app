@@ -134,17 +134,21 @@ export function useFloatingActionBar(
     const routeSurface = (target: Element) =>
       row.contains(target) ||
       (!!scroller?.contains(target) && !target.closest("[data-layout]"));
-    const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
+    const hit = (target: EventTarget | null) =>
+      target instanceof Element &&
+      !target.closest("[data-media-timecode], [data-message-reactions]") &&
+      (bar.contains(target) ||
+        !!(compact ? row.contains(target) : contentAt(target)));
+    const hoverTarget = (
+      target: EventTarget | null,
+      { x, y }: { x: number; y: number },
+    ) => {
       if (
         !(target instanceof Element) ||
         target.closest("[data-media-timecode], [data-message-reactions]")
       )
         return false;
-      if (
-        bar.contains(target) ||
-        (compact ? row.contains(target) : contentAt(target))
-      )
-        return true;
+      if (hit(target)) return true;
       // Retain only an active hover: content gaps and the tapered route to the
       // toolbar are pass-through geometry, never activation or hit surfaces.
       const bounds = contentBounds.current;
@@ -159,7 +163,6 @@ export function useFloatingActionBar(
       )
         return false;
       const { content, toolbar, clearance } = bounds;
-      const { clientX: x, clientY: y } = event;
       if (
         target.closest("[data-message-payload]") &&
         x >= content.left &&
@@ -236,16 +239,8 @@ export function useFloatingActionBar(
       {
         row,
         bar,
-        hit: (target) =>
-          target instanceof Element &&
-          !target.closest("[data-media-timecode], [data-message-reactions]") &&
-          (bar.contains(target) ||
-            !!(compact ? row.contains(target) : contentAt(target))),
-        retain: (target, point) =>
-          hoverTarget(target, {
-            clientX: point.x,
-            clientY: point.y,
-          } as PointerEvent),
+        hit,
+        retain: hoverTarget,
         changed: (next) => {
           hovered = next;
           update();
@@ -437,10 +432,10 @@ export function useFloatingActionBar(
         abovePaintedTop < viewport.top + height + overlap;
       const compactClipped =
         compact && !!viewport && abovePaintedTop < viewport.top;
-      const paintedTop = compactClipped
-        ? viewport.top + overlap
-        : nested
-          ? Math.max(rowBounds.top + overlap, viewport.top + overlap)
+      const paintedTop = nested
+        ? Math.max(rowBounds.top + overlap, viewport.top + overlap)
+        : compactClipped
+          ? viewport.top + overlap
           : abovePaintedTop;
       const top = paintedTop + height;
       if (viewport && paintedTop >= viewport.bottom) {

@@ -4,7 +4,7 @@ import { MessageRow } from "../../src/features/messages/MessageRow";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { IconButton } from "../../src/shared/design-system/ui/IconButton";
-import { MessageReplyIcon } from "../../src/shared/design-system/icons";
+import { ThreadIcon } from "../../src/shared/design-system/icons";
 import {
   message,
   profiles,
@@ -80,7 +80,7 @@ function App() {
                   title="Add reaction"
                   aria-label="Add reaction"
                   size="sm"
-                  icon={<MessageReplyIcon />}
+                  icon={<ThreadIcon />}
                 />
               }
             />

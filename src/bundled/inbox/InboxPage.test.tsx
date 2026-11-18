@@ -1604,6 +1604,19 @@ function fixture(
     failThreadSave() {
       failThreadSave = true;
     },
+    /** Another window's local Mark as unread: saved, but this owner is not told. */
+    markUnreadElsewhere(key: string) {
+      if (!journal) throw new Error("Missing read journal");
+      const revision = journal.revision + 1;
+      journal = readJournal(
+        {
+          ...journal,
+          revision,
+          localUnread: { ...journal.localUnread, [key]: revision },
+        },
+        viewer.pubkey,
+      );
+    },
     saveStarted: () => saveStarted,
     holdSave() {
       saveStarted = false;
@@ -3001,6 +3014,57 @@ it("stops a two-step Mark as read before a newer unread reminder, even on Retry"
   expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeTypeOf("number");
   expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
   await waitFor(() => expect(item()?.unreadCount).toBeGreaterThan(0));
+});
+
+it("a two-step Mark as read's Retry keeps its click's cut before a newer unread reminder", async () => {
+  const h = fixture();
+  const root = message(h.alice, "room", "Retry root", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const child = message(h.alice, "room", "Retry reply", 31, [
+    ["p", h.viewer.pubkey],
+    ["e", root.id, "", "reply"],
+  ]);
+  h.events.push(root, child);
+  h.emit([root, child]);
+  render(h.view);
+  await screen.findByText("Retry reply");
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  expect(
+    h.owner.session.unread
+      .inbox()
+      .items.find((entry) => entry.id === `room:${root.id}`)?.readThrough,
+  ).toHaveLength(2);
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("Retry reply"),
+  );
+  if (!row) throw Error("Missing two-step row");
+  h.failThreadSave();
+  fireEvent.click(within(row).getByRole("button", { name: /^Mark as read / }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "thread disk full",
+  );
+  expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
+  // Another window saves a reminder after the click, before Retry.
+  h.markUnreadElsewhere(`thread:${root.id}`);
+  fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
+  // Retry saves the failed step again under the click's cut, which rejects it.
+  await waitFor(() => expect(h.readSteps).toHaveLength(3));
+  await waitFor(() =>
+    expect(screen.getByRole("list", { name: "Activity" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    ),
+  );
+  expect(h.readSteps.map((step) => step.id)).toEqual([
+    root.id,
+    child.id,
+    child.id,
+  ]);
+  expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
+  expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeTypeOf("number");
 });
 
 it.each(["retry", "other", "blur"] as const)(

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
+import { soloGroups, WorkspaceNameConflict } from "../relay/solo-preferences";
 import type { KitEntry, Lineup } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -59,9 +60,22 @@ export function WorkspaceSettings({
   const [canvasError, setCanvasError] = useState(false);
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [projectName, setProjectName] = useState(target.name);
+  const [nameConflict, setNameConflict] = useState(false);
+  const confirmedName = useRef(target.name);
+  const renamedName = useRef<string | undefined>(undefined);
+  const keptName = useRef(target.name);
+  const nextName = projectName.trim();
+  const nameChanged =
+    target.kind === "project" && nextName !== confirmedName.current;
+  const nameError =
+    target.kind === "project" && (!nextName || nextName.length > 120)
+      ? "Use a workspace name of 1–120 characters."
+      : undefined;
   const alive = useRef(true);
   const inFlight = useRef(false);
   const confirmedCanvas = useRef("");
+  const historical = useRef<{ canvas: string; workspace: string }>(undefined);
   // What reopening would show: the saved settings, or this device's kept draft.
   const kept = useRef("");
   const snapshot = (canvas: string | undefined, { agents, teamIds }: Lineup) =>
@@ -79,10 +93,19 @@ export function WorkspaceSettings({
   const key = `solo:workspace-draft:${target.kind}:${target.id}`;
   const adopt = (canvas: string) => {
     try {
-      setWorkspace(readWorkspace(canvas));
+      const value = readWorkspace(canvas);
+      setWorkspace(value);
       setRaw(undefined);
+      const normalized = instructionsCanvas(value, undefined);
+      historical.current =
+        normalized === undefined
+          ? { canvas, workspace: JSON.stringify(value) }
+          : undefined;
+      // Dirty tracking follows the form's normalized legacy instructions.
+      return normalized ?? JSON.stringify(value);
     } catch {
       setRaw(canvas);
+      return canvas;
     }
   };
   const load = async (replace = false) => {
@@ -101,6 +124,15 @@ export function WorkspaceSettings({
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Workspace defaults are unavailable.");
+        const groups = soloGroups(kit.entries);
+        if (
+          groups &&
+          !groups.record.deleted &&
+          groups.record.value.type === "groups"
+        )
+          confirmedName.current =
+            groups.record.value.groups.find((group) => group.id === target.id)
+              ?.name ?? confirmedName.current;
         const id = await projectTemplateId(target.id);
         if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
@@ -123,6 +155,11 @@ export function WorkspaceSettings({
         revision = head?.id;
       }
       confirmedCanvas.current = content;
+      if (target.kind === "project") {
+        setProjectName(confirmedName.current);
+        keptName.current = confirmedName.current;
+        setNameConflict(false);
+      }
       const saved = replace ? null : readView<unknown>(scope, key, null);
       let adopted = content;
       if (
@@ -137,8 +174,30 @@ export function WorkspaceSettings({
           defaults = parseLineup(saved.lineup);
           setLineup(defaults);
         }
-        adopt(saved.canvas);
-        adopted = saved.canvas;
+        if (
+          target.kind === "project" &&
+          "name" in saved &&
+          typeof saved.name === "string"
+        ) {
+          const nameBase =
+            "nameBase" in saved && typeof saved.nameBase === "string"
+              ? saved.nameBase
+              : undefined;
+          // An unchanged draft name must not undo a rename made elsewhere.
+          if (saved.name.trim() !== nameBase) {
+            setProjectName(saved.name);
+            keptName.current = saved.name;
+            if (
+              saved.name.trim() !== confirmedName.current &&
+              nameBase !== confirmedName.current
+            ) {
+              setNameConflict(true);
+              setError(new WorkspaceNameConflict().message);
+              setCanvasError(true);
+            }
+          }
+        }
+        adopted = adopt(saved.canvas);
         setBase(saved.base ?? undefined);
         if ((saved.base ?? undefined) !== revision) {
           setError(
@@ -147,7 +206,7 @@ export function WorkspaceSettings({
           setCanvasError(true);
         }
       } else {
-        adopt(content);
+        adopted = adopt(content);
         setBase(revision);
       }
       kept.current = snapshot(adopted, defaults);
@@ -176,13 +235,25 @@ export function WorkspaceSettings({
       alive.current = false;
     };
   }, []);
+  // Preserve an unchanged historical header when its replacement would not fit.
+  const rawCanvas =
+    raw ??
+    (JSON.stringify(workspace) === historical.current?.workspace
+      ? historical.current.canvas
+      : undefined);
+  const draftCanvas =
+    instructionsCanvas(workspace, raw) ?? JSON.stringify(workspace);
   const save = async () => {
-    if (!active() || inFlight.current) return;
+    if (!active() || inFlight.current || nameConflict) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
     setStatus("");
     let canvasConfirmed = false;
+    let nameConfirmed =
+      target.kind === "project" &&
+      !nameChanged &&
+      confirmedName.current === renamedName.current;
     try {
       if (lifetime.checkOnly) {
         // Checking an uncertain details write never publishes pending Canvas edits.
@@ -196,7 +267,7 @@ export function WorkspaceSettings({
         }
         if (
           loaded &&
-          (raw ?? workspaceCanvas(workspace)) !== confirmedCanvas.current
+          instructionsCanvas(workspace, rawCanvas) !== confirmedCanvas.current
         ) {
           setStatus(
             "Chat name and lifetime saved. Workspace and Canvas still have unsaved changes.",
@@ -206,10 +277,18 @@ export function WorkspaceSettings({
       } else {
         // Validate both drafts before admitting either publication.
         const canvas = loaded
-          ? raw === undefined
+          ? rawCanvas === undefined
             ? workspaceCanvas(workspace)
-            : workspaceCanvas({ folders: [], canvas: raw })
+            : workspaceCanvas({ folders: [], canvas: rawCanvas })
           : undefined;
+        if (nameError) throw new Error(nameError);
+        const template =
+          target.kind === "project" && canvas !== undefined
+            ? projectTemplate(session.scope, recipeId, nextName, {
+                ...lineup,
+                canvas,
+              })
+            : undefined;
         if (lifetime.changed && lifetime.blocked)
           throw new Error(
             lifetime.invalid ||
@@ -217,23 +296,48 @@ export function WorkspaceSettings({
           );
         if (
           canvas !== undefined &&
-          !writeView(scope, key, { canvas, base: base ?? null, lineup })
+          !writeView(scope, key, {
+            canvas,
+            base: base ?? null,
+            lineup,
+            ...(target.kind === "project"
+              ? { name: projectName, nameBase: confirmedName.current }
+              : {}),
+          })
         )
           throw new CanvasSettingsError(
             "Your draft couldn’t be saved on this device. No new changes were sent.",
           );
-        if (canvas !== undefined) kept.current = snapshot(canvas, lineup);
+        if (canvas !== undefined) kept.current = snapshot(draftCanvas, lineup);
+        if (target.kind === "project") keptName.current = projectName;
+        if (nameChanged) {
+          await session.soloPreferences.renameSection(
+            target.id,
+            nextName,
+            confirmedName.current,
+          );
+          confirmedName.current = nextName;
+          renamedName.current = nextName;
+          nameConfirmed = true;
+          if (
+            !writeView(scope, key, {
+              canvas,
+              base: base ?? null,
+              lineup,
+              name: nextName,
+              nameBase: nextName,
+            })
+          )
+            throw new CanvasSettingsError(
+              "The confirmed workspace name couldn’t be retained on this device. Keep this dialog open to retry.",
+            );
+        }
+        if (!active()) return;
         if (
           canvas !== undefined &&
           (target.kind === "project" || canvas !== confirmedCanvas.current)
         ) {
-          if (target.kind === "project") {
-            const template = projectTemplate(
-              session.scope,
-              recipeId,
-              target.name,
-              { ...lineup, canvas },
-            );
+          if (template) {
             try {
               await session.channelKit.save(template, base);
             } catch (reason) {
@@ -279,9 +383,11 @@ export function WorkspaceSettings({
     } catch (reason) {
       if (active()) {
         setError(
-          `${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
+          `${nameConfirmed ? "Workspace name saved. " : ""}${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
         );
-        setCanvasError(reason instanceof CanvasSettingsError);
+        const conflictedName = reason instanceof WorkspaceNameConflict;
+        if (conflictedName) setNameConflict(true);
+        setCanvasError(reason instanceof CanvasSettingsError || conflictedName);
       }
     } finally {
       inFlight.current = false;
@@ -303,21 +409,20 @@ export function WorkspaceSettings({
       dirty={
         // An uncertain details save stays with its owner and reopens to be checked.
         (lifetime.changed && !lifetime.checkOnly) ||
-        (loaded &&
-          snapshot(instructionsCanvas(workspace, raw), lineup) !== kept.current)
+        (target.kind === "project" && projectName !== keptName.current) ||
+        (loaded && snapshot(draftCanvas, lineup) !== kept.current)
       }
       busy={busy || lifetime.busy}
       title={target.kind === "project" ? "Workspace settings" : undefined}
-      saveLabel={
-        lifetime.checkOnly
-          ? "Check save status"
-          : `Save ${target.kind === "project" ? "defaults" : "changes"}`
-      }
+      saveLabel={lifetime.checkOnly ? "Check save status" : "Save changes"}
       saveLoading={busy || lifetime.busy || loadingCanvas}
       saveDisabled={
         loadingCanvas ||
         !!signal?.aborted ||
         (!loaded && !lifetime.eligible) ||
+        !!nameError ||
+        nameConflict ||
+        (nameChanged && !session.soloPreferences?.sectionRenameWritable) ||
         (lifetime.available &&
           !lifetime.checkOnly &&
           (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
@@ -325,6 +430,18 @@ export function WorkspaceSettings({
       }
       onSave={() => void save()}
     >
+      {target.kind === "project" && (
+        <Field label="Workspace name" error={nameError}>
+          <Input
+            value={projectName}
+            maxLength={120}
+            disabled={
+              busy || !loaded || !session.soloPreferences?.sectionRenameWritable
+            }
+            onChange={(event) => setProjectName(event.target.value)}
+          />
+        </Field>
+      )}
       {lifetime.available && lifetime.base && (
         <Field label="Chat name" error={lifetime.nameError}>
           <Input

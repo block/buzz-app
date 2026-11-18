@@ -220,14 +220,16 @@ second
         "<ol><li><p>x</p></li><li><p>y</p></li></ol>" +
         "<blockquote><p>quote   here</p></blockquote>" +
         "<table><thead><tr><th>a     b</th></tr></thead><tbody><tr><td>c   d</td></tr></tbody></table>" +
-        "<p><code>a    b</code></p><pre><code>one\n  two\n</code>",
+        '<p><code>a    b</code></p><pre><code tabindex="-1">one\n  two\n</code>',
     );
   });
 
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");
-    expect(html).toContain('<code class="language-ts">const x = 1');
+    expect(html).toContain(
+      '<code class="language-ts" tabindex="-1">const x = 1',
+    );
     expect(html).not.toContain("<strong>literal</strong>");
   });
 
@@ -861,6 +863,20 @@ describe("Markdown profile mentions", () => {
 });
 
 describe("Markdown inline extensions", () => {
+  it.each(["Agent2", "Agent"])(
+    "keeps numeric boundaries across a mention named %s",
+    (name) => {
+      const html = render(`@${name}:25: @${name} :25: @${name}:party_parrot:`, {
+        participantProfiles: new Map([[mic, { name }]]),
+        emoji: [party, { shortcode: "25", url: party.url }],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      });
+      expect(html.match(/<button/g)).toHaveLength(3);
+      expect(html.match(/<img/g)).toHaveLength(name === "Agent2" ? 2 : 3);
+    },
+  );
+
   it("preserves custom emoji and plugin prose alongside profile mentions", () => {
     const html = render("**:party_parrot:** PLUGIN @Mic", {
       emoji: [party],
@@ -1303,6 +1319,9 @@ describe("code block copy", () => {
 
   it("omits the copy action in noninteractive previews", () => {
     expect(render(fenced, { interactive: false })).not.toContain("<button");
+    expect(render(fenced, { interactive: false })).not.toContain(
+      'tabindex="0"',
+    );
   });
 });
 
@@ -1659,4 +1678,20 @@ it("opens a plugin page link in message content through the host opener", () => 
   );
   fireEvent.click(screen.getByRole("link", { name: "the entry" }));
   expect(onOpenLink).toHaveBeenCalledWith(href);
+});
+
+it("renders frozen forwarded mention labels without source profiles or notifications", () => {
+  const content = `@A*B* (${other}) and @A*B*`;
+  const html = render(content, {
+    participantProfiles: new Map(),
+    patch: {
+      mentions: [],
+      mentionReferences: [other],
+      mentionLabels: [{ id: other, names: ["A*B*"] }],
+    },
+  });
+  expect(html).toContain("A*B*");
+  expect(html).not.toContain("<em>");
+  expect(html).not.toContain(`(${other})`);
+  expect(html).toContain("data-mention-kind");
 });

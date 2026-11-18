@@ -61,8 +61,6 @@ mod claude_key;
 #[cfg(unix)]
 mod cli_link;
 mod clipboard;
-#[cfg(any(target_os = "macos", test))]
-mod gpu_reaper;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -78,6 +76,8 @@ mod microphone;
 mod mouse_nav;
 #[cfg(target_os = "macos")]
 mod reshow;
+#[cfg(any(target_os = "macos", test))]
+mod webkit_reaper;
 
 mod notifications;
 mod os_idle;
@@ -589,8 +589,19 @@ async fn plugin_import_install(
 }
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
+    let managed = manager.managed(&catalog);
+    // Every catalog read can start it, so a new or changed policy applies without a
+    // restart; each pinned version is tried once per run, and one apply runs at a time.
+    if manager.automatic_due(&managed, &catalog) {
+        let manager = manager.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = manager.apply_automatic() {
+                eprintln!("Could not apply the managed plugin policy: {error}");
+            }
+        });
+    }
     InstallationResult::Ready {
-        managed: manager.managed(&catalog),
+        managed,
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -910,9 +921,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         sign_out::sign_out_wipe_refusal
     ]
 }
+
+#[cfg(target_os = "macos")]
+fn register_spellcheck_default() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+    let enabled = NSNumber::numberWithBool(true);
+    let enabled: &AnyObject = &enabled;
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("WebContinuousSpellCheckingEnabled")],
+        &[enabled],
+    );
+    // SAFETY: the dictionary maps an NSString key to an NSNumber value.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     credential_service::drop_inherited();
+    #[cfg(target_os = "macos")]
+    register_spellcheck_default();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(
@@ -1034,7 +1062,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             #[cfg(target_os = "macos")]
-            gpu_reaper::install(app.handle());
+            webkit_reaper::install(app.handle());
             #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
@@ -1060,7 +1088,7 @@ pub fn run() {
                     }
                 }
             }
-            tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            tauri::async_runtime::spawn(host_command::load_login_shell_environment());
             if let Ok(manager) = &app.state::<PluginManager>().0 {
                 packaged_plugins::spawn(manager.clone());
             }

@@ -60,6 +60,7 @@ export function appClient(
     return found;
   };
   const handoff = agent.handoff;
+  const threadsApart = agent.threadsApart;
   const plugins = agent.plugins;
   const { settings, soloWorkspaces } = agent;
   const client: BuzzClient = {
@@ -322,6 +323,14 @@ export function appClient(
           handoff: (wake: AgentHandoff) => {
             check();
             handoff(wake);
+          },
+        }
+      : {}),
+    ...(threadsApart
+      ? {
+          threadsApart: (channel: string) => {
+            check();
+            return threadsApart(channel);
           },
         }
       : {}),

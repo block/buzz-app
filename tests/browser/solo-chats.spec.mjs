@@ -24,7 +24,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   const agents = ["Blossom", "Bubbles"].map((name) =>
     app.serveProfile(generateSecretKey(), { name, is_agent: true }),
   );
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (!filters.some((filter) => filter.kinds?.includes(39002)))
       return route.continue();
@@ -224,7 +224,7 @@ test.describe("Berd-style Solo project organization", () => {
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
 
-    await sidebar.getByText("Alpha", { exact: true }).click();
+    await row.click();
     await expect(
       page.getByRole("button", { name: "Workspace: Work", exact: true }),
     ).toBeVisible();
@@ -271,7 +271,7 @@ test.describe("Berd-style Solo project organization", () => {
     await page.keyboard.insertText("Keep this follow-up draft");
     await beta.click();
     await expect(composer).not.toContainText("Keep this follow-up draft");
-    await sidebar.getByText("Alpha", { exact: true }).click();
+    await row.click();
     await expect(composer).toContainText("Keep this follow-up draft");
     await expect(tag).toBeVisible();
     await page.reload();
@@ -376,7 +376,7 @@ test("Share opens View only and posts a link without promoting or moving the Sol
     releaseReadback = resolve;
   });
   let readbackHeld = false;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
       !readbackHeld &&
@@ -1387,7 +1387,7 @@ test.describe("Solo send focus", () => {
     const released = new Promise((resolve) => {
       release = resolve;
     });
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       const filters = route.request().postDataJSON();
       if (!hold || !filters.some((filter) => filter.kinds?.includes(39002)))
         return route.continue();

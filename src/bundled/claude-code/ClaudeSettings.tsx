@@ -251,7 +251,6 @@ export function ClaudeSettings({
                   and paste it below.
                 </>
               }
-              headerGap="compact"
               actions={
                 !own && (
                   <Button

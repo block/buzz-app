@@ -1576,11 +1576,12 @@ export function createRelaySession(
         liveListeners.delete(listener);
       };
     },
-    retry() {
+    retry(background?: boolean) {
       channels.retryList();
       revalidatePreviews(channels.suspendedPreviews());
       for (const id of channels.demandedChannels()) demandChannel(id);
-      traffic?.retry();
+      // A reconnect wait is live's own spread; the recovery timer keeps it.
+      if (!(background && liveView.status === "retrying")) traffic?.retry();
     },
   });
   /** Hands the owner's signed message in a chat still starting to live
@@ -2562,7 +2563,7 @@ export function createRelaySession(
   const recoverable = (
     subscribe: (listener: () => void) => () => void,
     status: () => RecoveryStatus,
-    retry: () => void,
+    retry: (background?: boolean) => void,
     reauthorize?: () => void,
   ): RecoverySource =>
     Object.freeze({

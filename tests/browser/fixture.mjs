@@ -40,6 +40,10 @@ export const test = base.extend({
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
+  // The production broker's reconnect draw (live.ts `random`). Pinned so a
+  // dropped socket returns at once; a journey can set a nonzero draw to
+  // test the spread.
+  liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
@@ -139,6 +143,7 @@ export const test = base.extend({
       enabledPlugins,
       builderlab,
       liveSetupTimeoutMs,
+      liveDraw,
       actionProfile,
       agentMessageDeletion,
       profilePicture,
@@ -2625,6 +2630,9 @@ export const test = base.extend({
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
                   liveSetupTimeoutMs,
+                  ...(liveDraw === undefined
+                    ? {}
+                    : { liveRandom: () => liveDraw }),
                 });
                 await broker.configureServer(server);
               } else server.middlewares.use(middleware);

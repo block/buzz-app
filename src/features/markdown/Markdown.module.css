@@ -227,8 +227,8 @@ html[data-keyboard-navigation] .document pre code:focus-visible {
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.document a:not([data-solo-link]):hover,
-.inline a:not([data-solo-link]):hover {
+.document a:not([data-solo-link], [aria-disabled="true"]):hover,
+.inline a:not([data-solo-link], [aria-disabled="true"]):hover {
   text-decoration-thickness: 2px;
 }
 .imageAlt {

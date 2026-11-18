@@ -99,6 +99,7 @@ export function WorkspaceSettings({
   const inFlight = useRef(false);
   const confirmedCanvas = useRef("");
   const confirmedWorkspace = useRef("");
+  const historical = useRef<{ canvas: string; workspace: string }>(undefined);
   // What reopening would show: the saved settings, or this device's kept draft.
   const kept = useRef("");
   const snapshot = (canvas: string | undefined, { agents, teamIds }: Lineup) =>
@@ -119,8 +120,13 @@ export function WorkspaceSettings({
       const value = readWorkspace(canvas);
       setWorkspace(value);
       setRaw(undefined);
+      const normalized = instructionsCanvas(value, undefined);
+      historical.current =
+        normalized === undefined
+          ? { canvas, workspace: JSON.stringify(value) }
+          : undefined;
       // Dirty tracking follows the form's normalized legacy instructions.
-      return workspaceCanvas(value);
+      return normalized ?? JSON.stringify(value);
     } catch {
       setRaw(canvas);
       return canvas;
@@ -275,6 +281,14 @@ export function WorkspaceSettings({
       alive.current = false;
     };
   }, []);
+  // Preserve an unchanged historical header when its replacement would not fit.
+  const rawCanvas =
+    raw ??
+    (JSON.stringify(workspace) === historical.current?.workspace
+      ? historical.current.canvas
+      : undefined);
+  const draftCanvas =
+    instructionsCanvas(workspace, raw) ?? JSON.stringify(workspace);
   const save = async () => {
     if (!active() || inFlight.current || nameConflict) return;
     inFlight.current = true;
@@ -299,7 +313,7 @@ export function WorkspaceSettings({
         }
         if (
           loaded &&
-          (raw ?? workspaceCanvas(workspace)) !== confirmedCanvas.current
+          instructionsCanvas(workspace, rawCanvas) !== confirmedCanvas.current
         ) {
           setStatus(
             "Chat name and lifetime saved. Workspace and Canvas still have unsaved changes.",
@@ -309,9 +323,9 @@ export function WorkspaceSettings({
       } else {
         // Validate both drafts before admitting either publication.
         const canvas = loaded
-          ? raw === undefined
+          ? rawCanvas === undefined
             ? workspaceCanvas(workspace)
-            : workspaceCanvas({ folders: [], canvas: raw })
+            : workspaceCanvas({ folders: [], canvas: rawCanvas })
           : undefined;
         if (nameError) throw new Error(nameError);
         const template =
@@ -347,7 +361,7 @@ export function WorkspaceSettings({
           throw new CanvasSettingsError(
             "Your draft couldn’t be saved on this device. No new changes were sent.",
           );
-        if (canvas !== undefined) kept.current = snapshot(canvas, lineup);
+        if (canvas !== undefined) kept.current = snapshot(draftCanvas, lineup);
         if (target.kind === "project") {
           keptName.current = projectName;
           keptIcon.current = icon;
@@ -457,8 +471,7 @@ export function WorkspaceSettings({
         (lifetime.changed && !lifetime.checkOnly) ||
         (target.kind === "project" &&
           (projectName !== keptName.current || icon !== keptIcon.current)) ||
-        (loaded &&
-          snapshot(instructionsCanvas(workspace, raw), lineup) !== kept.current)
+        (loaded && snapshot(draftCanvas, lineup) !== kept.current)
       }
       busy={busy || lifetime.busy}
       title={target.kind === "project" ? "Workspace settings" : undefined}

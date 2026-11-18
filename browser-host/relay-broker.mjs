@@ -874,6 +874,8 @@ export function relayBrokerPlugin({
   archiveFile,
   // Tests that hold EOSE on purpose lengthen this real-time deadline.
   liveSetupTimeoutMs,
+  // Tests pin the live reconnect draw; production uses Math.random.
+  liveRandom,
 } = {}) {
   const publicOrigin =
     browserOrigin === undefined
@@ -2274,6 +2276,8 @@ export function relayBrokerPlugin({
               principal.live,
               undefined,
               liveSetupTimeoutMs,
+              undefined,
+              liveRandom,
             );
             principal.streams++;
             traffic.observe(observer);

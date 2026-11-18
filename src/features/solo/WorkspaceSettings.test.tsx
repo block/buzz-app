@@ -283,7 +283,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
 
 // The combined modal talks to the real signed details owner; Canvas remains its
 // independent revision/receipt boundary, held explicitly for orchestration tests.
-function combined() {
+function combined(initialCanvas = "Original Canvas") {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
@@ -334,7 +334,7 @@ function combined() {
     canAccess: () => true,
     acceptDiscovery: () => {},
   });
-  let head = { id: "revision-one", content: "Original Canvas" };
+  let head = { id: "revision-one", content: initialCanvas };
   const canvas = {
     available: true,
     read: vi.fn(async () => head),
@@ -1208,6 +1208,78 @@ it("validates workspace names and retains failed edits across remount and partia
     expect.objectContaining({ name: "Projects chats" }),
     undefined,
   );
+});
+
+it("opens a near-limit historical chat Canvas as structured settings and protects oversized edits", async () => {
+  const user = userEvent.setup();
+  const header = [
+    '<!-- buzz-session-workspace:v1 {"folders":["/repo"],"worktree":{"location":"~/trees","baseBranch":"main"}} -->',
+    "## Workspace instructions",
+    "",
+    "- Use `/repo` for review only. Do not make changes directly in it.",
+    "- Before starting new work, fetch the latest `main` branch from origin.",
+    "- For each repository that needs changes, create a new worktree under `~/trees` from `origin/main`.",
+    "- Make all changes in that new worktree.",
+    "<!-- /buzz-session-workspace -->",
+    "",
+    "",
+  ].join("\n");
+  const body = "x".repeat(LIVE_CANVAS_BYTES - header.length);
+  const h = combined(header + body);
+  const { close } = h;
+  const save = h.canvas.save;
+  expect(
+    await screen.findByRole("button", { name: "Remove repo" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: "Work in a new worktree" }),
+  ).toBeChecked();
+  expect(screen.getByRole("textbox", { name: "Base branch" })).toHaveValue(
+    "main",
+  );
+  const field = screen.getByRole("textbox", { name: /^Instructions/ });
+  expect((field as HTMLTextAreaElement).value.length).toBe(body.length);
+  await user.keyboard("{Escape}");
+  expect(close).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /^Ongoing/ })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    ),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: /^Ongoing/ }));
+  h.publish.mockImplementationOnce(async (event) => {
+    h.apply(event);
+    throw new Error("Lost ack");
+  });
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Check save status" }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.change(field, { target: { value: `${body.slice(0, -1)}y` } });
+  await user.keyboard("{Escape}");
+  await user.click(
+    within(await prompt()).getByRole("button", { name: "Keep editing" }),
+  );
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(LIVE_CANVAS_LIMIT);
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.change(field, { target: { value: body } });
+  await user.keyboard("{Escape}");
+  expect(close).toHaveBeenCalledTimes(3);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  fireEvent.change(field, { target: { value: "Shorter instructions" } });
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(readWorkspace(save.mock.calls[0]?.[1] ?? "")).toEqual({
+    folders: ["/repo"],
+    worktree: { location: "~/trees", baseBranch: "main" },
+    canvas: "Shorter instructions",
+  });
 });
 
 it("closes untouched legacy worktree settings and reverted edits without a discard prompt", async () => {

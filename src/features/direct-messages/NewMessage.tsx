@@ -477,6 +477,7 @@ export function NewMessage({
       clearView(
         scope,
         draftKey,
+        `${draftKey}:files`,
         "direct-message:pending",
         "direct-message:recipients",
       );

@@ -101,7 +101,9 @@ export function workspaceCanvas(input: Workspace): string {
 export function readWorkspace(content: string): Workspace {
   if (!content.startsWith(prefix)) return { folders: [], canvas: content };
   const value = parseWorkspace(content);
-  const canvas = workspaceCanvas(value);
+  // Saved content can fit even when the current managed header is longer.
+  // Check its exact format here; the writer enforces the current size budget.
+  const canvas = workspaceCanvas({ ...value, canvas: "" }) + value.canvas;
   // Never silently discard manually edited instructions inside the managed block.
   if (
     canvas !== content &&

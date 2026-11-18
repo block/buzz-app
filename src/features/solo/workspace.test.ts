@@ -101,6 +101,17 @@ it("reads worktree Canvas saved with the earlier worktree rule without treating 
     canvas: "Instructions",
   };
   expect(readWorkspace(saved)).toEqual(workspace);
+  const body = "x".repeat(
+    LIVE_CANVAS_BYTES - saved.length + workspace.canvas.length,
+  );
+  const full = saved.slice(0, -workspace.canvas.length) + body;
+  expect(readWorkspace(full)).toEqual({ ...workspace, canvas: body });
+  expect(() =>
+    readWorkspace(full.replace("Make all changes", "Make no changes")),
+  ).toThrow("edited");
+  expect(() => workspaceCanvas({ ...workspace, canvas: body })).toThrow(
+    LIVE_CANVAS_LIMIT,
+  );
   // Saved again, it gets the current rule.
   expect(workspaceCanvas(workspace)).toContain(
     "- Make code changes in that new worktree.",

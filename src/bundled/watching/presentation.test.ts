@@ -121,6 +121,23 @@ it("shows the runner's deadline for a one-shot that has not run", () => {
   expect(describe(once, NOW, armed, true).title).toBe("Once · 9:00 AM");
 });
 
+it("shows no time for a one-shot that expires before it runs", () => {
+  // Armed at 8:00 for one hour, ending at 8:30: the 9:00 run never starts.
+  const once = timer(at(10, 13, 8), 3_600, {
+    max_occurrences: 1,
+    expires_at: at(10, 13, 8, 30),
+  });
+  expect(describe(once, at(10, 13, 8, 10))).toEqual({
+    title: "Once · expires before it runs",
+    spent: false,
+  });
+  // Past the deadline it is spent, and keeps its configured time.
+  expect(describe(once, at(10, 13, 8, 40))).toEqual({
+    title: "Once · 9:00 AM",
+    spent: true,
+  });
+});
+
 it("renders timers dated past what Date can hold", () => {
   const far = Number.MAX_SAFE_INTEGER - DAY;
   expect(describe(timer(far, DAY), NOW).title).toBe("Every 24h");

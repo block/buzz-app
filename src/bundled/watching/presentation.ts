@@ -61,12 +61,9 @@ export function describe(
       Number.isNaN(new Date(at * 1000).getTime())
         ? undefined
         : formatItemTimestamp(at, { withTime: true, nowSeconds: now });
-    // A paused timer, or a run due at or after the deadline, never starts.
-    const runnable =
-      watch.enabled &&
-      !paused &&
-      !spent &&
-      (watch.expires_at === null || state.nextDue < watch.expires_at);
+    // A run due at or after the deadline never starts; nor does a paused one.
+    const fires = watch.expires_at === null || state.nextDue < watch.expires_at;
+    const runnable = watch.enabled && !paused && !spent && fires;
     // The runner keeps a missed run's deadline while its Interest is busy or
     // its channel is not joined, so a past deadline reads as overdue.
     const nextAt = when(state.nextDue);
@@ -74,7 +71,11 @@ export function describe(
     const next = nextAt && (overdue ? `overdue since ${nextAt}` : nextAt);
     // A one-shot shows the runner's deadline until it runs, since an interval
     // edit keeps that deadline, then its configured time as a record.
-    const once = spent ? when(watch.armed_at + watch.interval_secs) : next;
+    const once = spent
+      ? when(watch.armed_at + watch.interval_secs)
+      : fires
+        ? next
+        : "expires before it runs";
     const schedule =
       watch.max_occurrences === 1
         ? `Once · ${once ?? "date out of range"}`

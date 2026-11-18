@@ -274,6 +274,74 @@ it("pages older to a read frontier in one read, revalidating the root once", asy
   // One root read for the refresh, one for the queued load.
   expect(h.requests.slice(queued).filter(([f]) => f?.ids)).toHaveLength(2);
 });
+// A strict-window relay over `replies`, newest first.
+const pagedThread =
+  (replies: readonly RelayEvent[]) =>
+  (f: ReadFilter): readonly RelayEvent[] => {
+    if (f.ids) return [root];
+    const eligible = replies.filter(
+      (e) =>
+        f.until === undefined ||
+        e.created_at < f.until ||
+        (e.created_at === f.until && e.id > (f.before_id ?? "")),
+    );
+    const page = eligible.slice(0, f.limit);
+    const last = page.at(-1);
+    return [
+      ...page,
+      bounds(
+        f,
+        last && eligible.length > page.length
+          ? { created_at: last.created_at, id: last.id }
+          : null,
+      ),
+    ];
+  };
+it("reads a shallow frontier without loading large older replies", async () => {
+  const large = "x".repeat(30 * 1024);
+  const replies = Array.from({ length: 210 }, (_, n) =>
+    n < 150
+      ? message(author, channel, `${large}${n}`, 10 + n, [
+          ["e", root.id, "", "reply"],
+        ])
+      : message(author, channel, `reply ${n}`, 10 + n, [
+          ["e", root.id, "", "reply"],
+        ]),
+  ).reverse();
+  const h = await setup(pagedThread(replies));
+  await h.view.refresh();
+  const before = h.requests.length;
+  // Unread from the 40th newest reply: one 50-row continuation reaches it.
+  await h.view.loadMore(10 + 170);
+  expect(h.requests.slice(before + 1).map(([f]) => f?.limit)).toEqual([50]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    limited: false,
+  });
+  expect(h.view.snapshot().replies).toHaveLength(60);
+});
+it("replays a queued ordinary older load as one page", async () => {
+  const replies = Array.from({ length: 303 }, (_, n) => reply(n)).sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const h = await setup(pagedThread(replies));
+  await h.view.refresh();
+  const queued = h.requests.length;
+  const refreshing = h.view.refresh();
+  void h.view.loadMore();
+  await refreshing;
+  await vi.waitFor(() => {
+    expect(h.view.snapshot().replies).toHaveLength(60);
+    expect(h.view.snapshot().status).toBe("ready");
+  });
+  const windows = h.requests
+    .slice(queued)
+    .filter(([f]) => f?.thread_window)
+    .map(([f]) => f?.limit);
+  // The refresh's first window, then one older page.
+  expect(windows).toEqual([10, 50]);
+});
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

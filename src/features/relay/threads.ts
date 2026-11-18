@@ -990,7 +990,11 @@ export function createThreadView({
         } else if (older !== false && !disposed) {
           const through = older;
           older = false;
-          void run(false, false, through);
+          void run(
+            false,
+            false,
+            Number.isFinite(through) ? through : undefined,
+          );
         }
       }
     }

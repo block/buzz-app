@@ -1283,7 +1283,7 @@ export function SearchChoices({
             </span>
           )}
           <span>
-            <kbd>↵</kbd> Open
+            <kbd>↵</kbd> {onBack ? "Add" : "Open"}
           </span>
           {conversationShortcut && (
             <span>

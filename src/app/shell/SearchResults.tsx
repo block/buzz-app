@@ -1924,8 +1924,10 @@ export function SearchResults({
     destinations: filters.map((filter) => ({
       key: `guide:${filter.key}`,
       label: filter.label,
-      detail:
-        filter.examples.map(([example]) => example).join(" · ") || filter.about,
+      // A filter with no example here has no second line.
+      ...(filter.examples.length
+        ? { detail: filter.examples.map(([example]) => example).join(" · ") }
+        : {}),
       icon: filter.icon,
       trailing: <FilterSyntax operator={filter.key} text={syntaxOf(filter)} />,
       run: () => addFilter(filter.syntax),

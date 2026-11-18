@@ -473,7 +473,6 @@ it("reads and sets community artifact type policy through the broker's typed rou
       JSON.parse(JSON.stringify(command)),
     ],
   ]);
-  // A malformed or missing community offers neither.
   for (const artifactCommunity of [community.toUpperCase(), 7, undefined]) {
     vi.stubGlobal("fetch", async () =>
       Response.json({

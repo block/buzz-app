@@ -43,7 +43,6 @@ export const artifactTypePolicyAccess = (
   },
 });
 
-/** Calls a plugin may have running at once through one session. */
 const ARTIFACT_TYPE_POLICY_MAX_CALLS = 4;
 
 /** The session's community fields for plugins, present only with a type
@@ -77,10 +76,7 @@ export const sessionTypePolicy = (
     artifacts:
       communityId && access
         ? {
-            /** The community's id, when the relay keeps community-scoped
-             * artifacts; always with `typePolicy`. */
             communityId,
-            /** Each type's write policy (kind 9034), set as the viewer. */
             typePolicy: Object.freeze<ArtifactTypePolicyAccess>({
               read: (type, signal) =>
                 call(signal, (bound) => access.read(type, bound)),

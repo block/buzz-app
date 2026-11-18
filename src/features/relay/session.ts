@@ -3105,7 +3105,6 @@ export function createRelaySession(
           filter,
           transport?.artifactSync &&
             transport.subscribe &&
-            // A community sync needs a relay that keeps community artifacts.
             (transport.artifactCommunity ||
               !(filter as { scope?: unknown } | null)?.scope)
             ? (input, sink) => {

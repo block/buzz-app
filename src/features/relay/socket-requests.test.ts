@@ -5,9 +5,7 @@ import { keypair, signed } from "./testing";
 const key = keypair();
 
 it.each([
-  // A 9034 compare-and-set refusal precedes any policy change.
   [9034, false, "conflict: artifact policy changed"],
-  // Kinds without a documented compare-and-set keep `conflict:` unconfirmed.
   [9, true, undefined],
 ])("kind %s conflict refusal is sent=%s", async (kind, sent, reason) => {
   const publications = createSocketPublications(() => {});

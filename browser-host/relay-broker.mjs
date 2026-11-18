@@ -2779,7 +2779,6 @@ export function relayBrokerPlugin({
           const channelActivity = route === "/api/relay/channel-activity";
           if (channelActivity && !validChannelActivityFilters(filters))
             return json(res, 400, { error: "Activity filter rejected" });
-          // NIP-AR policy read: exactly `{type}`, sent as the relay's own filter.
           const typePolicyRead = route === "/api/relay/artifact-type-policy";
           if (typePolicyRead) {
             try {
@@ -3029,8 +3028,6 @@ export function relayBrokerPlugin({
               }
             } else if (typePolicyCommand) {
               try {
-                // Bound to the community this relay advertises; a relay
-                // without one gets no policy command.
                 validTypePolicy(
                   filters,
                   (await getAuthority(relay)).artifactCommunity,
@@ -3263,9 +3260,6 @@ export function relayBrokerPlugin({
                 )
               )
                 return json(res, 400, { error: failure.reason });
-              // A proven authorization refusal of a type policy command is 403,
-              // as over HTTP, so `typePolicy.set` can show the relay's reason.
-              // Other routes, and `auth-required:` (recoverable), stay unsent.
               if (
                 typePolicyCommand &&
                 failure?.sent === false &&

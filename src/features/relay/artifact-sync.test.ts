@@ -71,7 +71,6 @@ describe("artifactSyncFilter", () => {
       [{ ...community, "#type": ["a.b", "c.d"] }, "one #type and no #h"],
       [{ artifact: "current", scope: "community" }, "one #type and no #h"],
       [{ ...community, "#type": [] }, "#type"],
-      // The relay refuses a type outside the NIP-AR grammar.
       [{ ...community, "#type": ["Com.Example.Group"] }, "values for #type"],
       [{ ...community, scope: "channel" }, '"scope"'],
       [{ ...filter, scope: "channel" }, '"scope"'],

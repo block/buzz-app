@@ -256,7 +256,6 @@ it.each([
 });
 
 it("offers the host's type policy only while the session lasts", async () => {
-  // A read stays open until its signal aborts.
   const read = vi.fn(
     (_type: string, signal: AbortSignal) =>
       new Promise<never>((_, reject) =>
@@ -327,7 +326,6 @@ it("aborts open type policy calls when the viewer's access changes", async () =>
   const before = typePolicy.read("example.settings", signal);
   h.emit([roster(relay, C1, [], 11)]);
   await expect(before).rejects.toHaveProperty("name", "AbortError");
-  // The session stays open, so a new call gets a fresh lifetime.
   void typePolicy.read("example.settings", signal).catch(() => {});
   expect(nth(read.mock.calls, 1)[1].aborted).toBe(false);
 });

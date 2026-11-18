@@ -1059,7 +1059,6 @@ test("production interest controls preserve socket/global routes and pending wri
 });
 
 test.each([
-  // Outside the type policy route, an authorization refusal stays unsent.
   ["restricted: not a member", true, "Relay request failed (503)"],
   [
     "blocked: you are banned from this community",

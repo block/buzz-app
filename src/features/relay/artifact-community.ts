@@ -1,9 +1,5 @@
 import type { EventTemplate } from "nostr-tools";
 
-// Wire contract only: no imports beyond types, so the browser broker can load it.
-// NIP-AR community-scoped artifacts (docs/nips/NIP-AR.md "Community-scoped
-// artifacts" in block/buzz).
-
 /** SET_ARTIFACT_TYPE_POLICY: an owner or admin sets who may write one type. */
 export const ARTIFACT_TYPE_POLICY_KIND = 9034;
 export type ArtifactTypePolicyValue = "everyone" | "admins";

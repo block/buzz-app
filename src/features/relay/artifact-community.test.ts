@@ -11,7 +11,6 @@ import {
 const C = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 const T = "com.example.groups.group";
 const ID = "a".repeat(64);
-// NIP-AR kind 9034: empty content, exactly these four tags.
 const command = {
   kind: 9034,
   created_at: 1_700_000_000,

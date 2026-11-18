@@ -3546,7 +3546,6 @@ test("type policy commands use dedicated exact-shape routes for the relay's own 
     await unavailable.close();
   }
   const h = await harness(respond, { artifactCommunity: community });
-  // The harness signs as this fixed viewer key.
   const viewerKey = Uint8Array.from({ length: 32 }, (_, i) =>
     i === 31 ? 7 : 0,
   );
@@ -3554,8 +3553,6 @@ test("type policy commands use dedicated exact-shape routes for the relay's own 
   try {
     const transport = await connectBrokerTransport(h.base);
     expect(transport.writer.kinds).not.toContain(ARTIFACT_TYPE_POLICY_KIND);
-    // Bound to this relay's community; the shape matrix lives in
-    // artifact-community.test.ts.
     const other = {
       ...template,
       tags: [

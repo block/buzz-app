@@ -14,7 +14,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** `publish` scripts the relay. */
 function access(
   publish: (signal: AbortSignal) => Promise<string> = async () => "",
 ) {

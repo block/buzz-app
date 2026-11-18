@@ -358,18 +358,26 @@ export function useFloatingActionBar(
     const covered = (anchor: DOMRect) => {
       if (!workspace) return false;
       const workspaces = document.querySelectorAll(workspaceSelector);
-      if (workspaces.length < 2) return false;
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
+      // Hit testing every scroll frame is costly. Side-by-side workspaces
+      // don't overlap, so test only where another one spans the point.
+      const overlapped = [...workspaces].some((other) => {
+        if (other === workspace) return false;
+        const rect = other.getBoundingClientRect();
+        return (
+          x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+        );
+      });
+      if (!overlapped) return false;
       const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
+        .elementsFromPoint(x, y)
         .find(
           (element) =>
             !bar.contains(element) && element.closest(workspaceSelector),

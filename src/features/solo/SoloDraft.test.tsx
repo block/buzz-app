@@ -1066,6 +1066,58 @@ for (const [title, pick] of [
       [outside],
     );
   });
+it("a refused start keeps an agent picked in New chat while it was starting", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onFailed = vi.fn(),
+    user = userEvent.setup();
+  const refuse = refusedStart(test);
+  const outside = "b".repeat(64);
+  writeView("test", "solo:new-draft", {
+    text: "Ask @Outside agent",
+    recipients: [{ pubkey: outside, name: "Outside agent", start: 4, end: 18 }],
+  });
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      extensions={withPill}
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />
+  );
+  const first = render(view());
+  await waitFor(() =>
+    expect(sendingTo("Member agent, Outside agent")).toBeInTheDocument(),
+  );
+  await user.click(
+    screen.getByRole("button", {
+      name: `Remove agent Member agent ${"a".repeat(64)}`,
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  first.unmount();
+  // While the start is pending, the cleared New chat gets a new pick.
+  render(view());
+  await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
+  await user.click(
+    screen.getByRole("button", { name: "Send to Outside agent" }),
+  );
+  expect(sendingTo("Outside agent")).toBeInTheDocument();
+  await refuse();
+  await waitFor(() =>
+    expect(onFailed).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/\. Your message is back in New chat\.$/),
+    ),
+  );
+  expect(screen.getByRole("textbox")).toHaveTextContent("Ask @Outside agent");
+  // The newer pick stays; the refused start's emptied pill doesn't replace it.
+  expect(readView("test", "solo:new-draft:agents", null)).toEqual([
+    { pubkey: outside, name: "Outside agent" },
+  ]);
+});
 it("a pick after a refused start's agent comes back replaces it across remounts", async () => {
   const test = setup(),
     onStarted = vi.fn(),

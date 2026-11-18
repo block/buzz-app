@@ -810,12 +810,16 @@ export function SoloDraft({
                 // pill included; the composer reads them as it mounts. Without
                 // a pick, those the pill stood in with, beside the text's own
                 // tags (only references, when it alone routed the send).
+                // A pick made in New chat since the start cleared it is newer
+                // than this one, so it stays.
                 const typed = new Set(draft.recipients.map((p) => p.pubkey));
                 const pill = Array.isArray(toolbar)
                   ? toolbar
                   : (addressed?.filter((p) => !typed.has(p.pubkey)) ?? []);
                 if (
                   (Array.isArray(toolbar) || pill.length) &&
+                  readView(scope, `${draftKey}:new-draft:agents`, null) ===
+                    null &&
                   !writeView(scope, `${draftKey}:new-draft:agents`, pill)
                 )
                   missing.push("agents");

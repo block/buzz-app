@@ -1581,6 +1581,14 @@ function Composer({
           // A tag in the text is removed from the text, wherever it is, and
           // from the toolbar's agents if it is there too.
           if (!tagsDecide && named.some((person) => person.pubkey === pubkey)) {
+            // The toolbar keeps at least one agent: with no other tag to
+            // address the draft, its only agent stays, and so does its tag.
+            if (
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey &&
+              !named.some((person) => person.pubkey !== pubkey)
+            )
+              return;
             if (
               !input.current?.replaceRecipients(
                 recipients.filter((person) => person.pubkey !== pubkey),
@@ -1600,18 +1608,52 @@ function Composer({
           // always changes who gets the message. Focus and the caret stay
           // put, and only an added agent must be admissible.
           if (tagsDecide) {
-            if (!recipients.some((person) => person.pubkey === pubkey))
+            if (!recipients.some((person) => person.pubkey === pubkey)) {
               keepProseCaret(
                 (at) =>
                   insert(`@${name} `, { pubkey, name }, at, undefined, false),
                 false,
               );
-            else if (
-              input.current?.replaceRecipients(
+              return;
+            }
+            const others = named.filter((person) => person.pubkey !== pubkey);
+            // Without another tag the toolbar's agents address the draft
+            // again, so its only agent stays, and so does its tag.
+            if (
+              !others.length &&
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey
+            )
+              return;
+            if (
+              !input.current?.replaceRecipients(
                 recipients.filter((person) => person.pubkey !== pubkey),
               )
             )
-              completion.invalidate();
+              return;
+            completion.invalidate();
+            // Once no tag opens the text, the tags left would join the
+            // toolbar's agents; set those aside, so the message still goes
+            // to whoever was shown, less the removed agent.
+            const now = valueRef.current;
+            const stillNamed = now.recipients.filter(
+              (person) => !referenced(person.pubkey),
+            );
+            if (
+              stillNamed.length &&
+              !soloAudience<MentionRecipient>(
+                now.text,
+                stillNamed,
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              setAside();
+            else if (
+              routed.length > 1 &&
+              routed.some((person) => person.pubkey === pubkey)
+            )
+              choose(routed.filter((person) => person.pubkey !== pubkey));
             return;
           }
           if (!routed.some((person) => person.pubkey === pubkey)) {
@@ -3036,6 +3078,10 @@ function Composer({
         throw new Error("Could not load your agents. Retry.");
     }
     const recipients = explicit.filter((key) => !references.includes(key));
+    // Membership may have changed since the render's check: a reference that
+    // joined in the meantime notifies too, so check the cap again here,
+    // before anyone is added or the message queues.
+    if (recipients.length > 32) throw new Error("Choose at most 32 recipients");
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.

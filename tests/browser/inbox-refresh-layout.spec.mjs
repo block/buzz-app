@@ -11,9 +11,6 @@ test.use({
   threadUnreadMentions: true,
   inboxDm: true,
   historyCounts: { alpha: 2, beta: 1 },
-  // A fixed draw: the dropped socket returns before read-state publishes, as
-  // every journey here expects; a random wait would fail them with a 503.
-  liveDraw: 0,
 });
 
 for (const width of [1280, 280]) {

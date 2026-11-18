@@ -4,8 +4,6 @@ import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
   historyCounts: { alpha: 1, beta: 1 },
-  // A fixed draw: the broker's reconnect spread cannot outlast the polls.
-  liveDraw: 0,
 });
 
 // Models a laptop that wakes before its VPN is back: the relay connection

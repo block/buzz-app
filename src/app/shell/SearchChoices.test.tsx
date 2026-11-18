@@ -10,7 +10,13 @@ import {
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
-import { SearchChoices, type SearchViews } from "./SearchChoices";
+import {
+  SearchChoices,
+  SearchStepsContext,
+  type SearchDestination,
+  type SearchSteps,
+  type SearchViews,
+} from "./SearchChoices";
 
 const ROW = 40;
 const VIEW = 200;
@@ -530,4 +536,89 @@ it("lets Escape through once Peek turns off under a chosen group", () => {
   expect(
     screen.getByRole("button", { pressed: true }).textContent ?? "",
   ).toMatch(/^Top results/);
+});
+
+it("gives the person's result keys precedence over the field's other keys, consumes them without rows and ignores AltGr", () => {
+  const onEditLastChip = vi.fn();
+  const field = (
+    steps: SearchSteps,
+    rows: readonly SearchDestination[] = destinations.slice(0, 3),
+  ) => (
+    <SearchStepsContext.Provider value={steps}>
+      <SearchChoices
+        query="channel"
+        onQueryChange={() => {}}
+        input={createRef<HTMLElement>()}
+        chips={[
+          {
+            operand: "from:ada",
+            text: "from:@ada",
+            edit: "from:@ada",
+            label: "Remove from:@ada",
+          },
+        ]}
+        onEditLastChip={onEditLastChip}
+        groups={[{ label: "Channels", destinations: rows }]}
+      />
+    </SearchStepsContext.Provider>
+  );
+  const highlighted = () =>
+    screen.getByRole("option", { selected: true }).textContent;
+  // Ctrl+Shift+1 (⌘⇧1 on a Mac) otherwise opens the first row.
+  const view = render(
+    field({
+      previous: { key: "ArrowUp" },
+      next: { key: "!", mod: true, shift: true },
+    }),
+  );
+  const combobox = () => screen.getByRole("combobox");
+  expect(highlighted()).toContain("channel-0");
+  expect(
+    fireEvent.keyDown(combobox(), {
+      key: "!",
+      code: "Digit1",
+      ctrlKey: true,
+      shiftKey: true,
+    }),
+  ).toBe(false);
+  expect(run).not.toHaveBeenCalled();
+  expect(highlighted()).toContain("channel-1");
+  // Ctrl+Backspace at the start of the text otherwise edits the last chip.
+  view.rerender(
+    field({
+      previous: { key: "Backspace", mod: true },
+      next: { key: "ArrowDown" },
+    }),
+  );
+  const input = combobox() as HTMLInputElement;
+  input.setSelectionRange(0, 0);
+  fireEvent.keyDown(input, { key: "Backspace", ctrlKey: true });
+  expect(onEditLastChip).not.toHaveBeenCalled();
+  expect(highlighted()).toContain("channel-0");
+  // AltGr can report Control and Alt; it types a character, never a step.
+  view.rerender(
+    field({
+      previous: { key: "ArrowUp" },
+      next: { key: "@", mod: true, alt: true },
+    }),
+  );
+  expect(
+    fireEvent.keyDown(combobox(), {
+      key: "@",
+      ctrlKey: true,
+      altKey: true,
+      modifierAltGraph: true,
+    } as KeyboardEventInit),
+  ).toBe(true);
+  expect(highlighted()).toContain("channel-0");
+  // With no rows, a matched key is still consumed, so it never edits.
+  view.rerender(
+    field(
+      { previous: { key: "k", mod: true }, next: { key: "ArrowDown" } },
+      [],
+    ),
+  );
+  expect(fireEvent.keyDown(combobox(), { key: "k", ctrlKey: true })).toBe(
+    false,
+  );
 });

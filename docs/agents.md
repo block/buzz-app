@@ -693,7 +693,12 @@ An agent hands off to itself in another of its conversations with the
 a channel the agent can see, as `send` does, and a thread in that channel (any
 message of it names its root) unless the channel is a Solo chat. It refuses the
 current conversation, which is the whole channel in a DM, a Solo chat or a
-channel-scoped session. It is the same `plugin` trigger with `from`, the
+channel-scoped session. A channel-level watch or timer turn of an agent whose
+type runs one session per thread (its `sessionControls.scope`) is apart from
+that channel's threads outside a DM, Solo chat or huddle room, so it can hand off into one of
+them. Agents decides this for every harness through the run's handle
+(`threadsApart`); a type with no session controls keeps the channel one
+conversation. It is the same `plugin` trigger with `from`, the
 conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
 section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a
@@ -1679,6 +1684,26 @@ Account/community changes, disable/reset and disposal cancel recovery; readback
 cannot replace a received terminal result. Recovery neither archives raw activity
 nor restores history after reload. Older servers without the endpoint leave
 tasks unknown.
+
+A remote agent's Activity tab also lists the sessions Builderlab stored, above
+the live feed. Each time the tab opens it reads
+`/v3/beekeeper/list-agent-sessions` (pages of 50, most recently active first),
+following `next_cursor` past short or empty pages until it has 30, no cursor
+remains, or five pages were read. It shows up to 30, saying when older ones
+aren't shown. The conversation it was
+opened from comes first: its thread's session, else its channel's, which a DM
+or channel-scoped agent shares. When that session is not on the page, the tab
+asks for it by `channel_id` and `thread_root_event_id`. A session's messages
+are read from `/v3/beekeeper/get-agent-session-messages` only when its
+transcript opens, and again when the live feed shows one of its turns start or
+end. Each read returns the whole session, so a running turn isn't polled; with
+the live feed off or connecting, an open transcript doesn't refresh on its own. Messages carry no turn: a prompt joins the turn its mention
+started, and any other message the latest stored turn started at or before it,
+never one before the last prompt's turn. A message older than every turn joins
+the first. Tool requests join their responses by ID, and a message tool's text
+shows as the agent's posted message. A removed session shows no transcript. A
+server without the session list, a signed-out owner or an account without
+remote agents shows the live feed only, as it shows without Builderlab.
 
 ### Activity updates in the conversation
 

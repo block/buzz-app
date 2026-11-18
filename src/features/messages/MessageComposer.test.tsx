@@ -14825,6 +14825,8 @@ function mountSoloAgents(
     archived?: () => boolean;
     agents?: Agents;
     refreshed?: readonly string[];
+    /** Leave the pill to its own seed instead of picking Ada. */
+    unpicked?: boolean;
   } = {},
 ) {
   if (options.main) setDefaultAgent("scope", options.main);
@@ -14871,7 +14873,7 @@ function mountSoloAgents(
   });
   const ada = { pubkey: first.pubkey, name: "Ada" };
   const bea = { pubkey: second.pubkey, name: "Bea" };
-  act(() => h.commands().audience?.only([ada]));
+  if (!options.unpicked) act(() => h.commands().audience?.only([ada]));
   const sendingTo = (names: string) =>
     screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
   return { h, ada, bea, sendingTo };
@@ -14946,6 +14948,64 @@ it("with a tag further in, removing the pill's last agent sends to the tag alone
   act(() => h.commands().audience?.toggle(bea));
   expect(h.commands().recipients).toEqual([]);
   await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+});
+
+it("a pill emptied for a later tag stays empty when the draft reopens, until the tag goes", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 4, end: 8 }],
+  });
+  const before = mountSoloAgents({ main: first.pubkey, unpicked: true });
+  expect(before.sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => before.h.commands().audience?.toggle(before.ada));
+  expect(before.sendingTo("Bea")).toBeInTheDocument();
+  before.h.unmount();
+  const { h, bea, sendingTo } = mountSoloAgents({
+    main: first.pubkey,
+    unpicked: true,
+  });
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // Without the tag, the main agent stands in again.
+  act(() => h.commands().audience?.toggle(bea));
+  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+  expect(readView("scope", "draft:channel:agents", null)).toBeNull();
+});
+
+it("a reopened draft whose emptied pill still has its tag sends to the tag alone", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 4, end: 8 }],
+  });
+  writeView("scope", "draft:channel:agents", []);
+  const { h, bea, sendingTo } = mountSoloAgents({
+    main: first.pubkey,
+    unpicked: true,
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
+});
+
+it("removing an agent both the pill and a tag hold, while another tag remains, leaves only that tag", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Ada and @Bea",
+    recipients: [
+      { pubkey: first.pubkey, name: "Ada", start: 4, end: 8 },
+      { pubkey: second.pubkey, name: "Bea", start: 13, end: 17 },
+    ],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  await h.user.click(
+    screen.getByRole("button", { name: `Remove mention Ada ${ada.pubkey}` }),
+  );
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
 });
 
 it("with a tag further in that the pill also holds, removing its avatar removes it from both", () => {

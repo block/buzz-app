@@ -1531,6 +1531,14 @@ function Composer({
     setRouted(people);
     keepPick(people);
   };
+  // The viewer emptied the toolbar while other tags address the draft. Saved
+  // as an empty pick, so the draft reopens without those agents.
+  const setAside = () => {
+    seededRoute.current = undefined;
+    setRouted([]);
+    writeView(scope, pillKey, []);
+    setReplacedKey(draftKey);
+  };
   const audience = routing
     ? {
         recipients: addressed,
@@ -1559,16 +1567,18 @@ function Composer({
           // from the toolbar's agents if it is there too.
           if (!tagsDecide && named.some((person) => person.pubkey === pubkey)) {
             if (
-              input.current?.replaceRecipients(
+              !input.current?.replaceRecipients(
                 recipients.filter((person) => person.pubkey !== pubkey),
               )
             )
-              completion.invalidate();
-            if (
-              routed.length > 1 &&
-              routed.some((person) => person.pubkey === pubkey)
-            )
-              choose(routed.filter((person) => person.pubkey !== pubkey));
+              return;
+            completion.invalidate();
+            if (routed.some((person) => person.pubkey === pubkey)) {
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (named.some((person) => person.pubkey !== pubkey))
+                setAside();
+            }
             return;
           }
           // While tags in the text decide, a pick edits those tags, so it
@@ -1599,11 +1609,8 @@ function Composer({
             if (reachable.length < 32) choose([...reachable, { pubkey, name }]);
           } else if (routed.length > 1)
             choose(routed.filter((person) => person.pubkey !== pubkey));
-          else if (named.length) {
-            // Tags still address the draft, so its last agent can go.
-            choose([]);
-            setReplacedKey(draftKey);
-          }
+          // Tags still address the draft, so its last agent can go.
+          else if (named.length) setAside();
         },
       }
     : undefined;
@@ -2816,6 +2823,16 @@ function Composer({
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
       const chosen = readView<unknown>(scope, pillKey, null);
+      // An empty pick: the viewer set the agents aside for the draft's tags.
+      // Reopened, it stays aside while they remain; once they are gone, the
+      // main agent stands in.
+      if (Array.isArray(chosen) && !chosen.length) {
+        if (!replaced) {
+          setReplacedKey(draftKey);
+          return;
+        }
+        writeView(scope, pillKey, null);
+      }
       const kept = Array.isArray(chosen)
         ? chosen
             .filter(wellFormedRecipient)

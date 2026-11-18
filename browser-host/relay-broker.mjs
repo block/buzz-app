@@ -2240,6 +2240,7 @@ export function relayBrokerPlugin({
               principal.live,
               undefined,
               liveSetupTimeoutMs,
+              undefined,
               liveRandom,
             );
             principal.streams++;

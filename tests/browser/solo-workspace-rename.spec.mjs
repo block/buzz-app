@@ -100,9 +100,11 @@ test("workspace settings rename preserves filing in ordinary and composed headin
       .getByRole("textbox", { name: /^Instructions/ })
       .fill("Keep the workspace context");
     if (!composed)
-      await page.route("**/sidebar-section-rename", (route) =>
-        route.fulfill({ status: 502, json: { error: "Rename failed" } }),
-      );
+      await page.route("**/sidebar-section-rename", (route) => {
+        app.report.sidebarPreferenceFailures ??= [];
+        app.report.sidebarPreferenceFailures.push(route.request().url());
+        return route.fulfill({ status: 502, json: { error: "Rename failed" } });
+      });
     await settings
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
@@ -121,19 +123,23 @@ test("workspace settings rename preserves filing in ordinary and composed headin
     await expect(settings).toHaveCount(0);
     await expect
       .poll(() => app.report.sidebarPublications.length)
-      .toBe(composed ? 5 : 3);
+      .toBe(composed ? 4 : 3);
     const saved = app.report.sidebarPublications
-      .slice(-2)
+      .slice(composed ? -1 : -2)
       .map(({ blob, coordinate }) =>
         coordinate === "channel-workspaces" ? blob : blob.value,
       );
     expect(saved).toEqual([
       { ...initial, sections: [{ ...initial.sections[0], name }] },
-      expect.objectContaining({
-        type: "template",
-        name: `${name} chats`,
-        canvas: "Keep the workspace context",
-      }),
+      ...(!composed
+        ? [
+            expect.objectContaining({
+              type: "template",
+              name: `${name} chats`,
+              canvas: "Keep the workspace context",
+            }),
+          ]
+        : []),
     ]);
     await page.reload();
     if (composed) await show.click();

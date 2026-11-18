@@ -94,7 +94,12 @@ export function ChannelSidebarRow({
         const liveRows = activeChannelRows(sidebar);
         const sectionRows = activeChannelRows(section);
         const candidates = [
-          liveRows.find((row) => row.dataset.channelId === channel.id),
+          liveRows.find(
+            (row) =>
+              row.dataset.channelId === channel.id &&
+              (channel.channelType !== "solo" ||
+                row.dataset.soloDestinationId === channel.id),
+          ),
           ...neighborIds.map((id) =>
             sectionRows.find((row) => row.dataset.channelId === id),
           ),
@@ -108,7 +113,7 @@ export function ChannelSidebarRow({
         }
       });
     };
-  }, [channel.id, present]);
+  }, [channel.id, channel.channelType, present]);
   const presenceId = useId();
   const activate = () => onSelect(channel.id);
   const soloActivation = useSoloRowActivation(

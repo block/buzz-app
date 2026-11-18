@@ -108,6 +108,8 @@ test("an existing unified layout remains writable during a legacy read failure",
     )
       return route.continue();
     rejected++;
+    app.report.sidebarPreferenceFailures ??= [];
+    app.report.sidebarPreferenceFailures.push(route.request().url());
     return route.fulfill({
       status: 502,
       json: { error: "Legacy read unavailable" },

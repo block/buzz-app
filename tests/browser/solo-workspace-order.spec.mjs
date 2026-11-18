@@ -72,25 +72,18 @@ test("ordinary and composed workspace headers reorder, cancel and restore", asyn
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    const workspace = sidebar.locator('[data-sidebar-section^="group:"]');
     const heading = (name) =>
       composed
         ? sidebar.getByRole("button", { name, exact: true })
         : sidebar.locator(`summary[aria-label="${name}"]`);
-    const work = workspace.filter({
-      has: page.locator(
+    const frame = (name) =>
+      heading(name).locator(
         composed
-          ? '[data-solo-workspace-id]:text-is("Work")'
-          : 'summary[aria-label="Work"]',
-      ),
-    });
-    const home = workspace.filter({
-      has: page.locator(
-        composed
-          ? '[data-solo-workspace-id]:text-is("Home")'
-          : 'summary[aria-label="Home"]',
-      ),
-    });
+          ? "xpath=ancestor::*[@data-project][1]"
+          : "xpath=ancestor::*[@data-sidebar-section][1]",
+      );
+    const work = frame("Work");
+    const home = frame("Home");
     const order = () =>
       sidebar
         .locator(

@@ -230,14 +230,18 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
       await page.evaluate((value) => {
         document.documentElement.style.fontSize = value;
       }, size);
-      const before = await row(page, alpha)
-        .locator("svg")
-        .first()
-        .boundingBox();
+      const glyphOffset = (element) =>
+        element.evaluate((glyph) => {
+          const row = glyph.closest("button[data-solo-destination-id], form");
+          const icon = glyph.getBoundingClientRect();
+          const frame = row.getBoundingClientRect();
+          return { x: icon.x - frame.x, y: icon.y - frame.y };
+        });
+      const before = await glyphOffset(row(page, alpha).locator("svg").first());
       await row(page, alpha).dblclick();
       await expect(input(page)).toHaveAttribute("aria-disabled", "false");
       const glyph = sidebar(page).getByRole("form").locator("svg").first();
-      const after = await glyph.boundingBox();
+      const after = await glyphOffset(glyph);
       expect(after.x).toBeCloseTo(before.x, 0);
       expect(after.y).toBeCloseTo(before.y, 0);
       await page.screenshot({

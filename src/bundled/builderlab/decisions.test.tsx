@@ -260,7 +260,7 @@ it("answers each community with its own sign-in server's account, and leaves the
   const block = createTestSession(allowed("block", true));
   const server = (hosts: string[]) =>
     ({
-      snapshot: () => ({ authority: { communityHosts: hosts } }),
+      snapshot: () => ({ authority: { id: hosts[0], communityHosts: hosts } }),
       subscribe: () => () => {},
     }) as unknown as FederatedIdentity;
   const buildServer = server(["public.example"]);
@@ -283,8 +283,12 @@ it("answers each community with its own sign-in server's account, and leaves the
     subscribe: () => () => {},
   } as unknown as KnownCommunities;
   const communities = communityDecisionSessions(sessions, buildServer, known);
-  // A community no server covers has no Builderlab.
+  // A community no server covers has no Builderlab; communities share
+  // the account of the server that covers them.
   expect(communities.forCommunity(OTHER)).toBeUndefined();
+  expect(communities.account(OTHER)).toBeUndefined();
+  expect(communities.account(BLOCK)).toBe("block.example");
+  expect(communities.account(PUBLIC)).toBe("public.example");
   const decide = vi.fn<BuilderlabDecide>(async () => ({
     outcome: "answered",
     backend: "builderlab",
@@ -307,10 +311,16 @@ it("answers each community with its own sign-in server's account, and leaves the
   await flush();
   const BUILDERLAB = "block.builderlab/builderlab";
   const keys = () => decisions.providers().map((provider) => provider.key);
-  expect(keys()).toEqual([DEFAULT_DECISION_PROVIDER]);
+  // Offered before any sign-in, where a server covers a community, so the
+  // user can sign in from Settings.
+  expect(keys()).toEqual([BUILDERLAB, DEFAULT_DECISION_PROVIDER]);
+  const [offered] = decisions.providers();
+  expect(offered?.offered?.(BLOCK)).toBe(true);
+  expect(offered?.offered?.(OTHER)).toBe(false);
+  expect(offered?.setupScope?.(BLOCK)).toBe("block.example");
+  expect(decisions.backend(BLOCK)).toBe(DEFAULT_DECISION_PROVIDER);
   // Signed in to Block alone, while the build's server is signed out.
   await block.signIn();
-  expect(keys()).toEqual([BUILDERLAB, DEFAULT_DECISION_PROVIDER]);
   await build.signIn();
   for (const chosen of [undefined, BUILDERLAB]) {
     if (chosen) decisions.setBackend(chosen);
@@ -318,6 +328,18 @@ it("answers each community with its own sign-in server's account, and leaves the
     expect(decisions.backend(PUBLIC)).toBe(DEFAULT_DECISION_PROVIDER);
     expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
   }
+  // Settings signs in to, and explains, each community's own account.
+  const Settings = offered?.Settings;
+  if (!Settings) throw new Error("Builderlab has settings");
+  const view = render(<Settings active={() => true} community={PUBLIC} />);
+  expect(
+    screen.getByText(
+      "This Builderlab account can’t use decisions. For access, contact your account administrator.",
+    ),
+  ).toBeVisible();
+  view.rerender(<Settings active={() => true} community={BLOCK} />);
+  expect(screen.queryByText(/can’t use decisions/)).toBeNull();
+  view.unmount();
   // Without a community, it cannot answer: it bills one.
   expect(decisions.providers()[0]?.status()).toBe("needs-setup");
   expect(decisions.backend()).toBe(DEFAULT_DECISION_PROVIDER);
@@ -339,7 +361,7 @@ it("answers each community with its own sign-in server's account, and leaves the
   expect(decide).toHaveBeenCalledOnce();
   block.signOut();
   build.signOut();
-  expect(keys()).toEqual([DEFAULT_DECISION_PROVIDER]);
+  expect(decisions.backend(BLOCK)).toBe(DEFAULT_DECISION_PROVIDER);
   await fiber.dispose();
 });
 

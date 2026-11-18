@@ -5,6 +5,7 @@
 // Builderlab account may use decisions; see `offerBuilderlabDecisions`.
 // Settings > Decisions API shows the same sign-in control as this plugin's
 // card.
+import { useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
@@ -45,6 +46,9 @@ export type CommunityDecisionSessions = Readonly<{
   /** The session of the community's sign-in server, or undefined where no
    * Builderlab serves that community. */
   forCommunity(relay: string): BuilderlabSession | undefined;
+  /** The sign-in server that serves the community, or undefined where none
+   * does. Communities with the same server share one account. */
+  account(relay: string): string | undefined;
   /** Any community's session, or the list, changed. */
   subscribe(listener: () => void): () => void;
 }>;
@@ -64,17 +68,19 @@ export function communityDecisionSessions(
         return [];
       }
     });
-  const forCommunity = (relay: string) => {
+  /** The authority of the server that covers `relay`, if one does. */
+  const covering = (relay: string) => {
     // Without a server per community, the build's answers every one.
-    const server = sessions.server(relay) ?? identity;
-    const hosts = server.snapshot().authority?.communityHosts;
-    return hosts && coversCommunity(hosts, relay)
-      ? sessions.forCommunity(relay)
+    const authority = (sessions.server(relay) ?? identity).snapshot().authority;
+    return authority && coversCommunity(authority.communityHosts, relay)
+      ? authority
       : undefined;
   };
   return {
     communities,
-    forCommunity,
+    forCommunity: (relay) =>
+      covering(relay) ? sessions.forCommunity(relay) : undefined,
+    account: (relay) => covering(relay)?.id,
     subscribe(listener) {
       // Each community's server and session; either can change which
       // session answers it, so a change watches them again.
@@ -114,7 +120,8 @@ export function communityDecisionSessions(
 }
 
 /** Registers Builderlab in Settings > Decisions API while the user is signed
- * in, and removes it otherwise. It is ready in a community while that
+ * in, or a joined community's sign-in server serves it, so its sign-in can
+ * start there; and removes it otherwise. It is ready in a community while that
  * community's Builderlab reports that the account may use decisions; reading
  * its status keeps that fresh. Where it is ready it is a default provider,
  * so it answers unless the user chose another. Builds without native calls
@@ -145,7 +152,7 @@ export function offerBuilderlabDecisions(
       signedIn(session) ||
       !!communities
         ?.communities()
-        .some((relay) => signedIn(communities.forCommunity(relay)));
+        .some((relay) => communities.forCommunity(relay) !== undefined);
     if (allowed && !withdraw)
       withdraw = ctx.decisions.registerProvider(provider);
     else if (!allowed && withdraw) {
@@ -257,15 +264,57 @@ export function builderlabProvider(
           : { outcome, reason }
       ) as DecisionReply;
     },
-    // Settings shows in which communities it answers.
-    Settings: ({ active }) => (
+    // Only a community its sign-in server serves can use it.
+    offered: (community) =>
+      !communities || communities.forCommunity(community) !== undefined,
+    // Communities on one sign-in server share its account.
+    setupScope: (community) => communities?.account(community),
+    Settings: ({ active, community }) => (
+      <BuilderlabDecisionsLogin
+        session={sessionIn(community) ?? session}
+        available={loginAvailable}
+        active={active}
+        openIdentity={openIdentity}
+        native={!!native}
+      />
+    ),
+  };
+}
+
+/** The sign-in for one community's sign-in server, and whether its account
+ * may use decisions. */
+function BuilderlabDecisionsLogin({
+  session,
+  available,
+  active,
+  openIdentity,
+  native,
+}: {
+  session: BuilderlabSession;
+  available: boolean;
+  active(): boolean;
+  openIdentity: (() => void) | undefined;
+  native: boolean;
+}) {
+  const state = useSyncExternalStore(session.subscribe, session.snapshot);
+  return (
+    <>
       <Login
         session={session}
-        available={loginAvailable}
+        available={available}
         active={active}
         showHeading={false}
         openIdentity={openIdentity}
       />
-    ),
-  };
+      {native &&
+        state.status === "signed-in" &&
+        !state.checkingPermissions &&
+        state.account?.canUseBuilderlabDecisions !== true && (
+          <p role="status" className="m-0 text-body-sm text-secondary">
+            This Builderlab account can’t use decisions. For access, contact
+            your account administrator.
+          </p>
+        )}
+    </>
+  );
 }

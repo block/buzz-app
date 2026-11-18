@@ -144,8 +144,19 @@ export type DecisionProvider = Readonly<{
     request: DecisionRequest & { timeoutMs: number },
     options: { signal: AbortSignal },
   ): Promise<DecisionReply>;
-  /** Its settings, shown under its name in Settings > Decisions API. */
-  Settings?: ComponentType<{ active(): boolean; grouped?: boolean }>;
+  /** Whether the user can choose and set it up for `community` (a relay
+   * URL). Defaults to true. */
+  offered?(community: string): boolean;
+  /** Which setup `community` uses, such as an account. Communities with the
+   * same scope share one setup; without one, every community shares it. */
+  setupScope?(community: string): string | undefined;
+  /** Its settings, shown in Settings > Decisions API for `community`, or
+   * without one, for every community. */
+  Settings?: ComponentType<{
+    active(): boolean;
+    grouped?: boolean;
+    community?: string;
+  }>;
   /** Ignored: Settings always names the provider above its settings. */
   showSettingsHeading?: boolean;
   /** Lower comes first in Settings. Default 0. */

@@ -24,6 +24,7 @@ const TYPESAFE = DEFAULT_DECISION_PROVIDER;
 const BUILDERLAB = "block.builderlab/builderlab";
 const BLOCK = "wss://block.example";
 const FRIENDS = "wss://friends.example";
+const DESIGN = "wss://design.block.example";
 const memberships: Membership[] = [
   { id: BLOCK, name: "Block" },
   { id: FRIENDS, name: "Friends", localName: "Pals" },
@@ -109,50 +110,45 @@ it("says to turn a provider on when none is, linking to Manage plugins", async (
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
-it("shows every provider's settings once, with the communities where it answers", async () => {
+it("shows each community's provider setup, and which communities share it", async () => {
   const { decisions, register, changed } = setup();
   let typesafe: DecisionProviderStatus = "ready";
   await register(TYPESAFE, () => typesafe);
-  await register(BUILDERLAB, inBlock);
+  // One Builderlab account serves both Block communities; Friends has none.
+  await register(BUILDERLAB, inBlock, {
+    offered: (community) => new URL(community).host.endsWith("block.example"),
+    setupScope: () => "block-server",
+    Settings: ({ community }) => (
+      <p>Sign-in for {community && new URL(community).host}</p>
+    ),
+  });
+  act(() => decisions.setBackend(BUILDERLAB, BLOCK));
+  act(() => decisions.setBackend(BUILDERLAB, DESIGN));
   render(
     <DecisionsSettings
       decisions={decisions}
       active={() => true}
-      memberships={memberships}
+      memberships={[...memberships, { id: DESIGN, name: "Design" }]}
     />,
   );
   expect(
     screen.getAllByText(/receives the message text sent with them/),
   ).toHaveLength(1);
-  expect(row("builderlab")).toHaveTextContent("Available in Block");
-  expect(row("TypeSafe")).toHaveTextContent(
-    "Available in all your communities",
-  );
-  expect(screen.getByText("Settings for builderlab")).toBeVisible();
+  // Each community sets up its own choice; one account is shared.
+  expect(screen.getByText("Sign-in for block.example")).toBeVisible();
+  expect(screen.getByText("Sign-in for design.block.example")).toBeVisible();
+  expect(screen.getByText("Same Builderlab account as Design.")).toBeVisible();
+  expect(screen.getByText("Same Builderlab account as Block.")).toBeVisible();
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  // Design's Builderlab cannot answer yet: TypeSafe does.
+  expect(row("Design")).toHaveTextContent(
+    "builderlab can’t answer here yet, so TypeSafe answers",
+  );
+  expect(row("Block")).not.toHaveTextContent("answers");
   typesafe = "needs-setup";
   changed();
-  expect(row("TypeSafe")).toHaveTextContent("Not set up");
-  // Where TypeSafe answers no community, the community says what to do.
   expect(row("Pals")).toHaveTextContent(
-    "Set up TypeSafe above to use decisions here",
-  );
-  expect(row("Block")).not.toHaveTextContent("Set up");
-});
-
-it("explains Builderlab access when no community offers it", async () => {
-  const { decisions, register } = setup();
-  await register(TYPESAFE, () => "ready");
-  await register(BUILDERLAB, () => "needs-setup");
-  render(
-    <DecisionsSettings
-      decisions={decisions}
-      active={() => true}
-      memberships={memberships}
-    />,
-  );
-  expect(row("builderlab")).toHaveTextContent(
-    "None of your communities offer Builderlab decisions to this account. For access, contact your account administrator.",
+    "Set up TypeSafe to use decisions here",
   );
 });
 
@@ -163,14 +159,17 @@ it("says whether each provider is ready while there are no communities", async (
   render(<DecisionsSettings decisions={decisions} active={() => true} />);
   expect(row("TypeSafe")).toHaveTextContent("Not set up");
   expect(row("helper")).toHaveTextContent("Ready");
+  expect(screen.getByText("Settings for helper")).toBeVisible();
   expect(screen.queryByRole("combobox")).toBeNull();
 });
 
-it("chooses a provider for each community, offering only those that can answer there", async () => {
+it("chooses a provider for each community, offering only those it can be set up in", async () => {
   const user = userEvent.setup();
   const { decisions, register } = setup();
   await register(TYPESAFE, () => "ready");
-  await register(BUILDERLAB, inBlock);
+  await register(BUILDERLAB, inBlock, {
+    offered: (community) => new URL(community).host === "block.example",
+  });
   render(
     <DecisionsSettings
       decisions={decisions}
@@ -248,7 +247,10 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
   expect(screen.getByRole("button", { name: "Turn plugin off" })).toBeVisible();
   selected = "decisions";
   rerender(page());
-  const alert = screen.getByRole("alert");
+  // Each community using TypeSafe shows its failure.
+  const alerts = screen.getAllByRole("alert");
+  expect(alerts).toHaveLength(2);
+  const [alert] = alerts as [HTMLElement];
   expect(alert).toHaveTextContent(
     "TypeSafe settings are unavailable. You can turn its plugin off in Manage plugins.",
   );
@@ -257,12 +259,12 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
   );
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
   // The rest of the section still works.
-  expect(screen.getByText("Settings for helper")).toBeVisible();
   await user.click(
     screen.getByRole("combobox", { name: "Decision provider for Block" }),
   );
   await user.click(await screen.findByRole("option", { name: /helper/ }));
   expect(decisions.backend(BLOCK)).toBe("acme.helper/helper");
+  expect(screen.getByText("Settings for helper")).toBeVisible();
   consoleError.mockRestore();
 });
 

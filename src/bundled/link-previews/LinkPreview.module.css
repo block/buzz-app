@@ -43,18 +43,44 @@ html[data-keyboard-navigation] .card:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   white-space: nowrap;
 }
+/* The site name and its separator give way first, down to nothing. */
 .siteName {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.siteName bdi {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The page names itself, but the domain is always whole and reads left to right. */
-.domain {
+.siteName span {
   flex-shrink: 0;
+}
+/* The page names itself, but the domain reads left to right. Short of room,
+ * it drops subdomains first and keeps its suffix last. */
+.domain {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
+}
+.subdomains,
+.registered > :first-child {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
-  unicode-bidi: isolate;
+}
+.registered {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.registered > :last-child {
+  flex-shrink: 0;
 }
 .title {
   display: -webkit-box;

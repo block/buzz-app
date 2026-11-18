@@ -50,15 +50,24 @@ function admit<T>(work: () => Promise<T>) {
   );
   return turn;
 }
+// Story n's page is on site{n} or more{n}, and its image on img{n}.
+const story = (url: string) => new URL(url).hostname.match(/\d+/)?.[0];
+const dispatched: { url: string; mounted: boolean }[] = [];
+let inFlight = 0;
+function send<T>(url: string, work: () => Promise<T>) {
+  asked.push(url);
+  dispatched.push({
+    url,
+    mounted: [
+      ...document.querySelectorAll<HTMLAnchorElement>("[data-link-previews] a"),
+    ].some((card) => story(card.href) === story(url)),
+  });
+  inFlight++;
+  return admit(work).finally(() => inFlight--);
+}
 const host = {
-  readPage: (url: string): Promise<HostPage> => {
-    asked.push(url);
-    return admit(() => readPage(url));
-  },
-  requestBytes: (request: { url: string }) => {
-    asked.push(request.url);
-    return admit(readImage);
-  },
+  readPage: (url: string): Promise<HostPage> => send(url, () => readPage(url)),
+  requestBytes: (request: { url: string }) => send(request.url, readImage),
 };
 async function readPage(url: string): Promise<HostPage> {
   await pass();
@@ -149,6 +158,8 @@ let setFrom: (from: number) => void = () => {};
 Object.assign(window, {
   linkPreviewScroll: {
     asked,
+    dispatched,
+    inFlight: () => inFlight,
     release() {
       open = true;
       opened();

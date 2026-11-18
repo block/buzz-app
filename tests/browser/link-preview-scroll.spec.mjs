@@ -29,6 +29,22 @@ async function expectSteady(page, before, reader) {
       expect(height, `row ${id} keeps its height`).toBe(before.rows[id]);
 }
 
+// No read is under way, and none starts while the timeline sits still.
+async function expectIdle(page) {
+  await expect(async () => {
+    const sent = await page.evaluate(
+      () => window.linkPreviewScroll.asked.length,
+    );
+    await settle(page);
+    expect(
+      await page.evaluate(() => [
+        window.linkPreviewScroll.inFlight(),
+        window.linkPreviewScroll.asked.length,
+      ]),
+    ).toEqual([0, sent]);
+  }).toPass();
+}
+
 // Reads stay held while the reader moves; once they are let through, every
 // card on screen fills in without moving anything.
 async function releaseAndHold(page) {
@@ -41,7 +57,7 @@ async function releaseAndHold(page) {
   await expect(
     history(page).locator("[data-link-previews] img").first(),
   ).toBeVisible();
-  await settle(page);
+  await expectIdle(page);
   await expectSteady(page, before, reader);
   await page.evaluate(() => window.linkPreviewScroll.hold());
 }
@@ -74,10 +90,10 @@ test("link previews never move the reader in the real timeline", async ({
     await releaseAndHold(page);
 
     // A fling through unread history: cards scrolled past are withdrawn, so
-    // apart from the read already under way when it began, every page or
-    // image read that goes out is for a card still on screen.
+    // every page or image read goes out for a card that is still mounted, and
+    // while the host holds one, the rest wait where they can be withdrawn.
     const sent = await page.evaluate(
-      () => window.linkPreviewScroll.asked.length,
+      () => window.linkPreviewScroll.dispatched.length,
     );
     const start = await feed.evaluate((element) => element.scrollTop);
     // Loaded WebKit runners coalesce some of a burst's wheel events, so keep
@@ -89,19 +105,29 @@ test("link previews never move the reader in the real timeline", async ({
       ).toBeGreaterThan(3000);
     }).toPass({ intervals: [0] });
     await settle(page);
+    const held = await page.evaluate(
+      (sent) => window.linkPreviewScroll.dispatched.length - sent,
+      sent,
+    );
+    expect(held).toBeLessThanOrEqual(1);
     await releaseAndHold(page);
     const fling = await page.evaluate(
-      (sent) => window.linkPreviewScroll.asked.slice(sent),
+      (sent) => window.linkPreviewScroll.dispatched.slice(sent),
       sent,
     );
     // Story n's page is on site{n} or more{n}, and its image on img{n}.
     const story = (url) => new URL(url).hostname.match(/\d+/)?.[0];
-    const shown = await feed
-      .locator("[data-link-previews] a")
-      .evaluateAll((cards) => cards.map((card) => card.href));
-    expect(fling.some((url) => url.includes("://img"))).toBe(true);
+    const shown = (
+      await feed
+        .locator("[data-link-previews] a")
+        .evaluateAll((cards) => cards.map((card) => card.href))
+    ).map(story);
+    expect(fling.some(({ url }) => url.includes("://img"))).toBe(true);
+    expect(fling.filter(({ mounted }) => !mounted)).toEqual([]);
+    // Once the host lets reads through, the reader isn't moving, so every
+    // read after the one it held is for a card that is still on screen.
     expect(
-      fling.slice(1).filter((url) => !shown.map(story).includes(story(url))),
+      fling.slice(held).filter(({ url }) => !shown.includes(story(url))),
     ).toEqual([]);
 
     // Away and back: remounted cards draw from the cache on their first frame.

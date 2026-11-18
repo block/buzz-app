@@ -2,7 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import type { LinkPreviewProps } from "../../features/conversation/contracts";
 import type { Loader, Page } from "./loader";
-import { domainOf } from "./safety";
+import { domainOf, splitHost } from "./safety";
 import styles from "./LinkPreview.module.css";
 
 function Media({ loader, image }: { loader: Loader; image: string }) {
@@ -86,14 +86,12 @@ export function LinkPreview({
       <span className={styles.body}>
         <span className={styles.site}>
           {siteName && (
-            <>
-              <bdi className={styles.siteName}>{siteName}</bdi>
+            <span className={styles.siteName}>
+              <bdi>{siteName}</bdi>
               <span>{"\u00a0·\u00a0"}</span>
-            </>
+            </span>
           )}
-          <span className={styles.domain} dir="ltr">
-            {domain}
-          </span>
+          <Domain domain={domain} />
         </span>
         {page ? (
           <span className={styles.title}>{page.title}</span>
@@ -112,3 +110,16 @@ export function LinkPreview({
 }
 
 const bareUrl = (url: string) => url.replace(/^https:\/\//i, "");
+
+function Domain({ domain }: { domain: string }) {
+  const { subdomains, name, suffix } = splitHost(domain);
+  return (
+    <bdi className={styles.domain} dir="ltr" title={domain}>
+      {subdomains && <span className={styles.subdomains}>{subdomains}</span>}
+      <span className={styles.registered}>
+        <span>{name}</span>
+        <span>{suffix}</span>
+      </span>
+    </bdi>
+  );
+}

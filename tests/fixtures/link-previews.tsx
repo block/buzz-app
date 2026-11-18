@@ -37,6 +37,16 @@ const pages: Record<string, HostPage> = {
     status: 302,
     location: "https://router.local/admin",
   },
+  "https://docs.platform-engineering.developer-tools.example-company.com/guides/start":
+    {
+      status: 200,
+      preview: {
+        siteName: "Example Company Developer Documentation",
+        title: "Getting started with the platform",
+        description: "Set up your first project.",
+        image: "https://img.example.com/wide.png",
+      },
+    },
   "https://spoof.example.net/login": {
     status: 200,
     preview: {
@@ -191,6 +201,10 @@ const rows = [
     "three",
     "Reading list: https://a.example.org/ https://b.example.org/ https://c.example.org/ https://d.example.org/ https://e.example.org/",
   ),
+  message(
+    "narrow",
+    "Narrow: https://docs.platform-engineering.developer-tools.example-company.com/guides/start",
+  ),
 ];
 const profiles = new Map([["a".repeat(64), { name: "Morgan" }]]);
 const directory = { status: "ready", channels: [] };
@@ -269,23 +283,24 @@ function Preview() {
         </button>
       </div>
       {rows.map((row) => (
-        <conversation.ui.Message
-          key={row.id}
-          row={row}
-          session={session}
-          scope={`https://preview.example:${"a".repeat(64)}`}
-          profile={{ name: "Morgan" }}
-          media={() => undefined}
-          onOpenLink={(url) => {
-            // Buzz has no panel for an ordinary page, so the browser opens it.
-            if (url === "https://a.example.org/") return false;
-            setOpened(url);
-            return true;
-          }}
-          canOpenLink={() => true}
-          day={false}
-          retry={undefined}
-        />
+        <div key={row.id} style={row.id === "narrow" ? { width: 440 } : {}}>
+          <conversation.ui.Message
+            row={row}
+            session={session}
+            scope={`https://preview.example:${"a".repeat(64)}`}
+            profile={{ name: "Morgan" }}
+            media={() => undefined}
+            onOpenLink={(url) => {
+              // Buzz has no panel for an ordinary page, so the browser opens it.
+              if (url === "https://a.example.org/") return false;
+              setOpened(url);
+              return true;
+            }}
+            canOpenLink={() => true}
+            day={false}
+            retry={undefined}
+          />
+        </div>
       ))}
       <p role="status">{opened}</p>
     </main>

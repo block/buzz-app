@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { LinkPreview } from "./LinkPreview";
 import type { Loader, Page } from "./loader";
+import { splitHost } from "./safety";
 
 afterEach(cleanup);
 
@@ -75,7 +76,8 @@ it("keeps the real domain whole and isolated from the page's site name", async (
     />,
   );
   await screen.findByRole("link", { name: /Sign in/ });
-  const domain = screen.getByText("spoof.example.net");
+  const domain = screen.getByTitle("spoof.example.net");
+  expect(domain.tagName).toBe("BDI");
   expect(domain.getAttribute("dir")).toBe("ltr");
   expect(domain.textContent).toBe("spoof.example.net");
   const name = screen.getByText(siteName);
@@ -158,4 +160,22 @@ it("draws a page it has already read on its first render", () => {
     />,
   );
   expect(screen.getByRole("link", { name: /Seen before/ })).toBeTruthy();
+});
+
+it("splits a hostname so subdomains give way before the registered name", () => {
+  expect(splitHost("docs.platform.example-company.com")).toEqual({
+    subdomains: "docs.platform.",
+    name: "example-company",
+    suffix: ".com",
+  });
+  expect(splitHost("login.bank.co.uk")).toEqual({
+    subdomains: "login.",
+    name: "bank",
+    suffix: ".co.uk",
+  });
+  expect(splitHost("example.com")).toEqual({
+    subdomains: "",
+    name: "example",
+    suffix: ".com",
+  });
 });

@@ -67,3 +67,30 @@ export const wantsCard = (href: string) =>
   linkKind(href) === "web" &&
   agentCardLinkId(href) === null &&
   !!previewable(href);
+
+const SECOND_LEVEL = new Set(["co", "com", "net", "org", "gov", "edu", "ac"]);
+
+/** A hostname as its subdomains, the label its owner registered, and the
+ * suffix after it, so a card short of room can drop subdomains first. Without
+ * the public suffix list, a two-letter country code takes one common second
+ * level with it, as in co.uk. */
+export function splitHost(host: string) {
+  const labels = host.split(".");
+  const tld = labels.at(-1) ?? "";
+  const wide =
+    labels.length > 2 &&
+    tld.length === 2 &&
+    SECOND_LEVEL.has(labels.at(-2) ?? "");
+  const at = Math.max(0, labels.length - (wide ? 3 : 2));
+  return {
+    subdomains: labels
+      .slice(0, at)
+      .map((label) => `${label}.`)
+      .join(""),
+    name: labels[at] ?? host,
+    suffix: labels
+      .slice(at + 1)
+      .map((label) => `.${label}`)
+      .join(""),
+  };
+}

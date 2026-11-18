@@ -116,15 +116,15 @@ export function ToastProvider({
         <Toaster
           ref={attachViewport}
           id={id}
-          position="bottom-right"
+          position="top-right"
           swipeDirections={["left", "right"]}
-          expand
+          expand={false}
           visibleToasts={Infinity}
           hotkey={["F6"]}
           customAriaLabel="App notifications"
           className="buzz-toast-viewport"
-          offset="max(var(--space-6), env(safe-area-inset-bottom))"
-          mobileOffset="var(--space-4)"
+          offset="var(--space-2)"
+          mobileOffset="var(--space-2)"
         />,
         portalContainer ?? document.body,
       )}
@@ -200,7 +200,7 @@ function ToastCard({
           </div>
         )}
       </div>
-      {details}
+      {details && <div className="buzz-toast-details">{details}</div>}
       {children && <div className="buzz-toast-actions">{children}</div>}
     </div>
   );

@@ -32,13 +32,13 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
       const cardBox = await recovery.boundingBox();
       if (!cardBox) throw new Error("Toast card has no geometry");
       expect(cardBox.x + cardBox.width).toBeGreaterThan(width - 40);
-      expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(width - 16);
+      expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(width - 8);
       const box = await stack.boundingBox();
       if (!box) throw new Error("Toast viewport has no geometry");
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      expect(box.y + box.height).toBeGreaterThan(844 - 40);
-      expect(box.y + box.height).toBeLessThanOrEqual(844 - 16);
+      expect(cardBox.y).toBeGreaterThanOrEqual(8);
+      expect(cardBox.y).toBeLessThan(24);
       expect(box.x + box.width).toBeGreaterThan(width - 40);
       await page.keyboard.press("F6");
       await expect(stack).toBeFocused();
@@ -85,7 +85,7 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
   await page.evaluate(() =>
     document.documentElement.style.removeProperty("--type-scale"),
   );
-  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 400 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.getByRole("button", { name: "Show recovery stack" }).click();
   await expect(region.getByRole("dialog")).toHaveCount(6);
@@ -172,11 +172,23 @@ test("swiping actual toast content dismisses confirmations and preserves recover
     ).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
     const bounds = await card.boundingBox();
     if (!bounds) throw new Error("Toast card has no geometry");
-    const x = bounds.x + 8,
+    const x = bounds.x + 24,
       y = bounds.y + bounds.height - 8;
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(x + 160, y, { steps: 8 });
+    const item = card.locator("xpath=ancestor::li[@data-sonner-toast]");
+    if (name === "Changes saved")
+      await expect(item).toHaveAttribute("data-swiping", "true");
+    await page.mouse.move(x + 80, y, { steps: 4 });
+    if (name === "Changes saved")
+      await expect
+        .poll(() =>
+          item.evaluate((el) =>
+            parseFloat(el.style.getPropertyValue("--swipe-amount-x")),
+          ),
+        )
+        .toBeGreaterThan(0);
+    await page.mouse.move(x + 160, y, { steps: 4 });
     await page.mouse.up();
   };
   await swipe("Changes saved");
@@ -276,7 +288,7 @@ test("touch panning reaches overflowing persistent recovery actions", async ({
     browserName !== "chromium",
     "Real touch drag injection uses Chromium's CDP input API.",
   );
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 400 });
   const touch = await page.context().newCDPSession(page);
   await touch.send("Emulation.setTouchEmulationEnabled", {
     enabled: true,
@@ -287,6 +299,23 @@ test("touch panning reaches overflowing persistent recovery actions", async ({
     .getByRole("button", { name: "Show recovery stack", exact: true })
     .click();
   const stack = page.locator("[data-sonner-toaster]");
+  await expect(stack.locator("[data-sonner-toast]").first()).toHaveCSS(
+    "transform",
+    "matrix(1, 0, 0, 1, 0, 0)",
+  );
+  const front = await stack
+    .locator("[data-sonner-toast]")
+    .first()
+    .boundingBox();
+  if (!front) throw new Error("Missing front toast");
+  await touch.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: front.x + 20, y: front.y + 20 }],
+  });
+  await touch.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
   await expect(stack.getByRole("dialog")).toHaveCount(6);
   await expect(stack.locator("[data-sonner-toast]").first()).toHaveCSS(
     "transform",
@@ -375,6 +404,9 @@ test("notice body opens its destination while nested actions keep their targets"
     await expect(recovery).toBeVisible();
     const body = recovery.getByRole("button", { name: "Open related dialog" });
     await body.hover();
+    await expect(
+      recovery.locator("xpath=ancestor::li[@data-sonner-toast]"),
+    ).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
     await expect(body).toHaveCSS("cursor", "pointer");
     const title = await recovery
       .getByText("Plugin update available", { exact: true })

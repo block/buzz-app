@@ -2180,3 +2180,10 @@ not clear saved drafts or bypass conflict checks.
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
+
+### App notifications
+
+Desktop toast notifications appear in the top-right corner. Hover the stack to
+expand it and pause timed notifications; F6 focuses notifications for keyboard
+access. Dismissible notices show their close button on hover or keyboard focus.
+Recovery notices remain until resolved or dismissed where allowed.

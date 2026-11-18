@@ -115,6 +115,7 @@ import {
 import { conversationHistory } from "./history";
 import { buzzHome } from "./setup";
 import {
+  contextText,
   developerInstructions,
   rootOf,
   sessionName,
@@ -1924,19 +1925,8 @@ export class CodexRuntime {
                 .filter(Boolean)
                 .join("\n\n")
             : "";
-        const instructions =
-          Object.values(
-            turnContext(
-              agent,
-              settings,
-              request.team,
-              memory,
-              this.repositories(reads.scope),
-            ),
-          )
-            .map((item) => item.value)
-            .join("\n") +
-          `\nFor every spoken request, apply the room's current source policy below, replacing policies retained from other conversations.\n${policy()}\nVoice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. This is the room's existing conversation. A turn that starts with <realtime_delegation> is a spoken request: the voice model speaks only your final answer, so put the result there in a few plain spoken sentences, not in a send. When you delegate, say only a short acknowledgement, then wait: never state a fact the delegated work has not returned yet.`;
+        const voiceInstructions = (updates?: string) =>
+          `${contextText(agent, settings, request.team, memory, this.repositories(reads.scope), updates)}\nFor every spoken request, apply the room's current source policy below, replacing policies retained from other conversations.\n${policy()}\nVoice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. This is the room's existing conversation. A turn that starts with <realtime_delegation> is a spoken request: the voice model speaks only your final answer, so put the result there in a few plain spoken sentences, not in a send. When you delegate, say only a short acknowledgement, then wait: never state a fact the delegated work has not returned yet.`;
         loaded = await this.loadThread(
           request,
           entry,
@@ -1944,8 +1934,11 @@ export class CodexRuntime {
           signal,
           server,
           rpc,
-          instructions,
+          voiceInstructions(),
         );
+        // Realtime start adds these instructions again, so they carry the
+        // same section updates as the injected message.
+        const instructions = voiceInstructions(loaded.updates);
         // A resumed thread keeps its first developer message, not resume's.
         if (!loaded.fresh)
           await rpc.request("thread/inject_items", {
@@ -1954,16 +1947,12 @@ export class CodexRuntime {
               {
                 type: "message",
                 role: "developer",
-                content: [
-                  {
-                    type: "input_text",
-                    text: `${instructions}${loaded.updates ? `\n\n${loaded.updates}` : ""}`,
-                  },
-                ],
+                content: [{ type: "input_text", text: instructions }],
               },
             ],
           });
         signal.throwIfAborted();
+        const sections = this.showSections(agent.key, entry, key, loaded);
         const threadId = loaded.threadId;
         lane.voice = {
           loaded,
@@ -2087,7 +2076,7 @@ export class CodexRuntime {
           ...(agent.protection
             ? { protection: agent.protection.stateKey }
             : {}),
-          ...(loaded.sections ? { sections: loaded.sections } : {}),
+          ...(sections ? { sections } : {}),
         });
         return { input: media.input, close };
       });
@@ -3577,6 +3566,40 @@ export class CodexRuntime {
     return { params, model, effort, summary, bridge, base };
   }
   /** Shared thread setup; a voice seat retains it between delegated turns. */
+  /** A thread's key in its saved prompts. */
+  private promptKey(threadId: string) {
+    return this.targetKey
+      ? JSON.stringify([this.targetKey, threadId])
+      : threadId;
+  }
+
+  /** The sections to save for `loaded`'s thread. Its saved prompt shows them
+   * again when they changed since it last did; the binding has what it last
+   * showed, as a seat's typed and spoken turns share one loaded thread. Only
+   * the binding of this thread counts: a fresh replacement has shown none. */
+  private showSections(
+    agentKey: AgentKey,
+    entry: Entry,
+    key: string,
+    { threadId, fresh, sections, base, updates }: Loaded,
+  ): Saved["sections"] {
+    if (!sections) return undefined;
+    const binding = entry.saved[key];
+    const last =
+      (binding?.threadId === threadId ? binding.sections?.shown : undefined) ??
+      sections.shown;
+    if (fresh || base.key === (last ?? sectionsKey(sections.parts)))
+      return last ? { ...sections, shown: last } : sections;
+    void this.prompts(agentKey).add(this.promptKey(threadId), {
+      label: `base-section-updates ${new Date().toISOString()}`,
+      // Without the block's tag lines, so it is shown under the label.
+      text: updates
+        ? updates.split("\n").slice(1, -1).join("\n")
+        : "Every section is as the thread's base instructions give it.",
+    });
+    return { ...sections, shown: base.key };
+  }
+
   async loadThread(
     request: Request,
     entry: Entry,
@@ -3828,7 +3851,6 @@ export class CodexRuntime {
         saved,
         resuming,
         fresh,
-        base,
         sections,
         updates,
       } = loaded;
@@ -3974,25 +3996,8 @@ export class CodexRuntime {
             request.solo ? request.canvas : NO_PROJECT,
           );
         active.turnId = turn.turn.id;
-        const session = this.targetKey
-          ? JSON.stringify([this.targetKey, active.threadId])
-          : active.threadId;
-        // The saved prompt shows the sections again when they change. The
-        // binding has what it last showed: a seat's typed turns share one
-        // loaded thread.
-        const last = entry.saved[key]?.sections?.shown ?? sections?.shown;
-        const shown =
-          !fresh &&
-          sections &&
-          base.key !== (last ?? sectionsKey(sections.parts));
-        if (shown)
-          void this.prompts(agent.key).add(session, {
-            label: `base-section-updates ${new Date().toISOString()}`,
-            // Without the block's tag lines, so it is shown under the label.
-            text: updates
-              ? updates.split("\n").slice(1, -1).join("\n")
-              : "Every section is as the thread's base instructions give it.",
-          });
+        const session = this.promptKey(threadId);
+        const saving = this.showSections(agent.key, entry, key, loaded);
         if (fresh)
           void this.prompts(agent.key).save(session, [
             {
@@ -4028,18 +4033,7 @@ export class CodexRuntime {
           ...(agent.protection
             ? { protection: agent.protection.stateKey }
             : {}),
-          ...(sections
-            ? {
-                sections: {
-                  ...sections,
-                  ...(shown
-                    ? { shown: base.key }
-                    : last
-                      ? { shown: last }
-                      : {}),
-                },
-              }
-            : {}),
+          ...(saving ? { sections: saving } : {}),
         });
         ready();
         this.status(agent.key, key, "Working");

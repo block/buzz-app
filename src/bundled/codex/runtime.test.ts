@@ -4601,12 +4601,26 @@ it("splits turn context into ordered values that Codex does not truncate", async
       new TextEncoder().encode(context[key]?.value).length,
     ).toBeLessThanOrEqual(4_000);
   }
-  const text = keys.map((key) => context[key]?.value).join("");
+  // Each part names the whole's revision on its first line.
+  const header = /^\[Buzz turn context ([0-9a-f]{16}), part (\d+) of (\d+)\]\n/;
+  const revisions = new Set(
+    keys.map((key, index) => {
+      const [, revision, part, count] = context[key]?.value.match(header) ?? [];
+      expect([Number(part), Number(count)]).toEqual([index + 1, keys.length]);
+      return revision;
+    }),
+  );
+  expect(revisions.size).toBe(1);
+  const text = keys
+    .map((key) => context[key]?.value.replace(header, ""))
+    .join("");
   expect(text).toContain(
     `<agent-instructions>\n${instructions}\n</agent-instructions>`,
   );
   expect(text).toContain(`CORE START ${"c".repeat(6_000)} CORE END`);
-  expect(context["buzz.instructions.001"]?.value).toMatch(/^Rule \d+\.\n/);
+  expect(context["buzz.instructions.001"]?.value.replace(header, "")).toMatch(
+    /^Rule \d+\.\n/,
+  );
 });
 
 it("gives a resumed conversation the agent's current name", async () => {
@@ -8868,7 +8882,7 @@ describe("a thread that keeps the base sections it started with", () => {
     );
   });
 
-  it("gives a voice seat's resumed thread the sections that changed, and keeps what it started with", async () => {
+  it("gives a voice seat's resumed thread the sections that changed, at both starts, and shows them in its saved prompt", async () => {
     vi.stubGlobal("RTCPeerConnection", class {});
     const started = {
       layout: 1,
@@ -8885,6 +8899,14 @@ describe("a thread that keeps the base sections it started with", () => {
           workspace: "/tmp/codex-test",
           sections: started,
         },
+      }),
+    );
+    f.storage.set(
+      `buzz.session-prompts.v1:codex:${pubkey}`,
+      JSON.stringify({
+        version: 1,
+        texts: ["The first prompt."],
+        sessions: [["kept", [["base", 0]]]],
       }),
     );
     f.huddleChannels.add("channel");
@@ -8904,15 +8926,44 @@ describe("a thread that keeps the base sections it started with", () => {
     expect(
       f.sent.find((wire) => wire.method === "thread/resume")?.params,
     ).toMatchObject({ threadId: "kept" });
-    expect(
-      JSON.stringify(
-        f.sent.find((wire) => wire.method === "thread/inject_items")?.params,
-      ),
-    ).toContain("<base-section-updates>\\nThese sections replace");
-    expect(JSON.parse(f.storage.get(bindings) ?? "{}")[room].sections).toEqual(
-      started,
+    const injected = (
+      f.sent.find((wire) => wire.method === "thread/inject_items")?.params as
+        | { items: { content: { text: string }[] }[] }
+        | undefined
+    )?.items[0]?.content[0]?.text;
+    expect(injected).toContain(
+      "<base-section-updates>\nThese sections replace",
     );
+    // Realtime start adds its instructions as a later developer message, so
+    // they must not say that no sections changed.
+    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toBe(injected);
+    const [[, parts]] = savedPrompts(f.storage) as [
+      [string, [string, string][]],
+    ];
+    expect(parts.at(-1)?.[0]).toMatch(/^base-section-updates \d{4}-/);
+    // The thread keeps what it started with.
+    expect(JSON.parse(f.storage.get(bindings) ?? "{}")[room].sections).toEqual({
+      ...started,
+      // A room is a whole conversation.
+      shown: composeBase({ scope: "thread", place: "conversation" }).key,
+    });
     await connection.close();
+  });
+
+  it("does not carry what an old thread's saved prompt showed to its fresh replacement", async () => {
+    const f = resumed({
+      layout: 1,
+      parts: { ...current.parts, progress: "older" },
+      shown: "the sections of an earlier turn",
+    });
+    // The kept thread's rollout is gone, so a fresh thread replaces it.
+    f.failures.set("thread/resume", "no rollout found for thread id kept");
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(binding(f).threadId).not.toBe("kept");
+    expect(binding(f).sections).toEqual({ layout: 1, parts: current.parts });
   });
 
   it("continues a thread saved before its sections were kept, with no update", async () => {

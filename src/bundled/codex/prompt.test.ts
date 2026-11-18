@@ -101,6 +101,38 @@ it("calls a conversation without a root a whole conversation", () => {
   expect(sessionPlace({})).toBe("conversation");
 });
 
+it("sends every part of a split turn context again when any part changes", () => {
+  // Codex sends a thread only the values that changed since its last turn.
+  const agent = { name: "Codex", pubkey: "b".repeat(64) } as Parameters<
+    typeof turnContext
+  >[0];
+  const rules = Array.from({ length: 800 }, (_, line) => `Rule ${line}.`);
+  const context = (last: string) =>
+    turnContext(agent, {
+      instructions: [...rules, last].join("\n"),
+    } as Parameters<typeof turnContext>[1]);
+  const before = context("Last rule.");
+  const after = context("Changed last rule.");
+  const keys = Object.keys(before);
+  expect(keys.length).toBeGreaterThan(1);
+  expect(Object.keys(after)).toEqual(keys);
+  // The edit is only in the last part, yet every part differs.
+  const body = (value = "") => value.slice(value.indexOf("\n") + 1);
+  expect(body(after[keys[0] ?? ""]?.value)).toBe(
+    body(before[keys[0] ?? ""]?.value),
+  );
+  for (const key of keys)
+    expect(after[key]?.value).not.toBe(before[key]?.value);
+  expect(after[keys.at(-1) ?? ""]?.value).toContain("Changed last rule.");
+  // A context that fits one value has no part header.
+  expect(context("Short.")["buzz.instructions"]?.value).toMatch(/^\[Buzz/);
+  expect(
+    turnContext(agent, { instructions: "Short." } as Parameters<
+      typeof turnContext
+    >[1])["buzz.instructions"]?.value,
+  ).toMatch(/^You are Codex/);
+});
+
 it("sends the base sections that changed as Buzz's own block, which no instruction can forge", () => {
   const updates =
     "<base-section-updates>\n## Progress\n\nNew text.\n</base-section-updates>";

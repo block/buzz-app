@@ -56,13 +56,14 @@ test("workspace settings rename preserves filing in ordinary and composed headin
       exact: true,
     });
     if (await show.isVisible()) await show.click();
-    const title = composed
-      ? sidebar.getByRole("button", { name, exact: true })
-      : header.locator("summary");
-    await expect(title).toBeVisible();
+    const title = () =>
+      composed
+        ? sidebar.getByRole("button", { name, exact: true })
+        : header.locator("summary");
+    await expect(title()).toBeVisible();
     const open = async () => {
       if (composed) {
-        await title.focus();
+        await title().focus();
         await page.keyboard.press("Shift+F10");
       } else {
         await header
@@ -143,7 +144,7 @@ test("workspace settings rename preserves filing in ordinary and composed headin
     ]);
     await page.reload();
     if (composed) await show.click();
-    await expect(title).toBeVisible();
+    await expect(title()).toBeVisible();
     await expect(
       sidebar
         .locator(`[data-sidebar-section="group:${id}"]`)

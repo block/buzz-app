@@ -542,27 +542,20 @@ export function ChannelInventory({
   const previousLocation = useRef(location);
   const pendingExpansion = useRef(false);
   useLayoutEffect(() => {
+    if (!location) {
+      pendingExpansion.current = false;
+      return;
+    }
     if (location !== previousLocation.current) {
       previousLocation.current = location;
       pendingExpansion.current =
-        !!location &&
-        !preserveSidebar &&
-        !navigator.snapshot().attempt.traversal;
+        !preserveSidebar && !navigator.snapshot().attempt.traversal;
     }
     if (pendingExpansion.current && ordinarySelection && !preserveSidebar) {
       pendingExpansion.current = false;
-      if (current?.channelType === "solo" || currentDraft)
-        sidebar.toggle(ordinarySelection, true);
+      sidebar.toggle(ordinarySelection, true);
     }
-  }, [
-    location,
-    navigator,
-    ordinarySelection,
-    preserveSidebar,
-    sidebar.toggle,
-    current?.channelType,
-    currentDraft,
-  ]);
+  }, [location, navigator, ordinarySelection, preserveSidebar, sidebar.toggle]);
   const [chatTool, setChatTool] = useState<{
     channel: ChannelSummary;
     kind: "share" | "convert" | "settings";
@@ -2063,15 +2056,19 @@ export function ChannelInventory({
                                   close={(focus) => {
                                     setRenamingChat(undefined);
                                     if (focus)
-                                      requestAnimationFrame(() =>
-                                        sidebar.collapsed.includes(section.key)
-                                          ? sidebar.list.current
-                                              ?.querySelector<HTMLElement>(
-                                                `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
-                                              )
-                                              ?.focus()
-                                          : focusChannelPlacement(channel.id),
-                                      );
+                                      requestAnimationFrame(() => {
+                                        const summary =
+                                          sidebar.list.current?.querySelector<HTMLElement>(
+                                            `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
+                                          );
+                                        if (
+                                          summary?.closest(
+                                            "details:not([open])",
+                                          )
+                                        )
+                                          summary.focus();
+                                        else focusChannelPlacement(channel.id);
+                                      });
                                   }}
                                 />
                               );

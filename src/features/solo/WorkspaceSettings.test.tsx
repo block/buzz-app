@@ -1123,7 +1123,7 @@ it("validates workspace names and retains failed edits across remount and partia
   await instructions();
   const name = screen.getByRole("textbox", { name: "Workspace name" });
   expect(name).toHaveValue("Work");
-  expect(name).toHaveAttribute("maxlength", "120");
+  expect(name).toHaveAttribute("maxlength", "256");
   fireEvent.change(name, { target: { value: " " } });
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   fireEvent.change(name, { target: { value: " Projects " } });

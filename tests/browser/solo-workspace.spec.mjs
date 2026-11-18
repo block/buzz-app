@@ -22,6 +22,19 @@ test.use({
   ownSoloChannels: [id, other],
   historyCounts: { [id]: 2, [other]: 1, gamma: 1 },
 });
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    const choices = JSON.parse(localStorage.getItem(key) ?? "null") ?? {
+      version: 3,
+      enabled: { "buzz.reminders": false, "buzz.workflows": false },
+    };
+    // The Solo source fixture is needed here. Its companion panel fixture
+    // deliberately matches everything, taking priority over Profile details.
+    choices.enabled["fixture.notes"] = false;
+    localStorage.setItem(key, JSON.stringify(choices));
+  });
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });

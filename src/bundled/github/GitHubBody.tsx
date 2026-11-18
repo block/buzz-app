@@ -281,7 +281,8 @@ function EmbeddedAttachment({
     >
       {/* Media keeps a failure until remounted with a new source. */}
       <Fragment key={shown}>{children(shown, size)}</Fragment>
-      {loaded ? caption : fallback}
+      {/* An image's frame holds its place, so its link shows only if it fails. */}
+      {loaded ? caption : image && !failed ? null : fallback}
     </div>
   );
 }

@@ -142,7 +142,7 @@ it.each(["Markdown", "HTML"])(
       );
       const preview = screen.getByAltText(alt);
       expect(preview).toHaveAttribute("alt", alt);
-      expect(screen.getByRole("link")).toHaveAttribute("href", image);
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
       fireEvent.load(preview);
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
       expect(container).toHaveTextContent(/^Before after\.$/);
@@ -169,7 +169,7 @@ it.each([
       />,
     );
     const preview = screen.getByAltText(description);
-    expect(screen.getByRole("link")).toHaveAttribute("href", source);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
     fireEvent.load(preview);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(container).toHaveTextContent(
@@ -684,7 +684,7 @@ it("keeps mixed HTML text, images and attachment links in order after loading an
   expect(screenshot).toHaveAttribute("src", image);
   expect(screenshot).not.toHaveAttribute("onerror");
   expect(container).toHaveTextContent(
-    "Before the screenshot. HTML screenshot After the screenshot. Source archive",
+    "Before the screenshot. After the screenshot. Source archive",
   );
   fireEvent.load(screenshot);
   expect(screen.queryByRole("link", { name: "HTML screenshot" })).toBeNull();
@@ -853,10 +853,9 @@ it.each([`![Linked image](${image})`, `**![Linked image](${image})**`])(
       />,
     );
     expect(screen.getByAltText("Linked image").closest("a, p")).toBeNull();
-    expect(screen.getByRole("link", { name: "Linked image" })).toHaveAttribute(
-      "href",
-      image,
-    );
+    expect(
+      screen.queryByRole("link", { name: "Linked image" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "https://example.com/review" }),
     ).toBeVisible();
@@ -867,6 +866,11 @@ it.each([`![Linked image](${image})`, `**![Linked image](${image})**`])(
     expect(
       screen.getByRole("link", { name: "https://example.com/review" }),
     ).toBeVisible();
+    fireEvent.error(screen.getByAltText("Linked image"));
+    expect(screen.getByRole("link", { name: "Linked image" })).toHaveAttribute(
+      "href",
+      image,
+    );
     expect(container.querySelector("a a")).toBeNull();
   },
 );

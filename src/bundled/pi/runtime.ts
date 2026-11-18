@@ -114,11 +114,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
-  scope: sessionScope(
-    value && typeof value === "object"
-      ? (value as Partial<Config>).scope
-      : undefined,
-  ),
+  scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;

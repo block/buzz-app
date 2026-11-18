@@ -117,11 +117,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
-  scope: sessionScope(
-    value && typeof value === "object"
-      ? (value as Partial<Config>).scope
-      : undefined,
-  ),
+  scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 /** What an agent runs on: its config, with `candidate`'s provider, model and
  * thinking level in place of its own while it is on Recommended. */

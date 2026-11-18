@@ -3939,10 +3939,8 @@ export class AgentsService extends Service implements Agents {
       sources.reconcile(
         this.attentionProvider(source),
         source,
-        this.state.running.filter(
-          ({ key }) =>
-            this.runners.runs(key) && !this.runners.transitioning(key),
-        ),
+        this.state.running.filter(({ key }) => this.runners.runs(key)),
+        (key) => this.runners.transitioning(key),
       );
     const unsubscribe = this.subscribe(update);
     update();

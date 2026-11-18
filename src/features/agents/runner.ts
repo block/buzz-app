@@ -2397,11 +2397,12 @@ export class AgentRunners {
       count(-1);
     };
     const lifetime = runner.controller.signal;
-    // Whether this runner, as it is now, should still act on the event.
-    const live = () =>
-      !lifetime.aborted &&
+    // Source output belongs to its watch registration, which can survive a
+    // harness change. Event classification still belongs to its original run.
+    const sameRunner = () =>
       this.runners.get(runner.key) === runner &&
-      this.stillCurrent(runner, job);
+      (trigger.type === "source" || !lifetime.aborted);
+    const live = () => sameRunner() && this.stillCurrent(runner, job);
     // Checked as non-null by the caller.
     const classifier = trigger.watch.classifier as NonNullable<
       EventWatch["classifier"]
@@ -2422,8 +2423,7 @@ export class AgentRunners {
       try {
         await previous;
         const results = await outcomes;
-        // A retired or replaced runner keeps none of its work.
-        if (lifetime.aborted || this.runners.get(runner.key) !== runner) return;
+        if (!sameRunner()) return;
         unreserve();
         if (trigger.type === "watch" || trigger.type === "source") {
           const [result] = results;

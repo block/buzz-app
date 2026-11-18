@@ -140,3 +140,85 @@ test("a table pasted into a list item or a quote stays Markdown text", async ({
     await input.fill("");
   }
 });
+
+const surrounded =
+  "Before\n\n| Cell | Value |\n| --- | --- |\n| cellword | 2 |\n\nAfter";
+
+test("Backspace from the paragraph below a table never edits the one above", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.evaluate((el, text) => el.insertText(text), surrounded);
+  await input.evaluate((el) => {
+    const at = el.value.indexOf("After");
+    el.focus();
+    el.setSelectionRange(at, at);
+  });
+  await page.keyboard.press("Backspace");
+  await expect(input.locator("td[data-active]")).toHaveCount(1);
+  await page.keyboard.press("Backspace");
+  await expect(input.locator("p").first()).toHaveText("Before");
+  await expect(input.locator("table")).toHaveCount(1);
+  await expect(input.locator("p").last()).toHaveText("After");
+  await expect(input.locator("td").first()).toHaveText("cellword");
+});
+
+test("Delete from the paragraph above a table never edits the one below", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.evaluate((el, text) => el.insertText(text), surrounded);
+  await input.evaluate((el) => {
+    el.focus();
+    el.setSelectionRange(6, 6);
+  });
+  await page.keyboard.press("Delete");
+  await expect(input.locator("th[data-active]")).toHaveCount(1);
+  await page.keyboard.press("Delete");
+  await expect(input.locator("p").last()).toHaveText("After");
+  await expect(input.locator("p").first()).toHaveText("Before");
+  await expect(input.locator("th").first()).toHaveText("ell");
+});
+
+for (const [name, setup] of [
+  ["selected text outside", (page) => page.locator("p").first().dblclick()],
+  ["a caret outside", (page) => page.locator("p").last().click()],
+]) {
+  test(`Copy and Cut use the cell text dragged over, not ${name}`, async ({
+    page,
+  }) => {
+    const input = await composer(page);
+    await input.evaluate((el, text) => el.insertText(text), surrounded);
+    await setup(input);
+    const box = await input.locator("td").first().boundingBox();
+    await page.mouse.move(box.x + 3, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 3, box.y + box.height / 2, {
+      steps: 6,
+    });
+    await page.mouse.up();
+    const visible = await page.evaluate(() => getSelection().toString());
+    expect(visible).toContain("cell");
+    const run = (type) =>
+      input.evaluate((element, type) => {
+        const clipboardData = new DataTransfer();
+        element.dispatchEvent(
+          new ClipboardEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+        return clipboardData.getData("text/plain");
+      }, type);
+    const copied = await run("copy");
+    expect(copied).toContain(visible.trim());
+    expect(copied).not.toContain("Before");
+    await expect(input.locator("p").first()).toHaveText("Before");
+    const cut = await run("cut");
+    expect(cut).toContain(visible.trim());
+    await expect(input.locator("p").first()).toHaveText("Before");
+    await expect(input.locator("td").first()).not.toContainText(visible.trim());
+    await expect(input.locator("table")).toHaveCount(1);
+  });
+}

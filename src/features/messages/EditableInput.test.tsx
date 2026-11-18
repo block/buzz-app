@@ -5211,6 +5211,65 @@ describe("editable tables", () => {
     });
   });
 
+  it("keeps Before when Backspace walks up from the paragraph below", async () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(`Before\n\n${source}\n\nAfter`);
+    });
+    const at = h.draft().text.indexOf("After");
+    act(() => h.input.setSelectionRange(at, at));
+    await h.user.keyboard("{Backspace}");
+    expect(activeCell(h.input)).toBe("2");
+    await h.user.keyboard("{Backspace}");
+    expect(h.input.querySelector("p")?.textContent).toBe("Before");
+    expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    expect(h.markdown()).toBe(
+      "Before\n\n| a | b |\n| :--- | ---: |\n| 1 |  |\n\nAfter",
+    );
+  });
+
+  describe("message length", () => {
+    const small = "| a | b |\n| - | - |\n| 1 | 2 |";
+    const size = "| a | b |\n| --- | --- |\n| 1 | 2 |".length;
+    const limit = size * 2 + 1;
+
+    it("counts every table together when Markdown is pasted", () => {
+      const tooLong = vi.fn();
+      const h = mount("", { maxLength: limit, onPasteTooLong: tooLong });
+      paste(h.input, small);
+      paste(h.input, small);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+      expect(tooLong).toHaveBeenCalledTimes(1);
+      expect(h.markdown().length).toBeLessThanOrEqual(limit);
+    });
+
+    it("counts every table together when cells are pasted", () => {
+      const tooLong = vi.fn();
+      const html = "<table><tr><td>a</td><td>b</td></tr></table>";
+      const h = mount("", { maxLength: limit, onPasteTooLong: tooLong });
+      paste(h.input, "a\tb\n1\t2", html);
+      paste(h.input, "a\tb\n1\t2", html);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+      expect(tooLong).toHaveBeenCalledTimes(1);
+      expect(h.markdown().length).toBeLessThanOrEqual(limit);
+    });
+
+    it("stops typing and growing a table at the limit", async () => {
+      const h = mount(small, { maxLength: size + 2 });
+      act(() => h.input.setSelectionRange(0, 0));
+      await h.user.keyboard("xxxxxx");
+      expect(h.markdown().length).toBeLessThanOrEqual(size + 2);
+      act(() => {
+        h.input.runTableCommand("row_below");
+      });
+      act(() => {
+        h.input.runTableCommand("column_right");
+      });
+      expect(h.markdown().length).toBeLessThanOrEqual(size + 2);
+      expect(cells(h.input)).toHaveLength(2);
+    });
+  });
+
   it("keeps a table in a restored draft", () => {
     const first = mount();
     act(() => {

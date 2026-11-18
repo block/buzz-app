@@ -161,8 +161,9 @@ type Request = {
   effort?: string;
   /** The synced settings in `settings`. */
   synced?: Delivery["synced"];
-  /** Called once a final send answers this request, or one steered after it,
-   * a steering rejection is posted in its place, or the turn ends normally.
+  /** Called once a final send answers this request, or one steered after it
+   * (in its conversation, for a community session), a steering rejection is
+   * posted in its place, or the turn ends normally.
    * `stopped` is that the owner's interrupt ended the turn. */
   answered: (stopped?: boolean) => void;
   /** A failed final delivery stays pending until this request gets a reply. */
@@ -3060,6 +3061,12 @@ export class CodexRuntime {
           }
         : {};
     const final = isFinalMessage(call.tool, args);
+    // A community turn answers each conversation with its own final send.
+    const settling = request?.conversation.community
+      ? answering.filter(
+          (taken) => taken.activityScope === request.activityScope,
+        )
+      : answering;
     const reply = await callSessionTool(
       this.target
         ? {
@@ -3078,13 +3085,13 @@ export class CodexRuntime {
       this.added(),
     ).catch((error) => {
       if (final)
-        for (const taken of answering)
+        for (const taken of settling)
           if (taken.finalDelivery !== true)
             taken.finalDelivery = new Error(message(error));
       throw error;
     });
     if (final) {
-      for (const taken of answering) {
+      for (const taken of settling) {
         taken.finalDelivery = true;
         taken.answered();
       }

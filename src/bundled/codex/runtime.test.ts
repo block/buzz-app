@@ -8594,6 +8594,53 @@ it("steers a working community thread with a Solo message and replies to both re
   await f.complete(0, "");
 });
 
+it("settles each steered community conversation only with its own final send", async () => {
+  const f = fixture();
+  const thread = f.delivery("Work in the channel");
+  const solo = f.delivery("Quick question in Solo", "e".repeat(64));
+  const { config } = scoped(thread);
+  const held = vi.fn<Delivery["workingUntil"]>();
+  const steered = vi.fn<Delivery["workingUntil"]>();
+  f.soloChannels.add("channel");
+  await f.runtime.run({
+    ...thread,
+    channelId: "other",
+    config,
+    workingUntil: held,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...solo, config, workingUntil: steered });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  if (thread.trigger.type !== "mention" || solo.trigger.type !== "mention")
+    throw new Error("Expected mentions");
+  const settled = (working: typeof held) =>
+    Promise.race([
+      Promise.all(working.mock.calls.map(([done]) => done)).then(() => true),
+      new Promise((resolve) => setTimeout(resolve, 0, false)),
+    ]);
+  await f.tool("send", {
+    audience: "everyone",
+    channel: "channel",
+    request: solo.trigger.event.id,
+    text: "SOLO ANSWER",
+    final: true,
+  });
+  expect(await settled(steered)).toBe(true);
+  expect(await settled(held)).toBe(false);
+  await f.tool("send", {
+    audience: "everyone",
+    request: thread.trigger.event.id,
+    text: "CHANNEL ANSWER",
+    final: true,
+  });
+  expect(await settled(held)).toBe(true);
+  await f.complete(0, "");
+});
+
 it("steers community follow-ups received while Codex starts the first turn", async () => {
   const f = fixture();
   const first = f.delivery("Start the channel task");

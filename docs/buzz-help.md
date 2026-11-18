@@ -1017,9 +1017,13 @@ Quitting Buzz also turns it off.
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
   U marks it unread, and Delete deletes your own message.
   With message text selected, Q quotes it into the draft.
-  On macOS, ⌘← and ⌘→ go back and forward, including while the message input
-  is empty and focused. With text in the input, they move the cursor to the
-  start and end of the line. ⌘[ and ⌘] also navigate while typing.
+  On macOS, ⌘← and ⌘→ go back and forward from an empty, focused message
+  composer, including an untouched automatic mention prefill. A draft containing
+  text, added mentions, attachments, GIFs or chat cards keeps these keys for
+  editing, as do edit/send states and other input fields such as Search.
+  With text, they move to the start and end of the line. ⌘[ and ⌘] also navigate
+  while typing. These default history chords reserve the keys for the host;
+  rebind Go back/Go forward in Settings → Shortcuts to free them for a plugin.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. ⌘R (Ctrl+R)
   reloads Buzz in place: every community reconnects and reads its
   conversations from the relay again, and running agents keep working. ⇧⌘R

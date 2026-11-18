@@ -3397,6 +3397,19 @@ function Composer({
       }
     }
   }
+  const isEmptyForShortcuts = () =>
+    !editingDisabled &&
+    !editDisabled &&
+    !submission &&
+    !editing.target &&
+    ((valueRef.current.text === "" &&
+      !valueRef.current.recipients.length &&
+      composerMarkdown(valueRef.current) === "") ||
+      automaticTag.current === JSON.stringify(valueRef.current)) &&
+    !valueRef.current.chatCards?.length &&
+    !valueRef.current.forward &&
+    !valueRef.current.gifs?.length &&
+    !attachments.items.length;
   const readingOnly = !outbox?.supports(9) && !cached;
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
@@ -3763,6 +3776,7 @@ function Composer({
           )}
           <div className={styles.composerInput}>
             <RichComposerInput
+              isEmptyForShortcuts={isEmptyForShortcuts}
               ref={input}
               id={inputId}
               disabled={editingDisabled}
@@ -3896,19 +3910,7 @@ function Composer({
                   !event.ctrlKey &&
                   !event.repeat &&
                   !event.defaultPrevented &&
-                  !editingDisabled &&
-                  !editDisabled &&
-                  !submission &&
-                  !editing.target &&
-                  ((valueRef.current.text === "" &&
-                    !valueRef.current.recipients.length &&
-                    composerMarkdown(valueRef.current) === "") ||
-                    automaticTag.current ===
-                      JSON.stringify(valueRef.current)) &&
-                  !valueRef.current.chatCards?.length &&
-                  !valueRef.current.forward &&
-                  !valueRef.current.gifs?.length &&
-                  !attachments.items.length
+                  isEmptyForShortcuts()
                 ) {
                   // The default selects the newest message; the preference
                   // and ⌘↑ edit using the same conversation-scoped lookup.

@@ -1,3 +1,7 @@
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
+import { ShortcutsService } from "../shortcuts/service";
+import { registerNavigationShortcuts } from "../../app/shortcuts";
 // @vitest-environment jsdom
 import { MESSAGE_TOKENS_TAG, signedMessageTokenTags } from "./message-tokens";
 import { Context } from "@deepseek-ai/cordis";
@@ -17610,4 +17614,184 @@ it("pastes a copied forward literally inside a code block", async () => {
   expect(
     screen.queryByRole("button", { name: "Remove forwarded message" }),
   ).not.toBeInTheDocument();
+});
+
+async function composerHistory() {
+  const platform = vi
+    .spyOn(navigator, "platform", "get")
+    .mockReturnValue("MacIntel");
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const shortcuts = new ShortcutsService(ctx, window);
+  const controller = createNavigationController(createMemoryHistory());
+  const navigation = controller.navigation;
+  void navigation.open({ version: 1, kind: "home" });
+  void navigation.open({ version: 1, kind: "settings" });
+  await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
+  const back = vi.fn(navigation.back);
+  const forward = vi.fn(navigation.forward);
+  const remove = registerNavigationShortcuts(shortcuts, {
+    ...navigation,
+    back,
+    forward,
+  });
+  onTestFinished(async () => {
+    remove();
+    controller.dispose();
+    await ctx.fiber.dispose();
+    platform.mockRestore();
+  });
+  const press = (input: HTMLElement, key = "ArrowLeft") =>
+    fireEvent.keyDown(input, { key, code: key, metaKey: true });
+  return { back, forward, press };
+}
+
+it("uses automatic prefill as empty for repeated Command-arrow history, until the user edits", async () => {
+  const history = await composerHistory();
+  const h = mount({ defaultMention: second });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  for (let i = 0; i < 2; i++) {
+    history.press(h.input());
+    expect(history.back).toHaveBeenCalledTimes(i + 1);
+    await act(async () => {});
+    history.press(h.input(), "ArrowRight");
+    expect(history.forward).toHaveBeenCalledTimes(i + 1);
+    await act(async () => {});
+    h.remount();
+  }
+  h.fill("my own draft");
+  history.press(h.input());
+  expect(history.back).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  "mention",
+  "GIF",
+  "chat card",
+  "rich block",
+  "edit",
+  "completion",
+  "disabled",
+  "submission",
+])("keeps Command arrows in a composer with %s state", async (state) => {
+  const history = await composerHistory();
+  if (state === "GIF")
+    writeView("scope", "draft:channel", {
+      text: "",
+      recipients: [],
+      gifs: ["![Party](https://example.org/party.gif)"],
+    });
+  if (state === "chat card")
+    writeView(
+      "scope",
+      "draft:channel",
+      "[Session: Example](buzz://channel/session-id)",
+    );
+  const h = mount({}, undefined, first.pubkey);
+  if (state === "mention") act(() => h.commands().insertMention(second));
+  if (state === "rich block") act(() => h.input().toggleFormat("code_block"));
+  if (state === "edit") {
+    h.setRows([editableMessage()]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp", metaKey: true });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    h.fill("");
+  }
+  if (state === "completion") {
+    h.fill("!query");
+    h.publish(h.completionRequests.length - 1);
+    expect(screen.getByRole("option", { name: "chosen" })).toBeInTheDocument();
+  }
+  if (state === "disabled") h.retarget({ disabled: true });
+  if (state === "submission")
+    h.retarget({
+      submission: {
+        draftKey: "task",
+        locked: false,
+        disabled: false,
+        submit: vi.fn(),
+      },
+    });
+  history.press(h.input());
+  expect(history.back).not.toHaveBeenCalled();
+});
+
+it("keeps Command arrows local with a staged attachment and allows the next draft during background upload", async () => {
+  const history = await composerHistory();
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile());
+  expect(h.input()).toHaveValue("");
+  history.press(h.input());
+  expect(history.back).not.toHaveBeenCalled();
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  try {
+    // Upload ownership has transferred to the outbox; this is a new empty draft.
+    history.press(h.input());
+    expect(history.back).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () =>
+      h.uploadCalls[0]?.result.reject(new Error("test upload failed")),
+    );
+  }
+});
+
+it("keeps Command arrows local while sending an automatic prefill and restores eligibility afterward", async () => {
+  const history = await composerHistory();
+  const seed = mount();
+  seed.unmount();
+  const { unread: _unread, ...session } = seed.session;
+  const sending = deferred<string>();
+  const send = vi.fn(() => sending.promise);
+  const h = mount({
+    defaultMention: second,
+    session: { ...session, messages: { ...session.messages, send } },
+  });
+  h.submit();
+  try {
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(h.input()).toHaveValue(`@${second.name} `);
+    history.press(h.input());
+    expect(history.back).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => sending.resolve("sent"));
+  }
+  history.press(h.input());
+  expect(history.back).toHaveBeenCalledOnce();
+});
+
+it("keeps Command arrows in a forward-only draft until its card is removed", async () => {
+  const history = await composerHistory();
+  const h = await mountUploadComposer({ sourceMessages: true });
+  const id = h.owner.session.messages.send("channel", "Original message");
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://relay.example.test",
+      channelId: "channel",
+      id,
+    },
+    "Original message",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+    },
+  });
+  const remove = await screen.findByRole("button", {
+    name: "Remove forwarded message",
+  });
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  expect(h.input()).toHaveValue("");
+  history.press(h.input());
+  expect(history.back).not.toHaveBeenCalled();
+  fireEvent.click(remove);
+  history.press(h.input());
+  expect(history.back).toHaveBeenCalledOnce();
 });

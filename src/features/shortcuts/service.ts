@@ -19,9 +19,15 @@ import {
   type Shortcut,
 } from "./bindings";
 export type { KeyBinding, NormalizedShortcut, Shortcut } from "./bindings";
+type HostShortcutDefinition = Shortcut & {
+  /** Keyboard-only eligibility; programmatic host actions still use when(). */
+  whenKeyboard?: ((event: KeyboardEvent) => boolean) | undefined;
+};
 export type RegisteredShortcut = Contribution<NormalizedShortcut>;
 /** Host-only: a field matches it itself, so it is listed in Settings but never reserved or run. */
-export type HostShortcut = NormalizedShortcut & Readonly<{ local: boolean }>;
+export type HostShortcut = NormalizedShortcut &
+  Pick<HostShortcutDefinition, "whenKeyboard"> &
+  Readonly<{ local: boolean }>;
 export type Shortcuts = {
   register(shortcut: Shortcut): void;
   snapshot(): readonly RegisteredShortcut[];
@@ -45,7 +51,7 @@ function eligibleIn(
   shortcut: Shortcut,
   editable: boolean,
   modal: Modal,
-  event?: KeyboardEvent,
+  keyboardEligible?: () => boolean,
 ) {
   try {
     return (
@@ -53,7 +59,8 @@ function eligibleIn(
       (!modal ||
         shortcut.allowInModal ||
         (modal === "visit" && shortcut.allowInVisit)) &&
-      (!shortcut.when || shortcut.when(event))
+      (!shortcut.when || shortcut.when()) &&
+      (!keyboardEligible || keyboardEligible())
     );
   } catch (error) {
     console.error(`Shortcut predicate failed: ${shortcut.id}`, error);
@@ -107,7 +114,7 @@ export class ShortcutsService extends Service implements Shortcuts {
           .composedPath()
           .some((target) => (target as Element).matches?.(MODAL));
       const eligible = (shortcut: Shortcut) =>
-        eligibleIn(shortcut, editable, modal, event);
+        eligibleIn(shortcut, editable, modal);
       // Host chords are reserved even while unavailable (e.g. Settings behind a modal).
       const reserved = [...this.hostBindings.values()].find(
         (shortcut) =>
@@ -115,7 +122,12 @@ export class ShortcutsService extends Service implements Shortcuts {
           matches(bindingsFor(shortcut, shortcut.id), event, apple),
       );
       const shortcut = reserved
-        ? eligible(reserved)
+        ? eligibleIn(
+            reserved,
+            editable,
+            modal,
+            () => !reserved.whenKeyboard || reserved.whenKeyboard(event),
+          )
           ? reserved
           : undefined
         : [...this.contributions.snapshot()]
@@ -175,10 +187,11 @@ export class ShortcutsService extends Service implements Shortcuts {
     this.contributions.register(this.ctx, normalizeShortcut(shortcut));
   }
   /** Host composition only; not part of the injected plugin contract. */
-  registerHost(shortcut: Shortcut, { local = false } = {}) {
+  registerHost(shortcut: HostShortcutDefinition, { local = false } = {}) {
     const entry: HostShortcut = Object.freeze({
       ...normalizeShortcut(shortcut),
       local,
+      whenKeyboard: shortcut.whenKeyboard,
     });
     if (this.hostBindings.has(entry.id))
       throw new Error(`Host shortcut already registered: ${entry.id}`);

@@ -79,9 +79,11 @@ function press(
 }
 
 function composer(value = "") {
+  const ref = createRef<ComposerInputElement>();
   render(
     <EditableInput
-      ref={createRef<ComposerInputElement>()}
+      ref={ref}
+      isEmptyForShortcuts={() => ref.current?.value === ""}
       draft={mentionDraft(value)}
       value={value}
       decorationsFor={() => []}
@@ -228,3 +230,57 @@ it("keeps non-keyboard history navigation available while a draft is focused", a
     await h.dispose();
   }
 });
+
+it.each(
+  [
+    { shift: true, shiftKey: true },
+    { alt: true, altKey: true },
+    { ctrl: true, ctrlKey: true },
+  ].flatMap((modifiers) =>
+    ["input", "composer"].map((target) => ({ modifiers, target })),
+  ),
+)(
+  "preserves modified-arrow rebindings in an editable: %j",
+  async ({ modifiers, target }) => {
+    const h = await harness();
+    const input =
+      target === "composer"
+        ? composer("draft")
+        : document.createElement("input");
+    if (target === "input") document.body.append(input);
+    input.focus();
+    try {
+      h.bindings.set("navigation-back", {
+        key: "ArrowLeft",
+        mod: true,
+        ...modifiers,
+      });
+      expect(press(input, "ArrowLeft", modifiers).defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(h.target()).toBe("home"));
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it.each(["composer", "body"])(
+  "normalizes WebKit Command arrows from %s",
+  async (target) => {
+    const h = await harness();
+    const input = target === "composer" ? composer() : document.body;
+    try {
+      expect(
+        press(input, "\u001c", { code: "ArrowLeft", keyCode: 37 })
+          .defaultPrevented,
+      ).toBe(true);
+      await vi.waitFor(() => expect(h.target()).toBe("home"));
+      expect(
+        press(input, "\u001d", { code: "ArrowRight", keyCode: 39 })
+          .defaultPrevented,
+      ).toBe(true);
+      await vi.waitFor(() => expect(h.target()).toBe("settings"));
+    } finally {
+      await h.dispose();
+    }
+  },
+);

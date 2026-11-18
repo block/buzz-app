@@ -380,6 +380,9 @@ and are asked to sign in again in Buzz.
   color; on your own messages they take a neutral gray instead. A reaction
   never shows a `:shortcode:` as text: it draws the community's custom emoji
   with that name, or a neutral smiley when there is none or its image can't load.
+- Link preview cards below a message have an X to hide them. Hiding is for
+  you on this device only; the author and other readers still see the card.
+  With a mouse the X shows on hover; Tab reaches it with a keyboard.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
 - Right-click an uploaded image to **Copy image**, **Copy image URL**, or

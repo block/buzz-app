@@ -188,3 +188,92 @@ it("drops a card whose renderer throws and keeps the rest", () => {
   );
   expect(screen.getByText("web https://ok.example/")).toBeTruthy();
 });
+
+it("hides a card for this viewer, keeps it hidden, and refills the fold", () => {
+  const urls = [1, 2, 3, 4].map((n) => `https://${n}.example/`);
+  const props = {
+    urls,
+    messageId: "hide-me",
+    registry: reader([entry("web", () => true, 100, card("web"))]),
+    onOpenLink: () => true,
+  };
+  const { unmount } = render(<LinkPreviews {...props} />);
+  fireEvent.click(
+    screen.getAllByRole("button", {
+      name: "Hide link preview",
+    })[0] as HTMLElement,
+    { detail: 1 },
+  );
+  expect(screen.queryByText("web https://1.example/")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^web/ })).toHaveLength(3);
+  expect(screen.queryByRole("button", { name: /more preview/ })).toBeNull();
+  const saved: string[] = JSON.parse(
+    localStorage.getItem("buzz.link-previews.hidden") ?? "[]",
+  );
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatch(/^hide-me:[0-9a-z]+$/);
+  expect(saved[0]).not.toContain("example");
+  unmount();
+  render(<LinkPreviews {...props} />);
+  expect(screen.queryByText("web https://1.example/")).toBeNull();
+  render(<LinkPreviews {...props} messageId="other" />);
+  expect(screen.getByText("web https://1.example/")).toBeTruthy();
+});
+
+it("moves keyboard focus to the next hide button", () => {
+  render(
+    <LinkPreviews
+      urls={["https://a.example/", "https://b.example/"]}
+      messageId="keyboard"
+      registry={reader([entry("web", () => true, 100, card("web"))])}
+      onOpenLink={() => true}
+    />,
+  );
+  const [first, second] = screen.getAllByRole("button", {
+    name: "Hide link preview",
+  }) as [HTMLElement, HTMLElement];
+  first.focus();
+  fireEvent.click(first, { detail: 0 });
+  expect(screen.queryByText("web https://a.example/")).toBeNull();
+  expect(document.activeElement).toBe(second);
+});
+
+it("keeps the newest 1000 hidden previews", async () => {
+  const key = "buzz.link-previews.hidden";
+  const props = {
+    urls: ["https://x/"],
+    registry: reader([entry("web", () => true, 100, card("web"))]),
+    onOpenLink: () => true,
+  };
+  const hideIn = (messageId: string) => {
+    const { unmount } = render(
+      <LinkPreviews {...props} messageId={messageId} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hide link preview" }), {
+      detail: 1,
+    });
+    unmount();
+  };
+  hideIn("first");
+  const first: string = JSON.parse(localStorage.getItem(key) ?? "[]").at(-1);
+  localStorage.setItem(
+    key,
+    JSON.stringify([
+      first,
+      ...Array.from({ length: 999 }, (_, n) => `m${n}:x`),
+    ]),
+  );
+  vi.resetModules();
+  const { LinkPreviews: Fresh } = await import("./LinkPreviews");
+  render(<Fresh {...props} messageId="first" />);
+  expect(screen.queryByText("web https://x/")).toBeNull();
+  cleanup();
+  render(<Fresh {...props} messageId="last" />);
+  fireEvent.click(screen.getByRole("button", { name: "Hide link preview" }), {
+    detail: 1,
+  });
+  const saved: string[] = JSON.parse(localStorage.getItem(key) ?? "[]");
+  expect(saved).toHaveLength(1000);
+  expect(saved).not.toContain(first);
+  expect(saved[0]).toBe("m0:x");
+});

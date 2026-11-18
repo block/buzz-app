@@ -332,13 +332,22 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   await user.click(
     await screen.findByRole("menuitem", { name: "Delete workspace" }),
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Deletion unavailable",
-  );
-  expect(screen.getByRole("button", { name: "Work" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Work?",
+  });
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete workspace" }),
+    within(dialog).getByRole("button", { name: "Delete workspace" }),
+  );
+  // A failure stays in the dialog, so Delete workspace retries it there.
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Workspace could not be deleted. Try again.",
+  );
+  // The workspace stays, behind the dialog.
+  expect(
+    screen.getByRole("button", { name: "Work", hidden: true }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete workspace" }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
@@ -346,7 +355,63 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Planning" })).toBeVisible(),
   );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Chats" })).toHaveFocus(),
+  );
   expect(h.saved().assignments).toEqual({});
+  owner.dispose();
+});
+
+it("leaves the chat count out when deleting an empty workspace", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  render(h.view(owner.queries));
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Work" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
+  );
+  expect(
+    await screen.findByRole("alertdialog", { name: "Delete Work?" }),
+  ).toHaveAccessibleDescription(
+    "Its instructions, folders and agent list are cleared on all your devices, but your agents aren't deleted. It can't be undone.",
+  );
+  owner.dispose();
+});
+
+it("asks before deleting a workspace, and Cancel or Escape keeps it", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  await owner.queries.assign("chat", "work");
+  render(h.view(owner.queries));
+  for (const dismiss of ["cancel", "escape"]) {
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Delete workspace" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete Work?",
+    });
+    expect(dialog).toHaveAccessibleDescription(
+      "1 chat moves to Chats. Its instructions, folders and agent list are cleared on all your devices, but your agents aren't deleted. It can't be undone.",
+    );
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    if (dismiss === "cancel") await user.click(cancel);
+    else await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Work" })).toHaveFocus(),
+    );
+  }
+  expect(h.remove).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
   owner.dispose();
 });
 
@@ -745,7 +810,7 @@ it("opens the inline rename editor from the row actions menu", async () => {
   owner.dispose();
 });
 
-it("prevents rename in a deleting workspace while other workspaces remain editable", async () => {
+it("holds the delete confirmation open while it runs and allows rename after", async () => {
   const h = fixture();
   Object.assign(h.details, {
     available: true,
@@ -779,18 +844,24 @@ it("prevents rename in a deleting workspace while other workspaces remain editab
     await user.click(
       await screen.findByRole("menuitem", { name: "Delete workspace" }),
     );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete Work?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete workspace" }),
+    );
     await waitFor(() =>
       expect(h.remove).toHaveBeenCalledWith("work", expect.any(AbortSignal)),
     );
-    await user.dblClick(screen.getByRole("button", { name: "Planning" }));
-    expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
-    await user.dblClick(screen.getByRole("button", { name: "Existing chat" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("textbox", { name: "Chat name" }),
-      ).not.toHaveAttribute("readonly"),
-    );
+    // While the delete runs, the dialog can't be dismissed.
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toBeDisabled();
     await user.keyboard("{Escape}");
+    expect(dialog).toBeVisible();
+    // The pending dialog is modal, so no row behind it can start a rename.
+    expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
   } finally {
     release();
   }

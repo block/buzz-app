@@ -588,7 +588,9 @@ and are asked to sign in again in Buzz.
   workspace control and leaves no text in the message. A plugin's chat, such as
   a Nexus task, shows the workspace control when its plugin files it; until
   that chat's first message, **#** offers its workspaces too, and choosing one
-  files the chat right away.
+  files the chat right away. **Delete workspace**, in the workspace's **…**
+  menu, asks first: its chats move to **Chats**, and its instructions, folders
+  and agent list are cleared on all your devices. Your agents aren't deleted.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**.

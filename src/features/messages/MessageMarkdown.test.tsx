@@ -28,6 +28,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { messageEditText } from "./message-edit";
 import { serializeSelection } from "./selection-copy";
 import { buzzCopyDocument } from "./composer-clipboard";
 import { projectComposerDocument } from "./composer-document";
@@ -720,6 +721,65 @@ describe("Markdown profile mentions", () => {
       expect(html.lastIndexOf("<button")).toBeGreaterThan(html.indexOf("@Mic"));
     },
   );
+
+  it("renders a mention after a bare link that ends at CJK punctuation", () => {
+    const html = render("看这个 https://example.test，@Mic");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/",
+    ]);
+    expect(html).toContain('，<button type="button"');
+    expect(html).toContain('aria-label="View Mic profile"');
+  });
+
+  it.each([
+    "看这个 https://example.test，@Mic",
+    "看这个 HTTPS://example.test，@Mic",
+    '看这个 "https://example.test"@Mic',
+    "看这个 https://example.org，https://example.test，@Mic",
+  ])(
+    "keeps a mention after a bare link through an Edit save: %s",
+    (content) => {
+      const saved = messageEditText(props(content).row, profiles).replace(
+        "看这个",
+        "看看",
+      );
+      expect(saved).toContain("[@Mic](nostr:");
+      const html = render(saved, { patch: { edited: true } });
+      expect(html).toContain('aria-label="View Mic profile"');
+      expect(html).not.toContain("](nostr:");
+    },
+  );
+
+  it("keeps one link when an uppercase URL contains another URL", () => {
+    const html = render("HTTPS://example.org/a/https://example.test，b");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.org/a/https://example.test",
+    ]);
+  });
+
+  it("leaves no marker in table code that CommonMark reads differently", () => {
+    const html = render(
+      "| a | b |\n| - | - |\n| `x | `https://example.test，y` |",
+    );
+    expect(html).not.toMatch(/[\uE000-\uE002]/);
+  });
+
+  it("keeps an entity at the end of a bare link", () => {
+    const html = render("https://example.test/a&gt;");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/a",
+    ]);
+    expect(html.replace(/<[^>]*>/g, "")).toBe("https://example.test/a&gt;");
+  });
+
+  it("parses a link right after a bare link that ends at CJK punctuation", () => {
+    const html = render("看 https://example.test，[a](https://example.org)");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/",
+      "https://example.org/",
+    ]);
+    expect(html.replace(/<[^>]*>/g, "")).toBe("看 https://example.test，a");
+  });
 
   it.each<[string, RenderOptions]>([
     ["no opener", { canOpenLink: undefined }],

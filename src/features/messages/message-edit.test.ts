@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 import { shareMessageRows } from "../relay/row-identity";
 import { foldMessages } from "../relay/fold";
+import { scanMarkdown } from "../relay/message-content";
 import { profileTarget } from "../profiles/target";
 import { messageEditText, validateMessageEdit } from "./message-edit";
 import type { EventData } from "../relay/events";
@@ -74,6 +75,27 @@ describe("message edit round trips", () => {
   it("never infers a recipient from unbound prose", () => {
     const row = firstRow([{ ...original, tags: [["h", "room"]] }]);
     expect(messageEditText(row, profiles)).toBe(original.content);
+  });
+  it("keeps a reference definition's URL when an edit changes only prose", () => {
+    const definition = "[ref]: https://example.test/a，@Sam";
+    const sent = {
+      ...original,
+      content: `https://example.test，@Sam look at [ref].\n\n> ${definition}\n\n${definition}\n\n${"> ".repeat(101)}${definition}`,
+      tags: [
+        ["h", "room"],
+        ["p", person],
+      ],
+    };
+    const draft = messageEditText(firstRow([sent]), profiles);
+    expect(draft).toBe(
+      sent.content.replace(
+        "@Sam look",
+        `[@Sam](${profileTarget(person)}) look`,
+      ),
+    );
+    expect(
+      scanMarkdown(draft.replace("look", "see")).definitions.get("ref"),
+    ).toBe("https://example.test/a，@Sam");
   });
   it.each([
     "[ref]: <https://example.com/a @Sam>",

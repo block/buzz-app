@@ -1480,7 +1480,6 @@ export function createTabs({
             </Field>
             <Select
               label="Sessions"
-              description="Community shares context across channels, DMs, Solo chats and huddles in this community."
               variant="preference"
               value={draft.scope}
               groups={SCOPES}

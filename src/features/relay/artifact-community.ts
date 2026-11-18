@@ -36,15 +36,12 @@ export const artifactCommunityId = (value: unknown): value is string =>
 
 /** The relay's type grammar (buzz-core artifact.rs): at most 128 bytes, two or
  * more dot-separated segments of `[a-z][a-z0-9_-]*`. */
-export const artifactTypeName = (type: string): boolean =>
+export const artifactTypeName = (type: string) =>
   type.length <= 128 && /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/.test(type);
 
 /** The community from NIP-11 `artifacts.community_scope` version 1, only when
  * `supported_extensions` lists `nip-ar`. */
-export function communityScope(
-  artifacts: unknown,
-  nipAr: boolean,
-): string | undefined {
+export function communityScope(artifacts: unknown, nipAr: boolean) {
   const scope = (
     artifacts as {
       community_scope?: { version?: unknown; community_id?: unknown };
@@ -65,7 +62,7 @@ export function typePolicyTemplate(
   policy: ArtifactTypePolicyValue,
   prev: string,
   now: number,
-): EventTemplate {
+) {
   const event = {
     kind: ARTIFACT_TYPE_POLICY_KIND,
     created_at: now,
@@ -81,7 +78,7 @@ export function typePolicyTemplate(
   return event;
 }
 
-const tagValue = (tag: unknown, name: string): string | undefined =>
+const tagValue = (tag: unknown, name: string) =>
   Array.isArray(tag) &&
   tag.length === 2 &&
   tag[0] === name &&
@@ -91,7 +88,7 @@ const tagValue = (tag: unknown, name: string): string | undefined =>
 
 /** Hosts sign only this exact shape: empty content and the four two-element
  * tags in order, for `community`. `prev` is "0" or a lowercase event id. */
-export function validTypePolicy(event: EventTemplate, community: string): void {
+export function validTypePolicy(event: EventTemplate, community: string) {
   const [scope, type, policy, prev, ...extra] = Array.isArray(event?.tags)
     ? event.tags
     : [];
@@ -123,7 +120,7 @@ export function typePolicyFilter(type: string) {
 
 /** The relay's `{policy, revision}` answer to `typePolicyFilter`. Throws on
  * anything else. */
-export function parseTypePolicy(body: unknown): ArtifactTypePolicyState {
+export function parseTypePolicy(body: unknown) {
   const { policy, revision } = (
     body && typeof body === "object" && !Array.isArray(body) ? body : {}
   ) as { policy?: unknown; revision?: unknown };

@@ -24,8 +24,8 @@ test("reverts incompatible agent settings from Previous Versions", async ({
   const versions = page.getByRole("list", { name: "Previous versions" });
   const incompatible = versions.getByRole("button", { name: /Incompatible/ });
   await expect(incompatible).toBeVisible();
-  const compatible = versions.getByRole("button", {
-    name: /Latest compatible/,
+  const compatible = versions.getByRole("button").filter({
+    hasNotText: "Incompatible",
   });
   await expect(compatible).toBeVisible();
   await expect
@@ -54,7 +54,6 @@ test("reverts incompatible agent settings from Previous Versions", async ({
 
   await expect(history).toHaveCount(0);
   await expect(incompatible).toBeVisible();
-  await expect(compatible).toHaveCount(0);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();

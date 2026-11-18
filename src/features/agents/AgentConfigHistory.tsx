@@ -357,23 +357,24 @@ export function AgentConfigVersionRow({
   event,
   head,
   expected,
-  incompatible,
+  settings,
   label,
-  latestCompatible,
   onSelect,
 }: {
   event: RelayEvent;
   head: RelayEvent | undefined;
   expected: Expected;
-  incompatible?: boolean;
+  settings?: SettingsCheck | undefined;
   label?: string;
-  latestCompatible?: boolean;
   onSelect(): void;
 }) {
   useClockFormat();
   const operation = artifactOp(event);
   const invalid =
-    operation !== "delete" && !incompatible && artifactProblem(event, expected);
+    operation !== "delete" &&
+    (settings
+      ? revisionProblem(expected, event, settings)
+      : artifactProblem(event, expected));
   const nowSeconds = Date.now() / 1000;
   const timestamp =
     nowSeconds - event.created_at < 7 * 24 * 60 * 60
@@ -405,11 +406,12 @@ export function AgentConfigVersionRow({
                   <span className="sr-only">· Current</span>
                 </>
               )}
-              {invalid ? " · Not valid" : ""}
-              {latestCompatible ? " · Latest compatible" : ""}
-              {incompatible && (
-                <span className="text-danger"> · Incompatible</span>
-              )}
+              {invalid &&
+                (settings ? (
+                  <span className="text-danger"> · Incompatible</span>
+                ) : (
+                  " · Not valid"
+                ))}
             </span>
             {event.id === head?.id && (
               <span

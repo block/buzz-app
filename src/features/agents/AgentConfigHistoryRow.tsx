@@ -9,12 +9,9 @@ import type {
   HistoryPresentation,
   HistorySelection,
 } from "./history-presentation";
-import { artifactOp } from "./agent-config-artifacts";
 import {
   incompatibleSettings,
   recalledHistory,
-  revisionProblem,
-  segments,
   type History,
 } from "./agent-config-history";
 import type { Agents, ConfigHistory } from "./service";
@@ -112,32 +109,6 @@ export function ConfigHistoryRow({
         b.event.created_at - a.event.created_at ||
         a.event.id.localeCompare(b.event.id),
     );
-  const settings = incompatible
-    ? history.sides.find(({ side }) => side === "settings")
-    : undefined;
-  const incompatibleVersions = new Set(
-    expanded.length && history.settings
-      ? revisions
-          .filter(
-            ({ track, event }) =>
-              track.side === "settings" &&
-              artifactOp(event) !== "delete" &&
-              revisionProblem(track.expected, event, history.settings),
-          )
-          .map(({ event }) => event.id)
-      : [],
-  );
-  const loadedSettings = counts.settings;
-  const latestCompatible =
-    expanded.length && settings?.head && loadedSettings
-      ? segments(loadedSettings)
-          .find(({ revisions }) => revisions[0]?.id === settings.head?.id)
-          ?.revisions.find(
-            (event) =>
-              artifactOp(event) !== "delete" &&
-              !incompatibleVersions.has(event.id),
-          )?.id
-      : undefined;
   return (
     <Accordion
       variant="settings"
@@ -165,9 +136,10 @@ export function ConfigHistoryRow({
                     }
                     head={track.head}
                     expected={track.expected}
-                    incompatible={incompatibleVersions.has(event.id)}
-                    latestCompatible={
-                      track.side === "settings" && latestCompatible === event.id
+                    settings={
+                      expanded.length && track.side === "settings"
+                        ? history.settings
+                        : undefined
                     }
                     onSelect={() =>
                       setSelected({ side: track.side, id: event.id })

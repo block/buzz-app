@@ -270,6 +270,7 @@ appTest.describe("workspace composition", () => {
       ).toBeVisible();
 
       const moveToMixed = async (row, header) => {
+        await row.hover();
         const start = await row.boundingBox();
         const target = await header.boundingBox();
         if (!start || !target)
@@ -285,6 +286,14 @@ appTest.describe("workspace composition", () => {
           {
             steps: 10,
           },
+        );
+        // An expanded creation target can shift the heading as the pointer crosses it.
+        await header.scrollIntoViewIfNeeded();
+        const current = await header.boundingBox();
+        if (!current) throw new Error("Workspace drag target disappeared");
+        await page.mouse.move(
+          current.x + current.width / 2,
+          current.y + current.height / 2,
         );
         await expect(mixed).toHaveAttribute("data-drop-target");
         await Promise.all([

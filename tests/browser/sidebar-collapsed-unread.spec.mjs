@@ -17,10 +17,10 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   page,
   app,
 }, info) => {
-  // Mark as read cuts at click time; keep the signed fixture arrival newer.
-  await page.clock.setFixedTime(
-    new Date(app.histories.get("primary/beta").at(-1).created_at * 1000),
-  );
+  // The broker signs against wall time. Put the later fixture arrival just
+  // beyond the click cutoff while keeping publication time valid.
+  const now = Math.floor(Date.now() / 1000);
+  await page.clock.setFixedTime(new Date(now * 1000));
   await holdReadingFocus(page);
   await open(page, app);
   const section = page.locator('[data-sidebar-section="group:work"]');
@@ -109,7 +109,17 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   await expect(title).toHaveCSS("color", await ink("text-metadata"));
   // New evidence must update the heading without reopening its hidden rows.
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
-  app.append("primary", "beta", "Unread while collapsed", true, false);
+  app.append(
+    "primary",
+    "beta",
+    "Unread while collapsed",
+    true,
+    false,
+    undefined,
+    undefined,
+    [],
+    now + 1,
+  );
   await expect(badge).toHaveCount(1);
   await expect(title).toHaveCSS("color", await ink("text-navigation-unread"));
   await expect(beta).toBeHidden();

@@ -89,8 +89,8 @@ export function WorkspaceControl({
         <MenuTrigger
           disabled={
             disabled ||
-            snapshot.status === "idle" ||
-            snapshot.status === "loading"
+            (!snapshot.data &&
+              (snapshot.status === "idle" || snapshot.status === "loading"))
           }
           render={(props) => (
             <Button

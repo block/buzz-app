@@ -59,3 +59,18 @@ it.each([
   expect(relativeTimestamp(sent, seen)).toBe(label);
   expect(shortRelativeTimestamp(sent, seen)).toBe(short);
 });
+
+it("reads the year in the local time zone, not UTC", () => {
+  // 11:30 PM on Dec 31, 2025 in Los Angeles, when UTC is already in 2026.
+  const sent = Date.UTC(2026, 0, 1, 7, 30) / 1000;
+  const seen = Date.UTC(2026, 5, 15, 19) / 1000;
+  const zone = process.env.TZ;
+  try {
+    process.env.TZ = "America/Los_Angeles";
+    expect(relativeTimestamp(sent, seen)).toBe("on Dec 31, 2025");
+    expect(shortRelativeTimestamp(sent, seen)).toBe("Dec 31, 2025");
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
+});

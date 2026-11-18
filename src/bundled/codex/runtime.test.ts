@@ -8063,9 +8063,15 @@ it.each([false, true])(
     try {
       await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
       expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
-      if (cancelled) abort.abort(new Error("deadline"));
-      else await f.complete(0, "");
+      if (cancelled) {
+        vi.useFakeTimers();
+        abort.abort(new Error("deadline"));
+      } else await f.complete(0, "");
       await expect(once).resolves.toMatchObject({ ok: !cancelled });
+      if (cancelled) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        vi.useRealTimers();
+      }
       await vi.waitFor(() =>
         expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
           "idle",
@@ -8075,6 +8081,7 @@ it.each([false, true])(
         cancelled ? "Stopped" : "Idle",
       );
     } finally {
+      vi.useRealTimers();
       abort.abort();
       f.runtime.dispose();
       await once;
@@ -8115,10 +8122,13 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
           })
         )?.result,
       ).toMatchObject({ success: true });
+      vi.useFakeTimers();
       if (cancel === "interrupt")
         await f.runtime.session(agent, { channelId: "channel" }, "interrupt");
       else abort.abort(new Error("deadline"));
       await expect(once).resolves.toEqual({ ok: true });
+      await vi.advanceTimersByTimeAsync(1_000);
+      vi.useRealTimers();
       await vi.waitFor(() =>
         expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
           "idle",
@@ -8128,6 +8138,7 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
         true,
       );
     } finally {
+      vi.useRealTimers();
       abort.abort();
       outer.runtime.dispose();
       if (outer !== f) f.runtime.dispose();
@@ -8137,7 +8148,9 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
 );
 
 it("waits for native completion after a community wake deadline", async () => {
-  const f = fixture();
+  const late: unknown[] = [];
+  const terminating = deferred<void>();
+  const f = fixture(late, terminating.promise);
   const base = f.delivery("seed");
   const config = { ...(base.config as object), scope: "community" };
   const abort = new AbortController();
@@ -8176,11 +8189,30 @@ it("waits for native completion after a community wake deadline", async () => {
       ).toBe(true),
     );
     expect(f.starts()).toHaveLength(1);
+    vi.useFakeTimers();
     cleaned.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
+    ).toBe(true);
+    expect(f.starts()).toHaveLength(1);
+    late.push({ processId: "late-shell" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(
+      f.sent.find(
+        (wire) => wire.method === "thread/backgroundTerminals/terminate",
+      )?.params,
+    ).toMatchObject({ processId: "late-shell" });
+    expect(f.starts()).toHaveLength(1);
+    terminating.resolve();
+    await vi.advanceTimersByTimeAsync(900);
+    vi.useRealTimers();
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
     expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
     await f.complete(1);
   } finally {
+    vi.useRealTimers();
+    terminating.resolve();
     abort.abort();
     cleaned.resolve();
     f.runtime.dispose();

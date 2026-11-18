@@ -3635,7 +3635,11 @@ export class CodexRuntime {
                 INTERRUPTED_TURN_COMPLETION_MS,
               );
           }
-          await this.terminals(server.rpc, active.threadId);
+          await this.terminals(
+            server.rpc,
+            active.threadId,
+            drainingWake ? STOP_LINGER_MS : 0,
+          );
         } catch {
           await server.rpc.close();
         }

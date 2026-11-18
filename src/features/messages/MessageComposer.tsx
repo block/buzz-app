@@ -206,7 +206,7 @@ import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import { resolveMatch } from "../../plugins/contributions";
-import { transformSend } from "./send-transform";
+import { transformRecipients, transformSend } from "./send-transform";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -3361,7 +3361,7 @@ function Composer({
         ? captured.text.trim()
         : undefined;
     // The toolbar's agents go along unless the text opens with a tag.
-    let fromPill =
+    const fromPill =
       routing &&
       capturedRecipients.some(
         (person) =>
@@ -3376,14 +3376,11 @@ function Composer({
     const stillCurrent = () => {
       attempt.signal.throwIfAborted();
       if (valueRef.current !== captured) return false;
-      // A submission owns its draft's saving; see the entry check above.
-      if (!submission) {
-        const current = viewRevision(scope, draftKey);
-        if (current !== savedRevision) {
-          diagnose("send-upload-conflict", savedRevision, current);
-          reportConflict();
-          return false;
-        }
+      const current = viewRevision(scope, draftKey);
+      if (current !== savedRevision) {
+        diagnose("send-upload-conflict", savedRevision, current);
+        reportConflict();
+        return false;
       }
       return true;
     };
@@ -3411,9 +3408,12 @@ function Composer({
           }
         }
       }
-      // Plugins see what would be sent; huddle windows have no session to lend.
+      // Plugins see what would be sent. Huddle windows have no session to lend,
+      // and a `submission` composer (New Message, a new Solo chat) starts its
+      // conversation elsewhere, so it is not transformed.
       const transforms =
         host &&
+        !submission &&
         !captured.pending?.length &&
         !captured.forward &&
         !captured.chatCards?.length &&
@@ -3422,13 +3422,11 @@ function Composer({
           ? (extensions?.sendTransforms?.snapshot() ?? [])
           : [];
       let transformed: SendDraft | undefined;
-      let outgoing = captured;
-      const typedRecipients = capturedRecipients;
       if (host && transforms.length) {
         const markdown = composerMarkdown(captured);
         const draft = {
           text: markdown,
-          mentions: typedRecipients.map(({ pubkey, name }) => ({
+          mentions: capturedRecipients.map(({ pubkey, name }) => ({
             pubkey,
             name,
           })),
@@ -3451,19 +3449,32 @@ function Composer({
             clear();
             return;
           }
-          transformed = result;
-          capturedRecipients = result.mentions;
-          // A plugin's tag names its agent like a typed one, so no pill stands in.
-          fromPill &&= result.mentions.every(
-            ({ pubkey }) =>
-              referenced(pubkey) ||
-              typedRecipients.some((person) => person.pubkey === pubkey),
+          // Recipients and their names come from the host, as for typed mentions.
+          const admitted = admits();
+          const members = session.channels
+            .list()
+            .channels.find((item) => item.id === channelId)?.members;
+          capturedRecipients = transformRecipients(
+            winner,
+            result.mentions,
+            capturedRecipients,
+            {
+              mayAdd: !solo,
+              admitted,
+              nameOf: (pubkey) =>
+                session.profiles.snapshot().get(pubkey)?.name ||
+                session.agentChoices
+                  .snapshot()
+                  .identities.find((agent) => agent.pubkey === pubkey)?.name ||
+                (agents?.joinable() ?? []).find(
+                  (agent) => agent.pubkey === pubkey,
+                )?.name ||
+                (members?.includes(pubkey) ? pubkey.slice(0, 12) : undefined),
+            },
           );
+          transformed = result;
           // Signed chips belong to the text they were typed in.
-          if (result.text !== markdown) {
-            tokens = [];
-            outgoing = mentionDraft(result.text);
-          }
+          if (result.text !== markdown) tokens = [];
         }
       }
       const bringable = new Set(
@@ -3498,9 +3509,9 @@ function Composer({
       if (submission) {
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
-          outgoing,
+          captured,
           attachments.store,
-          routing || transformed ? capturedRecipients : undefined,
+          routing ? capturedRecipients : undefined,
           ownSoloConversation ? capturedRunPicks : undefined,
           ownSoloConversation ? capturedPicks : undefined,
           ownSoloConversation ? capturedPicksRevision : undefined,
@@ -4027,11 +4038,9 @@ function Composer({
       // The toolbar keeps whoever heard this message for the follow-up; a
       // reference named only this message.
       if (routing) {
-        // Only the people chosen before any plugin ran stay; a plugin's
-        // additions are for this message alone.
         setRouted(
-          typedRecipients.filter(
-            (person) => !references.includes(person.pubkey),
+          capturedRecipients.filter((person) =>
+            recipients.includes(person.pubkey),
           ),
         );
         setReplacedKey(undefined);

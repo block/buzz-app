@@ -130,12 +130,16 @@ it("refuses a malformed change before signing", async () => {
 });
 
 it("rejects when signing fails or the caller aborts the publish", async () => {
-  const h = access(
-    (signal) =>
-      new Promise((_, reject) =>
-        signal.addEventListener("abort", () => reject(signal.reason)),
-      ),
-  );
+  let publishing = () => {};
+  const published = new Promise<void>((resolve) => {
+    publishing = resolve;
+  });
+  const h = access((signal) => {
+    publishing();
+    return new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason)),
+    );
+  });
   h.writer.sign.mockRejectedValueOnce(new Error("Signer unavailable"));
   await expect(
     h.access.set(change, new AbortController().signal),
@@ -144,7 +148,8 @@ it("rejects when signing fails or the caller aborts the publish", async () => {
 
   const controller = new AbortController();
   const pending = h.access.set(change, controller.signal);
-  await vi.waitFor(() => expect(h.writer.publish).toHaveBeenCalledOnce());
+  await published;
+  expect(h.writer.publish).toHaveBeenCalledOnce();
   controller.abort();
   await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 });

@@ -1066,6 +1066,10 @@ and are asked to sign in again in Buzz.
   attached files without opening the conversation. A thread draft also shows
   where you left it: **Draft** on a message's reply line, or **Draft reply** when
   no one has replied yet (hidden while that thread is open).
+- **Preview** is an optional plugin, off by default. Enable it in Plugins and
+  choose the Preview icon in a conversation. Enter a localhost address or click
+  a local link in chat. On macOS, pages open beside the conversation. Other
+  hosts offer an action to open the page in your browser.
 - **Changesets** is an optional desktop plugin, off by default. When a local
   agent finishes a turn in a chat with project folders, a card under its last
   message lists the files it changed, with added and removed lines. Only you

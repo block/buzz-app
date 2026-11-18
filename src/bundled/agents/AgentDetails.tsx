@@ -359,7 +359,7 @@ export function AgentDetails({
               }}
               transition={identityTransition}
             >
-              <AgentPortrait agent={agent} community={agent.relay} />
+              <AgentPortrait agent={agent} community={agent.relay} animate />
             </motion.div>
             <motion.div
               className={styles.identityName}

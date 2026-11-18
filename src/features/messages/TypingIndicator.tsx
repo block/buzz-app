@@ -509,11 +509,12 @@ export function TypingIndicator({
         )}${humans.length > 2 ? ` and ${humans.length - 2} others` : ""}${humans.length === 1 ? " is typing" : " are typing"}`
     : "";
   const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
+  const waiting =
+    firstStep === "Received · waiting to start" || firstStep === "Starting";
   const previewText =
     (firstAgent && replaced.has(firstAgent)) ||
     firstStep === "Working" ||
-    firstStep === "Received · waiting to start" ||
-    firstStep === "Starting"
+    waiting
       ? undefined
       : firstStep;
   const visibleStep = activityStepLabel(previewText);
@@ -558,6 +559,14 @@ export function TypingIndicator({
                 profiles.get(firstAgent)?.picture,
                 session.media,
               )}
+              responding={
+                waiting
+                  ? undefined
+                  : {
+                      source: profiles.get(firstAgent)?.picture,
+                      media: session.media,
+                    }
+              }
               layout={threadRootId ? "thread" : "timeline"}
             >
               <AgentChooser
@@ -580,13 +589,7 @@ export function TypingIndicator({
                         />
                       )
                     }
-                    state={
-                      details.get(firstAgent)?.label ===
-                        "Received · waiting to start" ||
-                      details.get(firstAgent)?.label === "Starting"
-                        ? "waiting"
-                        : "working"
-                    }
+                    state={waiting ? "waiting" : "working"}
                     text={previewText}
                   />
                 }

@@ -399,6 +399,35 @@ it("opens activity for the composer's explicit thread", async () => {
   expect(claimProfileTranscript(activity)).toBeDefined();
 });
 
+it("keeps the thumbnail for a static portrait during a response and clears the indicator when idle", () => {
+  const f = fixture();
+  const profiles = new Map(f.session.profiles.snapshot());
+  const profile = profiles.get(agent);
+  if (!profile) throw new Error("Missing agent profile");
+  profiles.set(agent, {
+    ...profile,
+    picture: "https://community.test/portrait.png",
+  });
+  const session = {
+    ...f.session,
+    profiles: { ...f.session.profiles, snapshot: () => profiles },
+    media: (url: string, size?: "small") => (size ? `${url}?small` : url),
+  };
+  const view = render(
+    <TypingIndicator session={session} channelId="channel" />,
+  );
+  const portrait = () =>
+    view.container.querySelector("[data-agent-response-preview] img");
+  expect(portrait()).toBeNull();
+  f.update([entry()]);
+  expect(portrait()).toHaveAttribute(
+    "src",
+    "https://community.test/portrait.png?small",
+  );
+  f.update([]);
+  expect(portrait()).toBeNull();
+});
+
 it("retains one explicit live region from idle through work and back to idle", () => {
   const f = fixture();
   render(<TypingIndicator session={f.session} channelId="channel" />);

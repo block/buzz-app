@@ -143,6 +143,11 @@ export function ActivityGroupPreview({
       }))}
       stackPrevious={!group.standalone}
       picture={avatarMedia(profile?.picture, media)}
+      responding={
+        !retired && !group.followingMessage && (working || live)
+          ? { source: profile?.picture, media }
+          : undefined
+      }
       layout={layout}
     >
       <ActivityDisclosure

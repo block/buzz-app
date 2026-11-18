@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { avatarMedia } from "../../shared/avatar-source";
+import { useChatAvatar } from "../profiles/use-chat-avatar";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { RobotIcon } from "../../shared/design-system/icons";
 import { useMessageDensity } from "../../shared/theme/message-density";
@@ -13,8 +15,15 @@ export function AgentResponsePreview({
   children,
   stackPrevious = false,
   bylineHint,
+  responding,
 }: {
   bylineHint?: ReactNode;
+  responding?:
+    | {
+        source: string | undefined;
+        media: (url: string, size?: "small") => string | undefined;
+      }
+    | undefined;
   stackPrevious?: boolean;
   name: string;
   picture?: string | undefined;
@@ -33,6 +42,13 @@ export function AgentResponsePreview({
   const avatars: typeof participants = participants.length
     ? participants.slice(0, 3)
     : [{ id: "primary", name, picture }];
+  const showLoop =
+    !!responding &&
+    !hiddenAvatar &&
+    avatars.length === 1 &&
+    !!avatars[0]?.picture &&
+    avatarMedia(responding.source, responding.media) === avatars[0].picture;
+  const loop = useChatAvatar(responding?.source, responding?.media, showLoop);
   return (
     <div
       className={styles.message}
@@ -61,7 +77,7 @@ export function AgentResponsePreview({
                   title={agent.name}
                 >
                   <Avatar
-                    src={agent.picture}
+                    src={showLoop ? (loop ?? agent.picture) : agent.picture}
                     alt=""
                     fallback={agent.name}
                     shape="squircle"

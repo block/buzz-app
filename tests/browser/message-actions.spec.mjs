@@ -516,11 +516,18 @@ test("a pointer press on More after keyboard input leaves the open toolbar in pl
   // Keyboard reveal skips the entry, but the entry still spans its pointer
   // duration (at most --duration-state) from the moment the bar opened, and a
   // press inside that span resumes its last frames. A person presses later,
-  // so let the span pass on the clock that times the entry.
+  // so let the span pass on the clock that times the entry. That clock counts
+  // milliseconds and the token is served in seconds, so convert by unit, and
+  // fail on a token that is not a time: a span of 0.15 or NaN ends the wait
+  // after one frame.
   await actions.evaluate(async (bar) => {
-    const span = Number.parseFloat(
-      getComputedStyle(bar).getPropertyValue("--duration-state"),
-    );
+    const token = getComputedStyle(bar)
+      .getPropertyValue("--duration-state")
+      .trim();
+    const [, amount, unit] = /^(\d*\.?\d+)(m?s)$/.exec(token) ?? [];
+    const span = Number(amount) * (unit === "s" ? 1000 : 1);
+    if (!(span > 0))
+      throw new Error(`--duration-state is not a positive time: "${token}"`);
     const opened = document.timeline.currentTime;
     while (document.timeline.currentTime - opened < span)
       await new Promise(requestAnimationFrame);

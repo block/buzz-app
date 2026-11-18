@@ -8,6 +8,7 @@ import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 
 const self = getPublicKey(generateSecretKey());
 const contact = getPublicKey(generateSecretKey());
+const community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 async function harness(info, identity = generateSecretKey()) {
   let handler;
   const requests = [];
@@ -52,15 +53,22 @@ it.each([
   ["nip-ar", false],
   [["nip-ar"], true],
 ])(
-  "offers artifact writes only with a NIP-AR advertisement: %j",
+  "offers artifact writes and community scope only with a NIP-AR advertisement: %j",
   async (supported_extensions, supported) => {
     const h = await harness(() =>
-      Response.json({ self, supported_extensions }),
+      Response.json({
+        self,
+        supported_extensions,
+        artifacts: { community_scope: { version: 1, community_id: community } },
+      }),
     );
     try {
       const transport = await h.connect();
       expect(transport.writer.kinds.includes(45010)).toBe(supported);
       expect(transport.configArtifacts !== undefined).toBe(supported);
+      expect(transport.artifactCommunity).toBe(
+        supported ? community : undefined,
+      );
       if (supported) {
         const event = await transport.configArtifacts.sign(
           {

@@ -1058,7 +1058,12 @@ test("production interest controls preserve socket/global routes and pending wri
 });
 
 test.each([
-  ["restricted: not a member", true, "Relay request failed (503)"],
+  ["restricted: not a member", true, "Not a member"],
+  [
+    "blocked: you are banned from this community",
+    true,
+    "You are banned from this community",
+  ],
   [
     'invalid: an open channel named "Launch" already exists',
     true,
@@ -2374,6 +2379,32 @@ test("a sync close that overtakes its open keeps the late open from taking a hos
     });
     expect(next.status).toBe(200);
     await next.text();
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});
+
+test("a community artifact sync reaches the relay exactly as requested", async () => {
+  const h = await harness();
+  const filter = {
+    artifact: "current",
+    scope: "community",
+    "#type": ["example.settings"],
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    const open = await fetch(`${h.base}/api/relay/stream-artifact-sync`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, id: "s1", filter }),
+    });
+    expect(open.status).toBe(200);
+    await open.text();
+    await until(() => h.requests.length === 4);
+    expect(h.requests[3].filters).toEqual([filter]);
     stream.abort();
   } finally {
     await h.close();

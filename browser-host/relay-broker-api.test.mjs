@@ -32,6 +32,10 @@ import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
 import { feedbackEvent } from "../src/features/relay/product-feedback.ts";
 import { archiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
+import {
+  ARTIFACT_TYPE_POLICY_KIND,
+  typePolicyTemplate,
+} from "../src/features/relay/artifact-community.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -3519,6 +3523,119 @@ test("identity archive requests use dedicated exact-shape routes behind archive 
     expect(h.publications).toHaveLength(1);
   } finally {
     live?.dispose();
+    await h.close();
+  }
+});
+
+test("type policy commands use dedicated exact-shape routes for the relay's own community", async () => {
+  const community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  const template = typePolicyTemplate(
+    community,
+    "example.settings",
+    "admins",
+    "0",
+    Math.floor(Date.now() / 1000),
+  );
+  const respond = () => Response.json([]);
+  const unavailable = await harness(respond);
+  try {
+    expect(
+      (await unavailable.post("artifact-type-policy-sign", template)).status,
+    ).toBe(400);
+  } finally {
+    await unavailable.close();
+  }
+  const h = await harness(respond, { artifactCommunity: community });
+  // The harness signs as this fixed viewer key.
+  const viewerKey = Uint8Array.from({ length: 32 }, (_, i) =>
+    i === 31 ? 7 : 0,
+  );
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(ARTIFACT_TYPE_POLICY_KIND);
+    const [scope, ...rest] = template.tags;
+    const invalid = [
+      {
+        ...template,
+        tags: [["community", "11111111-1111-4111-8111-111111111111"], ...rest],
+      },
+      { ...template, tags: [...rest, scope] },
+      { ...template, tags: [...template.tags, ["h", community]] },
+    ];
+    for (const event of invalid) {
+      expect((await h.post("artifact-type-policy-sign", event)).status).toBe(
+        400,
+      );
+      expect(
+        (
+          await h.post(
+            "artifact-type-policy-publish",
+            finalizeEvent(event, viewerKey),
+          )
+        ).status,
+      ).toBe(400);
+    }
+    const signal = new AbortController().signal;
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.artifactTypePolicy.writer.sign(
+      template,
+      signal,
+    );
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    live = await openBrokerSocket(transport);
+    await transport.artifactTypePolicy.writer.publish(signed, signal);
+    expect(h.publications.map((event) => event.id)).toEqual([signed.id]);
+    const foreign = finalizeEvent(
+      { ...template, tags: template.tags.map((tag) => [...tag]) },
+      new Uint8Array(32).fill(5),
+    );
+    expect((await h.post("artifact-type-policy-publish", foreign)).status).toBe(
+      400,
+    );
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
+test("the type policy read sends one exact type as the relay's policy filter", async () => {
+  const community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  const revision = "e".repeat(64);
+  const h = await harness(() => Response.json({ policy: "admins", revision }), {
+    artifactCommunity: community,
+  });
+  try {
+    for (const body of [
+      { type: "example.settings", kinds: [45010] },
+      { type: ["example.settings"] },
+      [{ type: "example.settings" }],
+      { type: "Example.Settings" },
+    ])
+      expect((await h.post("artifact-type-policy", body)).status).toBe(400);
+    expect(h.calls).toEqual([]);
+    const transport = await connectBrokerTransport(h.base);
+    await expect(
+      transport.artifactTypePolicy.read(
+        "example.settings",
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ policy: "admins", revision });
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      url: `${fixtureRelayUrl}/query`,
+      body: [
+        {
+          artifact: "policy",
+          scope: "community",
+          "#type": ["example.settings"],
+        },
+      ],
+    });
+  } finally {
     await h.close();
   }
 });

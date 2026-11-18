@@ -63,6 +63,11 @@ import {
   artifactSyncFilter,
 } from "../src/features/relay/artifact-sync-filter.ts";
 import {
+  communityScope,
+  typePolicyFilter,
+  validTypePolicy,
+} from "../src/features/relay/artifact-community.ts";
+import {
   assertSidebarStarIntent,
   mutateSidebarStar,
   assertSidebarMuteIntent,
@@ -331,6 +336,11 @@ async function relayAuthority(fetch, relay) {
   const author = nip11.self ?? nip11.pubkey;
   if (typeof author !== "string" || !/^[0-9a-f]{64}$/.test(author))
     throw new Error("Relay did not advertise its identity");
+  const artifactSupport =
+    Array.isArray(nip11.supported_extensions) &&
+    nip11.supported_extensions.includes("nip-ar");
+  // NIP-AR community scope: the relay keeps this community's artifacts.
+  const artifactCommunity = communityScope(nip11.artifacts, artifactSupport);
   return {
     relayAuthor: author,
     channelCreation:
@@ -341,9 +351,8 @@ async function relayAuthority(fetch, relay) {
       nip11.supported_extensions.includes("nip-cl"),
     // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
     artifactSync: nip11.artifacts?.sync?.version === 1,
-    artifactSupport:
-      Array.isArray(nip11.supported_extensions) &&
-      nip11.supported_extensions.includes("nip-ar"),
+    artifactSupport,
+    ...(artifactCommunity ? { artifactCommunity } : {}),
     // Bridge search accepts `search_sort: "newest"`.
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
@@ -2459,6 +2468,9 @@ export function relayBrokerPlugin({
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
               "/api/relay/identity-archive-publish",
+              "/api/relay/artifact-type-policy",
+              "/api/relay/artifact-type-policy-sign",
+              "/api/relay/artifact-type-policy-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -2768,6 +2780,22 @@ export function relayBrokerPlugin({
           const channelActivity = route === "/api/relay/channel-activity";
           if (channelActivity && !validChannelActivityFilters(filters))
             return json(res, 400, { error: "Activity filter rejected" });
+          // NIP-AR policy read: exactly `{type}`, sent as the relay's own filter.
+          const typePolicyRead = route === "/api/relay/artifact-type-policy";
+          if (typePolicyRead) {
+            try {
+              if (
+                typeof filters?.type !== "string" ||
+                Object.keys(filters).length !== 1
+              )
+                throw new Error("Invalid artifact type policy read");
+              filters = [typePolicyFilter(filters.type)];
+            } catch {
+              return json(res, 400, {
+                error: "Invalid artifact type policy read",
+              });
+            }
+          }
           const profile = route === "/api/relay/profile";
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
@@ -2961,18 +2989,23 @@ export function relayBrokerPlugin({
           const archive =
             route === "/api/relay/identity-archive-sign" ||
             route === "/api/relay/identity-archive-publish";
+          const typePolicyCommand =
+            route === "/api/relay/artifact-type-policy-sign" ||
+            route === "/api/relay/artifact-type-policy-publish";
           const signing =
             route === "/api/relay/sign" ||
             route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/member-administration-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
-            route === "/api/relay/identity-archive-sign";
+            route === "/api/relay/identity-archive-sign" ||
+            route === "/api/relay/artifact-type-policy-sign";
           const publishing =
             route === "/api/relay/publish" ||
             route === "/api/relay/channel-details-publish" ||
             route === "/api/relay/member-administration-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
-            route === "/api/relay/identity-archive-publish";
+            route === "/api/relay/identity-archive-publish" ||
+            route === "/api/relay/artifact-type-policy-publish";
           if (signing || publishing) {
             if (administration) {
               try {
@@ -2992,6 +3025,20 @@ export function relayBrokerPlugin({
               } catch {
                 return json(res, 400, {
                   error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (typePolicyCommand) {
+              try {
+                // Bound to the community this relay advertises; a relay
+                // without one gets no policy command.
+                validTypePolicy(
+                  filters,
+                  (await getAuthority(relay)).artifactCommunity,
+                );
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid artifact type policy command",
                   sent: false,
                 });
               }
@@ -3165,6 +3212,7 @@ export function relayBrokerPlugin({
             !readPublishing &&
             !snapshot &&
             !channelActivity &&
+            !typePolicyRead &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
@@ -3216,6 +3264,15 @@ export function relayBrokerPlugin({
                 )
               )
                 return json(res, 400, { error: failure.reason });
+              // A proven authorization refusal is 403, as over HTTP, so the
+              // writer sees a refusal rather than an unsent publication.
+              if (
+                failure?.sent === false &&
+                /^(restricted|blocked|auth-required):/.test(
+                  failure.reason ?? "",
+                )
+              )
+                return json(res, 403, { error: failure.reason });
               return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&

@@ -96,7 +96,11 @@ export function fields(
     preset: onRecommended(config) ? PRESET : undefined,
     // Left out, the head's notes stay, so a settings form that drops them
     // never loses a plugin's note.
-    ...(pluginNotes && { pluginNotes }),
+    // An empty map is published as none (undefined drops the head's), so
+    // clearing the last note leaves no empty field behind.
+    ...(pluginNotes && {
+      pluginNotes: Object.keys(pluginNotes).length ? pluginNotes : undefined,
+    }),
   };
 }
 

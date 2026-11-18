@@ -691,6 +691,14 @@ describe("saving and History", () => {
       { settings: head().id },
     );
     expect(JSON.parse(head().content).pluginNotes).toEqual(notes);
+    // Clearing the last note leaves no empty map behind.
+    await f.configs.save(
+      typed,
+      { instructions: "local text", model: "c", pluginNotes: {} },
+      { settings: head().id },
+    );
+    expect(JSON.parse(head().content)).not.toHaveProperty("pluginNotes");
+    expect(head().tags.some((tag) => tag[0] === "note")).toBe(false);
   });
 
   it("saves only a changed side, on the head the editor opened", async () => {

@@ -207,6 +207,14 @@ describe("plugin agent hooks", () => {
     expect(f.save).not.toHaveBeenCalled();
   });
 
+  it("saves nothing when clearing a note that isn't there", async () => {
+    const f = start();
+    const a = agent({ config: { pluginNotes: { "org.other": { data: 1 } } } });
+    f.setAgents([a]);
+    await f.bundled.setNote(a, null);
+    expect(f.save).not.toHaveBeenCalled();
+  });
+
   it("keeps notes as they are on any other save", async () => {
     const f = start();
     const notes = { "org.example": { data: 1 } };
@@ -312,5 +320,10 @@ describe("plugin notes", () => {
     expect(fields("settings", configAgent, {})).not.toHaveProperty(
       "pluginNotes",
     );
+    // Clearing the last note publishes no empty map, and drops the head's.
+    const cleared = fields("settings", configAgent, { pluginNotes: {} });
+    expect(
+      JSON.parse(JSON.stringify({ pluginNotes: notes, ...cleared })),
+    ).not.toHaveProperty("pluginNotes");
   });
 });

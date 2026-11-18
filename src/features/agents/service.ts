@@ -3430,6 +3430,8 @@ export class AgentsService extends Service implements Agents {
   }
   async setNote(agent: Agent, note: PluginNote | null) {
     const plugin = this.bundledCaller("setNote");
+    // Clearing a note that isn't there changes nothing.
+    if (note === null && !noteOf(agent.config, plugin)) return;
     await this.savePlugin(agent, (agent.config ?? {}) as object, plugin, {
       note,
     });

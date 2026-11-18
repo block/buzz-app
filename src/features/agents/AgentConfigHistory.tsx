@@ -10,6 +10,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   artifactOp,
+  artifactProblem,
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
@@ -356,7 +357,7 @@ export function AgentConfigVersionRow({
   event,
   head,
   expected,
-  settings,
+  incompatible,
   label,
   latestCompatible,
   onSelect,
@@ -364,7 +365,7 @@ export function AgentConfigVersionRow({
   event: RelayEvent;
   head: RelayEvent | undefined;
   expected: Expected;
-  settings?: SettingsCheck | undefined;
+  incompatible?: boolean;
   label?: string;
   latestCompatible?: boolean;
   onSelect(): void;
@@ -372,7 +373,7 @@ export function AgentConfigVersionRow({
   useClockFormat();
   const operation = artifactOp(event);
   const invalid =
-    operation !== "delete" && revisionProblem(expected, event, settings);
+    operation !== "delete" && !incompatible && artifactProblem(event, expected);
   const nowSeconds = Date.now() / 1000;
   const timestamp =
     nowSeconds - event.created_at < 7 * 24 * 60 * 60
@@ -388,6 +389,7 @@ export function AgentConfigVersionRow({
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr)",
         }}
+        title={incompatible ? "Incompatible with this client" : undefined}
         aria-haspopup="dialog"
         onClick={onSelect}
       >
@@ -404,15 +406,14 @@ export function AgentConfigVersionRow({
                   <span className="sr-only">· Current</span>
                 </>
               )}
-              {invalid
-                ? expected.type === "buzz.agent.settings" && settings
-                  ? " · Incompatible"
-                  : " · Not valid"
-                : latestCompatible
-                  ? " · Latest compatible"
-                  : ""}
+              {invalid ? " · Not valid" : ""}
+              {latestCompatible ? " · Latest compatible" : ""}
+              {incompatible && <span className="sr-only"> · Incompatible</span>}
             </span>
-            {event.id === head?.id && (
+            {incompatible && (
+              <span className={styles.incompatible} aria-hidden="true" />
+            )}
+            {!incompatible && event.id === head?.id && (
               <span
                 className={styles.current}
                 title="Current version"

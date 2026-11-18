@@ -115,15 +115,27 @@ export function ConfigHistoryRow({
   const settings = incompatible
     ? history.sides.find(({ side }) => side === "settings")
     : undefined;
+  const incompatibleVersions = new Set(
+    expanded.length && history.settings
+      ? revisions
+          .filter(
+            ({ track, event }) =>
+              track.side === "settings" &&
+              artifactOp(event) !== "delete" &&
+              revisionProblem(track.expected, event, history.settings),
+          )
+          .map(({ event }) => event.id)
+      : [],
+  );
   const loadedSettings = counts.settings;
   const latestCompatible =
-    settings?.head && loadedSettings
+    expanded.length && settings?.head && loadedSettings
       ? segments(loadedSettings)
           .find(({ revisions }) => revisions[0]?.id === settings.head?.id)
           ?.revisions.find(
             (event) =>
               artifactOp(event) !== "delete" &&
-              !revisionProblem(settings.expected, event, history.settings),
+              !incompatibleVersions.has(event.id),
           )?.id
       : undefined;
   return (
@@ -153,9 +165,7 @@ export function ConfigHistoryRow({
                     }
                     head={track.head}
                     expected={track.expected}
-                    settings={
-                      track.side === "settings" ? history.settings : undefined
-                    }
+                    incompatible={incompatibleVersions.has(event.id)}
                     latestCompatible={
                       track.side === "settings" && latestCompatible === event.id
                     }

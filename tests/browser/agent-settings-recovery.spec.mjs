@@ -14,9 +14,8 @@ test("reverts incompatible agent settings from Previous Versions", async ({
     page.getByRole("tab", { name: "Settings", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   const versions = page.getByRole("list", { name: "Previous versions" });
-  await expect(
-    versions.getByRole("button", { name: /Incompatible/ }),
-  ).toBeVisible();
+  const incompatible = versions.getByRole("button", { name: /Incompatible/ });
+  await expect(incompatible).toBeVisible();
   const compatible = versions.getByRole("button", {
     name: /Latest compatible/,
   });
@@ -44,6 +43,10 @@ test("reverts incompatible agent settings from Previous Versions", async ({
       }),
     )
     .toEqual({ scope: "channel", model: "older-model", effort: "high" });
+
+  await expect(history).toHaveCount(0);
+  await expect(incompatible).toBeVisible();
+  await expect(compatible).toHaveCount(0);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();

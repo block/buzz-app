@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { systemPrompt } from "../../../bundled/claude-code/prompt";
 import { developerInstructions } from "../../../bundled/codex/prompt";
 import { type OwnerChoice, SECTION_TEXT_BYTES, wrapped } from "./choices";
+import publishing from "./publishing.md?raw";
 import {
   composeBase,
   sectionsKey,
@@ -383,6 +384,18 @@ describe("the owner's choices", () => {
     );
     expect(printed.match(/<\/owner-section>/g)).toHaveLength(1);
     expect(wrapped(" <base>\n")).toBe("<\\base>");
+  });
+
+  it("keep a tag that a text names in inline code, unless it frames a section", () => {
+    // The default Publishing text names the `<mention>` section.
+    expect(wrapped(publishing)).toBe(publishing.trim());
+    expect(
+      wrapped(
+        "`<mention>` <mention> `<owner-section>` `</base-section-updates>`",
+      ),
+    ).toBe(
+      "`<mention>` <\\mention> `<\\owner-section>` `<\\/base-section-updates>`",
+    );
   });
 
   // Whatever is saved, the locked text is what the host wrote.

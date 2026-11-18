@@ -53,8 +53,8 @@ function savedChoice(value: unknown): SavedChoice | undefined {
 export function ownerSections(
   store: Pick<AgentStore, "get">,
   sections: readonly Section[] = SECTIONS,
+  text = store.get(PROMPT_SECTIONS_KEY),
 ): OwnerSections {
-  const text = store.get(PROMPT_SECTIONS_KEY);
   if (!text) return { choices: {}, unused: {} };
   let global: unknown;
   try {
@@ -80,13 +80,26 @@ export function ownerSections(
   return { choices, unused };
 }
 
-/** The owner's choices as the prompt builder takes them. */
-export const ownerChoices = (store: Pick<AgentStore, "get">) =>
-  Object.fromEntries(
-    Object.entries(ownerSections(store).choices).map(
+/** Each store's saved value while a save to it is still being written, and
+ * how many are. A store shows a value as soon as it is written, and puts the
+ * saved one back if the write fails. */
+const saving = new WeakMap<
+  Pick<AgentStore, "get">,
+  { saved: string | null; count: number }
+>();
+
+/** The owner's choices as the prompt builder takes them. A turn reads the
+ * saved ones: a choice whose save then fails must not have reached it, for
+ * an older thread restarts on a first choice. */
+export function ownerChoices(store: Pick<AgentStore, "get">) {
+  const pending = saving.get(store);
+  const text = pending ? pending.saved : store.get(PROMPT_SECTIONS_KEY);
+  return Object.fromEntries(
+    Object.entries(ownerSections(store, SECTIONS, text).choices).map(
       ([id, { basedOn: _, ...choice }]): [string, OwnerChoice] => [id, choice],
     ),
   );
+}
 
 /** Replaces the owner's choices with `choices`: section id → choice, a
  * missing id meaning the default. A choice with no `basedOn` is stamped with
@@ -116,8 +129,20 @@ export async function saveOwnerSections(
       global[id] = { mode: "custom", text: choice.text.trim(), basedOn };
     }
   }
-  await store.set(
-    PROMPT_SECTIONS_KEY,
-    Object.keys(global).length ? JSON.stringify({ version: 1, global }) : null,
-  );
+  const value = Object.keys(global).length
+    ? JSON.stringify({ version: 1, global })
+    : null;
+  const pending = saving.get(store) ?? {
+    saved: store.get(PROMPT_SECTIONS_KEY),
+    count: 0,
+  };
+  pending.count += 1;
+  saving.set(store, pending);
+  try {
+    await store.set(PROMPT_SECTIONS_KEY, value);
+    // Writes are saved in order, so this is now the saved value.
+    pending.saved = value;
+  } finally {
+    if (!--pending.count) saving.delete(store);
+  }
 }

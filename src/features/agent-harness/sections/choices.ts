@@ -41,7 +41,20 @@ export function textProblem(text: string) {
 /** The tags Buzz prints around parts of a prompt or a turn. */
 const HOST_TAGS =
   /<(\/?)(owner-section|plugin-section|base-section-updates|base|identity|workspace|agent-instructions|team-instructions|team|core-memory|recent-notes|community-repositories|plugin-instructions|owner-instructions|workspace-canvas|referenced-folders|referenced-skills|thread-context|conversation-context|context|mention|interest|self-handoff|plugin-wake|app-wake|buzz-events?|new-message-arrived-while-you-were-working)(?![\w-])/gi;
+/** The tags that frame a section's text, which no replacement may print. */
+const FRAMES = /^(owner-section|plugin-section|base-section-updates|base)$/i;
+/** Inline code, as a default text names a tag in it: `<mention>`. */
+const CODE = /(`[^`\n]*`)/;
 /** Replacement `text` as it is printed in its wrapper: it cannot close the
- * wrapper or open or close another of Buzz's tags. */
+ * wrapper or open or close another of Buzz's tags. A tag in inline code is a
+ * reference, so it stays as written unless it frames a section. */
 export const wrapped = (text: string) =>
-  text.trim().replace(HOST_TAGS, "<\\$1$2");
+  text
+    .trim()
+    .split(CODE)
+    .map((part, index) =>
+      part.replace(HOST_TAGS, (tag, close: string, name: string) =>
+        index % 2 && !FRAMES.test(name) ? tag : `<\\${close}${name}`,
+      ),
+    )
+    .join("");

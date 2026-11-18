@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Section } from "../agent-harness/sections";
 import { hash } from "../agent-harness/sections/choices";
 import {
@@ -8,7 +8,7 @@ import {
   PROMPT_SECTIONS_KEY,
   saveOwnerSections,
 } from "./prompt-sections";
-import { isAgentKey } from "./state";
+import { fileStore, isAgentKey } from "./state";
 import { localStore } from "./store";
 
 const memory = () => {
@@ -74,6 +74,33 @@ describe("the owner's choices for the base prompt's sections", () => {
     expect(Object.keys(ownerSections(store).choices)).toEqual(["progress"]);
     await saveOwnerSections(store, {});
     expect(store.get(PROMPT_SECTIONS_KEY)).toBeNull();
+  });
+
+  it("reach turns only once they are saved", async () => {
+    // A native store shows a write at once, and puts the saved value back
+    // when the write fails.
+    const writes: ((error?: Error) => void)[] = [];
+    const store = fileStore(
+      new Map(),
+      () =>
+        new Promise<void>((resolve, reject) => {
+          writes.push((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    const off = { progress: { mode: "off" as const } };
+    const failed = saveOwnerSections(store, off);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(ownerSections(store).choices).toHaveProperty("progress");
+    expect(ownerChoices(store)).toEqual({});
+    writes[0]?.(new Error("disk full"));
+    await expect(failed).rejects.toThrow("disk full");
+    expect(ownerChoices(store)).toEqual({});
+    const saved = saveOwnerSections(store, off);
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    expect(ownerChoices(store)).toEqual({});
+    writes[1]?.();
+    await saved;
+    expect(ownerChoices(store)).toEqual({ progress: { mode: "off" } });
   });
 
   it("are refused for a section the owner cannot configure, and for a text that cannot be used", async () => {

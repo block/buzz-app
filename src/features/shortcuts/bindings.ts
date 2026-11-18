@@ -1,4 +1,6 @@
 // FOUNDATION: In-app key matching. Local editors handle events before this layer.
+import { keyboardKey } from "../../shared/keyboard-key";
+
 export type KeyBinding = Readonly<{
   key: string;
   /** Command on Apple platforms, Control elsewhere. Other modifiers match exactly. */
@@ -13,8 +15,8 @@ export type Shortcut = Readonly<{
   title: string;
   binding: KeyBinding | readonly KeyBinding[];
   run: () => void | Promise<void>;
-  /** Read current state; non-keyboard host requests omit the event. */
-  when?: (event?: KeyboardEvent) => boolean;
+  /** Read current state; false makes this registration ineligible. */
+  when?: () => boolean;
   allowInEditable?: boolean;
   allowInModal?: boolean;
   /** Also run when the topmost modal is its own navigation visit (Settings, Members). */
@@ -96,9 +98,10 @@ export function matches(
   event: KeyboardEvent,
   apple: boolean,
 ) {
+  const key = keyboardKey(event).toLowerCase();
   return bindings.some(
     (binding) =>
-      binding.key.toLowerCase() === event.key.toLowerCase() &&
+      binding.key.toLowerCase() === key &&
       !!binding.mod === (apple ? event.metaKey : event.ctrlKey) &&
       (apple
         ? !!binding.ctrl === event.ctrlKey

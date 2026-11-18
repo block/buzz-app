@@ -1,3 +1,4 @@
+import { keyboardKey } from "../shared/keyboard-key";
 import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
 import { inEditable } from "../features/shortcuts/bindings";
@@ -354,19 +355,24 @@ export function registerNavigationShortcuts(
   navigation: import("../features/navigation/controller").Navigation,
 ) {
   const apple = isApplePlatform(navigator.platform);
-  const canNavigate = (event?: KeyboardEvent) => {
+  const canNavigate = (event: KeyboardEvent) => {
     if (
-      !event ||
       !apple ||
       !event.metaKey ||
-      !["ArrowLeft", "ArrowRight"].includes(event.key) ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      !["ArrowLeft", "ArrowRight"].includes(keyboardKey(event)) ||
       !inEditable(event)
     )
       return true;
     // Command arrows keep their editing meaning except in an empty composer.
     return event.composedPath().some((target) => {
       const input = target as ComposerInputElement;
-      return input.matches?.("[data-composer-input]") && input.value === "";
+      return (
+        input.matches?.("[data-composer-input]") &&
+        input.isEmptyForShortcuts?.()
+      );
     });
   };
   const remove = [
@@ -405,7 +411,8 @@ export function registerNavigationShortcuts(
       allowInEditable: true,
       // Back closes a dialog that is its own visit.
       allowInVisit: true,
-      when: (event) => navigation.snapshot().canGoBack && canNavigate(event),
+      when: () => navigation.snapshot().canGoBack,
+      whenKeyboard: canNavigate,
       run: navigation.back,
     }),
     shortcuts.registerHost({
@@ -420,7 +427,8 @@ export function registerNavigationShortcuts(
         : { key: "]", mod: true },
       allowInEditable: true,
       allowInVisit: true,
-      when: (event) => navigation.snapshot().canGoForward && canNavigate(event),
+      when: () => navigation.snapshot().canGoForward,
+      whenKeyboard: canNavigate,
       run: navigation.forward,
     }),
   ];

@@ -63,8 +63,10 @@ if that desktop app is up and running.
 - **Search**: the top bar (⌘K or ⌘T; Ctrl elsewhere). ⌘F searches the current
   conversation. ⌘/ lists shortcuts.
 - **History shortcuts.** On macOS, ⌘← and ⌘→ go back and forward when the
-  message composer is empty. With text, they move to the start or end of the
-  line. ⌘[ and ⌘] work either way.
+  message composer is empty. A mention Buzz filled in for you still counts as
+  empty. Once you’ve typed, they move to the start or end of the line. ⌘[ and ⌘]
+  work either way. If a plugin uses ⌘← or ⌘→, change Go back or Go forward in
+  Settings → Shortcuts to give it the key.
 - **Settings** groups:
   - **Community**: **Profile**, **Local settings** (community address,
     repositories folder, cache, **New Solo chats** lifetime), **Mobile app**

@@ -93,6 +93,7 @@ function mount(
         fallback={fallback}
         sidebar={{
           list,
+          savedLocation: undefined,
           collapsed,
           contributionOrder: order,
           setContributionOrder: (next) => setOrder([...next]),

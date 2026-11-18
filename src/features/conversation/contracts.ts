@@ -306,6 +306,7 @@ export type ConversationExtensions = Readonly<{
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
+  sendTransforms?: ContributionReader<SendTransform>;
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
@@ -491,6 +492,39 @@ export type ComposerCompletion = Readonly<{
     context: CompletionContext,
   ): CompletionQuery | null;
   component: ComponentType<ComposerCompletionProps>;
+}>;
+
+/** A new message as the composer would send it: Markdown and the exact
+ * notified recipients (`p` tags). A name need not appear in the text. */
+export type SendDraft = Readonly<{
+  text: string;
+  mentions: readonly Readonly<{ pubkey: string; name: string }>[];
+}>;
+export type SendTransformContext = Readonly<{
+  session: RelaySession;
+  channelId: string;
+  threadRootId?: string | undefined;
+  /** Aborts when the user cancels or leaves before the send completes. */
+  signal: AbortSignal;
+}>;
+/**
+ * Rewrites, consumes or blocks a new message typed in a composer, once, before
+ * it is published. One transform runs per send; see `MatchOrder`. Edits,
+ * attachments, GIFs and agent sends never reach it. Returned mentions pass the
+ * same archive, eligibility and membership checks as typed ones.
+ */
+export type SendTransform = Readonly<{
+  id: string;
+  title: string;
+  order?: MatchOrder<SendDraft> | undefined;
+  /** Pure and synchronous; a throwing matcher is skipped. */
+  matches(draft: SendDraft): boolean;
+  /** Resolve the message to send instead; empty text with no mentions sends
+   * nothing and clears the draft. Throw to keep the draft and show the error. */
+  transform(
+    draft: SendDraft,
+    context: SendTransformContext,
+  ): SendDraft | Promise<SendDraft>;
 }>;
 
 /** A conversation a page opens in a tab beside its own. `messageId` opens at

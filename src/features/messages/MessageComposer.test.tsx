@@ -64,6 +64,7 @@ import type {
   ComposerAnnotator,
   ComposerAnnotatorProps,
   InlineRenderer,
+  SendTransform,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
 import { bundledContribution } from "../../plugins/provenance";
@@ -149,6 +150,7 @@ vi.mock(
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+let sendTransforms: readonly Contribution<SendTransform>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const noArchives = Object.freeze({ status: "ready" as const, archived: [] });
@@ -207,6 +209,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  sendTransforms = [];
   for (const owner of owners.splice(0)) owner.dispose();
   Reflect.deleteProperty(navigator, "locks");
   vi.unstubAllGlobals();
@@ -475,6 +478,10 @@ function mount(
       extensions: {
         tools: { snapshot: () => tools, subscribe: () => () => {} },
         inline: { snapshot: () => inline, subscribe: () => () => {} },
+        sendTransforms: {
+          snapshot: () => sendTransforms,
+          subscribe: () => () => {},
+        },
         completions: {
           snapshot: () => completions,
           subscribe(listener) {
@@ -736,6 +743,209 @@ it("keeps a slash command draft when its handler refuses", async () => {
   );
   expect(h.input()).toHaveValue("/leave");
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+function sendTransform(
+  transform: SendTransform["transform"],
+  options: Partial<SendTransform> = {},
+): Contribution<SendTransform> {
+  const id = options.id ?? "fixture";
+  return {
+    id,
+    key: `test/${id}`,
+    pluginId: "test",
+    revision: "1",
+    title: "Fixture transform",
+    matches: (draft) => draft.text.startsWith("/md "),
+    transform,
+    ...options,
+  };
+}
+
+it("sends a plugin's rewrite with exactly the recipients it returns", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(async ({ text }) => ({
+    text: text.slice(4).toUpperCase(),
+    mentions: [second],
+  }));
+  sendTransforms = [sendTransform(transform)];
+  const h = mount();
+  h.fill("/md hello");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    "HELLO",
+    [second.pubkey],
+    [],
+  );
+  expect(transform).toHaveBeenCalledExactlyOnceWith(
+    { text: "/md hello", mentions: [] },
+    expect.objectContaining({
+      session: h.session,
+      channelId: "channel",
+      signal: expect.any(AbortSignal),
+    }),
+  );
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+});
+
+it("gives a plugin the typed mentions and lets it drop them", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(() => ({
+    text: "quiet",
+    mentions: [],
+  }));
+  sendTransforms = [
+    sendTransform(transform, { matches: (draft) => draft.mentions.length > 0 }),
+  ];
+  const h = mount();
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "quiet", [], []);
+  expect(transform.mock.calls[0]?.[0].mentions).toEqual([first]);
+});
+
+it("consumes a message a plugin transforms to nothing", async () => {
+  const react = vi.fn();
+  sendTransforms = [
+    sendTransform(
+      async (_, { session }) => {
+        react(session);
+        return { text: "  ", mentions: [] };
+      },
+      { matches: (draft) => draft.text === "+:tada:" },
+    ),
+  ];
+  const h = mount();
+  h.fill("+:tada:");
+  h.submit();
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(react).toHaveBeenCalledExactlyOnceWith(h.session);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("keeps the draft and shows why when a plugin blocks or breaks a send", async () => {
+  sendTransforms = [
+    sendTransform(async () => {
+      throw new Error("Markdown needs a body.");
+    }),
+  ];
+  const h = mount();
+  h.fill("/md x");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Markdown needs a body.",
+  );
+  expect(h.input()).toHaveValue("/md x");
+
+  sendTransforms = [
+    sendTransform(() => ({
+      text: "",
+      mentions: [{ pubkey: "not-a-key", name: "Nobody" }],
+    })),
+  ];
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Fixture transform returned an invalid message.",
+    ),
+  );
+  expect(h.input()).toHaveValue("/md x");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("runs only the lowest-ordered matching transform", async () => {
+  sendTransforms = [
+    sendTransform(() => ({ text: "default", mentions: [] }), { id: "a" }),
+    sendTransform(() => ({ text: "specific", mentions: [] }), {
+      id: "b",
+      order: -10,
+    }),
+    sendTransform(() => ({ text: "unmatched", mentions: [] }), {
+      id: "c",
+      order: -20,
+      matches: () => false,
+    }),
+  ];
+  const h = mount();
+  h.fill("/md hi");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "specific", [], []);
+});
+
+it("does not send a transform's result after the draft changes", async () => {
+  let release!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  h.fill("/md slow, edited");
+  await act(async () => release({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/md slow, edited");
+});
+
+it("sends an unclaimed message synchronously, as without any transform", () => {
+  sendTransforms = [
+    sendTransform(() => ({ text: "x", mentions: [] }), {
+      matches: () => false,
+    }),
+  ];
+  const h = mount();
+  h.fill("hello");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "hello",
+    [],
+    [],
+  );
+});
+
+it("checks a plugin-added recipient like a typed one", async () => {
+  sendTransforms = [
+    sendTransform(() => ({ text: "hi", mentions: [first] }), {
+      matches: () => true,
+    }),
+  ];
+  const h = mount();
+  h.retarget({
+    session: {
+      ...h.session,
+      archives: {
+        snapshot: () => firstArchived,
+        subscribe: () => () => {},
+        state: (key: string) =>
+          key === first.pubkey ? "archived" : "not-archived",
+        ensure: async () => {},
+        refresh: async () => {},
+        writable: false,
+        supported: true,
+        consent: vi.fn(),
+        request: vi.fn(),
+      },
+    },
+  });
+  h.fill("hello");
+  h.submit();
+  expect(
+    await screen.findByText(
+      "A selected recipient is archived or being deleted. Remove it before sending.",
+    ),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("hello");
 });
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
@@ -9930,6 +10140,31 @@ it("seeds a Berd draft's pill with the default agent once, never its text", asyn
   );
 });
 
+it("submits a new chat's transformed text and recipients", async () => {
+  sendTransforms = [
+    sendTransform(() => ({
+      text: "rewritten",
+      mentions: [{ pubkey: first.pubkey, name: "Explicit" }],
+    })),
+  ];
+  const { h, submit } = mountBerdDraft({
+    pubkey: second.pubkey,
+    name: "Selected",
+  });
+  await screen.findByRole("status", {
+    name: "Sending to Selected. Change agents",
+  });
+  h.fill("/md hello");
+  await choicesLoaded();
+  h.submit();
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  expect(submit.mock.calls[0]?.slice(0, 3)).toEqual([
+    { text: "rewritten", recipients: [] },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+    [{ pubkey: first.pubkey, name: "Explicit" }],
+  ]);
+});
+
 it("a Berd draft with nobody addressed needs a tag to send", async () => {
   const { h, submit } = mountBerdDraft();
   const send = screen.getByRole("button", { name: "Send message" });
@@ -15349,6 +15584,36 @@ it("a person who joined since the pill was shown stops its untagged send", async
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("treats a plugin's agent tag like a typed one and keeps the toolbar's agents", async () => {
+  const person = "f".repeat(64);
+  sendTransforms = [
+    sendTransform(
+      () => ({
+        text: "hi",
+        mentions: [{ pubkey: second.pubkey, name: "Bea" }],
+      }),
+      { matches: () => true },
+    ),
+  ];
+  const { h, sendingTo } = mountSoloAgents({
+    refreshed: [first.pubkey, second.pubkey, person],
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [person, { name: "Pat" }],
+    ]),
+  );
+  h.fill("hello");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  // Bea heard this message only because the plugin tagged her.
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(sendingTo("Ada")).toBeInTheDocument();
+});
+
 it("a member who joined with no loaded profile also stops the untagged send", async () => {
   const { h } = mountSoloAgents({
     refreshed: [first.pubkey, second.pubkey, "f".repeat(64)],
@@ -17152,6 +17417,71 @@ it("inserts a bundled provider's chip as one atom and signs it into the sent mes
   // Nothing is left for a later, unrelated send.
   expect(signedMessageTokenTags()).toEqual([]);
 });
+
+it.each([
+  ["leaves the text as typed", "Use /notes ", [true]],
+  ["rewrites the text", "Rewritten", []],
+])(
+  "signs a chip into a send only when a transform %s",
+  async (_name, text, signedChips) => {
+    const publishes: ComposerCompletionProps["publish"][] = [];
+    function Completion({ publish }: ComposerCompletionProps) {
+      useLayoutEffect(() => {
+        publishes.push(publish);
+      }, [publish]);
+      return null;
+    }
+    const provider: Contribution<ComposerCompletion> = {
+      id: "folders",
+      key: "buzz.mentions/folders",
+      pluginId: "buzz.mentions",
+      revision: "bundled",
+      title: "Folder",
+      match: ({ text: typed, start }) => mentionQuery(typed, start),
+      component: Completion,
+    };
+    bundledContribution(provider);
+    sendTransforms = [
+      sendTransform(() => ({ text, mentions: [] }), { matches: () => true }),
+    ];
+    const providers = [provider];
+    const empty: [] = [];
+    const none = { snapshot: () => empty, subscribe: () => () => {} };
+    const h = mount();
+    h.retarget({
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => providers, subscribe: () => () => {} },
+        sendTransforms: {
+          snapshot: () => sendTransforms,
+          subscribe: () => () => {},
+        },
+      },
+    });
+    h.fill("Use @no");
+    const folder = { kind: "folder", id: "/notes", label: "@notes" };
+    act(() => {
+      publishes.at(-1)?.({
+        items: [{ id: "notes", label: "notes", edit: { token: folder } }],
+      } as unknown as CompletionResult);
+    });
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    let signed: string[][] = [];
+    h.messages.send.mockImplementation(() => {
+      signed = signedMessageTokenTags();
+      return "channel-id";
+    });
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(text);
+    expect(signed).toEqual(
+      signedChips.length
+        ? [[MESSAGE_TOKENS_TAG, JSON.stringify([folder])]]
+        : [],
+    );
+  },
+);
 
 /** A mention provider the test publishes for, over the real `@` syntax. */
 function mountPendingMention(

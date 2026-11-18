@@ -532,6 +532,57 @@ it("makes a supplement only through registerCompletionSupplement", async () => {
     ]),
   );
 });
+it("owns send transforms through disable, replacement and rejects malformed ones", async () => {
+  const transform = {
+    id: "transform",
+    title: "Transform",
+    matches: () => true,
+    transform: (draft: { text: string }) => ({ ...draft, mentions: [] }),
+  };
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerSendTransform(transform);
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.sendTransforms.snapshot()).toHaveLength(1),
+  );
+  const first = h.service.sendTransforms.snapshot()[0];
+  expect(first?.pluginId).toBe(h.plugin.manifest.id);
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.sendTransforms.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.sendTransforms.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.sendTransforms.snapshot()[0]).not.toBe(first);
+  for (const bad of [
+    { ...transform, id: "Not Valid" },
+    { ...transform, title: " " },
+    { ...transform, matches: undefined },
+    { ...transform, transform: undefined },
+    { ...transform, order: "first" },
+  ]) {
+    const broken = harness({
+      inject: ["conversation"],
+      apply(ctx) {
+        ctx.conversation.registerSendTransform(bad as never);
+      },
+    });
+    broken.runtime.reconcile([broken.plugin]);
+    await vi.waitFor(() =>
+      expect(broken.runtime.snapshot()[broken.plugin.manifest.id]?.status).toBe(
+        "failed",
+      ),
+    );
+    expect(broken.service.sendTransforms.snapshot()).toHaveLength(0);
+  }
+});
+
 it.each([
   [emoji, ["typeahead"]],
   [mentions, ["typeahead", "folders", "skills"]],

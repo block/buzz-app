@@ -184,6 +184,8 @@ import type {
   CompletionResolution,
   ComposerObservation,
   ComposerResource,
+  SendDraft,
+  SendTransform,
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import {
@@ -203,6 +205,8 @@ import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
+import { resolveMatch } from "../../plugins/contributions";
+import { transformSend } from "./send-transform";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -3334,7 +3338,9 @@ function Composer({
             .filter((person) => person.explicit)
             .map((person) => person.pubkey)
         : undefined;
-    const capturedRecipients = routing ? recipientsNow : captured.recipients;
+    let capturedRecipients: readonly MentionRecipient[] = routing
+      ? recipientsNow
+      : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
     // Mention resolution can update recipients before their picker commits.
     // Capture only a snapshot validated for the saved choices being sent.
@@ -3355,7 +3361,7 @@ function Composer({
         ? captured.text.trim()
         : undefined;
     // The toolbar's agents go along unless the text opens with a tag.
-    const fromPill =
+    let fromPill =
       routing &&
       capturedRecipients.some(
         (person) =>
@@ -3366,32 +3372,97 @@ function Composer({
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
+    // A command or transform that took the whole message clears the draft.
+    const stillCurrent = () => {
+      attempt.signal.throwIfAborted();
+      if (valueRef.current !== captured) return false;
+      // A submission owns its draft's saving; see the entry check above.
+      if (!submission) {
+        const current = viewRevision(scope, draftKey);
+        if (current !== savedRevision) {
+          diagnose("send-upload-conflict", savedRevision, current);
+          reportConflict();
+          return false;
+        }
+      }
+      return true;
+    };
+    const clear = () => {
+      const next = mentionDraft("");
+      saveDraft(next);
+      completion.invalidate();
+      caret.current = undefined;
+      input.current?.reset(next);
+      input.current?.focus();
+      setError(undefined);
+      automaticTag.current = undefined;
+      seedClosed.current = false;
+    };
     try {
-      const tokens = draftTokens(captured);
+      let tokens = draftTokens(captured);
       messageTokenTags(tokens);
       if (command && onCommand) {
         const handled = onCommand(command, attempt.signal);
         if (handled !== false) {
           setSending(true);
           if (await handled) {
-            attempt.signal.throwIfAborted();
-            if (valueRef.current !== captured) return;
-            const current = viewRevision(scope, draftKey);
-            if (current !== savedRevision) {
-              diagnose("send-upload-conflict", savedRevision, current);
-              reportConflict();
-              return;
-            }
-            const next = mentionDraft("");
-            saveDraft(next);
-            completion.invalidate();
-            caret.current = undefined;
-            input.current?.reset(next);
-            input.current?.focus();
-            setError(undefined);
-            automaticTag.current = undefined;
-            seedClosed.current = false;
+            if (stillCurrent()) clear();
             return;
+          }
+        }
+      }
+      // Plugins see what would be sent; huddle windows have no session to lend.
+      const transforms =
+        host &&
+        !captured.pending?.length &&
+        !captured.forward &&
+        !captured.chatCards?.length &&
+        !captured.gifs?.length &&
+        !capturedAttachments.length
+          ? (extensions?.sendTransforms?.snapshot() ?? [])
+          : [];
+      let transformed: SendDraft | undefined;
+      let outgoing = captured;
+      const typedRecipients = capturedRecipients;
+      if (host && transforms.length) {
+        const markdown = composerMarkdown(captured);
+        const draft = {
+          text: markdown,
+          mentions: typedRecipients.map(({ pubkey, name }) => ({
+            pubkey,
+            name,
+          })),
+        };
+        // Only a claimed send leaves the ordinary path.
+        const winner = resolveMatch<SendTransform, SendDraft>(
+          transforms,
+          draft,
+        );
+        if (winner) {
+          setSending(true);
+          const result = await transformSend(winner, draft, {
+            session: host,
+            channelId,
+            threadRootId,
+            signal: attempt.signal,
+          });
+          if (!stillCurrent()) return;
+          if (result === null) {
+            clear();
+            return;
+          }
+          transformed = result;
+          capturedRecipients = result.mentions;
+          // A plugin's tag names its agent like a typed one, so no pill stands in.
+          fromPill &&= result.mentions.every(
+            ({ pubkey }) =>
+              referenced(pubkey) ||
+              typedRecipients.some((person) => person.pubkey === pubkey),
+          );
+          // Signed chips belong to the text they were typed in.
+          if (result.text !== markdown) {
+            tokens = [];
+            outgoing = mentionDraft(result.text);
           }
         }
       }
@@ -3427,9 +3498,9 @@ function Composer({
       if (submission) {
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
-          captured,
+          outgoing,
           attachments.store,
-          routing ? capturedRecipients : undefined,
+          routing || transformed ? capturedRecipients : undefined,
           ownSoloConversation ? capturedRunPicks : undefined,
           ownSoloConversation ? capturedPicks : undefined,
           ownSoloConversation ? capturedPicksRevision : undefined,
@@ -3449,7 +3520,7 @@ function Composer({
         ));
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
+        const lookup = oldAgents.find(capturedRecipients);
         const old = lookup instanceof Promise ? await lookup : lookup;
         if (old.length) {
           setSending(true);
@@ -3484,7 +3555,7 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          const bring = capturedRecipients.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -3501,7 +3572,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          const missing = capturedRecipients.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
@@ -3542,10 +3613,11 @@ function Composer({
         reportConflict();
         return;
       }
+      const body = transformed?.text ?? composerMarkdown(captured);
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
+          ? mediaTimeReply(mediaTimeSeconds, body)
+          : body;
       const explicitRecipientIds = explicit?.filter((id) =>
         recipients.includes(id),
       );
@@ -3955,9 +4027,11 @@ function Composer({
       // The toolbar keeps whoever heard this message for the follow-up; a
       // reference named only this message.
       if (routing) {
+        // Only the people chosen before any plugin ran stay; a plugin's
+        // additions are for this message alone.
         setRouted(
-          capturedRecipients.filter((person) =>
-            recipients.includes(person.pubkey),
+          typedRecipients.filter(
+            (person) => !references.includes(person.pubkey),
           ),
         );
         setReplacedKey(undefined);

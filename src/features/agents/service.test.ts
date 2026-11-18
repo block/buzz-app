@@ -10620,7 +10620,7 @@ it("discovers newly granted Decisions access before Attention skips an unconfigu
   });
   const plugin = h.ctx
     .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
-    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, decide));
   try {
     await plugin.await();
     await session.signIn();

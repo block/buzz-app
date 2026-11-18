@@ -3,8 +3,8 @@
 // named by its revision; its token never leaves native. It is offered while
 // the user is signed in, and ready in a community only while that community's
 // Builderlab account may use decisions; see `offerBuilderlabDecisions`.
-// Settings > Decisions API shows the same sign-in control as this plugin's
-// card.
+// Settings > Decisions API shows whether each community's account can answer;
+// signing in stays in this plugin's card.
 import { useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -13,7 +13,7 @@ import type {
   DecisionProviderStatus,
   DecisionReply,
 } from "../../features/decisions/service";
-import { Login } from "./login/Login";
+import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
 import type {
   BuilderlabSession,
   CommunitySessions,
@@ -120,28 +120,26 @@ export function communityDecisionSessions(
 }
 
 /** Registers Builderlab in Settings > Decisions API while the user is signed
- * in, or a joined community's sign-in server serves it, so its sign-in can
- * start there; and removes it otherwise. It is ready in a community while that
- * community's Builderlab reports that the account may use decisions; reading
- * its status keeps that fresh. Where it is ready it is a default provider,
+ * in, or a joined community's sign-in server serves it, so it can be chosen
+ * there before sign-in; and removes it otherwise. It is ready in a community
+ * while that community's Builderlab reports that the account may use
+ * decisions; reading its status keeps that fresh. Where it is ready it is a default provider,
  * so it answers unless the user chose another. Builds without native calls
- * never offer it. `session` signs in from Settings; `communities`, when
- * given, answers each community with its own sign-in server's session.
- * `openIdentity` opens where an FI build's shared sign-in ends. */
+ * never offer it. `communities`, when given, answers each community with its
+ * own sign-in server's session, else `session` answers. `openSettings` opens
+ * a Settings section, where Builderlab's sign-in is. */
 export function offerBuilderlabDecisions(
   ctx: Context,
   session: BuilderlabSession,
-  loginAvailable: boolean,
   native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
-  openIdentity?: () => void,
+  openSettings?: (section: string) => void,
   communities?: CommunityDecisionSessions,
 ) {
   if (!native) return;
   const provider = builderlabProvider(
     session,
-    loginAvailable,
     native,
-    openIdentity,
+    openSettings,
     communities,
   );
   const signedIn = (each: BuilderlabSession | undefined) =>
@@ -173,9 +171,8 @@ export function offerBuilderlabDecisions(
 
 export function builderlabProvider(
   session: BuilderlabSession,
-  loginAvailable: boolean,
   native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
-  openIdentity?: () => void,
+  openSettings?: (section: string) => void,
   communities?: CommunityDecisionSessions,
 ): DecisionProvider {
   /** The session that answers `community`: its sign-in server's, or with no
@@ -269,52 +266,58 @@ export function builderlabProvider(
       !communities || communities.forCommunity(community) !== undefined,
     // Communities on one sign-in server share its account.
     setupScope: (community) => communities?.account(community),
-    Settings: ({ active, community }) => (
-      <BuilderlabDecisionsLogin
-        session={sessionIn(community) ?? session}
-        available={loginAvailable}
-        active={active}
-        openIdentity={openIdentity}
-        native={!!native}
-      />
-    ),
+    Settings: ({ active, community }) =>
+      native ? (
+        <BuilderlabDecisionsState
+          session={sessionIn(community)}
+          active={active}
+          openSettings={openSettings}
+        />
+      ) : null,
   };
 }
 
-/** The sign-in for one community's sign-in server, and whether its account
- * may use decisions. */
-function BuilderlabDecisionsLogin({
+/** Why one community's Builderlab account can't answer, if it can't: it is
+ * not signed in, which Builderlab's own settings do, or it may not use
+ * decisions. */
+function BuilderlabDecisionsState({
   session,
-  available,
   active,
-  openIdentity,
-  native,
+  openSettings,
 }: {
-  session: BuilderlabSession;
-  available: boolean;
+  session: BuilderlabSession | undefined;
   active(): boolean;
-  openIdentity: (() => void) | undefined;
-  native: boolean;
+  openSettings: ((section: string) => void) | undefined;
 }) {
-  const state = useSyncExternalStore(session.subscribe, session.snapshot);
+  const state = useSyncExternalStore(session?.subscribe ?? noSubscription, () =>
+    session?.snapshot(),
+  );
+  if (state?.status !== "signed-in")
+    return (
+      <p role="status" className="m-0 text-body-sm text-secondary">
+        Not signed in to Builderlab for this community. Sign in from{" "}
+        <SettingsSectionLink
+          section="block.builderlab/login"
+          open={
+            openSettings &&
+            ((section) => {
+              if (active()) openSettings(section);
+            })
+          }
+        >
+          Builderlab settings
+        </SettingsSectionLink>
+        .
+      </p>
+    );
+  if (state.checkingPermissions || state.account?.canUseBuilderlabDecisions)
+    return null;
   return (
-    <>
-      <Login
-        session={session}
-        available={available}
-        active={active}
-        showHeading={false}
-        openIdentity={openIdentity}
-      />
-      {native &&
-        state.status === "signed-in" &&
-        !state.checkingPermissions &&
-        state.account?.canUseBuilderlabDecisions !== true && (
-          <p role="status" className="m-0 text-body-sm text-secondary">
-            This Builderlab account can’t use decisions. For access, contact
-            your account administrator.
-          </p>
-        )}
-    </>
+    <p role="status" className="m-0 text-body-sm text-secondary">
+      This Builderlab account can’t use decisions. For access, contact your
+      account administrator.
+    </p>
   );
 }
+
+const noSubscription = () => () => {};

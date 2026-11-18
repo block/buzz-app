@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DecisionsSettings } from "../../app/DecisionsSettings";
 import { federatedFixture } from "../../features/federated-identity/testing";
@@ -71,7 +78,7 @@ it("needs a sign-in, then sends it to native with each call", async () => {
     model: "builderlab-1",
     answers: { a: { type: "yes_no", probability: 0.7 } },
   }));
-  const provider = builderlabProvider(session, true, decide);
+  const provider = builderlabProvider(session, decide);
   expect(provider.status()).toBe("needs-setup");
   await expect(provider.decide(request, { signal })).resolves.toEqual({
     outcome: "failed",
@@ -102,7 +109,7 @@ it("never ends an FI session for a decisions 401", async () => {
     signOut,
     freshCredential: async () => fi,
   } as unknown as BuilderlabSession;
-  const provider = builderlabProvider(session, true, async () => ({
+  const provider = builderlabProvider(session, async () => ({
     outcome: "failed",
     backend: "builderlab",
     reason: "session_expired",
@@ -117,7 +124,7 @@ it("never ends an FI session for a decisions 401", async () => {
 it("keeps the shared sign-in when only decisions are refused", async () => {
   const session = createTestSession(async () => credential("first"));
   await session.signIn();
-  const provider = builderlabProvider(session, true, async () => ({
+  const provider = builderlabProvider(session, async () => ({
     outcome: "failed",
     backend: "builderlab",
     reason: "unauthorized",
@@ -135,7 +142,7 @@ it.each([
 ])("reports a native rejection (%s) as %s", async (message, reason) => {
   const session = createTestSession(async () => credential("first"));
   await session.signIn();
-  const provider = builderlabProvider(session, true, async () => {
+  const provider = builderlabProvider(session, async () => {
     throw message;
   });
   await expect(provider.decide(request, { signal })).resolves.toEqual({
@@ -147,7 +154,7 @@ it.each([
 it("is unavailable outside the desktop app", async () => {
   const session = createTestSession(async () => credential("first"));
   await session.signIn();
-  const provider = builderlabProvider(session, false, undefined);
+  const provider = builderlabProvider(session, undefined);
   expect(provider.status()).toBe("needs-setup");
   await expect(provider.decide(request, { signal })).resolves.toEqual({
     outcome: "failed",
@@ -168,7 +175,7 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
   }));
   await session.signIn();
   const decide = vi.fn<BuilderlabDecide>();
-  const provider = builderlabProvider(session, true, decide);
+  const provider = builderlabProvider(session, decide);
   expect(provider.status()).toBe("needs-setup");
   await expect(provider.decide(request, { signal })).resolves.toEqual({
     outcome: "failed",
@@ -197,7 +204,7 @@ it("offers Builderlab while signed in, ready only while the account may use deci
   const offer = (native: BuilderlabDecide | undefined) =>
     root
       .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
-      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, native));
+      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, native));
   const fiber = offer(decide);
   await fiber.await();
   await flush();
@@ -295,30 +302,35 @@ it("answers each community with its own sign-in server's account, and leaves the
     model: "builderlab-1",
     answers: { a: { type: "yes_no", probability: 0.7 } },
   }));
+  const opened = vi.fn();
   const fiber = root
     .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
     .plugin((ctx) =>
-      offerBuilderlabDecisions(
-        ctx,
-        build,
-        true,
-        decide,
-        undefined,
-        communities,
-      ),
+      offerBuilderlabDecisions(ctx, build, decide, opened, communities),
     );
   await fiber.await();
   await flush();
   const BUILDERLAB = "block.builderlab/builderlab";
   const keys = () => decisions.providers().map((provider) => provider.key);
   // Offered before any sign-in, where a server covers a community, so the
-  // user can sign in from Settings.
+  // user can choose it there.
   expect(keys()).toEqual([BUILDERLAB, DEFAULT_DECISION_PROVIDER]);
   const [offered] = decisions.providers();
   expect(offered?.offered?.(BLOCK)).toBe(true);
   expect(offered?.offered?.(OTHER)).toBe(false);
   expect(offered?.setupScope?.(BLOCK)).toBe("block.example");
   expect(decisions.backend(BLOCK)).toBe(DEFAULT_DECISION_PROVIDER);
+  // Settings says where to sign in, and does not sign in itself.
+  const Settings = offered?.Settings;
+  if (!Settings) throw new Error("Builderlab has settings");
+  const signedOut = render(<Settings active={() => true} community={BLOCK} />);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Not signed in to Builderlab for this community. Sign in from Builderlab settings.",
+  );
+  expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Builderlab settings" }));
+  expect(opened).toHaveBeenCalledExactlyOnceWith("block.builderlab/login");
+  signedOut.unmount();
   // Signed in to Block alone, while the build's server is signed out.
   await block.signIn();
   await build.signIn();
@@ -328,9 +340,7 @@ it("answers each community with its own sign-in server's account, and leaves the
     expect(decisions.backend(PUBLIC)).toBe(DEFAULT_DECISION_PROVIDER);
     expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
   }
-  // Settings signs in to, and explains, each community's own account.
-  const Settings = offered?.Settings;
-  if (!Settings) throw new Error("Builderlab has settings");
+  // Settings explains each community's own account.
   const view = render(<Settings active={() => true} community={PUBLIC} />);
   expect(
     screen.getByText(
@@ -338,7 +348,7 @@ it("answers each community with its own sign-in server's account, and leaves the
     ),
   ).toBeVisible();
   view.rerender(<Settings active={() => true} community={BLOCK} />);
-  expect(screen.queryByText(/can’t use decisions/)).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
   view.unmount();
   // Without a community, it cannot answer: it bills one.
   expect(decisions.providers()[0]?.status()).toBe("needs-setup");
@@ -413,7 +423,7 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       );
     const builderlab = root
       .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
-      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, native));
+      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, native));
     try {
       await Promise.all([fallbackPlugin.await(), builderlab.await()]);
       if (entry === "settings-with-choice") {

@@ -62,9 +62,9 @@ const scopeIn = (provider: DecisionProvider, community: string) => {
 };
 
 /** Chooses, for each joined community, the provider that answers its
- * decisions, and sets that provider up there: a Builderlab sign-in for the
- * community's sign-in server, which communities on one server share, or the
- * TypeSafe key, which every community shares. Providers are plugins. Each
+ * decisions, and shows whether that provider can answer there: Builderlab's
+ * availability follows the community's sign-in server, which communities on
+ * one server share, while the TypeSafe key is one for every community. Providers are plugins. Each
  * community's menu offers the providers that can be set up there; the
  * service routes a community whose choice is not set up yet to TypeSafe.
  * With no communities, it lists each provider's settings. */
@@ -191,7 +191,7 @@ export function DecisionsSettings({
           const Settings = entry.Settings;
           return (
             Settings && (
-              <div className="grid gap-4 py-4">
+              <div className="grid gap-4 py-4 empty:hidden">
                 <Settings
                   active={() => active() && owned()}
                   grouped={false}
@@ -293,7 +293,7 @@ export function DecisionsSettings({
         >
           <InlineHeader
             title="Communities"
-            subtitle="Choose which provider answers each community’s decisions, and set it up there."
+            subtitle="Choose which provider answers each community’s decisions."
           />
           {communities.map(({ membership, name, url }, index) => {
             const row = state.communities[index];

@@ -213,13 +213,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.effect(() => () => stopProvider());
     // Native validation stays in place; the dev transport uses a public
     // revision. Each community's decisions use its own sign-in server's
-    // session; Settings signs in to the selected community's.
+    // session, which this plugin's card signs in to.
     offerBuilderlabDecisions(
       ctx,
       agentSession,
-      loginAvailable,
       dev?.decide,
-      openIdentity,
+      openSettings,
       sessions &&
         communityDecisionSessions(
           sessions,

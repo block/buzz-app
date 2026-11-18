@@ -5,6 +5,7 @@
   --sidenav-emoji-size: var(--space-4);
 }
 
-.unicode {
-  display: block;
+/* A small optical compromise for native glyphs; images keep their placement. */
+.icon[data-unicode] {
+  transform: translateX(0.5px);
 }

@@ -49,6 +49,11 @@ export class ProjectSource {
   }
 }
 
+/** The tags that rank instructions in the base instructions' Trust order.
+ * A Canvas's text prints none: only the host says who wrote the Canvas. */
+const RANKED =
+  /<(\/?)(workspace-canvas|agent-instructions|owner-instructions|team-instructions|team)(?![\w-])/gi;
+
 /** Whether a chat's Canvas does not say where its work happens: the
  * conversation has a `folder` of its own, or the plugin that manages it
  * replaced the working location rule. */
@@ -81,7 +86,7 @@ export function project(
     ? "which your owner wrote: their standing instructions for this chat, which your owner's messages override"
     : "which an agent wrote: standing instructions for this chat, which your owner's messages and your base instructions override";
   return {
-    section: `<workspace-canvas>\nThis Solo chat's Canvas as of this message, ${standing}. It replaces any earlier workspace Canvas.${folders}\n\n${unframed(agentCanvas(content, elsewhere, ownerWrote).trim())}\n</workspace-canvas>`,
+    section: `<workspace-canvas>\nThis Solo chat's Canvas as of this message, ${standing}. It replaces any earlier workspace Canvas.${folders}\n\n${unframed(agentCanvas(content, elsewhere, ownerWrote).trim()).replace(RANKED, "<\\$1$2")}\n</workspace-canvas>`,
     directories,
   };
 }

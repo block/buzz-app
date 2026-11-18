@@ -1665,7 +1665,7 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   sections** shows the default text of each. A plugin that is on can declare
   sections that it replaces in the chats it manages: its install review lists
   them. For example, such a plugin can set where an agent's work happens in a
-  chat it manages. Each section that such a plugin declared names the plugin.
+  chat it manages, except for an agent that runs on another computer. Each section that such a plugin declared names the plugin.
   When you choose Off or Custom for one of them, your own choice also applies
   in those chats. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it

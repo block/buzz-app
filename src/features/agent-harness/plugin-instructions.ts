@@ -35,7 +35,9 @@ export function pluginInstructions(entries: readonly TurnInstructions[] = []) {
 }
 
 /** The `<owner-instructions>` section for one conversation's instructions,
- * named by the plugin that gave them; cleared ones say none apply now. */
+ * named by the plugin that gave them; cleared ones say none apply now. It
+ * leaves their rank to the base instructions: a resumed thread keeps the
+ * Trust order it started with. */
 export function ownerInstructions(
   entry: TurnInstructions | undefined,
   clearAbsent = false,
@@ -43,7 +45,7 @@ export function ownerInstructions(
   if (!entry && !clearAbsent) return undefined;
   const text = body(entry?.text ?? "");
   const content = text
-    ? `Your owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your owner's messages, a workspace Canvas that your owner wrote, your agent instructions and your base instructions override them.\n\n${text}`
+    ? `Your owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your base instructions say how they rank.\n\n${text}`
     : "Your owner has no standing instructions for you in this conversation now. Disregard any earlier <owner-instructions>.";
   return `<owner-instructions${entry ? ` source="${attribute(entry.plugin)}"` : ""}>\n${content}\n</owner-instructions>`;
 }

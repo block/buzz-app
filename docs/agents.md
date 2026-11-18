@@ -747,19 +747,24 @@ there gets each text in place of the section's default text, in a
 `<plugin-section>` wrapper that names the plugin, and the base prompt ranks it
 as the section it replaces. A running session gets a changed section at its
 next turn: Claude restarts its process and resumes the session, and Codex sends
-the changed sections to the resumed thread. Each call replaces the plugin's
+the changed sections to the resumed thread. A Codex thread saved by a Buzz
+version that did not keep its sections cannot be told which sections changed:
+a local one starts a new thread once, without its earlier context, and one on
+an execution target stops with an error that asks for a new session. Each call replaces the plugin's
 whole set, and an empty set clears it. Each ID must be one the manifest
 declares, each text has from 1 to 4096 UTF-8 bytes after trimming, and the set
 at most 12 KiB; a plugin cannot turn a section off. `place` follows the rules
 of conversation instructions. The call rejects while another plugin that is on
-manages the conversation. The host uses a text only while the plugin is on, its
-manifest still declares the section and the agent's type supports the
-sections. The owner's own choice for a section
+manages the conversation, also while that plugin starts, updates or failed to
+start. The host uses a text only while the plugin is active, its manifest still
+declares the section and the agent's type supports the sections. An agent on an
+execution target uses no `working-location` text, as no plugin can give its
+conversations their own folders. The owner's own choice for a section
 in **Settings → Agent setup → Base instructions** wins over the plugin's text,
 and a protected agent uses no plugin text.
 `ctx.agents.conversationSections(pubkey, place)` resolves with the plugin's
-set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`
-or `"protected"` when a prompt does not use the text, or with undefined when
+set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`,
+`"protected"` or `"target"` when a prompt does not use the text, or with undefined when
 the plugin holds none there. When the plugin replaces `working-location` in a
 Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
 folder. The set is kept on this device, survives a restart, and is dropped

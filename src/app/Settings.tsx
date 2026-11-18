@@ -155,15 +155,18 @@ function isEssentialPlugin(plugin: PluginInfo) {
 }
 
 /** The names of the plugins that are on and can replace `section` of the
- * agents' base instructions in the chats they manage. */
+ * agents' base instructions in the chats they manage. Safe mode pauses the
+ * external ones. */
 export const sectionPlugins = (
   plugins: readonly PluginInfo[],
   section: string,
+  externalPaused = false,
 ) =>
   plugins
     .filter(
       (plugin) =>
         plugin.enabled &&
+        !(externalPaused && plugin.source === "external") &&
         plugin.manifest.host?.agentPromptSections?.some(
           (id) => replaceableSection(id)?.id === section,
         ),
@@ -1517,7 +1520,11 @@ export function Settings({
             agents={agents}
             active={selected === "agents"}
             sectionPlugins={(section) =>
-              sectionPlugins(catalog?.plugins ?? [], section)
+              sectionPlugins(
+                catalog?.plugins ?? [],
+                section,
+                externalPluginsPaused,
+              )
             }
             navigation={navigation}
             onProvider={onProvider}

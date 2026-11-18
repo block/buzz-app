@@ -108,6 +108,8 @@ export function composeBase(facts: Facts, choices?: SectionChoices) {
     key: sectionsKey(parts),
     /** Whether any section has other than its default text. */
     custom: sections.some(({ source }) => source),
+    /** Whether any section has a plugin's text. */
+    plugin: sections.some(({ source }) => source === "plugin"),
   };
 }
 

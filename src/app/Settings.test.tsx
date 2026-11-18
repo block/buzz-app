@@ -2255,7 +2255,7 @@ it("starts a section a link opens at its top, even with a kept place", async () 
   expect(document.getElementById("settings-content")).toHaveFocus();
 });
 
-it("names the plugins that are on and declare a base instruction section", () => {
+it("names the plugins that are on, not paused, and declare a base instruction section", () => {
   const plugin = (name: string, enabled: boolean, section?: string) => ({
     manifest: {
       id: `example.${name.toLowerCase()}`,
@@ -2279,6 +2279,15 @@ it("names the plugins that are on and declare a base instruction section", () =>
   expect(sectionPlugins(plugins, "working-location")).toEqual(["Tasks"]);
   expect(sectionPlugins(plugins, "routing")).toEqual(["Plans"]);
   expect(sectionPlugins(plugins, "progress")).toEqual([]);
+  // Safe mode pauses external plugins.
+  expect(sectionPlugins(plugins, "working-location", true)).toEqual([]);
+  expect(
+    sectionPlugins(
+      [{ ...plugin("Tasks", true, "working-location"), source: "bundled" }],
+      "working-location",
+      true,
+    ),
+  ).toEqual(["Tasks"]);
 });
 
 it("links a decision provider's details to Decisions API", async () => {

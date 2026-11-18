@@ -277,6 +277,7 @@ async function setup({
   typeId = "echo",
   conversationFolders = undefined as true | undefined,
   conversationSections = undefined as true | undefined,
+  execution = undefined as true | undefined,
   /** The base prompt sections the example plugin's manifest declares. */
   promptSections = [] as readonly string[],
   sessions = undefined as AgentType<Config>["sessions"],
@@ -423,6 +424,7 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
     ...(conversationFolders ? { conversationFolders } : {}),
     ...(conversationSections ? { conversationSections } : {}),
+    ...(execution ? { execution } : {}),
     ...(sessions ? { sessions } : {}),
   };
   plugin.agents.register(type);
@@ -2411,6 +2413,11 @@ describe("a conversation's sections", () => {
     f.owners.delete("example");
     f.inactive.add("example");
     expect(agent.promptSections?.(channel, root)).toEqual({ owner: {} });
+    await expect(
+      f.plugin.agents.conversationSections(f.agent.key, thread),
+    ).resolves.toEqual({
+      progress: { text: "Report to the task.", applied: false },
+    });
     for (const sections of [{ progress: "Mine." }, {}])
       await expect(
         other.setConversationSections(f.agent.key, thread, sections),
@@ -2488,6 +2495,41 @@ describe("a conversation's sections", () => {
           progress: "Report to the task.",
         },
       },
+    });
+  });
+
+  it("keep Working location from an agent on an execution target, which has no conversation folders", async () => {
+    const f = await ready({ execution: true, retire: vi.fn(async () => {}) });
+    await f.plugin.agents.setConversationSections(f.agent.key, thread, {
+      "working-location": "Work in the task's folder.",
+      progress: "Report to the task.",
+    });
+    const adapter = f.ctx.extend({
+      pluginOwner: {
+        id: "internal",
+        revision: "one",
+        agentExecution: ["example/echo"],
+      },
+    });
+    adapter.agents.registerExecution({
+      id: "remote",
+      harnesses: ["example/echo"],
+      connect: vi.fn(),
+    });
+    await adapter.agents.bindExecution(f.agent.key, { id: "remote" });
+    await expect(
+      f.plugin.agents.conversationSections(f.agent.key, thread),
+    ).resolves.toEqual({
+      "working-location": {
+        text: "Work in the task's folder.",
+        applied: false,
+        reason: "target",
+      },
+      progress: { text: "Report to the task.", applied: true },
+    });
+    const agent = await handle(f);
+    expect(agent.promptSections?.(channel, root)?.plugin?.sections).toEqual({
+      progress: "Report to the task.",
     });
   });
 

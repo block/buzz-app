@@ -489,7 +489,7 @@ export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 export type ConversationSection = Readonly<{
   text: string;
   applied: boolean;
-  reason?: "owner" | "protected";
+  reason?: "owner" | "protected" | "target";
 }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
@@ -1939,9 +1939,10 @@ export type Agents = {
   /** What the calling plugin's `setConversationSections` gave the
    * conversation, with whether a prompt built now uses each text. It does
    * not while the owner's choice for the section applies (`"owner"`), for a
-   * protected agent (`"protected"`), once the plugin's manifest no longer
-   * declares the section, or once the agent has a type that does not
-   * support it. Undefined when the plugin gave none. */
+   * protected agent (`"protected"`), for Working location on an execution
+   * target (`"target"`), while the plugin is not active, once its manifest
+   * no longer declares the section, or once the agent has a type that does
+   * not support it. Undefined when the plugin gave none. */
   conversationSections(
     agent: AgentKey,
     place: SessionPlace,
@@ -5979,9 +5980,7 @@ export class AgentsService extends Service implements Agents {
       );
       const saved = storedSections(this.storage, scope, key, conversation);
       if (saved?.plugin !== owner.id) return undefined;
-      const usable = this.sectionsType(agent)
-        ? usableSections(saved, owner.agentPromptSections ?? [])
-        : {};
+      const usable = this.pluginSections(agent, saved);
       const choices = { owner: ownerChoices(this.storage) };
       return Object.fromEntries(
         Object.entries(saved.sections).map(
@@ -5990,7 +5989,11 @@ export class AgentsService extends Service implements Agents {
             const current = pluginSection(id)?.id ?? id;
             const reason = agent.protection
               ? "protected"
-              : replacedBy(current, choices) && "owner";
+              : replacedBy(current, choices)
+                ? "owner"
+                : current === "working-location" && this.executions.read(key)
+                  ? "target"
+                  : undefined;
             return [
               id,
               reason
@@ -6010,13 +6013,29 @@ export class AgentsService extends Service implements Agents {
     return !!this.types().find((kind) => kind.key === agent.type)
       ?.conversationSections;
   }
+  /** The texts of `saved` that the agent's prompt uses now: only while its
+   * plugin is active, for the sections its manifest declares now and for an
+   * agent type that supports them. An agent on an execution target gets no
+   * Working location text, as no plugin can give its conversations their
+   * own folders. */
+  private pluginSections(
+    agent: Pick<Agent, "key" | "type">,
+    saved: NonNullable<ReturnType<typeof storedSections>>,
+  ) {
+    const declared =
+      this.sectionsType(agent) &&
+      this.ctx.pluginStatus.promptSections?.(saved.plugin);
+    if (!declared) return {};
+    const usable = usableSections(saved, declared);
+    if (!this.executions.read(agent.key)) return usable;
+    const { "working-location": _, ...elsewhere } = usable;
+    return elsewhere;
+  }
   /** The choices a prompt for the agent is built with now: the owner's and,
    * in the conversation its harness keys as `channelId` and `root`, the
-   * texts of the plugin that manages it. That plugin's texts count only
-   * while it is on, for the sections its manifest declares now and for an
-   * agent type that supports them. A protected agent gets none of them: its
-   * owner is the principal of its policy, and a plugin is not. Nor does a
-   * turn outside any conversation. */
+   * texts of the plugin that manages it, as `pluginSections` keeps them. A
+   * protected agent gets none of them: its owner is the principal of its
+   * policy, and a plugin is not. Nor does a turn outside any conversation. */
   private turnSections(
     agent: Agent,
     channelId?: string,
@@ -6034,9 +6053,7 @@ export class AgentsService extends Service implements Agents {
             conversationKey(channelId, root),
           )
         : undefined;
-    const declared =
-      saved && this.ctx.pluginStatus.promptSections?.(saved.plugin);
-    const sections = declared && usableSections(saved, declared);
+    const sections = saved && this.pluginSections(current, saved);
     return sections && Object.keys(sections).length
       ? { owner, plugin: { id: saved.plugin, sections } }
       : { owner };

@@ -8462,6 +8462,90 @@ it("resumes the durably saved thread even when the host cache has no thread", as
   await guest.complete();
 });
 
+it.each([
+  ["keeps", { owner: { progress: { mode: "off" } } }],
+  [
+    "requires New for",
+    {
+      plugin: {
+        id: "example.plugin",
+        sections: { progress: "Report to the task." },
+      },
+    },
+  ],
+] as const)(
+  "%s a remote thread saved before its sections were kept, once the conversation's sections change",
+  async (outcome, choices) => {
+    const conversation = JSON.stringify(["channel", root]);
+    const durable = new Map([
+      [
+        `buzz.codex.sessions.execution.v1:${scope}:${pubkey}:${conversation}`,
+        JSON.stringify({ key: "durable-session", intent: "existing" }),
+      ],
+      [
+        `buzz.codex.sessions.v18:${scope}:${pubkey}:session:durable-session`,
+        JSON.stringify({
+          [conversation]: { threadId: "kept", workspace: "/guest/project" },
+        }),
+      ],
+    ]);
+    const store = fileStore(
+      new Map(),
+      async (key, value) => {
+        if (value === null) durable.delete(key);
+        else durable.set(key, value);
+      },
+      undefined,
+      async (key) => durable.get(key) ?? null,
+    );
+    const guest = fixture();
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      async () => guestTarget(guest),
+      store,
+    );
+    const result = f.delivery("hello");
+    const delivery = {
+      ...result,
+      agent: { ...result.agent, promptSections: () => choices },
+    } as Delivery;
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    await f.runtime.run(delivery);
+    if (outcome === "keeps") {
+      await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+      expect(
+        guest.sent.find((wire) => wire.method === "thread/resume")?.params,
+      ).toMatchObject({ threadId: "kept" });
+      await guest.complete();
+      return;
+    }
+    // Its prompt cannot be told about the plugin's text, and a remote
+    // thread does not start over unasked.
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.detail).toContain(
+        "The base instructions of this conversation changed. Start a new session to continue.",
+      ),
+    );
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    );
+    expect(
+      guest.sent.some(
+        (wire) =>
+          wire.method === "thread/resume" || wire.method === "thread/start",
+      ),
+    ).toBe(false);
+  },
+);
+
 it("saves accepted thread state after its first durable write fails", async () => {
   const durable = new Map<string, string>();
   let failed = false;

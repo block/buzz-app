@@ -15,7 +15,11 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
-import type { EventData, RelayEvent } from "../../features/relay/events";
+import type {
+  EventData,
+  ReadFilter,
+  RelayEvent,
+} from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
@@ -2618,6 +2622,110 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     ],
     expect.anything(),
   );
+});
+
+it("shows a new turn's history as the thread shows it now", async () => {
+  const root = message("1", "Plan", { created_at: 50, tags: [["h", channel]] });
+  const reply = (id: string, content: string, created_at: number) =>
+    message(id, content, {
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const note = reply("2", "Use the red palette", 60);
+  const dropped = reply("3", "Drop the staging tables", 65);
+  const change = (id: string, kind: number, target: EventData, content = "") =>
+    message(id, content, {
+      kind,
+      created_at: 70,
+      tags: [
+        ["h", channel],
+        ["e", target.id],
+      ],
+    });
+  const mention = message("6", "@Gander go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const events = [
+    root,
+    note,
+    dropped,
+    change("4", 40003, note, "Use the blue palette"),
+    change("5", 5, dropped),
+    mention,
+  ];
+  const f = setup();
+  f.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    events.filter((event) =>
+      (filters ?? []).some(
+        (filter) =>
+          (!filter.kinds || filter.kinds.includes(event.kind)) &&
+          (filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            )),
+      ),
+    ),
+  );
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  await f.deliver(mention, { workingUntil });
+  await vi.waitFor(() => expect(workingUntil).toHaveBeenCalledOnce());
+  await workingUntil.mock.calls[0]?.[0];
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('"content":"Plan"');
+  expect(text).toContain("Use the blue palette");
+  expect(text).not.toContain("Use the red palette");
+  expect(text).not.toContain("Drop the staging tables");
+  // A later turn with nothing new to show reads no edits or deletions.
+  const changes = () =>
+    (f.read.mock.calls as unknown as [readonly ReadFilter[]][]).filter(
+      ([filters]) => filters.some((filter) => filter.kinds?.includes(40003)),
+    ).length;
+  const [reads, changed] = [f.read.mock.calls.length, changes()];
+  await f.deliver({ ...mention, id: "8".repeat(64), created_at: 120 });
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(2));
+  expect(f.read.mock.calls.length).toBeGreaterThan(reads);
+  expect(changes()).toBe(changed);
+});
+
+it("tells a new session nothing came before when all of it was deleted", async () => {
+  const root = message("1", "Use the red palette", {
+    created_at: 50,
+    tags: [["h", channel]],
+  });
+  const deletion = message("2", "", {
+    kind: 5,
+    created_at: 70,
+    tags: [
+      ["h", channel],
+      ["e", root.id],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    filters?.some((filter) => filter.kinds?.includes(5)) ? [deletion] : [root],
+  );
+  await f.deliver(
+    message("3", "@Gander go", {
+      created_at: 110,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  );
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).not.toContain("Use the red palette");
+  expect(text).not.toContain("Earlier context is already available");
 });
 
 it("runs an agent on Recommended on the current candidate", () => {

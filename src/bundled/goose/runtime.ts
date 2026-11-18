@@ -62,6 +62,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
+import { currentMessages } from "../../features/agent-harness/current-messages";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import {
   type GooseProcess,
@@ -776,7 +777,10 @@ export class GooseRuntime {
         )
       : Promise.resolve(undefined);
     const threadRead = (thread || (resumed && !dm)) && !topLevel;
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
+    let unseen: readonly EventData[] = [];
     if (session && (thread || dm || topLevel || resumed))
       try {
         const events = await session.read(
@@ -788,7 +792,7 @@ export class GooseRuntime {
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           { signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS) },
         );
-        earlier = events
+        const found = events
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
@@ -799,16 +803,26 @@ export class GooseRuntime {
               (resumed || item.created_at <= event.created_at),
           )
           .sort((a, b) => a.created_at - b.created_at);
+        // A session already has its own replies; a new one is shown them too.
+        // Only those it was not shown need their edits and deletions read.
+        unseen = await currentMessages(
+          channelId,
+          found.filter(
+            (item) =>
+              item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
+          ),
+          (filters) =>
+            session.read(filters, {
+              signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+            }),
+          reads,
+          signingAuthority,
+        );
+        // A new session counts only the messages still there.
+        earlier = seen ? found : unseen;
       } catch (error) {
         console.warn("goose could not read the conversation", error);
       }
-    // A session already has its own replies; a new one is shown them too.
-    const unseen = earlier.filter(
-      (item) =>
-        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
-    );
-    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
-    const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
       readAuthorNames(
         reads,

@@ -3599,6 +3599,162 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
   }
 });
 
+it("shows a new turn's history as the thread shows it now", async () => {
+  const root = message("1", "Plan", { created_at: 50 });
+  const reply = (id: string, content: string, created_at: number) =>
+    message(id, content, {
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const note = reply("2", "Use the red palette", 60);
+  const dropped = reply("3", "Drop the staging tables", 65);
+  const change = (id: string, kind: number, target: EventData, content = "") =>
+    message(id, content, {
+      kind,
+      created_at: 70,
+      tags: [
+        ["h", channel],
+        ["e", target.id],
+      ],
+    });
+  const mention = message("6", "@Claude go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const events = [
+    root,
+    note,
+    dropped,
+    change("4", 40003, note, "Use the blue palette"),
+    change("5", 5, dropped),
+    { ...change("7", 40003, root, "Hijacked plan"), pubkey: "d".repeat(64) },
+    mention,
+  ];
+  const f = setup();
+  f.read.mockImplementation(async (filters) =>
+    events.filter((event) =>
+      filters.some(
+        (filter) =>
+          (!filter.kinds || filter.kinds.includes(event.kind)) &&
+          (filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            )),
+      ),
+    ),
+  );
+  try {
+    await f.deliver({ type: "mention", event: mention });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(1));
+    await f.workingUntil.mock.calls[0]?.[0];
+    const text =
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? "";
+    expect(text).toContain('"content":"Plan"');
+    expect(text).toContain("Use the blue palette");
+    expect(text).not.toContain("Use the red palette");
+    expect(text).not.toContain("Drop the staging tables");
+    expect(text).not.toContain("Hijacked plan");
+    // A later turn with nothing new to show reads no edits or deletions.
+    const changes = () =>
+      f.read.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(40003)),
+      ).length;
+    const [reads, changed] = [f.read.mock.calls.length, changes()];
+    await f.deliver({
+      type: "mention",
+      event: { ...mention, id: "8".repeat(64), created_at: 120 },
+    });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(2));
+    await f.workingUntil.mock.calls[1]?.[0];
+    expect(f.read.mock.calls.length).toBeGreaterThan(reads);
+    expect(changes()).toBe(changed);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("tells a new session nothing came before when all of it was deleted", async () => {
+  const root = message("1", "Use the red palette", { created_at: 50 });
+  const deletion = message("2", "", {
+    kind: 5,
+    created_at: 70,
+    tags: [
+      ["h", channel],
+      ["e", root.id],
+    ],
+  });
+  const mention = message("3", "@Claude go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.kinds?.includes(5)) ? [deletion] : [root],
+  );
+  try {
+    await f.deliver({ type: "mention", event: mention });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(1));
+    await f.workingUntil.mock.calls[0]?.[0];
+    const text =
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? "";
+    expect(text).toContain("@Claude go");
+    expect(text).not.toContain("Use the red palette");
+    expect(text).not.toContain("Earlier context is already available");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("runs a new turn without history when its edits cannot be read", async () => {
+  const root = message("1", "Use the red palette", { created_at: 50 });
+  const mention = message("2", "@Claude go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(40003)))
+      throw new Error("timed out");
+    return [root];
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await f.deliver({ type: "mention", event: mention });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(1));
+    await f.workingUntil.mock.calls[0]?.[0];
+    const text =
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? "";
+    expect(text).toContain("@Claude go");
+    expect(text).not.toContain("Use the red palette");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it.each(["host", "self", "background"] as const)(
   "revokes a native Claude operation proof when its %s turn ends during a read",
   async (turn) => {

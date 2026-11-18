@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { usePanelShown } from "../../features/panels/PanelWorkspace";
 import { profileTarget } from "../../features/profiles/target";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -30,16 +31,19 @@ export function ProfileArchiveNotice({
     archives.snapshot,
     archives.snapshot,
   );
-  // Archive reads are finite snapshots, so each opening reads the current one,
-  // and so does a stale (idle) snapshot, as after a dropped connection.
+  // Archive reads are finite snapshots, so each opening reads the current
+  // one, and so does selecting a retained tab again, or a stale (idle)
+  // snapshot, as after a new access. A hidden tab reads nothing. A read that
+  // fails while the connection is down is repaired by the store on reconnect.
+  const shown = usePanelShown();
   useEffect(() => {
     void pubkey;
-    void archives.refresh();
-  }, [archives, pubkey]);
+    if (shown) void archives.refresh();
+  }, [archives, pubkey, shown]);
   const idle = snapshot.status === "idle";
   useEffect(() => {
-    if (idle) void archives.ensure();
-  }, [archives, idle]);
+    if (shown && idle) void archives.ensure();
+  }, [archives, idle, shown]);
   const archived = snapshot.archived.includes(pubkey);
   // A result counts only for the snapshot it was read under, so a corrected
   // archive never keeps an earlier replacement, even when the reread fails.
@@ -59,17 +63,18 @@ export function ProfileArchiveNotice({
   useEffect(() => {
     void readAt;
     void loading;
-    if (!archived || archives.snapshot().status === "loading") return;
-    const controller = new AbortController();
-    void archives.replacement(pubkey, controller.signal).then(
+    if (!shown || !archived || archives.snapshot().status === "loading") return;
+    let current = true;
+    void archives.replacement(pubkey).then(
       (key) => {
-        if (!controller.signal.aborted)
-          setReplacement({ of: pubkey, snapshot: eventId, key });
+        if (current) setReplacement({ of: pubkey, snapshot: eventId, key });
       },
       () => {},
     );
-    return () => controller.abort();
-  }, [archives, archived, loading, pubkey, eventId, readAt]);
+    return () => {
+      current = false;
+    };
+  }, [archives, archived, loading, pubkey, eventId, readAt, shown]);
   if (!archived) return null;
   const successor =
     replacement?.of === pubkey && replacement.snapshot === eventId

@@ -11,10 +11,11 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import type { Agent, Agents } from "../../features/agents/service";
+import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -63,14 +64,19 @@ function delta(
   });
 }
 /** `extra` events answer every filter of their kind, whatever its authors:
- * a relay that ignores the authors filter. While `failing.deltas` is set,
- * delta reads fail. While `held.snapshots` is set, snapshot reads wait for it. */
+ * a relay that ignores the authors filter. While `failing.deltas` or
+ * `failing.snapshots` is set, those reads fail. While `held.snapshots` is
+ * set, snapshot reads wait for it. `tabbed` shows the profile as a retained
+ * channel tab beside a thread tab, as Channels and Inbox do. */
 function mount(
   events: RelayEvent[],
   extra: RelayEvent[] = [],
-  { ownedBy }: { ownedBy?: (viewer: string) => Agents } = {},
+  {
+    ownedBy,
+    tabbed,
+  }: { ownedBy?: (viewer: string) => Agents; tabbed?: boolean } = {},
 ) {
-  const failing = { deltas: false };
+  const failing = { deltas: false, snapshots: false };
   const held: { snapshots?: Promise<void> } = {};
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
     if (
@@ -78,6 +84,11 @@ function mount(
       filters.some((filter) => filter.kinds?.includes(13535))
     )
       await held.snapshots;
+    if (
+      failing.snapshots &&
+      filters.some((filter) => filter.kinds?.includes(13535))
+    )
+      throw new Error("relay unavailable");
     return filters.flatMap((filter) => {
       if (failing.deltas && filter.kinds?.includes(8002))
         throw new Error("relay unavailable");
@@ -146,16 +157,24 @@ function mount(
     />
   );
   let openings = 0;
-  const view = render(panel(openings));
+  const view = render(
+    tabbed ? <Workspace profile={panel(openings)} /> : panel(openings),
+  );
   /** Closes the profile and opens it again in the same session. */
   const reopen = () => view.rerender(panel(++openings));
-  act(() => live?.state({ status: "connected", routes: [] }));
-  /** The live connection drops and comes back. */
-  const reconnect = () =>
+  /** The live connection drops. */
+  const drop = () => act(() => live?.state({ status: "retrying", routes: [] }));
+  /** The dropped connection comes back and its subscription establishes. */
+  const restore = () =>
     act(() => {
-      live?.state({ status: "retrying", routes: [] });
       live?.state({ status: "connected", routes: [] });
+      live?.established();
     });
+  /** The live connection drops and comes back. */
+  const reconnect = () => {
+    drop();
+    restore();
+  };
   return {
     query,
     open,
@@ -163,9 +182,25 @@ function mount(
     failing,
     held,
     archives: owner.session.archives,
+    drop,
+    restore,
     reconnect,
     reopen,
   };
+}
+/** A thread tab and the profile's tab, both retained while the other shows. */
+function Workspace({ profile }: { profile: ReactNode }) {
+  const [value, select] = useState("profile");
+  return (
+    <PanelWorkspace
+      value={value}
+      select={select}
+      items={[
+        { id: "thread", label: "Thread", content: <p>Thread</p> },
+        { id: "profile", label: "Profile", content: profile },
+      ]}
+    />
+  );
 }
 const people = [
   profile(old, { name: "Old Key" }),
@@ -386,6 +421,102 @@ it("retries a failed lookup after a reconnect, with an unchanged archive", async
   expect(archives.snapshot().eventId).toBe(eventId);
 });
 
+it("reads the archive again once the connection is back, after reads failed while it was down", async () => {
+  const events: RelayEvent[] = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { archives, failing, drop, restore, query } = mount(events);
+  const snapshots = () =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(13535)).length;
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  // The first establishment settles access, as at startup, which starts a
+  // new archive read; only a later reconnect is under test.
+  const before = snapshots();
+  restore();
+  await waitFor(() => expect(snapshots()).toBe(before + 1));
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  // The drop leaves the snapshot stale, so the open profile reads it again
+  // while the connection is down, and that read fails.
+  failing.snapshots = true;
+  drop();
+  await waitFor(() => expect(archives.snapshot().status).toBe("error"));
+  // Meanwhile the key is unarchived.
+  events.push(
+    snapshot([], 1_700_000_050),
+    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
+  );
+  failing.snapshots = false;
+  restore();
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+});
+
+it("reads a retained profile tab's archive when it is selected again, and nothing while it is hidden", async () => {
+  const events: RelayEvent[] = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { query, archives } = mount(events, [], { tabbed: true });
+  const reads = (kind: number) =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(kind)).length;
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await user.click(screen.getByRole("tab", { name: "Thread" }));
+  const snapshots = reads(13535);
+  const deltas = reads(8002);
+  // A reread of the shared snapshot, as another profile's opening makes,
+  // reads no deltas for the hidden one.
+  await act(() => archives.refresh());
+  await act(async () => {});
+  expect(reads(8002)).toBe(deltas);
+  // Another device unarchives the key, then the link returns to the tab.
+  events.push(
+    snapshot([], 1_700_000_050),
+    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
+  );
+  // The profile names its own tab.
+  await user.click(screen.getByRole("tab", { name: "Old Key" }));
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+  expect(reads(13535)).toBe(snapshots + 2);
+});
+
+it("shares one delta read among the profiles that show a key under one snapshot read", async () => {
+  const { query, archives } = mount([
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ]);
+  const reads = () =>
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.includes(8002)).length;
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await waitFor(() => expect(reads()).toBe(1));
+  const answers = await act(() =>
+    Promise.all([
+      archives.replacement(old.pubkey),
+      archives.replacement(old.pubkey),
+    ]),
+  );
+  expect(answers).toEqual([successor.pubkey, successor.pubkey]);
+  expect(reads()).toBe(1);
+  // A later snapshot read asks again, once.
+  await act(() => archives.refresh());
+  await waitFor(() => expect(reads()).toBe(2));
+  await act(() => archives.replacement(old.pubkey));
+  expect(reads()).toBe(2);
+});
+
 const ownedType = {
   key: "test/echo",
   title: "Echo",
@@ -467,6 +598,15 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
   // The profile's own navigation, push before open, as its other links use.
   expect(push).toHaveBeenCalledExactlyOnceWith(profileTarget(successor.pubkey));
   expect(open).not.toHaveBeenCalled();
+  // Push keeps this tab, as Channels does: the discarded edits are gone, so
+  // the link opens again without asking.
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Open new key profile: New Key",
+    }),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(push).toHaveBeenCalledTimes(2);
 });
 
 it("hides an owned agent's notice while its name is edited", async () => {

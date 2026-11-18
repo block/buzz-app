@@ -63,6 +63,14 @@ const TabHost = createContext<{
 export function usePanelTabHost() {
   return useContext(TabHost);
 }
+/** Retained tab content stays mounted while another tab is selected. */
+const PaneShown = createContext(true);
+/** Whether this content's tab is the selected one; true outside a tab host.
+ * Content that reads the relay can wait until it is shown, and read again
+ * when it is selected again, as when a link returns to its retained tab. */
+export function usePanelShown() {
+  return useContext(PaneShown);
+}
 
 export function usePanelTabTitle(
   label: string,
@@ -560,7 +568,9 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              {item.content}
+              <PaneShown.Provider value={selected === item.id}>
+                {item.content}
+              </PaneShown.Provider>
             </div>
           </TabScope>
         ))}

@@ -743,6 +743,16 @@ export function AgentsPage({
     const pubkey = profileKey(target);
     return !!find(pubkey) && browse(pubkey);
   };
+  const notice = (pubkey: string, hidden?: boolean) =>
+    connection.status === "ready" ? (
+      <ProfileArchiveNotice
+        session={connection.session}
+        pubkey={pubkey}
+        canOpen={canOpenOwned}
+        open={openOwned}
+        hidden={hidden}
+      />
+    ) : undefined;
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -754,6 +764,7 @@ export function AgentsPage({
         onClose={closePanel}
         onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
+        notice={notice(selected.pubkey)}
       />
     ) : (
       <AgentDetails
@@ -813,15 +824,7 @@ export function AgentsPage({
         canOpenLink={canOpenOwned}
         notice={
           connection.status === "ready"
-            ? (hidden) => (
-                <ProfileArchiveNotice
-                  session={connection.session}
-                  pubkey={selected.pubkey}
-                  canOpen={canOpenOwned}
-                  open={openOwned}
-                  hidden={hidden}
-                />
-              )
+            ? (hidden) => notice(selected.pubkey, hidden)
             : undefined
         }
         openSettings={openSettings}
@@ -1683,6 +1686,7 @@ function AgentPeek({
   onClose,
   onRemoved,
   openSettings,
+  notice,
 }: {
   agents: Agents;
   agent: Agent;
@@ -1691,6 +1695,8 @@ function AgentPeek({
   onClose(): void;
   onRemoved(): void;
   openSettings: ((section: string) => void) | undefined;
+  /** Status text under the identity, such as an archive notice. */
+  notice?: ReactNode;
 }) {
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
@@ -1711,6 +1717,7 @@ function AgentPeek({
         detail={summaryOf(agent, type)}
         onClose={onClose}
       />
+      {notice}
       {agent.place === "elsewhere" ? (
         <p className="m-0 text-body-sm text-secondary">
           {type && !type.remote ? (

@@ -117,7 +117,15 @@ export function createIdentityArchives(
     status: available ? "idle" : "unavailable",
     archived: empty,
   });
+  // Replacement lookups for the current snapshot read, shared by every
+  // profile that shows the same key; a stop cancels them.
+  let lookups = new Map<
+    string,
+    { readAt: number | undefined; answer: Promise<string | undefined> }
+  >();
+  let lookupsController = new AbortController();
   function publish(next: IdentityArchiveSnapshot) {
+    if (next.readAt !== snapshot.readAt) lookups = new Map();
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
@@ -364,19 +372,35 @@ export function createIdentityArchives(
   /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
    * when that delta is a well-formed archive delta. Callers show it only while
    * the current snapshot lists `pubkey`. Presentation only, never access.
+   * One read per key for each snapshot read: callers asking under the same
+   * read share it, and a later snapshot read asks again.
    * Older relays stamp deltas to the second, and concurrent publishers can
    * share one, so deltas tied at the newest second count only when they all
    * give the same answer, and a full page of them names no replacement. */
-  async function replacement(
-    pubkey: string,
-    signal?: AbortSignal,
-  ): Promise<string | undefined> {
+  function replacement(pubkey: string): Promise<string | undefined> {
     if (closed || !available || !authority || !HEX.test(pubkey))
-      return undefined;
+      return Promise.resolve(undefined);
+    const { readAt } = snapshot;
+    const known = lookups.get(pubkey);
+    if (known && known.readAt === readAt) return known.answer;
+    const current = lookups;
+    const answer = lookup(authority, pubkey, lookupsController.signal);
+    current.set(pubkey, { readAt, answer });
+    // A failed lookup is asked again by the next caller, not remembered.
+    answer.catch(() => {
+      if (current.get(pubkey)?.answer === answer) current.delete(pubkey);
+    });
+    return answer;
+  }
+  async function lookup(
+    authority: string,
+    pubkey: string,
+    signal: AbortSignal,
+  ): Promise<string | undefined> {
     const limit = 3;
     const events = await reader.read(
       [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit }],
-      { ...(signal && { signal }), priority: "background", fresh: true },
+      { signal, priority: "background", fresh: true },
     );
     const deltas = events.filter(
       (event) =>
@@ -401,6 +425,9 @@ export function createIdentityArchives(
   function stop() {
     for (const owned of requests) owned.abort();
     stopRead();
+    lookupsController.abort();
+    lookupsController = new AbortController();
+    lookups = new Map();
     return closed || !available ? "unavailable" : "idle";
   }
   function stopRead() {
@@ -423,6 +450,17 @@ export function createIdentityArchives(
       return;
     }
     if (!snapshot.transient) publish(retired(snapshot));
+  }
+  /** Once a dropped connection is back: a snapshot that a view subscribes to
+   * and that the drop left stale, or whose reads failed during it, is read
+   * again, since nothing else would ask before that view's next opening. */
+  function reconnect() {
+    if (
+      !closed &&
+      listeners.size &&
+      (snapshot.status === "idle" || snapshot.status === "error")
+    )
+      void refresh();
   }
   return {
     queries: Object.freeze({
@@ -456,6 +494,7 @@ export function createIdentityArchives(
       !backgroundRead || connected
         ? refresh(backgroundRead)
         : Promise.resolve(),
+    reconnect,
     dispose() {
       closed = true;
       clear();

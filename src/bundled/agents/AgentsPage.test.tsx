@@ -4787,6 +4787,28 @@ it("names an archived agent's replacement without a link when it is not one of y
   }
 });
 
+it("shows the archive notice for your agent that runs on another device", async () => {
+  const user = userEvent.setup();
+  const ada: Agent = { ...agent("Ada", 1), place: "elsewhere" };
+  const view = setup([ada, agent("Bo", 2)]);
+  const archive = archiveRelay(ada.pubkey, agent("Bo", 2).pubkey);
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={archive.relay} />);
+    await user.click(
+      within(screen.getByRole("grid", { name: "Agents" })).getByText("Ada"),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /^Open new key profile: / }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Bo" }),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    archive.dispose();
+  }
+});
+
 it("asks before choosing another agent discards an unsaved draft", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {

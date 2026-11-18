@@ -300,6 +300,9 @@ function OwnedAgentProfile({
   const [unsaved, reportUnsaved] = useAgentSaveReports();
   const [leaving, setLeaving] = useState<string>();
   if (leaving && !unsaved.dirty) setLeaving(undefined);
+  // A host that opens the link as a new tab keeps this one, so discarded
+  // edits are reset here rather than by leaving.
+  const [discards, setDiscards] = useState(0);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
   const conversationTarget = (link: string) => {
@@ -324,6 +327,7 @@ function OwnedAgentProfile({
   return (
     <AgentSaveState value={reportUnsaved}>
       <AgentDetails
+        key={discards}
         historyPresentation={
           navigation &&
           address?.kind === "conversation" &&
@@ -388,6 +392,7 @@ function OwnedAgentProfile({
           onKeep={() => setLeaving(undefined)}
           onDiscard={() => {
             setLeaving(undefined);
+            setDiscards((count) => count + 1);
             go(leaving);
           }}
         />

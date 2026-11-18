@@ -1010,13 +1010,18 @@ it.each([
       memory,
     );
     const user = userEvent.setup();
-    try {
+    // Discard resets the profile's editors, so the memory is opened again.
+    const openMemory = async () => {
       await user.click(screen.getByRole("tab", { name: "Memory" }));
       await user.click(await screen.findByRole("button", { name: "core" }));
       memory.dirty = dirty;
       memory.saving = saving;
       dispose.refresh();
+    };
+    try {
+      await openMemory();
       for (const name of ["Source", "Repository"]) {
+        if (!screen.queryByRole("link", { name })) await openMemory();
         navigate.mockClear();
         push.mockClear();
         await user.click(screen.getByRole("link", { name }));
@@ -1042,6 +1047,8 @@ it.each([
               name: "Discard changes",
             }),
           );
+          // A host may keep this profile open: its edits are gone.
+          expect(screen.queryByRole("link", { name })).toBeNull();
         }
         if (name === "Source") {
           expect(navigate).toHaveBeenCalledExactlyOnceWith({

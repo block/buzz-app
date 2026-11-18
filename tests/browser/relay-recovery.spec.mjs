@@ -1,10 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-test.use({
-  productionBroker: true,
-  historyCounts: { alpha: 1, beta: 1 },
-});
+test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
 
 // Models a laptop that wakes before its VPN is back: the relay connection
 // drops and every relay request gets a non-relay 403 page. When the network

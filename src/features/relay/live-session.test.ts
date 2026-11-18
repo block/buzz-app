@@ -2722,4 +2722,20 @@ describe("session recovery and the live reconnect wait", () => {
       owner.dispose();
     }
   });
+
+  it("Retry and credential changes skip the live reconnect wait", async () => {
+    vi.useFakeTimers();
+    const { owner, retry, live } = setup();
+    try {
+      live.state({ status: "retrying", routes: [] });
+      await vi.advanceTimersByTimeAsync(2_000);
+      owner.session.recovery?.retryAll();
+      expect(retry).toHaveBeenCalledTimes(1);
+      live.state({ status: "connected", routes: [] });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      owner.dispose();
+    }
+  });
 });

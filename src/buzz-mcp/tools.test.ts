@@ -4636,7 +4636,12 @@ it("hands off to the agent in another of its conversations it can see", async ()
   vi.mocked(client.threadsApart).mockReturnValue(false);
   await expect(
     wake({ channel: "chan" }, { channel: "chan", thread: nested }),
-  ).rejects.toThrow("That is this conversation.");
+  ).rejects.toThrow(/^That is this conversation\.$/);
+  // Where the host cannot tell yet, the refusal says why.
+  vi.mocked(client.threadsApart).mockReturnValue(undefined);
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("this channel has not loaded here yet");
   expect(vi.mocked(client.handoff).mock.calls).toEqual([
     [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
     [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],

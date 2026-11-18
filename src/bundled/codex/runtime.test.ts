@@ -6345,6 +6345,52 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
   expect(handoff).not.toHaveBeenCalled();
 });
 
+it.each([true, false])(
+  "hands a channel-level Codex wake into a thread only where the host says threads are apart (%s)",
+  async (apart) => {
+    const f = fixture();
+    const handoff = vi.fn();
+    f.events.push({
+      id: "d".repeat(64),
+      pubkey: owner,
+      kind: 39000,
+      content: "",
+      created_at: 1,
+      tags: [["d", "channel"]],
+    } as EventData);
+    const other = f.delivery("other thread", "e".repeat(64));
+    if (other.trigger.type !== "mention") throw new Error("Expected mention");
+    const delivery = pluginWake(f);
+    if (delivery.trigger.type !== "plugin") throw new Error("fixture");
+    await f.runtime.run({
+      ...delivery,
+      trigger: { ...delivery.trigger, type: "attention", topLevel: true },
+      agent: {
+        ...delivery.agent,
+        handoff,
+        threadsApart: () => apart,
+      } as Delivery["agent"],
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const result = await f.tool("self_handoff", {
+      channel: "channel",
+      thread: other.trigger.event.id,
+      text: "carry on",
+    });
+    if (apart) {
+      expect(JSON.stringify(result?.result)).toContain("Queued self-handoff");
+      expect(handoff).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "channel", root: "e".repeat(64) }),
+      );
+    } else {
+      expect(JSON.stringify(result?.result)).toContain(
+        "That is this conversation.",
+      );
+      expect(handoff).not.toHaveBeenCalled();
+    }
+  },
+);
+
 it("keeps callbacks live beside terminals and lets a title finish after its admission closes", async () => {
   let handler!: McpHandler;
   let enabled = true;

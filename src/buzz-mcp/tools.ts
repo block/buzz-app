@@ -569,11 +569,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const root = event && rootOf(event);
     // A conversation with no thread is the whole channel, unless the host
     // says this channel's threads have sessions of their own.
-    const whole =
-      context.wholeChannel ||
-      (!context.root && !client.threadsApart?.(channel));
-    if (channel === context.channel && (whole || root === context.root))
-      throw new Error("That is this conversation.");
+    const same = channel === context.channel;
+    const rootless = same && !context.root && !context.wholeChannel;
+    const apart = rootless ? client.threadsApart?.(channel) : undefined;
+    const whole = context.wholeChannel || (!context.root && apart !== true);
+    if (same && (whole || root === context.root))
+      throw new Error(
+        rootless && client.threadsApart && apart === undefined
+          ? "That is this conversation for now: this channel has not loaded here yet, so its threads cannot be told apart from it. Try again shortly."
+          : "That is this conversation.",
+      );
     const { channel: from, root: fromRoot } = context;
     client.handoff({
       channel,

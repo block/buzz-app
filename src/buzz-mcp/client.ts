@@ -137,9 +137,10 @@ export interface BuzzClient {
     }>,
   ): void;
   /** Whether the agent's threads in `channel` have sessions of their own,
-   * apart from its channel-level conversation there. Where the host cannot
-   * tell, a conversation with no thread is the whole channel. */
-  threadsApart?(channel: string): boolean;
+   * apart from its channel-level conversation there; undefined while the host
+   * cannot tell yet. Unless it says yes, a conversation with no thread is the
+   * whole channel. */
+  threadsApart?(channel: string): boolean | undefined;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */

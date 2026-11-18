@@ -2329,8 +2329,10 @@ describe("a plugin's wake", () => {
       f.plugin.agents.wake(bot, { channel, root, text: "first" });
       await vi.waitFor(() => expect(handle).toBeDefined());
       expect(handle?.threadsApart?.(channel)).toBe(apart);
-      // A channel not known yet stays one conversation.
-      expect(handle?.threadsApart?.("unknown-channel")).toBe(false);
+      // A channel not known yet cannot be told apart, under thread scope.
+      expect(handle?.threadsApart?.("unknown-channel")).toBe(
+        scope === "thread" ? undefined : false,
+      );
       // A DM or Solo chat is one conversation under either scope.
       const list = f.session.channels.list();
       for (const channelType of ["dm", "solo"] as const) {

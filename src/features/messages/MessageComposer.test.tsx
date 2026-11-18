@@ -9801,6 +9801,58 @@ const editableMessage = (
   ...overrides,
 });
 
+it("puts a tool placed beside Send just before Send, and hides it while editing", () => {
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "row",
+      key: "test/row",
+      pluginId: "test",
+      revision: "1",
+      title: "Row tool",
+      component: () => <button type="button">Row tool</button>,
+    },
+    {
+      id: "status",
+      key: "test/status",
+      pluginId: "test",
+      revision: "1",
+      title: "Status",
+      placement: "send",
+      component: ({ channelId }) => (
+        <button type="button">{`Status for ${channelId}`}</button>
+      ),
+    },
+  ];
+  const h = mount(
+    {
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: none,
+        completions: none,
+      },
+    },
+    undefined,
+    first.pubkey,
+  );
+  const form = within(h.container);
+  const status = form.getByRole("button", { name: "Status for channel" });
+  expect(form.getAllByRole("button", { name: /^Status/ })).toHaveLength(1);
+  expect(form.getByRole("button", { name: "Row tool" })).toBeTruthy();
+  // Right before Send, with nothing between them.
+  expect(status.nextElementSibling).toBe(
+    form.getByRole("button", { name: "Send message" }),
+  );
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(form.queryByRole("button", { name: /^Status/ })).toBeNull();
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  expect(form.getByRole("button", { name: "Status for channel" })).toBeTruthy();
+});
+
 it("edits in the same composer, cancels without persisting edit text, and restores draft undo history", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);

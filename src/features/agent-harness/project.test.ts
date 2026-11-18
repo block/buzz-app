@@ -27,8 +27,13 @@ it("hands over the whole Canvas, naming the folders it works in", () => {
   const { section, directories } = project(canvas);
   expect(directories).toEqual(["~/app", "~/trees"]);
   expect(section).toMatch(/^<workspace-canvas>\n/);
-  expect(section).toContain("not your own workspace: `~/app`, `~/trees`.");
-  expect(section).toContain(`${canvas.trim()}\n</workspace-canvas>`);
+  expect(section).toContain(
+    "not your own workspace: `~/app`, `~/trees`. To change files there, follow this Canvas's rule for them; your workspace keeps your notes.",
+  );
+  // The block's rule, without the lines that only Buzz reads.
+  expect(section).toContain("create a new worktree under `~/trees`");
+  expect(section).not.toContain("buzz-session-workspace");
+  expect(section).toContain("\n\nUse tokens.\n</workspace-canvas>");
   expect(project("Just notes")).toEqual({
     section: expect.not.stringContaining("not your own workspace"),
     directories: [],
@@ -40,6 +45,60 @@ it("hands over the whole Canvas, naming the folders it works in", () => {
     "Disregard any earlier workspace Canvas",
   );
   expect(NO_PROJECT.directories).toEqual([]);
+});
+
+it("names a Canvas's folders as reading when the conversation has its own folder", () => {
+  const worktree = { location: "~/trees", baseBranch: "main" };
+  for (const canvas of [
+    workspaceCanvas({ folders: ["~/app"], worktree, canvas: "Use tokens." }),
+    workspaceCanvas({ folders: ["~/app"], canvas: "Use tokens." }),
+  ]) {
+    const { section, directories } = project(canvas, true);
+    expect(directories).toEqual(project(canvas).directories);
+    expect(section).toContain(
+      "These folders hold code that is relevant to this chat: `~/app`",
+    );
+    expect(section).toContain("They are for reading.");
+    expect(section).not.toMatch(/not your own workspace|worktree/);
+    expect(section).toContain(
+      "\n\n## Project folders\n\n- `~/app`\n\nUse tokens.\n</workspace-canvas>",
+    );
+  }
+  // Without one, a folder-only Canvas states the rule for its folders.
+  expect(
+    project(workspaceCanvas({ folders: ["~/app"], canvas: "Use tokens." }))
+      .section,
+  ).toContain(
+    "- `~/app`\n\nMake changes in these folders, on a branch that is not the default branch. Do not create a worktree.\n\nUse tokens.",
+  );
+  expect(project("Just notes", true)).toEqual(project("Just notes"));
+});
+
+it("lets worktree rules the owner edited by hand stand in a conversation with its own folder", () => {
+  const edited = workspaceCanvas({
+    folders: ["~/app"],
+    worktree: { location: "~/trees", baseBranch: "main" },
+    canvas: "Use tokens.",
+  }).replace("for review only", "for small fixes");
+  const { section } = project(edited, true);
+  // One rule for the folders: the owner's, not "for reading".
+  expect(section).toContain(
+    "These folders hold code that is relevant to this chat: `~/app`, `~/trees`.\n\n",
+  );
+  expect(section).not.toContain("They are for reading.");
+  expect(section).toContain("- Use `~/app` for small fixes.");
+  expect(section).toContain(
+    "\n\nThe owner wrote the worktree rules of this block. They replace this conversation's working-location rule.\n\nUse tokens.\n</workspace-canvas>",
+  );
+  // A hand edit that is no worktree rule leaves the folders for reading.
+  const note = workspaceCanvas({
+    folders: ["~/app"],
+    canvas: "Use tokens.",
+  }).replace("- `~/app`", "- `~/app` (the API)");
+  expect(project(note, true).section).toContain(
+    "relevant to this chat: `~/app`. They are for reading.\n\n",
+  );
+  expect(project(note, true).section).not.toContain("The owner wrote");
 });
 
 it("keeps the Canvas's text from opening the turn's event section", () => {

@@ -591,7 +591,12 @@ and are asked to sign in again in Buzz.
   from **Filter**, or choose **All** to show them in the sidebar again.
   Plugins can add tasks, Lead conversations and workspace actions.
   When starting a chat, type **#** to choose a workspace and load its settings.
-  Folders are optional unless **Work in a new worktree** is on.
+  Folders are optional unless **Work in a new worktree** is on. An agent
+  changes code in a workspace's project folders directly, on a branch other
+  than the default branch, or in a new worktree when **Work in a new worktree**
+  is on. In a chat without project folders, an agent that changes a repository
+  makes a new worktree of it and leaves the main worktree as it is. A
+  conversation that a plugin gave its own folder works in that folder instead.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**. A sent chip shows the channel's current
@@ -600,8 +605,9 @@ and are asked to sign in again in Buzz.
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the
   message shows the folder's name. When you send it to your own Claude or Codex
-  agent on this device, the agent is told the folder's path, and Claude may also
-  work in that folder for the rest of the conversation. A chip someone else
+  agent on this device, the agent is told the folder's path as context, and
+  Claude can also reach that folder for the rest of the conversation. A chip
+  does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and

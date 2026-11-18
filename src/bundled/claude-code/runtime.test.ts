@@ -4693,6 +4693,42 @@ describe("a conversation given its own folder", () => {
     expect(published).toEqual([]);
   });
 
+  it("tells a Solo chat that works there to read its Canvas's folders, not to make a worktree", async () => {
+    const { deliver, claudes, data } = setup([], {
+      resolveDirectory: folders(),
+      solo: new Set([channel]),
+      canvas: {
+        content: workspaceCanvas({
+          folders: ["~/Development/app"],
+          worktree: { location: "~/Development/trees", baseBranch: "main" },
+          canvas: "Use the design system.",
+        }),
+      },
+    });
+    await assign(data, "/repos/worktree", channel);
+    await deliver({
+      type: "mention",
+      event: message("1", "@Claude go", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/worktree");
+    expect(systemPromptOf(claude)).toContain(
+      "This conversation has its own folder, and it is your working directory.",
+    );
+    const turn = claude?.prompts[0];
+    expect(turn).toContain(
+      "These folders hold code that is relevant to this chat: `~/Development/app`, `~/Development/trees`. They are for reading.",
+    );
+    expect(turn).toContain("## Project folders\n\n- `~/Development/app`");
+    expect(turn).not.toContain("create a new worktree");
+  });
+
   it("starts a protected agent there, contained as in its workspace", async () => {
     const { deliver, claudes, data, agent, runtime } = setup([root, mention], {
       hold: true,

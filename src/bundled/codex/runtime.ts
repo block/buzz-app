@@ -2137,7 +2137,11 @@ export class CodexRuntime {
     const canvas = reads.canvas?.bind(reads);
     const [canvasProject, folders] = await Promise.all([
       solo
-        ? readProject(canvas && (() => canvas(channelId, agent.owner)))
+        ? readProject(
+            canvas && (() => canvas(channelId, agent.owner)),
+            // A Solo chat is one conversation, with no thread root.
+            Boolean(this.folder(reads.scope, agent.key, channelId)),
+          )
         : undefined,
       referencedFolders(event, agent.owner, reads.scope),
     ]);

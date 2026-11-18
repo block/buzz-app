@@ -24,6 +24,11 @@ const worktreeRule =
   "- Make code changes in that new worktree. A task that only reads code, or does not use a repository, usually does not need one.";
 // What earlier versions wrote instead, which Canvases saved then still hold.
 const earlierWorktreeRule = "- Make all changes in that new worktree.";
+// What an agent reads with the block, which no Canvas holds.
+const folderRule =
+  "Make changes in these folders, on a branch that is not the default branch. Do not create a worktree.";
+const ownerRule =
+  "The owner wrote the worktree rules of this block. They replace this conversation's working-location rule.";
 export const emptyWorkspace = (): Workspace => ({ folders: [], canvas: "" });
 
 export function validateWorkspace(value: Workspace): Workspace {
@@ -55,19 +60,9 @@ export function validateWorkspace(value: Workspace): Workspace {
   return { folders, ...(worktree ? { worktree } : {}), canvas: value.canvas };
 }
 
-/** Workspace preferences remain ordinary Canvas instructions, as in the reference workflow. */
-export function workspaceCanvas(input: Workspace): string {
-  const value = validateWorkspace(input);
-  if (new TextEncoder().encode(value.canvas).length > LIVE_CANVAS_BYTES)
-    throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}.`);
-  if (!value.folders.length) return value.canvas;
-  const metadata = JSON.stringify({
-    folders: value.folders,
-    worktree: value.worktree,
-  })
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e");
-  const instructions = value.worktree
+/** What the workspace block tells an agent about its folders. */
+function instructions(value: Workspace) {
+  return value.worktree
     ? [
         "## Workspace instructions",
         "",
@@ -84,9 +79,23 @@ export function workspaceCanvas(input: Workspace): string {
         "",
         ...value.folders.map((folder) => `- \`${folder}\``),
       ];
+}
+
+/** Workspace preferences remain ordinary Canvas instructions, as in the reference workflow. */
+export function workspaceCanvas(input: Workspace): string {
+  const value = validateWorkspace(input);
+  if (new TextEncoder().encode(value.canvas).length > LIVE_CANVAS_BYTES)
+    throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}.`);
+  if (!value.folders.length) return value.canvas;
+  const metadata = JSON.stringify({
+    folders: value.folders,
+    worktree: value.worktree,
+  })
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e");
   const canvas = [
     `${prefix}${metadata} -->`,
-    ...instructions,
+    ...instructions(value),
     end,
     "",
     value.canvas,
@@ -125,6 +134,58 @@ export function shareableInstructions(content: string): string {
   } catch {
     return "";
   }
+}
+
+/** A Canvas's workspace block: its settings, and whether its text is other
+ * than what Buzz generates from them, so its owner edited it by hand.
+ * Undefined when the Canvas has no block or it cannot be read. */
+function workspaceBlock(content: string) {
+  if (!content.startsWith(prefix)) return undefined;
+  try {
+    const value = parseWorkspace(content);
+    const generated = workspaceCanvas({ ...value, canvas: "" });
+    if (!generated) return undefined;
+    return {
+      value,
+      edited:
+        !content.startsWith(generated) &&
+        !content.startsWith(
+          generated.replace(worktreeRule, earlierWorktreeRule),
+        ),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the Canvas's workspace block has worktree rules that its owner
+ * edited by hand. They are the owner's rule for the chat, also when the
+ * conversation works in a folder of its own. */
+export function ownerWorktreeRules(content: string) {
+  const block = workspaceBlock(content);
+  return !!block?.edited && !!block.value.worktree;
+}
+
+/** A Canvas as its agent reads it. A workspace block that Buzz generated is
+ * printed again from its settings, so what an agent is told can change
+ * without changing what Canvases hold. `ownFolder`: the conversation works in
+ * a folder of its own, so the block only lists the folders. A block edited by
+ * hand stays as written, as does one that cannot be read; its worktree rules
+ * are then the owner's rule for this chat, which the text says. */
+export function agentCanvas(content: string, ownFolder = false): string {
+  const block = workspaceBlock(content);
+  if (!block) return content;
+  const { value } = block;
+  if (block.edited) {
+    if (!ownFolder || !value.worktree) return content;
+    const at = content.length - value.canvas.length;
+    return `${content.slice(0, at)}${ownerRule}\n\n${content.slice(at)}`;
+  }
+  const lines = instructions(
+    ownFolder ? { ...value, worktree: undefined } : value,
+  );
+  if (!ownFolder && !value.worktree) lines.push("", folderRule);
+  return `${lines.join("\n")}\n\n${value.canvas}`;
 }
 
 /** The folders a Canvas's workspace block lets an agent work in: its project

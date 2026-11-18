@@ -32,6 +32,7 @@ import tools from "./tools.md?raw";
 import trust from "./trust.md?raw";
 import turnContract from "./turn-contract.md?raw";
 import waiting from "./waiting.md?raw";
+import workingLocationAssigned from "./working-location.assigned.md?raw";
 import workingLocation from "./working-location.md?raw";
 import workspaceLayout from "./workspace-layout.md?raw";
 import workspaceLayoutOwnFolder from "./workspace-layout.own-folder.md?raw";
@@ -127,7 +128,8 @@ export const SECTIONS: readonly Section[] = [
     id: "working-location",
     title: "Working location",
     plugin: true,
-    text: workingLocation,
+    text: ({ ownFolder }) =>
+      ownFolder ? workingLocationAssigned : workingLocation,
   },
   {
     id: "autonomy",

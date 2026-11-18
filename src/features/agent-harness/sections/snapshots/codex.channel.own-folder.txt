@@ -160,7 +160,7 @@ Your commits use the git identity of the person running you by default. Change i
 
 ## Working location
 
-Make file changes in a worktree, not on the default branch. When continuing recent work, reuse the existing worktree rather than creating another. For an existing local checkout, make changes in a new worktree.
+This conversation has its own folder, and it is your working directory. Make changes there. Do not create another worktree. Other folders that a turn names are for reading.
 
 ## Autonomy
 

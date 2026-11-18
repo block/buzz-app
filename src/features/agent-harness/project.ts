@@ -7,7 +7,11 @@ import {
   approvedCanvas,
   type CanvasHead,
 } from "../channel-templates/canvas-approval";
-import { workspaceDirectories } from "../solo/workspace";
+import {
+  agentCanvas,
+  ownerWorktreeRules,
+  workspaceDirectories,
+} from "../solo/workspace";
 import { unframed } from "./plugin-wake";
 
 export type Project = Readonly<{
@@ -39,14 +43,24 @@ export class ProjectSource {
   }
 }
 
-export function project(canvas: string | undefined): Project {
+/** `ownFolder`: the conversation works in a folder of its own, so the
+ * Canvas's folders are for reading, unless its owner wrote worktree rules
+ * for them by hand. The section states the rule for the folders it lists;
+ * the base prompt's working location rule points here. */
+export function project(
+  canvas: string | undefined,
+  ownFolder = false,
+): Project {
   if (!canvas?.trim()) return NO_PROJECT;
   const directories = workspaceDirectories(canvas);
-  const folders = directories.length
-    ? ` This chat's work happens in these folders, not your own workspace: ${directories.map((folder) => `\`${folder}\``).join(", ")}. \`cd\` into the one you need; your workspace keeps your notes.`
-    : "";
+  const list = directories.map((folder) => `\`${folder}\``).join(", ");
+  const folders = !directories.length
+    ? ""
+    : ownFolder
+      ? ` These folders hold code that is relevant to this chat: ${list}.${ownerWorktreeRules(canvas) ? "" : " They are for reading."}`
+      : ` This chat's work happens in these folders, not your own workspace: ${list}. To change files there, follow this Canvas's rule for them; your workspace keeps your notes.`;
   return {
-    section: `<workspace-canvas>\nThis Solo chat's Canvas as of this message: its standing instructions for this chat, which the owner's messages override. It replaces any earlier workspace Canvas.${folders}\n\n${unframed(canvas.trim())}\n</workspace-canvas>`,
+    section: `<workspace-canvas>\nThis Solo chat's Canvas as of this message: its standing instructions for this chat, which the owner's messages override. It replaces any earlier workspace Canvas.${folders}\n\n${unframed(agentCanvas(canvas, ownFolder).trim())}\n</workspace-canvas>`,
     directories,
   };
 }
@@ -85,6 +99,7 @@ export async function ownerCanvas(
  * time or there is no reader: the caller keeps what it knew. */
 export async function readProject(
   read: (() => Promise<string | undefined>) | undefined,
+  ownFolder = false,
 ): Promise<Project | undefined> {
   if (!read) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -99,6 +114,7 @@ export async function readProject(
           );
         }),
       ]),
+      ownFolder,
     );
   } catch (error) {
     console.warn("Could not read the chat's Canvas", error);

@@ -3286,9 +3286,16 @@ it.each([
       if (authenticated) await h.first.auth();
       // An abrupt TCP drop fires error, then close 1006.
       // The close arrives later, so only the error can meet the deadline.
-      h.first.onerror?.(new Event("error"));
+      // A local close() stays silent: the one close notification is the
+      // socket's own, 10ms after the error.
+      const socket = h.first;
+      socket.close = () => {
+        socket.readyState = 3;
+      };
+      socket.onerror?.(new Event("error"));
       await vi.advanceTimersByTimeAsync(10);
-      h.first.close(1006);
+      socket.readyState = 3;
+      socket.onclose?.({ code: 1006 });
       await vi.advanceTimersByTimeAsync(delay - 11);
       expect(h.sockets).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);

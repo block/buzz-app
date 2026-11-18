@@ -5,6 +5,7 @@ import {
   CircleDashedIcon,
   GitHubIssueIcon,
   GitMergeIcon,
+  GitPullRequestApprovedIcon,
   GitPullRequestIcon,
   XCircleIcon,
 } from "../../shared/design-system/icons/index";
@@ -16,6 +17,15 @@ export const stateIcons = {
   closed: XCircleIcon,
   merged: GitMergeIcon,
 };
+
+/** A link's glyph for `state`. An open pull request with every approval it
+ * needs gets a checked glyph of the same size. A draft keeps its own, as it
+ * cannot merge either way. */
+export function pullLinkIcon(state: PullState | undefined) {
+  if (state?.state === "open" && state.review === "approved")
+    return GitPullRequestApprovedIcon;
+  return stateIcons[state?.state ?? "open"];
+}
 
 /** An issue's: one completed is checked off, as on GitHub, and one not
  * planned is crossed out, as a closed pull request is here. */

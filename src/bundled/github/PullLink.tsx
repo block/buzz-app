@@ -9,7 +9,6 @@ import {
   LinkInteractiveContext,
   LinkLabelContext,
 } from "../../features/conversation/LinkLabelContext";
-import { CheckIcon } from "../../shared/design-system/icons/index";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import {
@@ -17,7 +16,7 @@ import {
   describePull,
   issueIcons,
   issueState,
-  stateIcons,
+  pullLinkIcon,
 } from "./pull-state-view";
 import type { PullStates } from "./pull-states";
 import { parseGitHubReference } from "./references";
@@ -47,12 +46,7 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   const shown = state && (issue ? issueState(state) : state.state);
   const Icon = issue
     ? issueIcons[state ? issueState(state) : "open"]
-    : stateIcons[state?.state ?? "open"];
-  // Only an approval is marked; the words say the rest.
-  const approved =
-    !issue &&
-    (state?.state === "open" || state?.state === "draft") &&
-    state.review === "approved";
+    : pullLinkIcon(state);
   const words = (issue ? describeIssue : describePull)({
     state,
     failed: read === "failed",
@@ -83,12 +77,6 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
           title={words}
         >
           <Icon aria-hidden="true" className={inlineStyles.icon} />
-          {approved && (
-            <CheckIcon
-              aria-hidden="true"
-              className={`${inlineStyles.icon} ${styles.pullApproved}`}
-            />
-          )}
         </span>
       }
     />

@@ -66,6 +66,12 @@ export function NewWorkspace({
   });
   const form = useId();
   const input = useRef<HTMLInputElement>(null);
+  const refocusAfterFailure = useRef(false);
+  useLayoutEffect(() => {
+    if (busy || !refocusAfterFailure.current) return;
+    refocusAfterFailure.current = false;
+    input.current?.focus({ preventScroll: true });
+  }, [busy]);
   const preferences = session.sidebarPreferences;
   const writable = useSyncExternalStore(
     preferences?.subscribe ?? noSubscription,
@@ -133,6 +139,7 @@ export function NewWorkspace({
       await onCreated(id);
       close();
     } catch (reason) {
+      refocusAfterFailure.current = true;
       setError(
         reason instanceof Error
           ? reason.message
@@ -165,7 +172,8 @@ export function NewWorkspace({
       // A partly created workspace keeps its retry state; never drop it on a stray click.
       dismissOnOutsideClick={false}
       title={moveConversation ? "Move to new workspace" : "New workspace"}
-      description="New conversations in this workspace can use its folders and instructions."
+      description="Set defaults for new conversations."
+      height="stable"
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
@@ -200,14 +208,14 @@ export function NewWorkspace({
           void submit();
         }}
       >
-        <SidebarSectionEmojiInput
-          session={session}
-          scope={session.scope}
-          icon={icon}
-          onIconChange={setIcon}
-          disabled={busy || submitted}
-        >
-          <Field label="Name">
+        <Field label="Name">
+          <SidebarSectionEmojiInput
+            session={session}
+            scope={session.scope}
+            icon={icon}
+            onIconChange={setIcon}
+            disabled={busy || submitted}
+          >
             <Input
               ref={input}
               required
@@ -217,8 +225,8 @@ export function NewWorkspace({
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
-          </Field>
-        </SidebarSectionEmojiInput>
+          </SidebarSectionEmojiInput>
+        </Field>
         <WorkspaceFields
           value={workspace}
           onChange={setWorkspace}

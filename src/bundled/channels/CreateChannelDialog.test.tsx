@@ -9,6 +9,7 @@ import {
   fireEvent,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createRelaySession,
@@ -17,6 +18,11 @@ import {
 import type { Agents } from "../../features/agents/service";
 import type { AgentChoicesSnapshot } from "../../features/agents/choices";
 import { channelTemplates } from "../../features/channel-templates/local";
+import {
+  projectTemplateId,
+  workspaceCanvas,
+} from "../../features/solo/workspace";
+import type { KitEntry } from "../../features/channel-templates/model";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 
 let store = createRelaySession(null);
@@ -29,10 +35,80 @@ const setupProps = () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   localStorage.clear();
   store.dispose();
   store = createRelaySession(null);
 });
+
+it.each([false, true])(
+  "only shares standalone workspace instructions when explicitly selected (%s)",
+  async (share) => {
+    vi.stubGlobal("crypto", webcrypto);
+    const user = userEvent.setup();
+    const id = await projectTemplateId("work");
+    const entry: KitEntry = {
+      eventId: "head",
+      createdAt: 1,
+      record: {
+        version: 1,
+        community: "https://relay.example.org",
+        deleted: false,
+        value: {
+          type: "template",
+          id,
+          name: "Work defaults",
+          description: "",
+          teamIds: [],
+          agents: [],
+          canvas: workspaceCanvas({
+            folders: ["/local/project"],
+            worktree: { location: "/local/worktrees", baseBranch: "main" },
+            canvas: "Release checklist",
+          }),
+        },
+      },
+    };
+    const session = {
+      ...store.session,
+      channelKit: {
+        ...store.session.channelKit,
+        available: true,
+        snapshot: () => ({ status: "ready" as const, entries: [entry] }),
+        refresh: async () => {},
+      },
+    };
+    const onCreate = vi.fn(async () => {});
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        session={session}
+        initialGroup="work"
+        destinations={[{ id: "work", name: "Work" }]}
+        open
+        onOpenChange={() => {}}
+        onCreate={onCreate}
+      />,
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Copy workspace instructions to the shared Canvas",
+    });
+    expect(checkbox).not.toBeChecked();
+    if (share) await user.click(checkbox);
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Notes");
+    await user.click(screen.getByRole("button", { name: "Create channel" }));
+    expect(onCreate).toHaveBeenCalledExactlyOnceWith({
+      name: "Notes",
+      visibility: "open",
+      setup: {
+        agents: [],
+        groupId: "work",
+        templateId: id,
+        canvas: share ? "Release checklist" : "",
+      },
+    });
+  },
+);
 
 it("shows description immediately with Name focused and creates an ongoing open channel", async () => {
   const user = userEvent.setup();

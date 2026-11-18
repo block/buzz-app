@@ -2,6 +2,7 @@ import { useSoloRowActivation } from "../../features/channel-navigation/useSoloR
 import { useIsPresent } from "motion/react";
 import type { ComposeWorkspaces } from "../../features/channel-navigation/WorkspaceComposition";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
+import type { WorkspaceSidebarComposition } from "./sidebar-environment";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useCallback,
@@ -93,7 +94,7 @@ export function SoloInventory({
   chatIcons,
   chatMenus,
   sidebarRows,
-  composedChatSections,
+  workspaceComposition,
   renderContents,
 }: {
   session: RelaySession;
@@ -104,21 +105,22 @@ export function SoloInventory({
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarRows?: SidebarRows | undefined;
-  composedChatSections?: ReadonlySet<string> | undefined;
-  /** Places the conversations in a host that titles them; creation then
-   * belongs to the host's own New menu, so only the standalone header has it. */
+  /** Places composed conversations inside their source's frame. */
   renderContents?: (
     content: ReactNode,
     header: ReactNode,
     pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
     compose: (composition: ComposeWorkspaces) => ReactNode,
   ) => ReactNode;
+  workspaceComposition?: WorkspaceSidebarComposition | undefined;
 }) {
   const list = useChannelList(session.channels);
   const regions = useSoloNavigation(session);
-  const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+  const standaloneClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  const pendingClick =
+    workspaceComposition?.pendingChatClick ?? standaloneClick;
   const preferences = useSyncExternalStore(
     session.sidebarPreferences.subscribe,
     session.sidebarPreferences.snapshot,
@@ -256,6 +258,7 @@ export function SoloInventory({
       open,
       openMessage,
       openAgentActivity,
+      pendingClick,
     ],
   );
   const renderChatMenu = useCallback(
@@ -266,8 +269,8 @@ export function SoloInventory({
     [menus, session],
   );
   const ownsPlacement = (id: string | undefined) =>
-    !composedChatSections ||
-    composedChatSections.has(id ? `group:${id}` : "solo");
+    !workspaceComposition ||
+    workspaceComposition.sections.has(id ? `group:${id}` : "solo");
   const starred = new Set(preferences.data?.starred);
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
@@ -276,8 +279,12 @@ export function SoloInventory({
       (item) =>
         eligibleSolo(item, session.viewer) &&
         !regions.excluded.has(item.id) &&
-        (!composedChatSections || !starred.has(item.id)) &&
-        ownsPlacement(preferences.data?.assignments[item.id]),
+        (!workspaceComposition || !starred.has(item.id)) &&
+        ownsPlacement(
+          regions.managed.has(item.id)
+            ? undefined
+            : preferences.data?.assignments[item.id],
+        ),
     )
     .sort(
       (a, b) =>
@@ -412,6 +419,7 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
+        workspaceComposition={workspaceComposition}
         sidebarRows={rowEntries}
         dormantAssignments={regions.managed}
         compose={compose}
@@ -627,6 +635,7 @@ function SoloConversationRow({
           type="button"
           selected={selected}
           data-solo-channel-id={id}
+          data-solo-destination-id={id}
           aria-current={selected ? "page" : undefined}
           aria-describedby={shared ? soloSharedMarkId(id) : undefined}
           {...activation}

@@ -549,7 +549,7 @@ and are asked to sign in again in Buzz.
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
-- **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to**
+- **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear
   in **Solo**, **Team**, **Forums**, or **Direct messages**. Reorder any section,
   including **Starred**, by dragging its heading or using **Move up** and
@@ -558,8 +558,11 @@ and are asked to sign in again in Buzz.
   and **New DM**. The last choice becomes that workspace’s icon and primary action.
   Open **Workspace settings** from the heading’s **…** menu to change the name,
   emoji, folders, worktree, Canvas, or default agents. Use **New channel** from a
-  workspace to start with its destination and template selected. You can change
-  either before creating.
+  workspace to start with its destination and agent defaults selected. You can
+  change the destination or template before creating. Select **Copy workspace
+  instructions to the shared Canvas** to share ordinary instructions with
+  everyone who can view the channel’s Canvas. Folders and worktree settings
+  stay in the workspace.
   **Archive inactive chats** shows how many chats have had no messages for
   14 days. It skips the open chat, running agent work and queued or sending
   messages. **Undo** restores the archived chats.
@@ -1006,9 +1009,9 @@ and are asked to sign in again in Buzz.
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your
   configured avatar.
-  The split **New** button repeats the last choice on this device for the
-  current account and community. Its arrow offers **New chat**, **New channel**,
-  **New DM** and **New workspace**. **Cmd/Ctrl+N** opens the menu in Messages.
+  The **New options** button in **Solo** opens **New chat**, **New channel**,
+  **New DM** and **New workspace**. **Cmd/Ctrl+N** opens this menu in Messages,
+  including during Focus when there are no unfiled chats.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
@@ -1070,32 +1073,26 @@ and are asked to sign in again in Buzz.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
-  collapse either section independently. Buzz remembers the collapsed sections
-  for that community and identity. Collapsed section headings highlight when
-  their channels have unread messages or thread replies. Muted channels do not
-  highlight the heading.
-- **Custom Team sections** can have an optional Unicode or community emoji.
-  Choose it beside the name when creating a section, or use the section's
-  menu → **Rename section** to change its name or emoji, then **Rename**.
-  Open the emoji picker and choose **Remove emoji** to clear only the emoji;
-  the name and channels stay unchanged. These controls require
-  writable saved sidebar preferences.
-- **Dragging channels and DMs between sections**: drag a channel or DM row onto
-  **Starred** or a saved group to move it there, or back to its home section:
-  channels to **Channels** and DMs to **Direct messages**. **Channels** does not
-  accept DMs, and **Direct messages** does not accept channels. Forums do not
-  drag. **Move channel** or **Move conversation** in the row's menu does the same
-  move from the keyboard.
-- Saved sidebar groups, stars, mutes, sorting and filters from another device or
-  a paired CLI update the open sidebar automatically while connected, in hosts
-  that support saved sidebar preferences. A CLI section-only move keeps a
-  starred channel in Starred until you unstar it.
+- **Sidebar sections** collapse independently through their headings. Buzz
+  remembers collapsed sections for each community and identity. Unread messages
+  or thread replies highlight the headings of collapsed sections. Muted
+  conversations are excluded from these highlights.
+- **Workspace emoji** can be Unicode or community emoji. Choose one beside the
+  name when creating a workspace or editing **Workspace settings**. Choose
+  **Remove emoji** in the picker to clear it. Changes require writable saved
+  sidebar preferences.
+- **Moving conversations** works by dragging or choosing **Move to…** from the
+  row’s menu. Workspaces and **Starred** accept any type. Unfiled conversations
+  return to the home for their type, **Solo**, **Team**, **Forums** or
+  **Direct messages**.
+- Saved workspaces, stars, mutes, sorting and filters update while connected in
+  hosts that support saved sidebar preferences. Moving a starred conversation
+  to a workspace or home section from the sidebar clears its star.
 - **Plugin channel rows**: a plugin can open a channel from its Solo row and keep
-  that row selected. The sidebar then keeps its scope, scroll position, and open
+  that row selected. The sidebar then keeps its scroll position and open
   sections. When a plugin is explicitly disabled, its existing chats appear as
-  ordinary Solo chats; enabling it again returns them to the plugin's rows when
-  available. Opening the channel from Team follows the usual Team navigation.
+  ordinary chats in **Solo**, with their saved workspace filings dormant.
+  Enabling the plugin again returns its chats to its rows when available.
 - **Open thread marker**: while a thread is displayed in the side pane, its
   original message keeps the hover highlight in the conversation, including on
   touch-only devices. Switching threads moves the marker; hiding the pane or
@@ -1676,7 +1673,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   Do not assume a particular optional plugin is on.
   A page or Settings section whose plugin is turned off says so, and its
   **Manage plugins** opens that plugin, where **Enable** turns it back on.
-  If a plugin hides the focused Team sidebar row, keyboard focus moves to a
+  If a plugin hides the focused sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z

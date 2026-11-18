@@ -173,28 +173,32 @@ audience. Keep the previous presentation as a fallback when the component is abs
 
 A source with `composeWorkspaces: true` receives optional `ui.Workspace`,
 `ui.Chats`, and `ui.ChatList` components. `ui.Chats` shows unfiled ordinary
-chats. Passing `all` includes named workspaces with their headers and frames.
-`ui.ChatList` includes the same ordinary chats without workspace headers or
-frames, even when their saved workspace is collapsed. It keeps workspace order
-and each workspace's Show more / Show less controls. It does not change saved
-assignments or collapse preferences. Region-owned chats remain with the source.
+chats. Passing `all` includes chat-only workspaces with their headers and
+frames. Mixed workspaces and Starred keep their placement in the unified
+sidebar. A composed workspace shares the sidebar’s collapse preference and
+accepts drags to and from other workspaces.
+`ui.ChatList` shows the same chats without the composed frames, even when
+their saved workspace is collapsed. It keeps workspace order and each
+workspace's Show more / Show less controls. Region-owned chats stay with
+their source. If the plugin is disabled, those chats appear in Solo and their
+saved workspace placements become dormant.
 
 The host retains row identity, menus, rename editors, and pending saves when a
 source switches between these presentations. Render each ordinary inventory
-once: use `ui.ChatList` alone, `ui.Chats` with `all`, or `ui.Workspace` for each
-named workspace plus `ui.Chats` for unfiled chats.
+once using `ui.ChatList` alone, `ui.Chats` with `all`, or `ui.Workspace` for each
+composable workspace plus `ui.Chats` for unfiled chats.
 
 Feature-detect `ui.ChatList` before use. On older hosts, fall back to `ui.Chats`
-with `all: true` to keep named-workspace chats reachable. That fallback retains
-workspace chrome. Existing `ui.Chats` behavior is unchanged.
+with `all: true` to keep named-workspace chats reachable with their headings
+and actions.
 
-`ctx.soloNavigation.workspaces` exposes the bound user's Solo workspace catalog.
+`ctx.soloNavigation.workspaces` exposes the bound user's workspace catalog.
 Pass the current region binding to `snapshot`, `subscribe`, `refresh`, and
 `create({id, name})`. The snapshot contains IDs, names, status, creation
 availability, and any read error. Ordinary chat assignments remain host-owned.
 Refresh before retrying uncertain creation and keep the same ID and name.
-Ended bindings cannot read or write a new community. The existing Solo writer
-enforces authorization, record capacity, and revision checks.
+Ended bindings cannot read or write a new community. The shared workspace writer
+enforces authorization and record capacity.
 
 Regions own their task filing; they do not add an ordinary Solo assignment for
 each task. Workspace selection in a task draft is personal metadata and is

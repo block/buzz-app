@@ -233,7 +233,7 @@ export function nativeSidebar(transport: ReadTransport) {
     else project(coordinate, draft.next);
     const next =
       coordinate === WORKSPACE_COORDINATE
-        ? workspacePayloadForSigning(draft.next, legacy)
+        ? workspacePayloadForSigning(draft.next, legacy, payload)
         : draft.next;
     if (new TextEncoder().encode(JSON.stringify(next)).length > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");

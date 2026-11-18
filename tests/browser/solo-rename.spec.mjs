@@ -16,11 +16,11 @@ test.use({
 });
 
 const sidebar = (page) =>
-  page.getByRole("navigation", { name: "Solo conversations" });
+  page.getByRole("navigation", { name: "Subscribed channels" });
 const rowCopies = (page, id) =>
-  sidebar(page).locator(`[data-solo-channel-id="${id}"]`);
+  sidebar(page).locator(`[data-solo-destination-id="${id}"]`);
 const row = (page, id) =>
-  sidebar(page).locator(`[data-solo-channel-id="${id}"]:not([inert] *)`);
+  sidebar(page).locator(`[data-solo-destination-id="${id}"]:not([inert] *)`);
 const input = (page) =>
   sidebar(page).getByRole("textbox", { name: "Chat name", exact: true });
 const composer = (page) =>
@@ -379,7 +379,7 @@ test("narrow mouse double-click renames while single-click and keyboard still na
       await expect(sidebar(page)).not.toBeVisible();
       await page.clock.runFor(501);
       await expect(
-        page.locator(`[data-solo-channel-id="${beta}"]`),
+        page.locator(`[data-solo-destination-id="${beta}"]`),
       ).toHaveAttribute("aria-current", "page");
     });
   }
@@ -412,7 +412,7 @@ test("narrow mouse double-click renames while single-click and keyboard still na
   await expect(sidebar(page)).not.toBeVisible();
   await expect(composer(page)).toBeVisible();
   await expect(
-    page.locator(`[data-solo-channel-id="${alpha}"]`),
+    page.locator(`[data-solo-destination-id="${alpha}"]`),
   ).toHaveAttribute("aria-current", "page");
   let releaseSave;
   let startSave;
@@ -438,7 +438,7 @@ test("narrow mouse double-click renames while single-click and keyboard still na
     await row(page, beta).dblclick();
     await expect(sidebar(page)).not.toBeVisible();
     await expect(
-      page.locator(`[data-solo-channel-id="${beta}"]`),
+      page.locator(`[data-solo-destination-id="${beta}"]`),
     ).toHaveAttribute("aria-current", "page");
   } finally {
     releaseSave();
@@ -545,20 +545,23 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
   await page.goto(app.origin);
   await newChat(page);
   await row(page, alpha).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New workspace" }).click();
+  await page.getByRole("menuitem", { name: "Move to…", exact: true }).hover();
+  await page
+    .getByRole("menuitem", { name: "Create new…", exact: true })
+    .click();
   const dialog = page.getByRole("dialog");
   // Wait until the exiting menus are gone and the dialog's initial focus has
   // settled on the field. The modal hides the menus from role queries.
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
-  const field = dialog.getByRole("textbox", { name: "Workspace name" });
+  const field = dialog.getByRole("textbox", { name: "Name", exact: true });
   await expect(field).toBeFocused();
   await field.fill("Work");
   await expect(field).toHaveValue("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(dialog).not.toBeVisible();
-  const work = sidebar(page).getByRole("button", { name: "Work", exact: true });
-  await expect(work).toHaveAttribute("aria-expanded", "true");
+  const work = sidebar(page).locator('summary[aria-label="Work"]');
+  const workspace = work.locator("..");
+  await expect(workspace).toHaveAttribute("open");
   let release;
   let started;
   const gate = new Promise((resolve) => {
@@ -580,15 +583,15 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
     await requested;
     await work.click();
     await expect(input(page)).toBeVisible();
-    await expect(work).toHaveAttribute("aria-expanded", "true");
+    await expect(workspace).toHaveAttribute("open");
     await row(page, beta).dblclick();
     await expect(input(page)).toHaveValue("Saved through collapse");
     release();
-    await expect(work).toHaveAttribute("aria-expanded", "false");
+    await expect(workspace).not.toHaveAttribute("open");
     await expect(input(page)).toHaveCount(0);
     // The editor closes before its panel finishes collapsing. Wait for the
     // panel's unmount so the next double-click has a stationary target.
-    await expect(rowCopies(page, alpha)).toHaveCount(0);
+    await expect(row(page, alpha)).toBeHidden();
     await expect(row(page, beta)).toBeFocused();
     await row(page, beta).dblclick();
     await expect(input(page)).toHaveValue("Beta");
@@ -607,7 +610,7 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
       await input(page).press("Enter");
       await expect(sidebar(page).getByRole("alert")).toBeVisible();
       await work.click();
-      await expect(work).toHaveAttribute("aria-expanded", "true");
+      await expect(workspace).toHaveAttribute("open");
       await input(page).focus();
       if (cancellation === "Escape") await input(page).press("Escape");
       else
@@ -615,7 +618,7 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
           .getByRole("button", { name: cancellation, exact: true })
           .click();
       // Wait for the closing transition's actual unmount, not just aria-expanded.
-      await expect(rowCopies(page, alpha)).toHaveCount(0);
+      await expect(row(page, alpha)).toBeHidden();
       await expect(work).toBeFocused();
       await work.click();
       await expect(row(page, alpha)).toBeVisible();
@@ -643,7 +646,7 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
       await work.click();
       await input(page).focus();
       finishSave();
-      await expect(rowCopies(page, alpha)).toHaveCount(0);
+      await expect(row(page, alpha)).toBeHidden();
       await expect(work).toBeFocused();
     } finally {
       finishSave();
@@ -656,7 +659,9 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
 // Composable source rows must retain native drawer hit targets and focus rules.
 // Real browser focus refusal for display:none cannot be established in jsdom.
 const regionRow = (page, id) =>
-  sidebar(page).locator(`[data-solo-destination-id="${id}"]`);
+  sidebar(page).locator(
+    `[data-sidebar-section^="solo-region:"] [data-solo-destination-id="${id}"]:not([inert] *)`,
+  );
 // Classify refuses a chat the roster has not loaded, so wait for its row first.
 async function regionFixture(page, app, ids = [alpha, beta]) {
   await page.goto(`${app.origin}/?solo-region-fixture`);
@@ -743,7 +748,9 @@ test("composable row removal respects blur and continues past a CSS-hidden neigh
   await expect(owned).toHaveCount(0);
   await expect(regionRow(page, beta)).toBeHidden();
   await expect(
-    sidebar(page).locator("summary").filter({ hasText: "Solo" }),
+    sidebar(page).locator(
+      '[data-sidebar-section^="solo-region:"] summary[aria-label="Solo"]',
+    ),
   ).toBeFocused();
 });
 
@@ -765,7 +772,9 @@ test("removing a focused region keeps keyboard focus in the remaining region", a
     await expect(temporary).toBeFocused();
     await page.evaluate(() => window.fixtureSoloRegion.removeTransientRegion());
     await expect(temporary).toHaveCount(0);
-    const remaining = sidebar(page).locator('summary[aria-label="Solo"]');
+    const remaining = sidebar(page).locator(
+      '[data-sidebar-section^="solo-region:"] summary[aria-label="Solo"]',
+    );
     await expect(remaining).toBeFocused();
     await remaining.press("Enter");
     await expect(regionRow(page, alpha)).toBeHidden();
@@ -789,9 +798,8 @@ test.describe("plugin-owned Solo lifecycle", () => {
     app,
   }) => {
     await regionFixture(page, app, [id]);
-    const solo = page.getByRole("tab", { name: "Solo", exact: true });
-    await solo.click();
-    await expect(solo).toHaveAttribute("aria-selected", "true");
+    const messages = page.getByRole("tab", { name: "Messages", exact: true });
+    await expect(messages).toHaveAttribute("aria-selected", "true");
     const row = regionRow(page, id);
     await expect(row).toBeVisible();
     await row.click();
@@ -809,9 +817,7 @@ test.describe("plugin-owned Solo lifecycle", () => {
       .click();
     await expect(dialog).toHaveCount(0);
     await expect(row).toHaveCount(0);
-    await expect(
-      page.getByRole("tab", { name: "Solo", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(messages).toHaveAttribute("aria-selected", "true");
     await expect(page).toHaveURL(/solo-draft/);
     expect(
       app.report.lifecyclePublications.map((event) => [event.kind, event.tags]),

@@ -160,6 +160,25 @@ it("leaves an oversized legacy projection readable and never truncates it to sav
   expect(workspacePayloadForSigning(reduced, legacy).sections).toHaveLength(19);
 });
 
+it("keeps a prior unfile when old clients remove and later restore the filing", () => {
+  const groups: SidebarGroups = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { [channel]: "work" },
+  };
+  const legacy = workspaceBaseRecord(groups);
+  const unfiled = workspaceRecordForWrite(
+    editSidebarAssignment(legacy, 0, { channelId: channel }),
+    groups,
+  );
+  const renamed = workspaceRecordForWrite(
+    editSidebarSectionRename(unfiled, 0, "work", "Renamed"),
+    { ...groups, assignments: {} },
+    unfiled,
+  );
+  expect(renamed.unfiled).toEqual([channel]);
+  expect(importWorkspaceFallback(renamed, groups)).toEqual(renamed);
+});
+
 it("fits two full legacy rosters through rename, move, unfile and removal", () => {
   const sections = Array.from({ length: 200 }, (_, order) => ({
     id: `00000000-0000-4000-8000-${String(order).padStart(12, "0")}`,
@@ -203,4 +222,53 @@ it("fits two full legacy rosters through rename, move, unfile and removal", () =
   expect(removed.removedSections).toEqual([original.id]);
   expect(removed.unfiled).toEqual([second]);
   expect(Object.keys(removed.assignments as object)).toHaveLength(1990);
+});
+
+it("defers new legacy workspaces and filings when the upgraded layout is full", () => {
+  const sections = Array.from({ length: 200 }, (_, order) => ({
+    id: `workspace-${order}`,
+    name: `Workspace ${order}`,
+    order,
+  }));
+  const assignments = Object.fromEntries(
+    Array.from({ length: 2000 }, (_, index) => [
+      `chat-${index}`,
+      index === 0 ? "workspace-199" : "workspace-0",
+    ]),
+  );
+  const current = workspaceBaseRecord({ sections, assignments });
+  const legacy = {
+    sections: [{ id: "legacy", name: "Older client", order: 0 }],
+    assignments: { "legacy-chat": "legacy", "legacy-other": "workspace-0" },
+  };
+  expect(importWorkspaceFallback(current, legacy)).toBe(current);
+
+  const room = editSidebarSectionRemoval(current, 0, "workspace-199");
+  const merged = importWorkspaceFallback(room, legacy);
+  expect(merged.sections).toEqual([
+    ...sections.slice(0, -1),
+    { id: "legacy", name: "Older client", order: 199 },
+  ]);
+  expect(merged.assignments).toHaveProperty("legacy-chat", "legacy");
+  expect(merged.assignments).not.toHaveProperty("legacy-other");
+  expect(workspacePayloadForSigning(merged, legacy).sections).toHaveLength(200);
+});
+
+it("only reclaims an unchanged archived filing when a new filing needs room", () => {
+  const groups = legacyWithFilings(2000, 12);
+  const source = workspaceBaseRecord(groups);
+  const [archivedId, liveId] = Object.keys(groups.assignments);
+  if (!archivedId || !liveId) throw new Error("Incomplete fixture");
+  const sectionId = groups.assignments[archivedId] ?? "";
+  const reclaim = { channelId: archivedId, sectionId };
+  const edit = (current: Record<string, unknown>, channelId: string) =>
+    editSidebarAssignment(current, 0, { channelId, sectionId, reclaim });
+  expect(edit(source, liveId).assignments).toHaveProperty(
+    archivedId,
+    sectionId,
+  );
+  const saved = workspaceRecordForWrite(edit(source, "new-chat"), groups);
+  expect(saved.assignments).toHaveProperty("new-chat", sectionId);
+  expect(saved.assignments).not.toHaveProperty(archivedId);
+  expect(saved.unfiled).toEqual([archivedId]);
 });

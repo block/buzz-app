@@ -759,7 +759,7 @@ it("rejects invalid sidebar intents before native reads or signing", async () =>
   }
   await expect(
     transport.writeSidebarAssignment?.(
-      { channelId: "c", createSection: { id: "invalid", name: "Work" } },
+      { channelId: "c", createSection: { id: "__proto__", name: "Work" } },
       signal,
     ),
   ).rejects.toThrow("Invalid sidebar assignment intent");

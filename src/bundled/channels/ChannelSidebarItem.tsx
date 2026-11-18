@@ -1,4 +1,5 @@
 import type { ChatIcon } from "../../features/conversation/service";
+import type { Navigation } from "../../features/navigation/controller";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { useIsPresent } from "motion/react";
 import {
@@ -11,20 +12,28 @@ import {
   type ComponentType,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuPopup,
+  MenuRoot,
+  MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { useLiveChannelSummary } from "../../features/relay/react";
-import { ClockIcon } from "../../shared/design-system/icons/index";
+import {
+  ClockIcon,
+  DotsThreeIcon,
+} from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
+import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -51,6 +60,14 @@ type ItemProps = {
   working: boolean;
   selected: string | undefined;
   onSelect: (id: string) => void;
+  navigation?: Navigation | undefined;
+  onRename?: ((id: string) => boolean) | undefined;
+  pendingClick?:
+    | RefObject<ReturnType<typeof setTimeout> | undefined>
+    | undefined;
+  onShareChat?:
+    | ((channel: ChannelSummary, trigger: HTMLElement) => void)
+    | undefined;
   onOpenThread: (channelId: string, rootId: string) => void;
   onOpenMessage: (channelId: string, messageId: string) => void;
   onOpenWorkingAgent?: (
@@ -149,6 +166,10 @@ function ChannelSidebarItemCore({
   session,
   selected,
   onSelect,
+  navigation,
+  onRename,
+  pendingClick,
+  onShareChat,
   onOpenThread,
   onOpenMessage,
   onOpenWorkingAgent,
@@ -182,6 +203,9 @@ function ChannelSidebarItemCore({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  const actions = useRef<HTMLButtonElement>(null);
+  const actionsOpen = !!menuAnchor && menuAnchor === actions.current;
+  const menuLabel = `Actions for ${channel.name}`;
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -191,6 +215,58 @@ function ChannelSidebarItemCore({
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      menuAction={
+        menuEnabled &&
+        channel.channelType === "solo" && (
+          <MenuRoot
+            open={menuOpen && present && actionsOpen}
+            onOpenChange={(open) => {
+              if (open && sectionKey && actions.current)
+                onOpenMenu?.(channel, sectionKey, actions.current);
+              else if (!open && actionsOpen) onCloseMenu?.();
+            }}
+            onOpenChangeComplete={(open) => {
+              if (!open) onMenuClosed?.(channel.id);
+            }}
+          >
+            <MenuTrigger
+              ref={actions}
+              render={(props) => (
+                <IconButton
+                  {...props}
+                  variant="bare"
+                  size="compact"
+                  aria-label={menuLabel}
+                  data-solo-row-action=""
+                  icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+                />
+              )}
+            />
+            <MenuPopup
+              align="end"
+              aria-label={menuLabel}
+              finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
+            >
+              {menuContent ?? lastMenuContent.current}
+            </MenuPopup>
+          </MenuRoot>
+        )
+      }
+      sharedDescription={
+        onShareChat && channel.channelType === "solo"
+          ? soloSharedMarkId(channel.id)
+          : undefined
+      }
+      sharedAction={
+        onShareChat &&
+        channel.channelType === "solo" && (
+          <ChatSharedMark
+            session={session}
+            channel={channel}
+            onOpen={(trigger) => onShareChat(channel, trigger)}
+          />
+        )
+      }
       working={agents.length > 0}
       ordinary={ordinary}
       muted={muted}
@@ -328,6 +404,9 @@ function ChannelSidebarItemCore({
       }
       onPrepare={(id) => session.channels.prepare?.(id)}
       onSelect={onSelect}
+      navigation={navigation}
+      onRename={onRename}
+      {...(pendingClick ? { pendingClick } : {})}
       {...(onHideDm ? { onHideDm } : {})}
     />
   );
@@ -350,7 +429,7 @@ function ChannelSidebarItemCore({
   if (!menuEnabled) return rendered;
   return (
     <ContextMenuRoot
-      open={menuOpen && present}
+      open={menuOpen && present && !actionsOpen}
       onOpenChange={(open) => {
         if (open) {
           if (sectionKey) onOpenMenu?.(channel, sectionKey);
@@ -365,7 +444,7 @@ function ChannelSidebarItemCore({
     >
       {rendered}
       <MenuPopup
-        aria-label={`Actions for ${channel.name}`}
+        aria-label={menuLabel}
         anchor={menuOpen ? menuAnchor : undefined}
         finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
       >

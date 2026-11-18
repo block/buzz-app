@@ -12,7 +12,7 @@ test.use({
 });
 
 // Browser-only contract: :has() projects real unread markers through hidden
-// section content into computed heading paint, including nested scope headings.
+// section content into computed paint for workspaces and built-in headings.
 test("collapsed headings follow unread, confirmed mute and read changes", async ({
   page,
   app,
@@ -113,17 +113,27 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   await expect(badge).toHaveCount(1);
   await expect(title).toHaveCSS("color", await ink("text-navigation-unread"));
   await expect(beta).toBeHidden();
-  // The aggregate Team heading also represents nested collapsed sections.
-  const team = page.locator(
-    '[data-sidebar-section="scope:team"] > .navigation-section-heading .navigation-section-heading-label > details > summary',
-  );
-  await team.click();
-  await expect(team.getByText("Team", { exact: true })).toHaveCSS(
+  // A built-in heading owns unread paint when a conversation moves home.
+  await summary.press("Enter");
+  await beta.click({ button: "right" });
+  const move = menu.getByRole("menuitem", { name: "Move to…", exact: true });
+  await move.focus();
+  await move.press("ArrowRight");
+  await page
+    .getByRole("menu", { name: "Move Beta to workspace", exact: true })
+    .getByRole("menuitemradio", { name: "Team", exact: true })
+    .click();
+  const team = page.locator('[data-sidebar-section="channels"]');
+  const unfiled = team.locator('button[data-channel-id="beta"]');
+  await expect(unfiled).toBeVisible();
+  const teamSummary = team.locator("summary");
+  await teamSummary.click();
+  await expect(teamSummary.getByText("Team", { exact: true })).toHaveCSS(
     "color",
     await ink("text-navigation-unread"),
   );
-  await team.press("Enter");
-  await expect(summary).toBeVisible();
+  await teamSummary.press("Enter");
+  await expect(unfiled).toBeVisible();
 });
 
 test.describe("thread activity", () => {

@@ -101,6 +101,7 @@ export function sidebarSections<T extends ChannelSummary>(
   hiddenDms: ReadonlySet<string> = new Set(),
   chatsOnly = false,
   draftSections: ReadonlySet<string> = new Set(),
+  dormantAssignments: ReadonlySet<string> = new Set(),
 ) {
   const groups = new Map(
     preferences?.sections.map((group) => [group.id, group]),
@@ -116,7 +117,9 @@ export function sidebarSections<T extends ChannelSummary>(
       (chatsOnly && channel.channelType !== "solo")
     )
       continue;
-    const destination = preferences?.assignments[channel.id];
+    const destination = dormantAssignments.has(channel.id)
+      ? undefined
+      : preferences?.assignments[channel.id];
     const key = stars.has(channel.id)
       ? "starred"
       : destination && groups.has(destination)
@@ -129,7 +132,10 @@ export function sidebarSections<T extends ChannelSummary>(
   return workspaceSectionOrder(preferences).flatMap((key) => {
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
-    if (chatsOnly && !rows.length && !draftSections.has(key)) return [];
+    // The Solo heading owns New and its keyboard shortcut, even when every
+    // chat is filed in a workspace.
+    if (chatsOnly && key !== "solo" && !rows.length && !draftSections.has(key))
+      return [];
     const mode = preferences?.sort?.[group ? `section:${group.id}` : key];
     rows.sort(
       mode === "recent" || (mode === undefined && key === "solo")

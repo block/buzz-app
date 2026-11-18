@@ -62,7 +62,6 @@ export function SidebarSection({
   headerActions,
   headerNotice,
   hideMoreActions = false,
-  persistentChevron = false,
   createChannel,
   createSection,
   newMessage,
@@ -98,7 +97,6 @@ export function SidebarSection({
     | undefined;
   hideMoreActions?: boolean;
   /** Keep the disclosure affordance visible instead of revealing it on hover. */
-  persistentChevron?: boolean;
   channelCount?: number | undefined;
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
@@ -527,17 +525,11 @@ export function SidebarSection({
               ) : (
                 icon
               )}
-              <FadingLabel
-                className={`${styles.sectionTitle} ${
-                  persistentChevron ? styles.scopeSectionTitle : ""
-                }`}
-              >
-                {title}
-              </FadingLabel>
+              <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
             </span>
             <span
               className={`${styles.sidebarIcon} ${styles.sectionChevron}`}
-              data-navigation-reveal={persistentChevron ? undefined : ""}
+              data-navigation-reveal=""
             >
               <CaretDownIcon strokeWidth={2.5} size={15} />
             </span>

@@ -19,11 +19,14 @@ test("workspace headings remember their own creation action", async ({
   });
   await initial.focus();
   await expect(initial).toBeVisible();
+  await initial.hover();
   const arrow = work.getByRole("button", {
     name: "New options in Work",
     exact: true,
   });
-  await expect(page.getByRole("tooltip")).toHaveText("New chat in Work");
+  await expect(
+    page.getByRole("tooltip").filter({ hasText: /^New chat in Work$/ }),
+  ).toBeVisible();
   await arrow.click();
   await expect(
     page.getByRole("menuitem", { name: "New channel", exact: true }),

@@ -109,6 +109,13 @@ function validAssignmentIntent(intent) {
     !Array.isArray(intent) &&
     (intent.channelId === undefined || typeof intent.channelId === "string") &&
     (intent.sectionId === undefined || typeof intent.sectionId === "string") &&
+    (intent.reclaim === undefined ||
+      (intent.reclaim &&
+        typeof intent.reclaim === "object" &&
+        !Array.isArray(intent.reclaim) &&
+        Object.keys(intent.reclaim).every((key) =>
+          ["channelId", "sectionId"].includes(key),
+        ))) &&
     (intent.createSection === undefined ||
       (intent.createSection &&
         typeof intent.createSection === "object" &&
@@ -122,7 +129,7 @@ function validAssignmentIntent(intent) {
         ))) &&
     validSidebarAssignment(intent) &&
     Object.keys(intent).every((key) =>
-      ["channelId", "sectionId", "createSection"].includes(key),
+      ["channelId", "sectionId", "createSection", "reclaim"].includes(key),
     )
   );
 }
@@ -286,7 +293,7 @@ function prepareSections(events, secret, now, legacy, edit) {
   return {
     groups,
     event: signWorkspace(
-      workspacePayloadForSigning(blob, legacy),
+      workspacePayloadForSigning(blob, legacy, current.blob),
       secret,
       Math.max(Math.floor(now / 1000), current.createdAt + 1),
     ),

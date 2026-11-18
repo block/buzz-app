@@ -431,13 +431,13 @@ test.describe("sidebar actions in the header", () => {
     const openMove = async () => {
       await trigger.click();
       const move = menu.getByRole("menuitem", {
-        name: "Move channel",
+        name: "Move to…",
         exact: true,
       });
       await move.focus();
       await page.keyboard.press("ArrowRight");
       return page.getByRole("menu", {
-        name: "Move Beta to section",
+        name: "Move Beta to workspace",
         exact: true,
       });
     };
@@ -450,12 +450,10 @@ test.describe("sidebar actions in the header", () => {
       .getByRole("menuitem", { name: "Create new…", exact: true })
       .click();
     const create = page.getByRole("dialog", {
-      name: "Move to new section",
+      name: "Move to new workspace",
       exact: true,
     });
-    await expect(
-      create.getByRole("textbox", { name: "Section name" }),
-    ).toBeFocused();
+    await expect(create.getByRole("textbox", { name: "Name" })).toBeFocused();
     await expect(menu).toHaveCount(0);
     await create.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(trigger).toBeFocused();
@@ -619,7 +617,7 @@ test.describe("dialog origin retirement", () => {
             .click({ button: "right" });
         if (action === "create") {
           await page
-            .getByRole("menuitem", { name: "Move channel", exact: true })
+            .getByRole("menuitem", { name: "Move to…", exact: true })
             .focus();
           await page.keyboard.press("ArrowRight");
           await page
@@ -630,7 +628,7 @@ test.describe("dialog origin retirement", () => {
             .getByRole("menuitem", { name: "Delete channel", exact: true })
             .click();
         const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Move to new section" : /^Delete .+\?$/,
+          name: action === "create" ? "Move to new workspace" : /^Delete .+\?$/,
         });
         await expect(dialog).toBeVisible();
         await back(page);

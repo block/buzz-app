@@ -445,14 +445,6 @@ export function createSidebarPreferencesStore({
     }
     return job.promise;
   }
-  function rejectMove(channelId: string, message: string): Promise<never> {
-    const failed = failedMoves.get(channelId);
-    if (failed) {
-      failedMoves.set(channelId, { ...failed, error: message });
-      publish(snapshot);
-    }
-    return Promise.reject(new Error(message));
-  }
   // Optimistic placement is a projection over confirmed data. Persistence keeps
   // assignment/create before Star removal. A failed
   // older intent cannot undo a later move or replace its retry state.
@@ -461,6 +453,8 @@ export function createSidebarPreferencesStore({
     destination: MoveDestination,
     signal?: AbortSignal,
   ): Promise<SidebarPreferences> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    const intent: MoveIntent = { id: ++nextMove, channelId, destination };
     if (
       !writable() ||
       (creationUncertain && "createSection" in destination) ||
@@ -468,18 +462,27 @@ export function createSidebarPreferencesStore({
       !confirmed ||
       !write ||
       !writeStar
-    )
-      return rejectMove(
-        channelId,
-        "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying",
-      );
+    ) {
+      const error =
+        "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying";
+      if (!closed && available && write && writeStar) {
+        const previous = failedMoves.get(channelId);
+        latestMove.set(channelId, intent.id);
+        failedMoves.set(channelId, {
+          ...intent,
+          id: previous?.id ?? intent.id,
+          error,
+        });
+        publish(snapshot);
+      }
+      return Promise.reject(new Error(error));
+    }
     const writeGeneration = generation;
     const writeSignal = AbortSignal.any([
       writeLifetime.signal,
       ...(signal ? [signal] : []),
     ]);
     if (writeSignal.aborted) return Promise.reject(writeSignal.reason);
-    const intent: MoveIntent = { id: ++nextMove, channelId, destination };
     pendingMoves.set(intent.id, intent);
     latestMove.set(channelId, intent.id);
     failedMoves.delete(channelId);

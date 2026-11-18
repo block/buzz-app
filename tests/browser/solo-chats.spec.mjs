@@ -47,7 +47,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   });
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
   await expect(row).toBeVisible();
   await row.click({ button: "right" });
@@ -113,7 +113,9 @@ test.describe("Berd-style Solo project organization", () => {
     const editor = page.locator('#new-chat-prompt [role="textbox"]');
     await editor.fill("Keep this unsent idea");
     const original = await editor.elementHandle();
-    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page
+      .getByRole("button", { name: "New options", exact: true })
+      .click();
     await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
     await expect(editor).toBeFocused();
     expect(
@@ -121,7 +123,7 @@ test.describe("Berd-style Solo project organization", () => {
     ).toBe(true);
     await expect(editor).toHaveText("Keep this unsent idea");
     const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
+      name: "Subscribed channels",
     });
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     const saved = sidebar.getByRole("button", {
@@ -151,10 +153,10 @@ test.describe("Berd-style Solo project organization", () => {
     await page.goto(app.origin);
     await newChat(page);
     const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
+      name: "Subscribed channels",
     });
     // Stable identity: after reload an unread count joins the accessible label.
-    const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
+    const row = sidebar.locator(`[data-solo-destination-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
     await page.getByRole("menuitem", { name: "New workspace" }).click();
@@ -292,7 +294,7 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
 }) => {
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const chat = (name) => sidebar.getByRole("button", { name, exact: true });
   const inProject = (name) =>
     sidebar
@@ -405,7 +407,7 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   });
   await page.goto(app.origin);
   await newChat(page);
-  const row = page.locator(`[data-solo-channel-id="${id}"]`);
+  const row = page.locator(`[data-solo-destination-id="${id}"]`);
   await row.click();
   const history = page.getByText(`primary ${id} message 0`, { exact: false });
   await expect(history).toBeVisible();
@@ -629,7 +631,7 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
   await page.goto(app.origin);
   await newChat(page);
   const sidebar = page.getByRole("navigation", {
-    name: "Solo conversations",
+    name: "Subscribed channels",
   });
   const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
   await row.click();
@@ -760,9 +762,9 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
   await expect(sidebar).toBeVisible();
-  await expect(sidebar.locator(`[data-solo-channel-id="${id}"]`)).toHaveCount(
-    0,
-  );
+  await expect(
+    sidebar.locator(`[data-solo-destination-id="${id}"]`),
+  ).toHaveCount(0);
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
@@ -1089,7 +1091,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
   await row.click();
   await expect(
@@ -1292,7 +1294,7 @@ test.describe("Solo composer caret", () => {
     await expect(composer).toHaveText("");
     await page.keyboard.insertText("first");
     const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
+      name: "Subscribed channels",
     });
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(composer).toHaveText("");
@@ -1397,7 +1399,7 @@ test.describe("Solo send focus", () => {
     });
     await page.goto(app.origin);
     await page
-      .getByRole("navigation", { name: "Solo conversations" })
+      .getByRole("navigation", { name: "Subscribed channels" })
       .getByRole("button", { name: "Alpha", exact: true })
       .click();
     const [agent] = app.soloAgents;

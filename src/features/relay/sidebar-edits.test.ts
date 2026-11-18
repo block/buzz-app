@@ -107,6 +107,11 @@ it("validates create-section policy separately from the host envelope", () => {
   expect(validSidebarAssignment({ channelId: "c", createSection })).toBe(true);
   expect(
     validSidebarAssignment({
+      createSection: { ...createSection, id: "fixture-workspace" },
+    }),
+  ).toBe(true);
+  expect(
+    validSidebarAssignment({
       channelId: "c",
       createSection: { ...createSection, position: "first" },
     }),
@@ -115,7 +120,7 @@ it("validates create-section policy separately from the host envelope", () => {
   for (const intent of [
     { channelId: "c", sectionId: "" },
     { channelId: "c", sectionId: "existing", createSection },
-    { channelId: "c", createSection: { ...createSection, id: "bad" } },
+    { channelId: "c", createSection: { ...createSection, id: "__proto__" } },
     { channelId: "c", createSection: { ...createSection, name: " " } },
     { channelId: "c", createSection: { ...createSection, icon: " " } },
     {

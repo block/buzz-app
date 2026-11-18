@@ -96,7 +96,7 @@ connection generation. This resets their session-owned state on switching or
 reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
-Saved sidebar groups, ordering, assignments, stars, mutes and sorting live in the
+Saved workspaces, section order, assignments, stars, mutes and sorting live in the
 session's `sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
 one initial read; `refresh()` explicitly reloads/retries while retaining the last
 good snapshot through loading/errors. Page exits neither restart nor cancel that
@@ -122,7 +122,7 @@ retry. Group/star writes use their separate narrow commands;
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
 Context Menu key. They extend the persistent sidebar’s existing menu after
-**Move channel**; DM removal stays separate.
+**Move to…**. DM removal stays separate.
 Mute closes immediately and optimistically changes the next menu action, not
 unread truth or notification policy before confirmation. Failure rolls back to
 confirmed state and shows an app notification with Retry (same intent) and Dismiss.
@@ -142,9 +142,9 @@ preferences relocated it during the transaction. Read actions require
 The packaged host decodes verified self-encrypted sidebar records and signs
 only validated sidebar coordinates; it uses its signed HTTP writer and confirms
 via readback. Sidebar records and channel recipes share kind 30078, so that
-writer selects the admission contract by the event's `d` coordinate: the five
-sidebar coordinates must match what the sidebar signer produces, and every
-other coordinate must satisfy the recipe contract.
+writer selects the admission contract by the event's `d` coordinate. The
+sidebar coordinates must match what the sidebar signer produces, and recipe
+coordinates must satisfy the recipe contract.
 
 The sidebar defaults to **Starred**, personal workspaces, **Solo**, **Team**,
 **Forums**, and **Direct messages**. All sections can be reordered by dragging
@@ -159,8 +159,8 @@ menu uses the same settings form and leaves existing placements in place.
 
 Each workspace heading has a compact creation control. Its arrow opens
 **New chat**, **New channel**, and **New DM**. The last choice becomes that
-workspace’s primary action on this device. A channel starts with the workspace
-and its template selected, and users can change either in the dialog.
+workspace’s primary action on this device. The standalone **New options** menu
+in **Solo** also offers **New workspace** and stays available during Focus.
 
 Sections collapse and expand through their headers; the ellipsis menu does not
 repeat that action. Collapsed section keys and sidebar scroll remain separate, scoped view intent.
@@ -190,8 +190,9 @@ browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
 Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
-`Actions for <channel>`. **Move channel** comes first when placement is writable; additional sidebar actions
-should extend that popup, with a separator only when another action group follows.
+`Actions for <channel>`. **Move to…** appears when saved preferences are
+writable and the conversation can move. Additional sidebar actions extend
+that popup with separators between action groups.
 `ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
 `onOpenMenu` props. It wraps the activity select surface rather than merging popup
 props onto the activity button.
@@ -249,9 +250,11 @@ assignments, section order, and removal markers. The first edit saves the
 combined legacy projection. Older desktop and mobile clients read their
 original coordinates. Their writes cannot replace the unified record. An
 upgraded client can import previously unseen workspaces and filings. A saved
-unified placement or removal takes precedence. The relay selects one whole
-record when same-account writers race, so confirmation can precede a later
-replacement of the same edit.
+unified placement or removal takes precedence. The fallback stops adding
+legacy data when the unified record reaches 200 workspaces or 2,000 filings,
+respectively. Excess entries stay available in the original legacy records.
+The relay selects one whole record when same-account writers race, so
+confirmation can precede a later replacement of the same edit.
 
 ## Starting a direct message
 
@@ -383,7 +386,7 @@ The conversation header’s **Channel actions** ellipsis opens the shared, defau
 Channel Settings tab; selecting it again never closes the pane. Editing is available
 from that pane, not directly from the menu. **View canvas** is Channels’
 [channel menu panel](plugin-architecture.md#optional-channel-menu-panels) and opens a
-Canvas tab in the side pane. **Move channel**, **Mute/Unmute**, and **Mark as read/unread**
+Canvas tab in the side pane. **Move to…**, **Mute/Unmute**, and **Mark as read/unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
@@ -405,7 +408,7 @@ preview are omitted from Channel Settings; opening details does not read Canvas.
 ## Channel lifecycle
 
 Lifecycle actions extend the persistent sidebar’s existing context popup after
-Move channel and the mute/read group. Lifecycle items use shared leading icons and
+**Move to…** and the mute/read group. Lifecycle items use shared leading icons and
 a separator only when there are lifecycle items and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Attention actions keep their existing owners. Solo chats in
@@ -758,15 +761,14 @@ text, effective duration and, for Create, staged privacy. Reverting
 all fields removes the warning. Pending operations still block dismissal; once
 settled, closing abandons any uncertain Create. Returning from a discard confirmation focuses Name and retains the draft.
 
-Create has no destination picker. Opening from a saved group's sidebar + fixes
-that destination for the draft and titles the modal **Create a channel in [icon]
-[group name]**, reusing the sidebar's decorative Unicode/custom-emoji renderer.
-Opening from the general Channels section stays ungrouped and uses **Create a
-channel**. Opening from Starred titles the modal **Create a channel in [star icon]
-Starred** and saves Starred placement with the creation intent. In the sidebar,
-the filled Tabler star retains the section emoji artwork size and is centered in
-the channel icon column. The creation heading reuses the decorative emoji slot
-and inherits the heading's typography.
+The **Destination workspace** picker files the channel in a workspace or leaves
+it unfiled. Opening from a workspace selects that workspace and its defaults.
+Choose a different destination or template in the dialog. The workspace's default
+agents can be included in setup. Select **Copy workspace instructions to the
+shared Canvas** to share ordinary instructions. Managed folders and worktree
+settings stay local, and an unparseable workspace block remains private.
+The heading uses the selected workspace's decorative emoji. Opening from
+**Team** starts unfiled. Opening from **Starred** starts with Starred placement.
 Group and Starred placement use the existing preference writer and normally
 apply before the new channel opens, so its first sidebar row is already in its
 destination; placement that must first re-read preferences can list the row
@@ -778,9 +780,9 @@ placement failure reports partial setup without creating a second channel; an
 unconfirmed create reports only its own failure. An identical retry rechecks its
 Create without continuing the template's setup writes; agents or Canvas that
 changed underneath an untouched form do not count as new details.
-Group placement remains managed through the left-nav Move action.
-Unavailable groups block a new create rather than silently falling back to a
-different destination.
+Use **Move to…** to change a channel’s workspace after creation. If the
+selected workspace becomes unavailable, choose another workspace or **Team**
+before creating.
 
 Create's session and existing creation helper also use `canonicalDetailsName`,
 including identical-retry matching. Signed names retain the relay's Unicode rules: trim Unicode White_Space and leading

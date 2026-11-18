@@ -5,6 +5,7 @@ import {
   DEFAULT_ACTIVE_WINDOW_SECONDS,
   HOME_SIDEBAR_SECTIONS,
   MAX_WORKSPACES,
+  MAX_WORKSPACE_ASSIGNMENTS,
   validWorkspaceSectionOrder,
   workspaceSectionOrder,
   type SidebarAssignmentIntent,
@@ -132,15 +133,25 @@ export function validSidebarChannelId(channelId: string): boolean {
 export function validSidebarAssignment(
   intent: SidebarAssignmentIntent,
 ): boolean {
-  const { channelId, sectionId, createSection } = intent;
+  const { channelId, sectionId, createSection, reclaim } = intent;
   return (
     (channelId === undefined
       ? !!createSection
       : validSidebarChannelId(channelId)) &&
     (sectionId === undefined || validSidebarChannelId(sectionId)) &&
+    (reclaim === undefined ||
+      (reclaim !== null &&
+        !!channelId &&
+        !!(sectionId || createSection) &&
+        reclaim.channelId !== channelId &&
+        typeof reclaim.channelId === "string" &&
+        validSidebarChannelId(reclaim.channelId) &&
+        typeof reclaim.sectionId === "string" &&
+        validSidebarChannelId(reclaim.sectionId))) &&
     (!createSection ||
       (sectionId === undefined &&
-        /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(createSection.id) &&
+        validSidebarChannelId(createSection.id) &&
+        createSection.id !== "__proto__" &&
         validSidebarChannelId(createSection.name) &&
         (createSection.icon === undefined ||
           validSidebarSectionIcon(createSection.icon)) &&
@@ -221,7 +232,7 @@ export function editSidebarAssignment(
   intent: SidebarAssignmentIntent,
   now = Date.now(),
 ): Record<string, unknown> {
-  const { channelId, sectionId, createSection } = intent;
+  const { channelId, sectionId, createSection, reclaim } = intent;
   const section = createSection?.id ?? sectionId;
   const existing = current.sections as SidebarGroups["sections"];
   const sections = [...existing];
@@ -250,6 +261,17 @@ export function editSidebarAssignment(
     throw new Error("Sidebar group no longer exists");
   const writes: [string[], unknown][] =
     channelId === undefined ? [] : [[["a", channelId], section ?? null]];
+  const assignments = current.assignments as SidebarGroups["assignments"];
+  if (
+    current.sectionOrder !== undefined &&
+    channelId !== undefined &&
+    section !== undefined &&
+    reclaim &&
+    !Object.hasOwn(assignments, channelId) &&
+    Object.keys(assignments).length >= MAX_WORKSPACE_ASSIGNMENTS &&
+    assignments[reclaim.channelId] === reclaim.sectionId
+  )
+    writes.push([["a", reclaim.channelId], null]);
   if (createSection && !existing.some(({ id }) => id === section)) {
     const added = sections.find(({ id }) => id === section);
     if (!added) throw new Error("Sidebar group no longer exists");

@@ -76,12 +76,13 @@ export function WorkspaceSettings({
   const iconChanged =
     target.kind === "project" && icon !== confirmedIcon.current;
   const nameError =
-    target.kind === "project" && (!nextName || nextName.length > 120)
-      ? "Use a workspace name of 1–120 characters."
+    target.kind === "project" && (!nextName || nextName.length > 256)
+      ? "Use a workspace name of 1–256 characters."
       : undefined;
   const alive = useRef(true);
   const inFlight = useRef(false);
   const confirmedCanvas = useRef("");
+  const confirmedWorkspace = useRef("");
   // What reopening would show: the saved settings, or this device's kept draft.
   const kept = useRef("");
   const snapshot = (canvas: string | undefined, { agents, teamIds }: Lineup) =>
@@ -159,6 +160,14 @@ export function WorkspaceSettings({
         revision = head?.id;
       }
       confirmedCanvas.current = content;
+      try {
+        confirmedWorkspace.current = snapshot(
+          workspaceCanvas(readWorkspace(content)),
+          defaults,
+        );
+      } catch {
+        confirmedWorkspace.current = snapshot(content, defaults);
+      }
       if (target.kind === "project") {
         setProjectName(confirmedName.current);
         keptName.current = confirmedName.current;
@@ -291,7 +300,9 @@ export function WorkspaceSettings({
           : undefined;
         if (nameError) throw new Error(nameError);
         const template =
-          target.kind === "project" && canvas !== undefined
+          target.kind === "project" &&
+          canvas !== undefined &&
+          snapshot(canvas, lineup) !== confirmedWorkspace.current
             ? projectTemplate(session.scope, recipeId, nextName, {
                 ...lineup,
                 canvas,
@@ -357,19 +368,21 @@ export function WorkspaceSettings({
             );
         }
         if (!active()) return;
-        if (
-          canvas !== undefined &&
-          (target.kind === "project" || canvas !== confirmedCanvas.current)
-        ) {
+        if (canvas !== undefined) {
           if (template) {
             try {
-              await session.channelKit.save(template, base);
+              const id = await session.channelKit.save(template, base);
+              confirmedWorkspace.current = snapshot(canvas, lineup);
+              setBase(id);
             } catch (reason) {
               throw new CanvasSettingsError(
                 reason instanceof Error ? reason.message : String(reason),
               );
             }
-          } else {
+          } else if (
+            target.kind === "chat" &&
+            canvas !== confirmedCanvas.current
+          ) {
             const selected = await session.canvas
               .save(target.id, canvas, base)
               .catch((reason) => {
@@ -472,7 +485,7 @@ export function WorkspaceSettings({
           >
             <Input
               value={projectName}
-              maxLength={120}
+              maxLength={256}
               disabled={
                 busy ||
                 !loaded ||

@@ -2749,8 +2749,6 @@ export class AgentsService extends Service implements Agents {
           if (!binding.session.snapshotRead || !binding.session.relayAuthor)
             throw new Error("Solo workspace authority is unavailable");
           const preferences = binding.session.sidebarPreferences;
-          await binding.session.channelKit.refresh({ after: true });
-          check(signal);
           await preferences.refresh();
           check(signal);
           const state = preferences.snapshot();

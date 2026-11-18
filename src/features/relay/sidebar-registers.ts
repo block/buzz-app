@@ -1,6 +1,9 @@
 import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
 import type { SidebarGroups } from "./sidebar-preferences.ts";
 
+export const MAX_WORKSPACES = 200;
+export const MAX_WORKSPACE_ASSIGNMENTS = 2000;
+
 /** Section and section-choice registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
 type Tree = { [key: string]: Tree | SidebarRegister };
@@ -248,6 +251,7 @@ export function importWorkspaceFallback(
   let order = Math.max(-1, ...sections.map((section) => section.order)) + 1;
   let changed = false;
   for (const section of legacy.sections) {
+    if (sections.length === MAX_WORKSPACES) break;
     if (live.has(section.id) || removed.has(section.id)) continue;
     live.add(section.id);
     sections.push({ ...section, order: order++ });
@@ -261,7 +265,9 @@ export function importWorkspaceFallback(
       });
     changed = true;
   }
+  let assigned = Object.keys(assignments).length;
   for (const [id, workspace] of Object.entries(legacy.assignments)) {
+    if (assigned === MAX_WORKSPACE_ASSIGNMENTS) break;
     if (
       Object.hasOwn(assignments, id) ||
       unfiled.has(id) ||
@@ -272,6 +278,7 @@ export function importWorkspaceFallback(
       value: workspace,
       enumerable: true,
     });
+    assigned++;
     changed = true;
   }
   if (!changed) return current;
@@ -470,11 +477,16 @@ export function editSidebarSortRecord(
       : current;
   // Older A–Z writers tombstone with null and skip equal values. A distinct
   // alpha anchor lets their explicit choice supersede the plugin binding.
+  const anchor = plugin
+    ? "alpha"
+    : group === "solo" || mode === "recent"
+      ? mode
+      : null;
   const next = editSidebarRecord(
     "channel-sort",
     source,
     createdAt,
-    [[["g", group], plugin ? "alpha" : mode === "recent" ? "recent" : null]],
+    [[["g", group], anchor]],
     now,
   );
   const base =

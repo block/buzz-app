@@ -1,9 +1,15 @@
 import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
 export type { SidebarSortMode } from "./sidebar-sort.ts";
 import {
+  MAX_WORKSPACES,
+  MAX_WORKSPACE_ASSIGNMENTS,
   projectSidebarRecord,
   projectSidebarSort,
   workspaceTombstones,
+} from "./sidebar-registers.ts";
+export {
+  MAX_WORKSPACES,
+  MAX_WORKSPACE_ASSIGNMENTS,
 } from "./sidebar-registers.ts";
 import type { ReadFilter } from "./events.ts";
 import type { RelayEvent } from "./events.ts";
@@ -19,9 +25,6 @@ export const HOME_SIDEBAR_SECTIONS = [
   "forums",
   "dms",
 ] as const;
-export const MAX_WORKSPACES = 200;
-export const MAX_WORKSPACE_ASSIGNMENTS = 2000;
-
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
   "channel-stars",
@@ -111,21 +114,29 @@ export function decodeLegacyWorkspaceEnvelope(value: unknown): SidebarGroups {
   return projectWorkspaceGroups({ ...data, version: 1, sectionOrder: [] });
 }
 
-/** Keep only removal markers that suppress a filing still in a legacy head. */
+/** A retained marker survives later changes to either legacy head. */
 export function workspaceRecordForWrite(
   payload: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
+  previous: Record<string, unknown> = {},
 ) {
   const groups = projectWorkspaceGroups(payload);
   const live = new Set(groups.sections.map(({ id }) => id));
   const legacySections = legacy && new Set(legacy.sections.map(({ id }) => id));
+  const previousRemovals = new Set(
+    workspaceTombstones(previous, "removedSections"),
+  );
+  const previousUnfiled = new Set(workspaceTombstones(previous, "unfiled"));
   const removedSections = workspaceTombstones(
     payload,
     "removedSections",
-  ).filter((id) => !legacySections || legacySections.has(id));
+  ).filter(
+    (id) =>
+      previousRemovals.has(id) || !legacySections || legacySections.has(id),
+  );
   const removed = new Set(removedSections);
   const unfiled = workspaceTombstones(payload, "unfiled").filter((id) => {
-    if (!legacy) return true;
+    if (previousUnfiled.has(id) || !legacy) return true;
     const target = legacy.assignments[id];
     return target && !removed.has(target);
   });
@@ -199,9 +210,10 @@ export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
 export function workspacePayloadForSigning(
   payload: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
+  previous?: Record<string, unknown>,
 ) {
   const record = compactWorkspaceRecord(
-    workspaceRecordForWrite(payload, legacy),
+    workspaceRecordForWrite(payload, legacy, previous),
   );
   if (new TextEncoder().encode(JSON.stringify(record)).length <= 128 * 1024)
     return record;
@@ -352,6 +364,8 @@ export type SidebarAssignmentIntent = Readonly<{
   channelId?: string;
   sectionId?: string;
   createSection?: SidebarSectionDraft & Readonly<{ position?: "first" }>;
+  /** A verified archived chat filing that may make room for one new filing. */
+  reclaim?: Readonly<{ channelId: string; sectionId: string }>;
 }>;
 export type SidebarAssignmentMutator = (
   intent: SidebarAssignmentIntent,
@@ -619,7 +633,6 @@ export async function readSidebarPreferences(
   decode: SidebarDecoder,
   signal: AbortSignal,
   consistency?: "strong",
-  legacyWorkspaces?: SidebarGroups,
   workspaceMigration = false,
 ): Promise<SidebarPreferences> {
   let events: readonly RelayEvent[];
@@ -671,9 +684,7 @@ export async function readSidebarPreferences(
     );
   }
   try {
-    const result = await (legacyWorkspaces
-      ? decode(events, signal, legacyWorkspaces)
-      : decode(events, signal));
+    const result = await decode(events, signal);
     signal.throwIfAborted();
     return result;
   } catch (error) {

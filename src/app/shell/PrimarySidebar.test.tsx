@@ -310,6 +310,12 @@ it("shows only chats under a plugin restriction and restores the other sections 
   ).toBeNull();
   expect(screen.queryByText("Plugin heading")).toBeNull();
   expect(screen.queryByText("Team plugin slot")).toBeNull();
+  f.roster((rows) => rows.filter((row) => row.channelType !== "solo"));
+  expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "New options" }));
+  await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
+  expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
   act(() => publish([]));
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
   expect(screen.getByText("Plugin heading")).toBeVisible();
@@ -901,7 +907,9 @@ it("collapses contributed Solo rows while leaving the single ordinary chat in So
     ).toHaveAttribute("hidden");
     expect(await screen.findByRole("button", { name: /^Chat/ })).toBeVisible();
     expect(
-      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+      view.container.querySelectorAll(
+        '[data-solo-channel-id="chat"], [data-solo-destination-id="chat"]',
+      ),
     ).toHaveLength(1);
   } finally {
     view.unmount();
@@ -1028,7 +1036,7 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
   }
 });
 
-it("keeps ordinary Buzz creation controls until a workspace source opts in and restores them when it is removed", async () => {
+it("renders each framed workspace once with creation controls and restores the ordinary frame when the source goes away", async () => {
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({
     available: true,
@@ -1037,8 +1045,13 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
       sections: [
         { id: "work", name: "Work", order: 0 },
         { id: "empty", name: "Empty", order: 1 },
+        { id: "mixed", name: "Mixed", order: 2 },
       ],
-      assignments: { chat: "work" },
+      assignments: {
+        chat: "work",
+        "public-row": "mixed",
+        "mixed-chat": "mixed",
+      },
       starred: [],
       muted: [],
     }),
@@ -1047,12 +1060,22 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
   Object.assign(h.session, {
     sidebarPreferences: preferences.queries,
   });
-  h.roster(
-    h.session.channels
-      .list()
-      .channels.filter((channel) => channel.id === "chat")
-      .map((channel) => ({ ...channel, cached: true })),
-  );
+  h.roster([
+    {
+      id: "chat",
+      name: "Chat",
+      channelType: "solo",
+      creator: viewer,
+      cached: true,
+    },
+    {
+      id: "mixed-chat",
+      name: "Mixed chat",
+      channelType: "solo",
+      creator: viewer,
+    },
+    { id: "public-row", name: "Public channel", channelType: "stream" },
+  ]);
   const view = render(
     <ToastProvider>
       <NewMenu relay={h.relay} navigator={h.navigator} />
@@ -1074,7 +1097,9 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
       screen.getByRole("button", { name: "New chat in Empty" }),
     ).toBeVisible();
     expect(
-      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+      view.container.querySelectorAll(
+        '[data-solo-channel-id="chat"], [data-solo-destination-id="chat"]',
+      ),
     ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "New options" }));
@@ -1098,17 +1123,36 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
             <>
               <Workspace id="work" />
               <Workspace id="empty" />
+              <Workspace id="mixed" />
               <Chats />
             </>
           );
         },
       }),
     );
+    const workspaces = view.container.querySelectorAll(
+      '[data-sidebar-section="group:work"]',
+    );
+    expect(workspaces).toHaveLength(1);
+    expect(
+      view.container.querySelector('[data-solo-workspace="work"]'),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "New chat in Work" }),
     ).toBeVisible();
+    const mixed = view.container.querySelectorAll(
+      '[data-sidebar-section="group:mixed"]',
+    );
+    expect(mixed).toHaveLength(1);
+    expect(mixed[0]).toHaveTextContent("Mixed chat");
+    expect(mixed[0]).toHaveTextContent("Public channel");
     expect(
-      view.container.querySelectorAll('[data-solo-destination-id="chat"]'),
+      view.container.querySelector('[data-solo-workspace="mixed"]'),
+    ).toBeNull();
+    expect(
+      view.container.querySelectorAll(
+        '[data-solo-channel-id="chat"], [data-solo-destination-id="chat"]',
+      ),
     ).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "New options" }));
     await screen.findByRole("menuitem", { name: "New workspace" });
@@ -1117,6 +1161,90 @@ it("keeps ordinary Buzz creation controls until a workspace source opts in and r
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await act(() => source.fiber.dispose());
     await checkOrdinary();
+  } finally {
+    view.unmount();
+    preferences.dispose();
+    await h.dispose();
+  }
+});
+
+it("shows a disabled region's chat in Solo while leaving its saved filing dormant", async () => {
+  const h = createSoloRegionFixture(viewer);
+  const saved = {
+    sections: [{ id: "personal", name: "Personal", order: 0 }],
+    assignments: { owned: "personal" },
+    starred: [],
+    muted: [],
+  };
+  const write = vi.fn(async () => saved);
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    write,
+    writeStar: async () => [],
+    read: async () => saved,
+  });
+  await preferences.queries.ensure();
+  Object.assign(h.session, { sidebarPreferences: preferences.queries });
+  await h.register();
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) =>
+        channel.id === "chat" ? { ...channel, cached: true } : channel,
+      ),
+  );
+  h.plugins({
+    status: "ready",
+    externalPluginsPaused: false,
+    catalog: {
+      profile: "fixture",
+      location: "Fixture",
+      plugins: [
+        {
+          manifest: { id: "example", name: "Example", apiVersion: 1 },
+          source: "external",
+          enabled: false,
+          revision: "one",
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ],
+    },
+  });
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={h.navigator}
+        target={conversationTarget(h.scope, "owned")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  try {
+    const row = await screen.findByRole("button", {
+      name: /^Owned$/,
+    });
+    expect(row.closest("[data-sidebar-section]")).toHaveAttribute(
+      "data-sidebar-section",
+      "solo",
+    );
+    expect(
+      view.container.querySelectorAll('[data-solo-destination-id="owned"]'),
+    ).toHaveLength(1);
+    row.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu", { name: "Actions for Owned" });
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Move to…" }),
+    ).toBeNull();
+    expect(preferences.queries.snapshot().data?.assignments.owned).toBe(
+      "personal",
+    );
+    expect(write).not.toHaveBeenCalled();
   } finally {
     view.unmount();
     preferences.dispose();
@@ -1237,7 +1365,13 @@ it.each(["neighbor", "heading", "moved"])(
     await preferences.queries.ensure();
     Object.assign(h.session, { sidebarPreferences: preferences.queries });
     h.roster([
-      { id: "chat", name: "Chat", channelType: "solo", creator: viewer },
+      {
+        id: "chat",
+        name: "Chat",
+        channelType: "solo",
+        creator: viewer,
+        cached: true,
+      },
       { id: "other", name: "Other", channelType: "solo", creator: viewer },
     ]);
     await h.register({
@@ -1256,7 +1390,13 @@ it.each(["neighbor", "heading", "moved"])(
       </ToastProvider>,
     );
     try {
-      const heading = screen.getByLabelText("Work", { selector: "summary" });
+      const region = view.container.querySelector<HTMLElement>(
+        '[data-sidebar-section="solo-region:example/work"]',
+      );
+      if (!region) throw new Error("Missing Work region");
+      const heading = within(region).getByLabelText("Work", {
+        selector: "summary",
+      });
       const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
       const chat = screen.getByRole("button", { name: "Chat" });
       chat.focus();
@@ -1335,7 +1475,13 @@ it("keeps an ordinary chat editor and pending save through layout changes and ta
       save,
     },
   });
-  h.roster([...h.session.channels.list().channels]);
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) =>
+        channel.id === "unknown" ? { ...channel, cached: true } : channel,
+      ),
+  );
   const source = await h.register({
     composeWorkspaces: true,
     component: ({ ui, snapshot }) => {

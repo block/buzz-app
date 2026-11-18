@@ -1,4 +1,5 @@
 import type { RelaySession } from "../relay/session";
+import { workspaceSectionOrder } from "../relay/sidebar-preferences";
 import type {
   SoloRegionBinding,
   SoloWorkspaceSnapshot,
@@ -39,6 +40,10 @@ export function createSoloWorkspaces(
       const previous = cache.get(preferences);
       if (previous?.source === source && previous.value.canCreate === canCreate)
         return previous.value;
+      const data = source.data;
+      const sections = new Map(
+        data?.sections.map((section) => [section.id, section]),
+      );
       const value: SoloWorkspaceSnapshot = Object.freeze({
         status:
           source.cached ||
@@ -49,9 +54,13 @@ export function createSoloWorkspaces(
               ? "ready"
               : "loading",
         workspaces: Object.freeze(
-          (source.data?.sections ?? []).map(({ id, name }) =>
-            Object.freeze({ id, name }),
-          ),
+          workspaceSectionOrder(data).flatMap((key) => {
+            if (!key.startsWith("group:")) return [];
+            const section = sections.get(key.slice(6));
+            return section
+              ? [Object.freeze({ id: section.id, name: section.name })]
+              : [];
+          }),
         ),
         canCreate,
         ...(source.error ? { error: source.error } : {}),

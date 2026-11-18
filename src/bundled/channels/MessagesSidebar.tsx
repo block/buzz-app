@@ -1,4 +1,5 @@
 import { teamSidebarSlotsReady, teamSidebarSource } from "./TeamSidebarSource";
+import { soloSidebarSource } from "./SoloSidebarSource";
 import { SidebarSectionSlotView } from "../../features/channel-navigation/SidebarSectionSources";
 import { MessagesSidebarEnvironment } from "./sidebar-environment";
 import type { SidebarContextProps } from "../../features/sidebar/contracts";
@@ -188,7 +189,7 @@ function ScopedSidebar({
           connectionError={connection.error}
           render={({
             sidebar,
-            composedChatSections,
+            workspaceComposition,
             dmPreviews,
             frame,
             before,
@@ -204,7 +205,7 @@ function ScopedSidebar({
                 navigator: props.navigator,
                 target: props.target,
                 sidebar,
-                composedChatSections,
+                workspaceComposition,
                 active: () => true,
                 chatIcons: props.chatIcons,
                 chatMenus: props.chatMenus,
@@ -233,8 +234,21 @@ function ScopedSidebar({
                   );
                   return (
                     <>
-                      {sources("solo")}
-                      {team(sources("team"))}
+                      {sources(
+                        "solo",
+                        (source) =>
+                          source.component !== soloSidebarSource.component,
+                      )}
+                      {team(
+                        <>
+                          {sources("team")}
+                          {sources(
+                            "solo",
+                            (source) =>
+                              source.component === soloSidebarSource.component,
+                          )}
+                        </>,
+                      )}
                       <props.Frame
                         scope={scope}
                         resizable

@@ -17,9 +17,11 @@ import {
   templateAgentChoices,
 } from "../agents/choices";
 import {
+  emptyLineup,
   legacyWorkspaceRecipeCoordinate,
   parseLineup,
 } from "../channel-templates/model";
+import { projectTemplateId, templateEntry } from "../solo/workspace";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
@@ -98,6 +100,8 @@ import {
   projectWorkspaceGroups,
   SIDEBAR_COORDINATES,
   WORKSPACE_PREFERENCE_COORDINATES,
+  MAX_WORKSPACE_ASSIGNMENTS,
+  type SidebarAssignmentIntent,
   type SidebarGroups,
 } from "./sidebar-preferences";
 import { sidebarSortNeedsActivity } from "./sidebar-sort";
@@ -1204,6 +1208,7 @@ export function createRelaySession(
       channels.denyChannel(id, new Error("Channel is no longer available"));
       dropStrandedSends();
     },
+    deleted: forgetDeletedFiling,
   });
   const memberAdministration = createMemberAdministration({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
@@ -1940,10 +1945,15 @@ export function createRelaySession(
         })
       : undefined;
   })();
-  let legacyWorkspaceRevision = 0;
-  let legacyWorkspaceCache:
-    | { revision: number; groups: SidebarGroups }
-    | undefined;
+  let legacyWorkspaceEpoch = new AbortController();
+  let legacyWorkspaceCache: SidebarGroups | undefined;
+  function invalidateLegacyWorkspaces() {
+    legacyWorkspaceCache = undefined;
+    legacyWorkspaceEpoch.abort(
+      new Error("Saved workspaces changed while loading. Try again."),
+    );
+    legacyWorkspaceEpoch = new AbortController();
+  }
   const legacyWorkspaceCoordinates = [
     "channel-sections",
     legacyWorkspaceRecipeCoordinate(transport?.scope ?? ""),
@@ -1951,9 +1961,8 @@ export function createRelaySession(
   async function readLegacyWorkspaces(signal: AbortSignal, fresh = false) {
     const decode = transport?.decodeSidebarPreferences;
     if (!transport?.workspaceMigration || !decode) return undefined;
-    const revision = legacyWorkspaceRevision;
-    if (!fresh && legacyWorkspaceCache?.revision === revision)
-      return legacyWorkspaceCache.groups;
+    const epoch = legacyWorkspaceEpoch;
+    if (!fresh && legacyWorkspaceCache) return legacyWorkspaceCache;
     const active = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
     const [teamEvents, solo] = await Promise.all([
       preferenceReader.read(
@@ -1975,8 +1984,7 @@ export function createRelaySession(
       solo,
     );
     active.throwIfAborted();
-    if (legacyWorkspaceRevision === revision)
-      legacyWorkspaceCache = { groups, revision };
+    if (legacyWorkspaceEpoch === epoch) legacyWorkspaceCache = groups;
     return groups;
   }
   const readPreferences = async (
@@ -1999,23 +2007,21 @@ export function createRelaySession(
         combined,
         consistency,
       );
-    let legacy: SidebarGroups | undefined;
     let legacyError: unknown;
-    try {
-      legacy = await readLegacyWorkspaces(combined);
-    } catch (error) {
+    const loadingLegacy = readLegacyWorkspaces(combined).catch((error) => {
       legacyError = error;
-    }
+      return undefined;
+    });
     const current = await readSidebarPreferences(
       preferenceReader,
       transport.viewer,
-      decode,
+      async (events, active) => decode(events, active, await loadingLegacy),
       combined,
       consistency,
-      legacy,
-      transport.workspaceMigration,
+      true,
     );
-    if (current.sectionOrder || !transport.workspaceMigration) return current;
+    if (current.sectionOrder) return current;
+    const legacy = await loadingLegacy;
     if (!legacy)
       throw legacyError ?? new Error("Saved workspaces are unavailable.");
     return {
@@ -2038,20 +2044,87 @@ export function createRelaySession(
         lifetime.signal,
         AbortSignal.timeout(20_000),
         signal,
+        ...(transport?.workspaceMigration ? [legacyWorkspaceEpoch.signal] : []),
       ]);
       if (!transport?.workspaceMigration) return write(intent, active);
-      const revision = legacyWorkspaceRevision;
-      const legacy = await readLegacyWorkspaces(active, true);
-      if (revision !== legacyWorkspaceRevision)
-        throw new Error("Saved workspaces changed while loading. Try again.");
+      const legacy = await readLegacyWorkspaces(active, true).catch(() => {
+        active.throwIfAborted();
+        // The signer requires a legacy base if there is no unified head yet.
+        return undefined;
+      });
+      active.throwIfAborted();
       return write(intent, active, legacy);
     };
+  }
+  const removeWorkspace = workspaceWrite(transport?.removeSidebarSection);
+  const assignWorkspace = workspaceWrite(transport?.writeSidebarAssignment);
+  async function writeWorkspaceAssignment(
+    intent: SidebarAssignmentIntent,
+    signal: AbortSignal,
+  ): Promise<SidebarGroups> {
+    if (!assignWorkspace)
+      throw new Error("Workspace placement is unavailable.");
+    const assignments = sidebarPreferences.queries.snapshot().data?.assignments;
+    const roster = channels.queries.list();
+    if (
+      transport?.workspaceMigration &&
+      intent.channelId &&
+      (intent.sectionId || intent.createSection) &&
+      assignments &&
+      Object.keys(assignments).length >= MAX_WORKSPACE_ASSIGNMENTS &&
+      roster.status === "ready"
+    ) {
+      const archived = roster.channels.find(
+        (channel) =>
+          channel.channelType === "solo" &&
+          channel.archived &&
+          Object.hasOwn(assignments, channel.id),
+      );
+      const sectionId = archived && assignments[archived.id];
+      if (archived && sectionId)
+        return assignWorkspace(
+          { ...intent, reclaim: { channelId: archived.id, sectionId } },
+          signal,
+        );
+    }
+    return assignWorkspace(intent, signal);
+  }
+  function forgetDeletedFiling(id: string) {
+    const preferences = sidebarPreferences.queries;
+    if (
+      transport?.workspaceMigration &&
+      preferences.snapshot().data?.assignments[id]
+    )
+      void preferences.assign(id).catch(() => {});
+  }
+  async function deleteWorkspaceSettings(id: string) {
+    const kit = channelKit.capability;
+    if (!kit.available) return;
+    const active = AbortSignal.any([
+      lifetime.signal,
+      AbortSignal.timeout(20_000),
+    ]);
+    await kit.refresh();
+    active.throwIfAborted();
+    const catalog = kit.snapshot();
+    if (catalog.status !== "ready")
+      throw new Error(
+        catalog.error ?? "Workspace settings could not be loaded.",
+      );
+    const entry = templateEntry(catalog.entries, await projectTemplateId(id));
+    if (entry?.record.value.type === "template")
+      await kit.save(
+        { ...entry.record.value, ...emptyLineup(), name: "Deleted workspace" },
+        entry.eventId,
+        true,
+        active,
+      );
   }
   const sidebarPreferences = createSidebarPreferencesStore({
     read: readPreferences,
     readAfterWrite: (signal) => readPreferences(signal, "strong"),
     available: !!transport?.decodeSidebarPreferences,
-    write: workspaceWrite(transport?.writeSidebarAssignment),
+    write: assignWorkspace ? writeWorkspaceAssignment : undefined,
     writeStar: (() => {
       const write = transport?.writeSidebarStar;
       return write
@@ -2098,7 +2171,16 @@ export function createRelaySession(
         : undefined;
     })(),
     persistence: options.persistence,
-    removeSection: workspaceWrite(transport?.removeSidebarSection),
+    removeSection: removeWorkspace
+      ? async (id, signal) => {
+          const result = await removeWorkspace(id, signal);
+          if (!result.sections.some((section) => section.id === id))
+            void deleteWorkspaceSettings(id).catch((error: unknown) => {
+              console.warn("The deleted workspace's settings were kept", error);
+            });
+          return result;
+        }
+      : undefined,
     renameSection: workspaceWrite(transport?.renameSidebarSection),
     writeOrder: workspaceWrite(transport?.writeSidebarSectionOrder),
     writeFilter: (() => {
@@ -3547,7 +3629,7 @@ export function createRelaySession(
         id: event.id,
         created_at: event.created_at,
       });
-      if (legacy) legacyWorkspaceRevision++;
+      if (legacy) invalidateLegacyWorkspaces();
       sidebarPreferences.invalidate();
     }
   };
@@ -3641,7 +3723,7 @@ export function createRelaySession(
         }
         return;
       }
-      if (!continuous) legacyWorkspaceRevision++;
+      if (!continuous) invalidateLegacyWorkspaces();
       sidebarPreferences.reconnect(continuous);
       repairUnread(continuous);
       // Only while this same connection is still up.
@@ -4109,7 +4191,7 @@ export function createRelaySession(
         typing.clear();
         sidebarHeads.clear();
         legacyWorkspaceCache = undefined;
-        legacyWorkspaceRevision++;
+        invalidateLegacyWorkspaces();
         sidebarPreferences.clear();
         channelKit.clear();
         lifecycle.clear();

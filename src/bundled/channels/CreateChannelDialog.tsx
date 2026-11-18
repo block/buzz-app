@@ -9,6 +9,7 @@ import {
 import {
   projectDefault,
   projectTemplateId,
+  readWorkspace,
 } from "../../features/solo/workspace";
 import { Select } from "../../shared/design-system/ui/Select";
 import { useTeams } from "../../features/agents/react";
@@ -27,6 +28,7 @@ import {
   type RefObject,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
   ChannelPrivacyConfirmation,
@@ -130,6 +132,8 @@ function OpenCreateChannelDialog({
   const loadDefaults = !!initialGroup && session.channelKit.available;
   const channelTemplates = useChannelTemplates();
   const [workspaceTemplate, setWorkspaceTemplate] = useState<ChannelTemplate>();
+  const [shareWorkspaceInstructions, setShareWorkspaceInstructions] =
+    useState(false);
   const [loadingDefaults, setLoadingDefaults] = useState(loadDefaults);
   const [defaultsError, setDefaultsError] = useState("");
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
@@ -164,12 +168,20 @@ function OpenCreateChannelDialog({
           throw new Error("A team in the workspace defaults could not load.");
         return team.agents;
       });
+      // A workspace Canvas can contain managed local paths or a hand-edited
+      // workspace block. Only standalone instructions are eligible to share.
+      let canvas = "";
+      try {
+        canvas = readWorkspace(preferred.canvas).canvas;
+      } catch {
+        // A raw workspace block stays private.
+      }
       setWorkspaceTemplate({
         id: preferred.id,
         name: "Workspace defaults",
         teams: [],
         agents: [...new Set([...preferred.agents, ...teamAgents])],
-        canvas: preferred.canvas,
+        canvas,
       });
     })()
       .catch((reason: unknown) => {
@@ -198,6 +210,7 @@ function OpenCreateChannelDialog({
     (item) => item.id === (chosenTemplate ?? workspaceTemplate?.id),
   );
   const templateId = template?.id ?? "";
+  const usesWorkspaceDefaults = !!template && template === workspaceTemplate;
   // A template names agents and teams' members; which are the owner's agents in
   // this community is the shared selection's call, under the policy session
   // setup applies.
@@ -247,7 +260,10 @@ function OpenCreateChannelDialog({
   };
   const templateSetup = template && {
     agents: templateAgents(template, teams, new Set(agentNames.keys())),
-    canvas: template.canvas,
+    canvas:
+      usesWorkspaceDefaults && !shareWorkspaceInstructions
+        ? ""
+        : template.canvas,
   };
   const templateNote =
     templateSetup &&
@@ -287,6 +303,7 @@ function OpenCreateChannelDialog({
     setGroupId(initialGroup);
     setStarred(initialStarred);
     setTemplateId(undefined);
+    setShareWorkspaceInstructions(false);
   }, [open, initialGroup, initialStarred]);
 
   const normalizedName = canonicalDetailsName(name);
@@ -306,6 +323,7 @@ function OpenCreateChannelDialog({
     privateChannel ||
     lifetime !== "ongoing" ||
     groupId !== initialGroup ||
+    shareWorkspaceInstructions ||
     (chosenTemplate !== undefined &&
       chosenTemplate !== (workspaceTemplate?.id ?? ""));
   const requestClose = () => {
@@ -623,10 +641,18 @@ function OpenCreateChannelDialog({
                 onValueChange={(value) => {
                   if (!editing.current) return;
                   setTemplateId(value);
+                  setShareWorkspaceInstructions(false);
                   setError("");
                 }}
               />
             </div>
+          )}
+          {usesWorkspaceDefaults && template.canvas.trim() && (
+            <Checkbox
+              label="Copy workspace instructions to the shared Canvas"
+              checked={shareWorkspaceInstructions}
+              onCheckedChange={setShareWorkspaceInstructions}
+            />
           )}
           <ChannelDurationField
             temporary={lifetime === "temporary"}

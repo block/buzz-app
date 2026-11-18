@@ -11,13 +11,6 @@
   flex: 1 1 10rem;
   min-width: 0;
 }
-.sidebarGroup + .sidebarGroup:not([hidden]) {
-  margin-block-start: var(--space-6);
-}
-.sidebarGroup[hidden] + .sidebarGroup {
-  margin-block-start: 0;
-}
-
 /* Page rows reserve the channel list's scrollbar gutter (.channelList in
    SidebarFrame.module.css), so they end in its column wherever scrollbars take
    space; the controls above keep the header's full width. The gutter needs a

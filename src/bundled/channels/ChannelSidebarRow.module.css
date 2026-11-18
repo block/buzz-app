@@ -25,6 +25,15 @@
   position: relative;
   z-index: 1;
 }
+.row [data-solo-row-action] {
+  flex-shrink: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .row:not(:hover, :focus-within)
+    [data-solo-row-action]:not([aria-expanded="true"]) {
+    opacity: 0;
+  }
+}
 .row:is(:hover, :has([data-context-menu-present])):not(
   [data-selected]
 )::before {

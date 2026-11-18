@@ -11,7 +11,7 @@ import { SoloRegions } from "./SoloRegions";
 function SoloSidebarContents(props: MessagesSidebarState) {
   const { regions } = useSoloNavigation(props.session);
   if (!regions.length) return null;
-  if (!props.composedChatSections.size)
+  if (!props.workspaceComposition.sections.size)
     return (
       <SoloRegions
         session={props.session}
@@ -19,6 +19,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
         navigator={props.navigator}
         target={props.target}
         sidebar={props.sidebar}
+        pendingClick={props.workspaceComposition.pendingChatClick}
       />
     );
   return (
@@ -30,7 +31,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
       chatIcons={props.chatIcons}
       chatMenus={props.chatMenus}
       sidebarRows={props.sidebarRows}
-      composedChatSections={props.composedChatSections}
+      workspaceComposition={props.workspaceComposition}
       renderContents={(_ordinary, _header, pendingClick, composeOrdinary) => (
         <SoloRegions
           session={props.session}

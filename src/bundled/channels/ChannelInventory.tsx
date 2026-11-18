@@ -10,6 +10,7 @@ import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { useChatConversions } from "../../features/solo/conversion";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { TeamSidebarSections, TeamSidebarSection } from "./TeamSidebarSource";
+import type { WorkspaceSidebarComposition } from "./sidebar-environment";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import {
   newMessage,
@@ -34,6 +35,7 @@ import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
+import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { eligibleSolo } from "../../features/solo/labels";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
@@ -145,7 +147,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { useBestieConversation } from "../../app/shell/bestie-context";
 
 /** The sidebar entry selected by a destination, excluding nested message state. */
-export function sidebarEntryLocation(target: OpenTarget) {
+function sidebarEntryLocation(target: OpenTarget) {
   return target.kind === "conversation"
     ? `conversation:${target.channelId}`
     : target.kind === "page"
@@ -155,7 +157,7 @@ export function sidebarEntryLocation(target: OpenTarget) {
 
 type Inventory = {
   sidebar: ReturnType<typeof useSidebarView>;
-  composedChatSections: ReadonlySet<string>;
+  workspaceComposition: WorkspaceSidebarComposition;
   dmPreviews: ReadonlyMap<string, UnreadDmPreview>;
   frame: Pick<ComponentProps<typeof SidebarFrame>, "busy" | "launchPending">;
   before: ReactNode;
@@ -258,14 +260,18 @@ export function ChannelInventory({
           key.startsWith("group:") ? `section:${key.slice(6)}` : key
         ];
       return saved &&
-        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
+        (saved === "alpha" ||
+          saved === "recent" ||
+          rowSortModes.some((mode) => mode.id === saved))
         ? saved
-        : "alpha";
+        : key === "solo"
+          ? "recent"
+          : "alpha";
     },
     [preferences.data, rowSortModes],
   );
-  const appliedSorts = Object.keys(preferences.data?.sort ?? {}).map(
-    sectionSort,
+  const appliedSorts = Object.keys(preferences.data?.sort ?? {}).map((key) =>
+    sectionSort(key.startsWith("section:") ? `group:${key.slice(8)}` : key),
   );
   const pluginSorted = appliedSorts.some(
     (mode) => mode !== "alpha" && mode !== "recent",
@@ -434,6 +440,19 @@ export function ChannelInventory({
       currentDraft.project ? `group:${currentDraft.project}` : "solo",
     );
   const activeDraftSections = JSON.stringify([...draftSections]);
+  const [workspaceFrames, setWorkspaceFrames] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const registerWorkspaceFrame = useCallback((key: string) => {
+    setWorkspaceFrames((previous) => new Set([...previous, key]));
+    return () =>
+      setWorkspaceFrames((previous) => {
+        if (!previous.has(key)) return previous;
+        const next = new Set(previous);
+        next.delete(key);
+        return next;
+      });
+  }, []);
   const sections = useMemo(
     () =>
       startup.ready
@@ -443,6 +462,7 @@ export function ChannelInventory({
             new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
             chatsOnly,
             new Set<string>(JSON.parse(activeDraftSections)),
+            regions.managed,
           )
         : [],
     [
@@ -453,13 +473,14 @@ export function ChannelInventory({
       dmVisibility.hidden,
       chatsOnly,
       activeDraftSections,
+      regions.managed,
     ],
   );
   // Projection rejects duplicate ids; optimistic creates skip existing ids.
   // useSidebarFilters keeps every section, filtering only its rows.
   const slotsMounted =
     slotsReady?.([
-      ...sections.map(({ key }) => key),
+      ...sections.flatMap(({ key }) => (workspaceFrames.has(key) ? [] : [key])),
       ...contributions.map(({ key }) => contributedSidebarSectionKey(key)),
     ]) ?? true;
   // A target for another community has no destination in this sidebar.
@@ -500,8 +521,9 @@ export function ChannelInventory({
         return workspace && channel.channelType !== "solo" ? [workspace] : [];
       }),
     );
-    for (const { id } of preferences.data?.sections ?? [])
-      if (!mixed.has(id)) composedChatSections.add(`group:${id}`);
+    for (const { key } of sections)
+      if (key.startsWith("group:") && !mixed.has(key.slice(6)))
+        composedChatSections.add(key);
   }
   const selectedSection =
     target.kind === "conversation"
@@ -522,19 +544,46 @@ export function ChannelInventory({
   useLayoutEffect(() => {
     if (location !== previousLocation.current) {
       previousLocation.current = location;
-      pendingExpansion.current = !!location && !preserveSidebar;
+      pendingExpansion.current =
+        !!location &&
+        !preserveSidebar &&
+        !navigator.snapshot().attempt.traversal;
     }
     if (pendingExpansion.current && ordinarySelection && !preserveSidebar) {
       pendingExpansion.current = false;
-      sidebar.toggle(ordinarySelection, true);
+      if (current?.channelType === "solo" || currentDraft)
+        sidebar.toggle(ordinarySelection, true);
     }
-  }, [location, ordinarySelection, preserveSidebar, sidebar.toggle]);
+  }, [
+    location,
+    navigator,
+    ordinarySelection,
+    preserveSidebar,
+    sidebar.toggle,
+    current?.channelType,
+    currentDraft,
+  ]);
   const [chatTool, setChatTool] = useState<{
     channel: ChannelSummary;
     kind: "share" | "convert" | "settings";
     visit: AbortSignal;
+    trigger?: HTMLElement | undefined;
   }>();
   const [renamingChat, setRenamingChat] = useState<string>();
+  const pendingChatClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const renamingSection = sections.find(({ rows }) =>
+    rows.some(
+      (channel) =>
+        channel.id === renamingChat && channel.channelType === "solo",
+    ),
+  )?.key;
+  if (renamingChat && !renamingSection) setRenamingChat(undefined);
+  const renameChat = useCallback((id: string) => {
+    setRenamingChat(id);
+    return true;
+  }, []);
   const openChatTool = (
     channel: ChannelSummary,
     kind: NonNullable<typeof chatTool>["kind"],
@@ -545,6 +594,13 @@ export function ChannelInventory({
         setChatTool({ channel, kind, visit });
     });
   };
+  const shareChat = useCallback(
+    (channel: ChannelSummary, trigger: HTMLElement) => {
+      const visit = navigator.snapshot().attempt.signal;
+      setChatTool({ channel, kind: "share", visit, trigger });
+    },
+    [navigator],
+  );
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const removedRowFocus = useRef<
@@ -758,11 +814,14 @@ export function ChannelInventory({
   const openAgentActivity = useCallback(
     (channelId: string, agent: string, messageId: string | undefined) => {
       if (!viewer || relay.snapshot().session !== queries) return;
-      const transcript = activityTranscript(
-        queries.channels,
-        channelId,
-        messageId,
-      );
+      const isChat = queries.channels
+        .list()
+        .channels.some(
+          (row) => row.id === channelId && row.channelType === "solo",
+        );
+      const transcript = isChat
+        ? {}
+        : activityTranscript(queries.channels, channelId, messageId);
       const intent = {
         channelId,
         agent,
@@ -840,11 +899,13 @@ export function ChannelInventory({
     [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
   );
   const filteredSections = useSidebarFilters(
-    sortedSections.map((section) =>
-      composedChatSections.has(section.key)
-        ? { ...section, rows: [] }
-        : section,
-    ),
+    sortedSections
+      .filter(({ key }) => !workspaceFrames.has(key))
+      .map((section) =>
+        composedChatSections.has(section.key)
+          ? { ...section, rows: [] }
+          : section,
+      ),
     Object.fromEntries(
       Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
         key.startsWith("section:") ? `group:${key.slice(8)}` : key,
@@ -879,7 +940,9 @@ export function ChannelInventory({
   const channelSectionKey = useCallback(
     (channelId: string) => {
       const data = queries.sidebarPreferences.snapshot().data;
-      const sectionId = data?.assignments[channelId];
+      const sectionId = regions.managed.has(channelId)
+        ? undefined
+        : data?.assignments[channelId];
       const channel = queries.channels
         .list()
         .channels.find((row) => row.id === channelId);
@@ -891,7 +954,7 @@ export function ChannelInventory({
             ? sidebarHome(channel)
             : "channels";
     },
-    [queries],
+    [queries, regions.managed],
   );
   const focusChannelPlacement = (channelId: string) => {
     sidebar.toggle(channelSectionKey(channelId), true);
@@ -928,7 +991,12 @@ export function ChannelInventory({
   ) =>
     moveChannel(
       channelId,
-      () => preferences.assign(channelId, sectionId),
+      () => {
+        const refusal = prepareSoloMove(queries, channelId);
+        return refusal
+          ? Promise.reject(new Error(refusal))
+          : preferences.assign(channelId, sectionId);
+      },
       surface,
     );
   const setChannelStar = (
@@ -1037,7 +1105,7 @@ export function ChannelInventory({
         </SoloChatMenuItems>,
       );
     }
-    if (placementWritable && !regions.excluded.has(channel.id)) {
+    if (placementWritable && !regions.managed.has(channel.id)) {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
@@ -1528,9 +1596,40 @@ export function ChannelInventory({
     },
     [lifecycleCallbacks, openSuccessor],
   );
+  const workspaceNewAction = (workspace: string, name: string) => (
+    <WorkspaceNewMenu
+      key={`${scope}:${workspace}`}
+      scope={scope}
+      workspace={workspace}
+      name={name}
+      channelAvailable={queries.channelCreation.available}
+      dmAvailable={queries.directMessages.available}
+      choose={(action, trigger) => {
+        if (relay.snapshot().session !== queries) return;
+        if (action === "chat") newChat(workspace);
+        else if (action === "channel") {
+          createChannelTrigger.current = trigger;
+          setInitialStarred(false);
+          setInitialGroup(workspace);
+          setCreateChannelOpen(true);
+        } else {
+          const partition = splitPartition(scope);
+          if (partition)
+            void navigator.open(workspaceMessageTarget(partition, workspace));
+        }
+      }}
+    />
+  );
   return render({
     sidebar,
-    composedChatSections,
+    workspaceComposition: {
+      sections: composedChatSections,
+      pendingChatClick,
+      collapsed: sidebar.collapsed,
+      toggle: sidebar.toggle,
+      registerFrame: registerWorkspaceFrame,
+      newAction: workspaceNewAction,
+    },
     dmPreviews: unreadDmPreviews,
     frame: {
       launchPending: connectionError
@@ -1596,21 +1695,23 @@ export function ChannelInventory({
             if (
               mounted.current &&
               channel &&
+              !prepareSoloMove(queries, channelId) &&
               queries.sidebarPreferences.sectionCreationWritable
             )
               setCreatingFor({ channel, position: "first" });
           });
         }}
-        onMove={(channelId, sectionKey) =>
-          sectionKey === "starred"
-            ? setChannelStar(channelId, true)
-            : assignGroup(
-                channelId,
-                sectionKey.startsWith("group:")
-                  ? sectionKey.slice("group:".length)
-                  : undefined,
-              )
-        }
+        onMove={(channelId, sectionKey) => {
+          if (prepareSoloMove(queries, channelId)) return;
+          if (sectionKey === "starred") setChannelStar(channelId, true);
+          else
+            assignGroup(
+              channelId,
+              sectionKey.startsWith("group:")
+                ? sectionKey.slice("group:".length)
+                : undefined,
+            );
+        }}
         onReorder={(sectionKey, overKey) =>
           sectionKey.startsWith("plugin:")
             ? reorderContributions(sectionKey, overKey)
@@ -1665,8 +1766,11 @@ export function ChannelInventory({
                     <DroppableSidebarSection
                       key={section.key}
                       createSectionTarget={
-                        section.key === firstChannelSection &&
-                        preferences.sectionCreationWritable
+                        section.key === firstChannelSection
+                          ? preferences.sectionCreationWritable
+                            ? "available"
+                            : "unavailable"
+                          : undefined
                       }
                       groupIndex={groupIds.indexOf(section.key)}
                       disabled={
@@ -1706,8 +1810,18 @@ export function ChannelInventory({
                       title={section.title}
                       icon={section.icon}
                       session={queries}
-                      open={!sidebar.collapsed.includes(section.key)}
-                      onToggle={(open) => sidebar.toggle(section.key, open)}
+                      open={
+                        !sidebar.collapsed.includes(section.key) ||
+                        renamingSection === section.key
+                      }
+                      onToggle={(open) =>
+                        sidebar.toggle(
+                          section.key,
+                          renamingSection === section.key
+                            ? sidebar.collapsed.includes(section.key)
+                            : open,
+                        )
+                      }
                       channelCount={section.allRows.length}
                       filter={
                         preferences.data
@@ -1818,46 +1932,22 @@ export function ChannelInventory({
                           : undefined
                       }
                       headerActions={
-                        section.key.startsWith("group:") ? (
-                          <WorkspaceNewMenu
-                            key={`${scope}:${section.key}`}
-                            scope={scope}
-                            workspace={section.key.slice(6)}
-                            name={section.title}
-                            channelAvailable={queries.channelCreation.available}
-                            dmAvailable={queries.directMessages.available}
-                            choose={(action, trigger) => {
-                              if (relay.snapshot().session !== queries) return;
-                              const workspace = section.key.slice(6);
-                              if (action === "chat") newChat(workspace);
-                              else if (action === "channel") {
-                                createChannelTrigger.current = trigger;
-                                setInitialStarred(false);
-                                setInitialGroup(workspace);
-                                setCreateChannelOpen(true);
-                              } else {
-                                const partition = splitPartition(scope);
-                                if (partition)
-                                  void navigator.open(
-                                    workspaceMessageTarget(
-                                      partition,
-                                      workspace,
-                                    ),
-                                  );
-                              }
-                            }}
-                          />
-                        ) : section.key === "solo" ? (
-                          (creationAction ?? (
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              onClick={() => newChat()}
-                            >
-                              New chat
-                            </Button>
-                          ))
-                        ) : null
+                        section.key.startsWith("group:")
+                          ? workspaceNewAction(
+                              section.key.slice(6),
+                              section.title,
+                            )
+                          : section.key === "solo"
+                            ? (creationAction ?? (
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  onClick={() => newChat()}
+                                >
+                                  New chat
+                                </Button>
+                              ))
+                            : null
                       }
                       removalFocus={() =>
                         sidebar.list.current?.querySelector<HTMLButtonElement>(
@@ -1926,7 +2016,10 @@ export function ChannelInventory({
                       }
                     >
                       <ChannelSidebarRows
-                        open={!sidebar.collapsed.includes(section.key)}
+                        open={
+                          !sidebar.collapsed.includes(section.key) ||
+                          renamingSection === section.key
+                        }
                       >
                         {[
                           ...(composedChatSections.has(section.key)
@@ -1940,11 +2033,44 @@ export function ChannelInventory({
                                   session={queries}
                                   id={channel.id}
                                   title={channel.name}
+                                  className={styles.unifiedChatName}
+                                  onAbandon={() => {
+                                    const ids = section.rows.map(
+                                      ({ id }) => id,
+                                    );
+                                    const index = ids.indexOf(channel.id);
+                                    const neighbors = [
+                                      ...ids.slice(index + 1),
+                                      ...ids.slice(0, index).reverse(),
+                                    ];
+                                    const rows = activeChannelRows(
+                                      sidebar.list.current,
+                                    );
+                                    const target = neighbors
+                                      .map((id) =>
+                                        rows.find(
+                                          (row) => row.dataset.channelId === id,
+                                        ),
+                                      )
+                                      .find(Boolean);
+                                    (
+                                      target ??
+                                      sidebar.list.current?.querySelector<HTMLElement>(
+                                        `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
+                                      )
+                                    )?.focus({ preventScroll: true });
+                                  }}
                                   close={(focus) => {
                                     setRenamingChat(undefined);
                                     if (focus)
                                       requestAnimationFrame(() =>
-                                        focusChannelPlacement(channel.id),
+                                        sidebar.collapsed.includes(section.key)
+                                          ? sidebar.list.current
+                                              ?.querySelector<HTMLElement>(
+                                                `[data-sidebar-section="${CSS.escape(section.key)}"] summary`,
+                                              )
+                                              ?.focus()
+                                          : focusChannelPlacement(channel.id),
                                       );
                                   }}
                                 />
@@ -1983,13 +2109,27 @@ export function ChannelInventory({
                                   composingMessage ? undefined : selected
                                 }
                                 onSelect={select}
+                                onShareChat={shareChat}
+                                navigation={navigator}
+                                pendingClick={pendingChatClick}
+                                onRename={
+                                  channel.channelType === "solo" &&
+                                  !renamingChat &&
+                                  canEditLifetime(queries, channel)
+                                    ? renameChat
+                                    : undefined
+                                }
                                 onOpenThread={openActivityThread}
                                 onOpenMessage={openActivityMessage}
                                 onOpenWorkingAgent={openWorkingAgent}
                                 onOpenAgentActivity={openAgentActivity}
                                 menuEnabled
                                 sectionKey={section.key}
-                                selectFrame={DraggableChannel}
+                                selectFrame={
+                                  regions.managed.has(channel.id)
+                                    ? undefined
+                                    : DraggableChannel
+                                }
                                 onOpenMenu={openRowMenu}
                                 menuOpen={menuOpen}
                                 menuAnchor={
@@ -2223,8 +2363,11 @@ export function ChannelInventory({
               )}
               <button
                 type="button"
-                disabled={!preferences.writable}
+                disabled={
+                  !preferences.writable || regions.managed.has(move.channelId)
+                }
                 onClick={() =>
+                  !prepareSoloMove(queries, move.channelId) &&
                   moveChannel(move.channelId, () =>
                     preferences.retryMove(move.channelId),
                   )
@@ -2305,6 +2448,11 @@ export function ChannelInventory({
             signal={chatTool.visit}
             trigger={{
               get current() {
+                if (
+                  chatTool.trigger?.isConnected &&
+                  !chatTool.trigger.closest("[inert]")
+                )
+                  return chatTool.trigger;
                 return (
                   activeChannelRows(sidebar.list.current).find(
                     (row) => row.dataset.channelId === chatTool.channel.id,
@@ -2351,6 +2499,8 @@ export function ChannelInventory({
             moveConversation
             create={(section) => {
               creatingFor.surface?.signal?.throwIfAborted();
+              const refusal = prepareSoloMove(queries, creatingFor.channel.id);
+              if (refusal) return Promise.reject(new Error(refusal));
               return preferences.createAndAssign(creatingFor.channel.id, {
                 ...section,
                 ...(creatingFor.position

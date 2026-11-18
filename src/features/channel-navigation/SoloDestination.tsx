@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { SoloChatTitle } from "../solo/SoloChatTitle";
 import {
   type ReactNode,
   type RefObject,
@@ -166,7 +167,7 @@ export function RegionConversation(props: SoloConversationProps) {
         <>
           <MenuSeparator />
           <MenuGroup>
-            {props.menuActions.slice(0, 6).map((action) => (
+            {props.menuActions.map((action) => (
               <MenuItem
                 key={action.id}
                 onClick={(event) => {
@@ -302,7 +303,18 @@ function ConversationLink(props: SoloConversationLinkProps) {
       {...(primary ? { "data-solo-destination-id": state.channel.id } : {})}
       aria-label={props["aria-label"]}
       aria-describedby={props["aria-describedby"]}
-      label={props.label}
+      label={
+        !props.multiline && props.label === state.channel.name ? (
+          <SoloChatTitle
+            key={state.channel.id}
+            channelId={state.channel.id}
+            title={state.channel.name}
+            details={context?.session.channelDetails}
+          />
+        ) : (
+          props.label
+        )
+      }
       icon={props.icon}
       trailing={props.trailing}
       multiline={!!props.multiline}

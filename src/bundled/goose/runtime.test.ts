@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
+import {
+  type RecommendedRun,
+  recommendedRun,
+} from "../../features/agents/recommended";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
@@ -12,6 +16,8 @@ import type { Agent, Delivery } from "../../features/agents/service";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
@@ -20,6 +26,7 @@ import { AgentSessions, AgentProcess } from "./sessions";
 import {
   DEFAULT_CONFIG,
   GooseRuntime,
+  running,
   sessionTitle,
   standalonePrompt,
 } from "./runtime";
@@ -85,8 +92,12 @@ function setup(
       slug?: string,
     ) => Promise<Memories>;
     thinking?: NonNullable<Parameters<typeof fakeSpawn>[0]>["thinking"];
+    /** The community's relay workflow key. */
+    workflowAuthority?: string;
     /** Wraps the fake's `spawn`, as `gated(…).wrap` does. */
     wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Host["spawn"];
+    /** What agents on Recommended run on. */
+    recommended?: RecommendedRun;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -132,6 +143,7 @@ function setup(
     dispose: () => {},
   };
   const session = {
+    workflowAuthority: options.workflowAuthority,
     read,
     agentMemories: {
       open: vi.fn(() => memories),
@@ -172,13 +184,16 @@ function setup(
   };
   // A reconnect is a new session to the same community.
   let connected = session;
+  const state = { status: "ready" };
   const relay = {
     snapshot: () => ({
-      status: "ready",
-      session: connected,
+      status: state.status,
+      session: state.status === "ready" ? connected : undefined,
       viewer: alice,
+      origin: "https://goose.example",
       scope: `https://goose.example:${alice}`,
     }),
+    subscribe: () => () => {},
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -193,6 +208,8 @@ function setup(
     storage,
     () => options.added ?? [],
     options.repositories,
+    undefined,
+    options.recommended,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -200,6 +217,7 @@ function setup(
     pubkey: self,
     name: "Gander",
     owner: alice,
+    relay: "wss://goose.example",
     ...(options.protection && { protection: options.protection }),
     publish: vi.fn(async (template: (typeof published)[number]) => {
       published.push(template);
@@ -236,6 +254,7 @@ function setup(
       prompt: async () => prompt,
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
+    state,
     agent,
     core,
     deliver,
@@ -1311,6 +1330,86 @@ describe("GooseRuntime", () => {
     },
   );
 
+  describe("on Recommended", () => {
+    // Synthetic candidates, best first, both for goose.
+    const candidates = ["model-a", "model-b"].map((model) => ({
+      harness: "goose",
+      provider: "openai",
+      model,
+      effort: "max",
+      label: model,
+    }));
+    beforeEach(() =>
+      vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", JSON.stringify(candidates)),
+    );
+    afterEach(() => vi.unstubAllEnvs());
+    const onIt = { ...DEFAULT_CONFIG, preset: "recommended" };
+
+    it("runs on the first candidate still offered, found once per launch", async () => {
+      const offered = vi.fn(async ({ model }: { model: string }) => {
+        return model === "model-b";
+      });
+      const { deliver, fake } = setup({
+        recommended: recommendedRun("goose", offered),
+      });
+      const first = message("1", "@Gander hi");
+      await deliver(first, { config: onIt });
+      await flush(100);
+      expect(fake.geese[0]?.opened[0]?._meta).toMatchObject({
+        provider: "openai",
+      });
+      expect(fake.geese[0]?.configured).toEqual([
+        "session-1 model=model-b",
+        "session-1 thinking_effort=max",
+      ]);
+      await deliver(
+        message("2", "@Gander again", {
+          tags: [
+            ["h", channel],
+            ["e", first.id, "", "reply"],
+            ["p", self],
+          ],
+        }),
+        { config: onIt },
+      );
+      await flush(100);
+      // Model A was not offered; neither is asked about again.
+      expect(offered.mock.calls.map(([{ model }]) => model)).toEqual([
+        "model-a",
+        "model-b",
+      ]);
+    });
+
+    it("looks for nothing for a delivery it drops", async () => {
+      const offered = vi.fn(async () => true);
+      const { run } = setup({ recommended: recommendedRun("goose", offered) });
+      const ignored = vi.fn();
+      // A watch without an address comes as a standalone turn, so is dropped.
+      await run({ type: "watch" } as unknown as Delivery["trigger"], {
+        config: onIt,
+        ignored,
+      });
+      expect(ignored).toHaveBeenCalledOnce();
+      expect(offered).not.toHaveBeenCalled();
+    });
+
+    it("runs on goose's own default when no candidate is offered or the check fails", async () => {
+      const offered = vi.fn(async ({ model }: { model: string }) => {
+        if (model === "model-a") throw new Error("discovery failed");
+        return false;
+      });
+      const { deliver, fake } = setup({
+        recommended: recommendedRun("goose", offered),
+      });
+      await deliver(message("1", "@Gander hi"), { config: onIt });
+      await flush(100);
+      expect(offered).toHaveBeenCalledTimes(2);
+      expect(fake.geese[0]?.turns).toHaveLength(1);
+      expect(fake.geese[0]?.opened[0]?._meta).not.toHaveProperty("provider");
+      expect(fake.geese[0]?.configured).toEqual([]);
+    });
+  });
+
   it("runs a mention on the agent's thinking level", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander think"), {
@@ -1634,8 +1733,10 @@ it("takes a plugin's wake in its thread's session, as the plugin's and not a mes
   const f = setup();
   await f.deliver(root);
   await flush(100);
-  await f.run(pluginWake(root.id));
+  const accepted = vi.fn();
+  await f.run(pluginWake(root.id), { accepted });
   await flush(100);
+  expect(accepted).toHaveBeenCalledOnce();
   const goose = f.goose();
   expect(goose?.turns).toHaveLength(2);
   expect(goose?.turns[1]?.sessionId).toBe(goose?.turns[0]?.sessionId);
@@ -1738,6 +1839,79 @@ it.each([
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(f.goose()).toBeUndefined();
+});
+
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  f.state.status = "connecting";
+  // The owner's own mention settles without waiting for the community.
+  await f.deliver(message("1", "Say hi"));
+  const stop = new AbortController();
+  const workflow = f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { signal: stop.signal },
+  );
+  stop.abort();
+  await expect(workflow).rejects.toThrow("Workflow request could not start");
+});
+
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  // The community is ready, so the wait ends at once; the agent is gone by then.
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored, current: () => false },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.goose()).toBeUndefined();
 });
 
 it("takes a wake with no thread only in a Solo chat", async () => {
@@ -2499,4 +2673,24 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     ],
     expect.anything(),
   );
+});
+
+it("runs an agent on Recommended on the current candidate", () => {
+  // A synthetic candidate.
+  const candidate = {
+    harness: "goose",
+    provider: "databricks",
+    model: "goose-model-b",
+    effort: "high",
+    label: "Model B",
+  };
+  const saved = { ...DEFAULT_CONFIG, preset: "recommended" };
+  expect(running(saved, candidate)).toMatchObject({
+    provider: "databricks",
+    model: "goose-model-b",
+    effort: "high",
+  });
+  // With none offered it runs on goose's own default.
+  expect(running(saved, null)).toEqual(saved);
+  expect(running(DEFAULT_CONFIG, candidate)).toEqual(DEFAULT_CONFIG);
 });

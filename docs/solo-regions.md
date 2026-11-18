@@ -25,7 +25,7 @@ recovery actions while the host renders its channels.
 
 A ready snapshot with `hidden: true` keeps the region out of the sidebar: the
 host draws no heading, rows, header actions, or "In" chip for it, and it neither
-names the Solo tab nor composes its workspaces. The region stays in the shared
+names a sidebar section or composes ordinary chats. The region stays in the shared
 projection, so its labeled chats stay out of the Solo list, its filing guard and
 workspace still apply, and its drafts still start; the chats remain reachable by
 links, notifications, and search, and the source presents them in its own UI. If the
@@ -53,7 +53,7 @@ workspaces.
 
 A source can open a channel that also appears in Team with
 `ctx.navigation.open(target, { sidebar: "preserve" })`. This opening keeps the
-sidebar scope, scroll, and disclosure state. It does not select or reveal the
+sidebar scroll and disclosure state. It does not select or reveal the
 Team row. The source supplies its own selected row. Check
 `ctx.navigation.snapshot().attempt.sidebar` along with the target to select it
 only for this opening. Retry retains the option. Later opens and Back/Forward
@@ -100,7 +100,21 @@ Check `handle.draftContext === true` before passing
 `draft: { context: JsonValue, key?: string }` to `openDraft`. The host retains
 and returns this JSON through `started`; only the source interprets it. It uses
 the same create, first-message, Outbox and reconciliation flow as any region
-draft. There is no source callback before creation.
+draft.
+
+A source may implement `prepareStart(binding, { channelId, members, start })` to
+prepare agent notes or conversation instructions before the first message.
+On Send, the host calls it after saving the start record, before creating the
+chat or sending its first message. `members` contains the selected and workspace
+agents passed to chat creation. `start` has the same workspace and draft context
+as `handle.started(binding, channelId)`, including the saved-context fallback.
+The source must still own a running, ready region. The hook may return `void`
+or `Promise<void>`; the host waits up to three seconds, then warns and continues
+on rejection or timeout. This allows async setup while bounding Send latency.
+Timed-out work is not canceled and may finish after the message; plugins must
+handle that case. The hook runs on each Send attempt, so make preparation safe
+to repeat for the same channel ID. It does not run for `handle.createChat` or
+Outbox replay. Sources without the hook keep the existing send behavior.
 
 Without a key, context uses the existing region/workspace draft. A key gives
 the source a separate text, attachment, settings, model and effort slot. It
@@ -139,15 +153,52 @@ Focused tests live beside `solo-navigation.ts` and `SoloRegions.tsx`. Browser an
 native app checks must still cover geometry, both themes, enlarged text, keyboard
 focus, hidden sections, and relay signing. DOM checks do not establish those facts.
 
+## Channel groups
+
+Check `ui.ChannelGroup` before using it. Older hosts omit this optional component.
+It frames a joined stream or forum channel with its current name, icon, native
+channel menu, and details entry. Sources supply selection, disclosure state and
+label, and their task content. The title calls `onSelect`; only the caret calls
+`onToggle`. `controls` identifies the body, which stays mounted while collapsed.
+Missing channels and channels without the viewer's membership render nothing.
+
+The host offers `onNewTask` only when the current channel permits starting a chat.
+Cached, archived, and read-only channels cannot offer it. The host rechecks access
+when an action runs. Native channel actions retain their existing authorization
+and mutation owners. Groups reuse the local roster and closed menus start no
+relay reads. The component does not discover channels, file tasks, or change their
+audience. Keep the previous presentation as a fallback when the component is absent.
+
 ## Personal workspaces
 
-`ctx.soloNavigation.workspaces` exposes the bound user's Solo workspace catalog.
+A source with `composeWorkspaces: true` receives optional `ui.Workspace`,
+`ui.Chats`, and `ui.ChatList` components. `ui.Chats` shows unfiled ordinary
+chats. Passing `all` includes chat-only workspaces with their headers and
+frames. Mixed workspaces and Starred keep their placement in the unified
+sidebar. A composed workspace shares the sidebar’s collapse preference and
+accepts drags to and from other workspaces.
+`ui.ChatList` shows the same chats without the composed frames, even when
+their saved workspace is collapsed. It keeps workspace order and each
+workspace's Show more / Show less controls. Region-owned chats stay with
+their source. If the plugin is disabled, those chats appear in Solo and their
+saved workspace placements become dormant.
+
+The host retains row identity, menus, rename editors, and pending saves when a
+source switches between these presentations. Render each ordinary inventory
+once using `ui.ChatList` alone, `ui.Chats` with `all`, or `ui.Workspace` for each
+composable workspace plus `ui.Chats` for unfiled chats.
+
+Feature-detect `ui.ChatList` before use. On older hosts, fall back to `ui.Chats`
+with `all: true` to keep named-workspace chats reachable with their headings
+and actions.
+
+`ctx.soloNavigation.workspaces` exposes the bound user's workspace catalog.
 Pass the current region binding to `snapshot`, `subscribe`, `refresh`, and
 `create({id, name})`. The snapshot contains IDs, names, status, creation
 availability, and any read error. Ordinary chat assignments remain host-owned.
 Refresh before retrying uncertain creation and keep the same ID and name.
-Ended bindings cannot read or write a new community. The existing Solo writer
-enforces authorization, record capacity, and revision checks.
+Ended bindings cannot read or write a new community. The shared workspace writer
+enforces authorization and record capacity.
 
 Regions own their task filing; they do not add an ordinary Solo assignment for
 each task. Workspace selection in a task draft is personal metadata and is

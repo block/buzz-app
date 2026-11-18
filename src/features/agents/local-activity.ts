@@ -1,4 +1,6 @@
 import type { AgentSessionAssociation } from "./session-admission";
+import type { MentionRefusal } from "./owner-attestation";
+
 export const REPLY_CORRELATION_MS = 120_000;
 
 export type LocalWorkState =
@@ -79,6 +81,16 @@ export type LocalWork = Readonly<{
   stoppable?: true;
   /** It can be asked again once it fails. */
   retryable?: true;
+  /** Host-owned note about how this turn ran, kept after it settles. */
+  notice?: string;
+}>;
+/** A mention this agent didn't act on, and why: shown only to its owner here. */
+export type LocalDecline = Readonly<{
+  scope: string;
+  agent: string;
+  channelId: string;
+  messageId: string;
+  refusal: MentionRefusal;
 }>;
 const settled = (state: LocalWorkState) =>
   state === "done" ||
@@ -90,6 +102,8 @@ export const localWorkRoot = (
 ) => (work.syntheticMessage && !work.thread ? undefined : work.threadRootId);
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
+  /** Mentions declined for who sent them; notified with `subscribeWork`. */
+  declined?(): readonly LocalDecline[];
   subscribeWork(listener: () => void): () => void;
   /** Hides one already-seen error on this device; never changes its outcome. */
   dismissError?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
@@ -105,12 +119,16 @@ export type LocalAgentSource = {
 /** App-owned local facts. No relay publication, inference, polling or process control. */
 export function createLocalAgentActivity() {
   let work: readonly LocalWork[] = [];
+  let declined: readonly LocalDecline[] = [];
   const workListeners = new Set<() => void>();
   const entries = new Map<symbol, LocalWork>();
   const visible = new Map<symbol, readonly LocalVisibleMessage[]>();
   const omissions = new Map<symbol, { messages: number; characters: number }>();
   let revision = 0;
   let order = 0;
+  const declines = new Map<string, LocalDecline>();
+  const declineKey = (row: Pick<LocalWork, "scope" | "agent" | "messageId">) =>
+    `${row.scope}\n${row.agent}\n${row.messageId}`;
   /** How to stop each stoppable request's turn, until it settles. */
   const stops = new Map<symbol, () => Promise<void>>();
   /** How to ask each retryable request again, while its row is kept. */
@@ -123,6 +141,7 @@ export function createLocalAgentActivity() {
         omissions.delete(id);
       }
     work = Object.freeze([...entries.values()]);
+    declined = Object.freeze([...declines.values()]);
     for (const listener of workListeners) listener();
   };
   const subscribe = (listeners: Set<() => void>, listener: () => void) => {
@@ -133,6 +152,7 @@ export function createLocalAgentActivity() {
   };
   const reader: LocalAgentSource = {
     work: () => work,
+    declined: () => declined,
     subscribeWork: (listener) => subscribe(workListeners, listener),
     dismissError({ scope, agent, messageId }) {
       for (const [id, row] of entries)
@@ -197,6 +217,7 @@ export function createLocalAgentActivity() {
         | "dismissed"
         | "stoppable"
         | "retryable"
+        | "notice"
         | "evidence"
       >,
       retry?: () => void,
@@ -207,6 +228,7 @@ export function createLocalAgentActivity() {
       // still owns the prior attempt's fresh reply IDs, because those relay
       // echoes may arrive after the activity row is replaced.
       let replaced: LocalWork | undefined;
+      declines.delete(declineKey(input));
       for (const [id, row] of entries)
         if (
           row.scope === input.scope &&
@@ -590,6 +612,14 @@ export function createLocalAgentActivity() {
               : result.error || "Could not finish this request",
           );
         },
+        /** Notes how this turn ran, such as without its gateway. */
+        notice: (text: string) => {
+          const current = entries.get(id);
+          const notice = text.trim().slice(0, 500);
+          if (!current || !notice || current.notice === notice) return;
+          entries.set(id, Object.freeze({ ...current, notice }));
+          publish();
+        },
         /** The harness's way to stop this request's turn, offered as Stop. */
         interruptible: (stop: () => Promise<void>) => {
           const current = entries.get(id);
@@ -599,12 +629,25 @@ export function createLocalAgentActivity() {
           entries.set(id, Object.freeze({ ...current, stoppable: true }));
           publish();
         },
-        remove: () => {
+        /** With a `refusal`, keeps a note of why the agent didn't act. */
+        remove: (refusal?: MentionRefusal) => {
           stops.delete(id);
           retries.delete(id);
           clearTimeout(replyTimers.get(id));
           replyTimers.delete(id);
-          if (entries.delete(id)) publish();
+          const row = entries.get(id);
+          if (!entries.delete(id)) return;
+          if (refusal && row) {
+            // Display budget only: the oldest note goes first.
+            const oldest = declines.size >= 512 && declines.keys().next().value;
+            if (oldest) declines.delete(oldest);
+            const { scope, agent, channelId, messageId } = row;
+            declines.set(
+              declineKey(row),
+              Object.freeze({ scope, agent, channelId, messageId, refusal }),
+            );
+          }
+          publish();
         },
       };
     },
@@ -620,6 +663,14 @@ export function createLocalAgentActivity() {
           retries.delete(id);
           clearTimeout(replyTimers.get(id));
           replyTimers.delete(id);
+          changed = true;
+        }
+      for (const [key, row] of declines)
+        if (
+          (!scope || row.scope === scope) &&
+          (!agent || row.agent === agent)
+        ) {
+          declines.delete(key);
           changed = true;
         }
       if (changed) publish();
@@ -661,7 +712,7 @@ export function localActivity(
   return agents;
 }
 export function localWorkLabel(
-  row: Pick<LocalWork, "state" | "error" | "step">,
+  row: Pick<LocalWork, "state" | "error" | "step" | "notice">,
 ) {
   if (row.state === "superseded") return "Continued on a later message";
   if (row.state === "stopped") return "Stopped";
@@ -672,7 +723,10 @@ export function localWorkLabel(
         ? stepText(row.step)
         : "Starting"
       : row.state === "error"
-        ? row.error || "Could not finish this request"
+        ? // A failure keeps how its turn ran, such as without its gateway.
+          [row.error || "Could not finish this request", row.notice]
+            .filter(Boolean)
+            .join(" · ")
         : "Finished";
 }
 

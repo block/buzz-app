@@ -66,6 +66,7 @@ import {
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
+  composerCodeBlockExit,
   composerCodeFence,
   composerFenceDelimiters,
   composerPrefixDelimiters,
@@ -176,6 +177,15 @@ const CARET_KEYS = new Map<string | number, string>([
   [39, "ArrowRight"],
   [40, "ArrowDown"],
 ]);
+/** The visual direction each arrow key moves the caret. */
+const arrowDirections: Partial<
+  Record<string, "left" | "right" | "up" | "down">
+> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 /** The key a keydown names, restoring a caret key the host reported as a control
  * character (Right Arrow arrives as U+001D) from its code. */
 function keyboardKey(
@@ -410,6 +420,8 @@ export type EditableInputProps = Omit<
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
+  /** Handle semantic clipboard content only when prose paste permits it. */
+  onSemanticPaste?(data: DataTransfer): boolean;
   /** Vet a pasted identity link as a notification recipient: the recipient under
    * its current name, or null to keep the display-only chip. */
   acceptRecipient?(pubkey: string): MentionRecipient | null;
@@ -431,6 +443,7 @@ export function EditableInput({
   onFormatsChange,
   onEditLink,
   onPasteTooLong,
+  onSemanticPaste,
   acceptRecipient,
   onAnnotationMenu,
   ...events
@@ -449,6 +462,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -463,6 +477,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -504,6 +519,8 @@ export function EditableInput({
     sync(draft: MentionDraft, reset?: boolean): void;
     /** Applies the settles held through the composition that has just ended. */
     settleHeld(): void;
+    /** Nests the caret's list item, or outdents it; false outside a list. */
+    indent(outdent: boolean): boolean;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -521,6 +538,25 @@ export function EditableInput({
       document.removeEventListener("pointercancel", release);
       document.defaultView?.removeEventListener("blur", release);
     };
+  }, []);
+
+  // A selection keeps painting after focus leaves the editor or its window,
+  // where :focus no longer matches. Selected tokens follow the selection.
+  useLayoutEffect(() => {
+    const root = mount.current;
+    const document = root?.ownerDocument;
+    if (!root || !document) return;
+    const track = () => {
+      const selection = document.getSelection();
+      root.toggleAttribute(
+        "data-selection-inside",
+        !!selection?.rangeCount &&
+          root.contains(selection.anchorNode) &&
+          root.contains(selection.focusNode),
+      );
+    };
+    document.addEventListener("selectionchange", track);
+    return () => document.removeEventListener("selectionchange", track);
   }, []);
 
   useLayoutEffect(() => {
@@ -1045,6 +1081,53 @@ export function EditableInput({
       editor.dispatch(tr.scrollIntoView());
       editor.focus();
       return { from, to: editor.state.selection.to };
+    };
+    /** Quote copied timeline content with its source links after the draft,
+     * wherever its caret is, and leave a blank line for the reply.
+     * A blank last paragraph, such as an empty draft's, gives way to the quote.
+     * Quoted identity links stay references: unlike a paste, quoting someone
+     * never notifies them. */
+    const insertQuote = (html: string, sourceLinks: readonly string[] = []) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const copy = buzzCopyDocument(html);
+      if (!copy?.textContent.trim()) return false;
+      const { nodes } = composerSchema;
+      const tr = closeHistory(editor.state.tr);
+      const end = tr.doc.content.size;
+      const last = tr.doc.lastChild;
+      const from =
+        last?.type === nodes.paragraph && !last.content.size
+          ? end - last.nodeSize
+          : end;
+      const previous = tr.doc.resolve(from).nodeBefore;
+      tr.replaceWith(from, end, [
+        ...(sourceLinks.length &&
+        previous?.type === nodes.paragraph &&
+        previous.content.size
+          ? [nodes.paragraph.create()]
+          : []),
+        ...sourceLinks.map((link) =>
+          nodes.paragraph.create(null, composerSchema.text(`From ${link}:`)),
+        ),
+        nodes.blockquote.create(null, copy.content),
+        ...(sourceLinks.length ? [nodes.paragraph.create()] : []),
+        nodes.paragraph.create(),
+      ]);
+      tr.setSelection(Selection.atEnd(tr.doc));
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      ) {
+        current.current.onPasteTooLong?.();
+        return false;
+      }
+      const before = editor.state;
+      editor.dispatch(tr.scrollIntoView());
+      if (editor.state === before) return false;
+      // The reply typed below the quote is its own undo step.
+      separateHistory = true;
+      editor.focus();
+      return true;
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
@@ -1978,6 +2061,7 @@ export function EditableInput({
             const dom = document.createElement("span");
             dom.className = tokenClass.current;
             dom.contentEditable = "false";
+            dom.setAttribute("spellcheck", "false");
             dom.dataset.source = node.attrs.source;
             hosts.current.set(dom, {
               key: `token-${++tokenHosts}`,
@@ -2133,24 +2217,27 @@ export function EditableInput({
             )
               return true;
           }
+          // A code block that no textblock follows or precedes has nowhere for
+          // the native caret to go past its edge: open a paragraph there.
+          const direction = arrowDirections[named];
+          const exit =
+            direction &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            editable() &&
+            composerCodeBlockExit(
+              editor.state,
+              direction === "right" || direction === "down",
+            );
+          if (exit && editor.endOfTextblock(direction)) {
+            editor.dispatch(closeHistory(exit).scrollIntoView());
+            return true;
+          }
           // A caret key reported as a control character would be typed as that
           // character by the native path. Move the caret here instead.
           if (named !== event.key) return moveCaret(named, event);
-          if (
-            event.key === "Tab" &&
-            !event.altKey &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            editable()
-          ) {
-            const command = event.shiftKey ? liftListItem : sinkListItem;
-            if (
-              command(composerSchema.nodes.list_item)(editor.state, (tr) =>
-                editor.dispatch(closeHistory(tr)),
-              )
-            )
-              return true;
-          }
           if (event.key === "Backspace" || event.key === "Delete") {
             if (!editable()) return false;
             if (
@@ -2320,6 +2407,12 @@ export function EditableInput({
               return true;
             }
             const code = editor.state.selection.$from.parent.type.spec.code;
+            if (
+              !code &&
+              event.clipboardData &&
+              current.current.onSemanticPaste?.(event.clipboardData)
+            )
+              return true;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =
@@ -2530,6 +2623,7 @@ export function EditableInput({
         },
       },
       editLink: { configurable: true, value: editLink },
+      insertQuote: { configurable: true, value: insertQuote },
       removeRecipient: {
         configurable: true,
         value: (pubkey: string) => {
@@ -2699,6 +2793,13 @@ export function EditableInput({
         for (const held of heldSettles.current.splice(0))
           held.resolve(held.apply());
       },
+      indent(outdent) {
+        if (!editable()) return false;
+        syncNativeSelection();
+        return (outdent ? liftListItem : sinkListItem)(
+          composerSchema.nodes.list_item,
+        )(editor.state, (tr) => editor.dispatch(closeHistory(tr)));
+      },
       sync(next, reset = false) {
         if (
           !reset &&
@@ -2856,6 +2957,16 @@ export function EditableInput({
             !event.shiftKey &&
             view.current &&
             openAnnotation.current?.(view.current.state.selection.head)
+          )
+            event.preventDefault();
+          // After the host, which claims Tab to accept a completion.
+          if (
+            !event.defaultPrevented &&
+            event.key === "Tab" &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            api.current?.indent(event.shiftKey)
           )
             event.preventDefault();
           if (!event.defaultPrevented && event.key === "Enter") {

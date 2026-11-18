@@ -68,6 +68,12 @@ import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import {
+  communityScope,
+  parseTypePolicy,
+  typePolicyFilter,
+  validTypePolicy,
+} from "./artifact-community";
+import {
   acceptPublish,
   acceptReadStatePublish,
   admitSignedRequest,
@@ -464,6 +470,7 @@ export async function connectNativeTransport(
     | { sync?: { version?: unknown } }
     | undefined;
   const artifactSync = artifacts?.sync?.version === 1;
+  const artifactCommunity = communityScope(info.artifacts, artifactSupport);
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -476,6 +483,7 @@ export async function connectNativeTransport(
   if (!writer) throw new Error("Native relay writer is unavailable");
   const commandWriter = (
     route:
+      | "artifact-type-policy"
       | "channel-details"
       | "channel-lifecycle"
       | "identity-archive"
@@ -975,6 +983,29 @@ export async function connectNativeTransport(
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
+    ...(artifactCommunity
+      ? {
+          artifactCommunity,
+          artifactTypePolicy: {
+            async read(type: string, signal: AbortSignal) {
+              const filters = [typePolicyFilter(type)];
+              const response = await admitSignedRequest(
+                origin,
+                transport.viewer,
+                () => nativeRelayRequest(origin, "/query", filters, signal),
+                signal,
+              );
+              signal.throwIfAborted();
+              if (!response.ok)
+                throw new Error((await readApiFailure(response)).error);
+              return parseTypePolicy(await response.json());
+            },
+            writer: commandWriter("artifact-type-policy", (event) =>
+              validTypePolicy(event, artifactCommunity),
+            ),
+          },
+        }
+      : {}),
     verifiedProfiles: verifiedProfileAuthority(info),
     async readVerifiedProfileAuthority(signal) {
       return verifiedProfileDiscovery(await nativeRelayInfo(origin, signal));

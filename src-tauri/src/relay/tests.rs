@@ -959,6 +959,73 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     verify(&registered);
 }
 
+#[test]
+fn type_policy_commands_are_signed_and_sent_only_through_their_typed_route() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let invoke = |cmd: &str, body: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let command = serde_json::json!({
+        "kind": 9034, "created_at": 123, "content": "",
+        "tags": [
+            ["community", "9b353519-f4fe-4757-aef4-bec6cc0ae54c"],
+            ["type", "com.example.groups.group"], ["policy", "admins"], ["prev", "0"]
+        ]
+    });
+    let signed = invoke(
+        "relay_channel_sign",
+        serde_json::json!({
+            "community": "https://relay.test", "route": "artifact-type-policy", "event": command
+        }),
+    )
+    .unwrap();
+    verify(&signed);
+    for field in ["kind", "created_at", "tags", "content"] {
+        assert_eq!(signed[field], command[field]);
+    }
+    // The generic signer also backs artifact saves, which must never set a policy.
+    assert_eq!(
+        invoke(
+            "relay_sign",
+            serde_json::json!({"community": "https://relay.test", "event": command}),
+        )
+        .unwrap_err(),
+        serde_json::json!("This event is not supported by the packaged relay connection")
+    );
+    assert_eq!(
+        invoke(
+            "relay_http",
+            serde_json::json!({
+                "community": "https://relay.test", "path": "/events", "method": "POST",
+                "body": signed.to_string()
+            }),
+        )
+        .unwrap_err(),
+        serde_json::json!("Invalid outgoing signature")
+    );
+}
+
 #[tokio::test]
 async fn signing_is_verifiable_and_does_not_export_a_key() {
     let event = IdentityHost::fixture()

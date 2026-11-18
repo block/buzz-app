@@ -7,6 +7,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
+import { typePolicyTemplate } from "./artifact-community";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -2284,6 +2285,81 @@ it.each([
     expect(transport.artifactIncremental !== undefined).toBe(incremental);
   },
 );
+
+const artifactCommunity = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+it.each([
+  { nipAr: true, offered: true },
+  { nipAr: false, offered: false },
+])(
+  "offers the community type policy only with NIP-AR: %j",
+  async ({ nipAr, offered }) => {
+    discovery = {
+      ...(nipAr ? { supported_extensions: ["nip-ar"] } : {}),
+      artifacts: {
+        community_scope: { version: 1, community_id: artifactCommunity },
+      },
+    };
+    const transport = await connectNativeTransport(community);
+    expect(transport.artifactCommunity).toBe(
+      offered ? artifactCommunity : undefined,
+    );
+    expect(transport.artifactTypePolicy !== undefined).toBe(offered);
+  },
+);
+
+it("reads the type policy through signed /query and signs 9034 only for this community's typed route", async () => {
+  discovery = {
+    supported_extensions: ["nip-ar"],
+    artifacts: {
+      community_scope: { version: 1, community_id: artifactCommunity },
+    },
+  };
+  const policy = (await connectNativeTransport(community)).artifactTypePolicy;
+  assert.exists(policy);
+  const signal = new AbortController().signal;
+  const type = "com.example.groups.group";
+  const revision = "b".repeat(64);
+  respond = () => ({ body: { policy: "admins", revision } });
+  await expect(policy.read(type, signal)).resolves.toEqual({
+    policy: "admins",
+    revision,
+  });
+  expect(requests.at(-1)).toMatchObject({
+    community,
+    path: "/query",
+    method: "POST",
+  });
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual([
+    { artifact: "policy", scope: "community", "#type": [type] },
+  ]);
+  const template = typePolicyTemplate(
+    artifactCommunity,
+    type,
+    "admins",
+    revision,
+    1700000010,
+  );
+  const event = signed(viewer, template);
+  vi.mocked(invoke).mockResolvedValueOnce(event);
+  expect(await policy.writer.sign(template, signal)).toEqual(event);
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_channel_sign",
+    { community, route: "artifact-type-policy", event: template },
+  ]);
+  const elsewhere = typePolicyTemplate(
+    "11111111-1111-4111-8111-111111111111",
+    type,
+    "admins",
+    revision,
+    1700000010,
+  );
+  const calls = vi.mocked(invoke).mock.calls.length;
+  await expect(policy.writer.sign(elsewhere, signal)).rejects.toThrow();
+  await expect(
+    policy.writer.publish(signed(viewer, elsewhere), signal),
+  ).rejects.toThrow();
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(calls);
+});
 
 it.each([
   "incremental_limit",

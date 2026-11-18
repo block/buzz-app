@@ -137,6 +137,31 @@ fn member_administration(event: &EventTemplate) -> bool {
                 && (event.kind == 9001
                     || matches!(tag(event, 2, "role"), Some("admin" | "member" | "guest")))))
 }
+/// NIP-AR SET_ARTIFACT_TYPE_POLICY: `community`, `type`, `policy` and `prev`,
+/// in that order, with empty content.
+fn type_policy(event: &EventTemplate) -> bool {
+    event.kind == 9034
+        && event.content.is_empty()
+        && event.created_at <= 9_007_199_254_740_991
+        && event.tags.len() == 4
+        && tag(event, 0, "community")
+            .is_some_and(|id| uuid(id) && id != "00000000-0000-0000-0000-000000000000")
+        && tag(event, 1, "type").is_some_and(artifact_type)
+        && matches!(tag(event, 2, "policy"), Some("everyone" | "admins"))
+        && tag(event, 3, "prev").is_some_and(|prev| prev == "0" || super::hex_key(prev))
+}
+/// The relay's namespaced type: at most 128 bytes, two or more dot-separated
+/// segments of `[a-z][a-z0-9_-]*`.
+fn artifact_type(value: &str) -> bool {
+    value.len() <= 128
+        && value.contains('.')
+        && value.split('.').all(|segment| {
+            segment.starts_with(|c: char| c.is_ascii_lowercase())
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        })
+}
 /// The stepping-down owner of `[h, ["p", heir, "owner"], ["p", owner, "admin"]]`.
 fn ownership_transfer(event: &EventTemplate) -> Option<&str> {
     let [_, heir, owner] = event.tags.as_slice() else {
@@ -155,6 +180,7 @@ fn member_signer_mismatch(event: &EventTemplate, viewer: &str) -> bool {
 }
 fn valid(route: &str, event: &EventTemplate) -> bool {
     match route {
+        "artifact-type-policy" => type_policy(event),
         "channel-details" => details(event),
         "channel-lifecycle" => lifecycle(event),
         "identity-archive" => archive(event),
@@ -251,6 +277,68 @@ mod tests {
         assert!(valid("channel-details", &event));
         event.tags[1][1] = "#C".into();
         assert!(!valid("channel-details", &event));
+    }
+
+    #[test]
+    fn type_policy_signs_only_the_exact_command() {
+        let command = |tags: [[&str; 2]; 4]| EventTemplate {
+            kind: 9034,
+            created_at: 9_007_199_254_740_991,
+            content: String::new(),
+            tags: tags
+                .iter()
+                .map(|t| t.iter().map(|v| v.to_string()).collect())
+                .collect(),
+        };
+        let community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+        let longest = format!("a.{}", "b".repeat(126));
+        let prev = "a".repeat(64);
+        let base = [
+            ["community", community],
+            ["type", longest.as_str()],
+            ["policy", "admins"],
+            ["prev", prev.as_str()],
+        ];
+        assert!(valid("artifact-type-policy", &command(base)));
+        let mut unset = base;
+        unset[2][1] = "everyone";
+        unset[3][1] = "0";
+        assert!(valid("artifact-type-policy", &command(unset)));
+
+        let too_long = format!("a.{}", "b".repeat(127));
+        let upper_prev = "A".repeat(64);
+        let upper_community = community.to_uppercase();
+        for (index, value) in [
+            (0, "00000000-0000-0000-0000-000000000000"),
+            (0, upper_community.as_str()),
+            (1, too_long.as_str()),
+            (1, "nodot"),
+            (1, "Com.example"),
+            (1, "com.1example"),
+            (1, "com..example"),
+            (2, "owners"),
+            (3, upper_prev.as_str()),
+            (3, "1"),
+        ] {
+            let mut tags = base;
+            tags[index][1] = value;
+            assert!(!valid("artifact-type-policy", &command(tags)), "{value}");
+        }
+        let mut swapped = base;
+        swapped.swap(0, 1);
+        let mut extra = command(base);
+        extra.tags.push(vec!["h".into(), community.into()]);
+        let mut wide = command(base);
+        wide.tags[3].push("relay".into());
+        let mut content = command(base);
+        content.content = "{}".into();
+        let mut late = command(base);
+        late.created_at += 1;
+        let mut kind = command(base);
+        kind.kind = 9035;
+        for event in [command(swapped), extra, wide, content, late, kind] {
+            assert!(!valid("artifact-type-policy", &event), "{:?}", event.tags);
+        }
     }
 }
 

@@ -454,10 +454,13 @@ describe("harnessKit.systemPrompt", () => {
     expect(text).toContain(
       '## Progress\n<plugin-section id="progress" plugin="example">\nQuiet.\n</plugin-section>',
     );
-    // Without the conversation, the prompt has no plugin's sections.
-    expect(await kit.systemPrompt(d, options)).not.toContain(
-      "</plugin-section>\n",
-    );
+    expect(text).toContain("This session is one thread");
+    // Without the conversation, the prompt has no plugin's sections, and its
+    // Session Model states the scope alone.
+    const unnamed = await kit.systemPrompt(d, options);
+    expect(unnamed).not.toContain("</plugin-section>\n");
+    expect(unnamed).not.toContain("This session is one thread");
+    expect(unnamed).toContain("each thread gets its own independent");
     expect(asked[1]).toEqual([undefined, undefined]);
   });
 

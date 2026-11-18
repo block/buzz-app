@@ -1713,6 +1713,26 @@ it("refreshes core memory after a queued community wake acquires ownership", asy
   }
 });
 
+it("tells a thread's session and a timer's run what each one is", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes } = setup([root]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const [thread, standalone] = prompted();
+  expect(systemPromptOf(thread)).toContain("This session is one thread");
+  expect(systemPromptOf(standalone)).toContain(
+    "This run joins no conversation",
+  );
+});
+
 it("runs a timer on the core memory as it is then, after an ordinary turn read it", async () => {
   const root = message("2", "@Claude hi", {
     tags: [

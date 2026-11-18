@@ -434,6 +434,9 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(promptMessage(promptSections(text)).text).toBe("@Pi can you look?");
   expect(String(delivered?.params.steer)).toContain("@Pi can you look?");
   expect(String(delivered?.params.instructions)).toContain(self);
+  expect(String(delivered?.params.instructions)).toContain(
+    "This session is one thread",
+  );
   expect(turn.workingUntil).toHaveBeenCalledTimes(1);
   expect(published).toEqual([]);
 });
@@ -537,13 +540,16 @@ it("builds a conversation's instructions with the sections of the plugin that ma
 });
 
 it("builds a one-off turn's instructions with no conversation's sections", async () => {
-  const { runOnce, agent } = setup({
+  const { host, runOnce, agent } = setup({
     wait: () => ({ status: "done", answer: 1, text: "" }),
   });
   const promptSections = vi.fn(() => ({}));
   Object.assign(agent, { promptSections });
   await runOnce("watch", "Check the build");
   expect(promptSections.mock.calls).toEqual([[undefined, undefined]]);
+  expect(String(host.requests("once")[0]?.params.instructions)).toContain(
+    "This run joins no conversation",
+  );
 });
 
 it("tells a Solo chat whose plugin gives the working location to read its Canvas's folders", async () => {

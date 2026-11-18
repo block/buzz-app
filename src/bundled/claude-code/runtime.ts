@@ -87,7 +87,10 @@ import {
   readProject,
   worksElsewhere,
 } from "../../features/agent-harness/project";
-import { sectionsOf } from "../../features/agent-harness/sections/compose";
+import {
+  placeOf,
+  sectionsOf,
+} from "../../features/agent-harness/sections/compose";
 import {
   referencedFolders,
   referencedSkills,
@@ -2291,6 +2294,7 @@ export class ClaudeRuntime {
             ...(memory === undefined ? {} : { memory }),
             notes,
             sections,
+            place: placeOf(key),
           }),
         };
       },

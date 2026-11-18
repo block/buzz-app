@@ -11,6 +11,7 @@ import {
 } from "../../features/agent-harness/plugin-wake";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { composeBase } from "../../features/agent-harness/sections/compose";
+import type { Facts } from "../../features/agent-harness/sections";
 import {
   type AuthorNames,
   CONTENT_LIMIT,
@@ -50,10 +51,12 @@ export function systemPrompt(
     notes?: string;
     /** The choices for the base prompt's sections, from the agent's handle. */
     sections?: SectionChoices | undefined;
+    /** What the session is, which its Session Model states. */
+    place?: Facts["place"];
   }>,
 ) {
   const base = composeBase(
-    { scope: input.scope, ownFolder: input.workspace },
+    { scope: input.scope, ownFolder: input.workspace, place: input.place },
     input.sections,
   );
   return [

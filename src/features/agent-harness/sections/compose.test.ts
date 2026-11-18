@@ -7,6 +7,7 @@ import { type OwnerChoice, SECTION_TEXT_BYTES, wrapped } from "./choices";
 import publishing from "./publishing.md?raw";
 import {
   composeBase,
+  placeOf,
   replacedBy,
   sectionsKey,
   sectionUpdates,
@@ -62,10 +63,14 @@ const defaultText = (section: (typeof SECTIONS)[number], facts: Facts) =>
 // of the whole prompt in review. Run Vitest with `-u` to update them.
 describe("the session prompt of each harness", () => {
   for (const scope of SCOPES) {
+    // The session for a message in a channel's thread.
+    const place: Facts["place"] =
+      scope === "thread" ? "thread" : "conversation";
     // Claude Code, Goose and Pi build theirs with `systemPrompt`.
     it(`for Claude Code, with ${scope} sessions`, async () => {
       const frame = {
         scope,
+        place,
         agent,
         instructions: "Be terse.",
         repositories:
@@ -82,7 +87,7 @@ describe("the session prompt of each harness", () => {
     });
 
     it(`for Claude Code, with ${scope} sessions and the owner's choices`, async () => {
-      const frame = { scope, agent, cwd: workspace };
+      const frame = { scope, place, agent, cwd: workspace };
       await expect(
         systemPrompt({ ...frame, sections: every(() => ({ mode: "off" })) }),
       ).toMatchFileSnapshot(snapshot(`claude.${scope}.owner-off`));
@@ -98,7 +103,7 @@ describe("the session prompt of each harness", () => {
     });
 
     it(`for Claude Code, with ${scope} sessions in a conversation a plugin manages`, async () => {
-      const frame = { scope, agent, cwd: workspace };
+      const frame = { scope, place, agent, cwd: workspace };
       await expect(
         systemPrompt({ ...frame, sections: managed }),
       ).toMatchFileSnapshot(snapshot(`claude.${scope}.plugin`));
@@ -118,8 +123,6 @@ describe("the session prompt of each harness", () => {
     });
 
     it(`for Codex, with ${scope} sessions`, async () => {
-      // The thread for a message in a channel's thread.
-      const place = scope === "thread" ? "thread" : "conversation";
       await expect(
         developerInstructions(agent, composeBase({ scope, place }).text),
       ).toMatchFileSnapshot(snapshot(`codex.${scope}.default`));
@@ -231,6 +234,19 @@ describe("composeBase", () => {
       composeBase({ scope }).text.split("## Session Model")[1];
     expect(model("thread")).toContain("each thread gets its own independent");
     expect(model("channel")).toContain("You are one per-channel session");
+    // Sessions in other workspaces do not share files.
+    for (const scope of SCOPES) {
+      expect(model(scope)).toContain(
+        "they share files on disk when they use the same workspace",
+      );
+      expect(model(scope)).not.toContain("your workspace on disk");
+    }
+  });
+
+  it("reads what a session is from its conversation key", () => {
+    expect(placeOf(`channel/${"a".repeat(64)}`)).toBe("thread");
+    expect(placeOf("channel")).toBe("conversation");
+    expect(placeOf(undefined)).toBe("standalone");
   });
 
   it("describes the session itself when the harness says what it is", () => {

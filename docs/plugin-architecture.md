@@ -1053,7 +1053,9 @@ showing what the session has not seen and taking plugins' notes. Its
 `cursor` is opaque: save it with the session and give it to the next
 `turnPrompt`, which keeps a mark for each thread of a channel conversation.
 Give `systemPrompt` the `conversation` so that a type with
-`conversationSections` gets the base prompt sections a plugin replaced there.
+`conversationSections` gets the base prompt sections a plugin replaced there,
+and so that the prompt says whether the session is one thread or a whole
+conversation.
 A type whose turns take those notes declares `notes: true`, so that a plugin
 can tell before it leaves one.
 `reply` posts as the agent there. `tools(agent, conversation, { read })`

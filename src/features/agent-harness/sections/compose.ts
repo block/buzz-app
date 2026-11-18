@@ -99,6 +99,13 @@ export const sectionsOf = (
   return handle?.promptSections?.(channelId, root);
 };
 
+/** What the session for conversation `key` is, as `sectionsOf` reads the
+ * key: one thread, one whole conversation, or a run that joins none. */
+export const placeOf = (
+  key: string | undefined,
+): NonNullable<Facts["place"]> =>
+  !key ? "standalone" : key.includes("/") ? "thread" : "conversation";
+
 /** One hash for a prompt's `parts`. */
 export const sectionsKey = (parts: Readonly<Record<string, string>>) =>
   hash(JSON.stringify(parts));

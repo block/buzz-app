@@ -35,6 +35,7 @@ import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
 import { ownerCanvas, readProject, worksElsewhere } from "./project";
+import { placeOf } from "./sections/compose";
 
 /** Whether each thread is its own conversation, or the whole channel is one. */
 export type HarnessScope = "thread" | "channel";
@@ -286,6 +287,8 @@ export function harnessKit(sources: Sources): HarnessKit {
           conversation?.channel,
           conversation?.root,
         ),
+        // Without the conversation, the Session Model states the scope alone.
+        ...(conversation ? { place: placeOf(conversation.key) } : {}),
       });
       return tools ? text : `${text}\n\n${NO_TOOLS}`;
     },

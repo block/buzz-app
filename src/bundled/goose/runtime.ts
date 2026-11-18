@@ -94,7 +94,10 @@ import {
   worksElsewhere,
 } from "../../features/agent-harness/project";
 import type { Exclusive } from "../../features/agent-harness/acp/agent-sessions";
-import { sectionsOf } from "../../features/agent-harness/sections/compose";
+import {
+  placeOf,
+  sectionsOf,
+} from "../../features/agent-harness/sections/compose";
 import {
   bindSession,
   type TurnContext,
@@ -1792,6 +1795,7 @@ export class GooseRuntime {
         // A conversation's prompt has the sections of the plugin that
         // manages it.
         sections: sectionsOf(entry.handle, conversation),
+        place: placeOf(conversation),
       }),
     };
   }

@@ -73,6 +73,7 @@ export function mountEmojiMart({
   perLine,
   emojiSize,
   emojiButtonSize,
+  navigation,
   search,
   searchSelection,
   searchChange,
@@ -91,6 +92,8 @@ export function mountEmojiMart({
   perLine: number;
   emojiSize: number;
   emojiButtonSize: number;
+  /** Show the category bar; by default, when the grid is wide enough for it. */
+  navigation?: boolean;
   search: string;
   searchSelection: { current: EmojiSearchSelection | undefined };
   searchChange(value: string): void;
@@ -155,12 +158,11 @@ export function mountEmojiMart({
     dynamicWidth: false,
     maxFrequentRows: 2,
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
-    navPosition: spaciousGrid(
-      perLine * emojiButtonSize,
-      rootFontSize(host.ownerDocument),
-    )
-      ? "bottom"
-      : "none",
+    navPosition:
+      (navigation ??
+      spaciousGrid(perLine * emojiButtonSize, rootFontSize(host.ownerDocument)))
+        ? "bottom"
+        : "none",
     perLine,
     ...(preview
       ? {
@@ -194,10 +196,9 @@ export function mountEmojiMart({
   // picker/dictionary (or lose search, focus and scroll) just to change appearance.
   const documentRoot = host.ownerDocument.documentElement;
   const syncAppearance = () => {
-    picker.setAttribute(
-      "theme",
-      resolvedTheme(colorMode ?? documentRoot.dataset.colorMode),
-    );
+    const theme = resolvedTheme(colorMode ?? documentRoot.dataset.colorMode);
+    if (picker.getAttribute("theme") !== theme)
+      picker.setAttribute("theme", theme);
     picker.toggleAttribute(
       "data-keyboard-navigation",
       documentRoot.hasAttribute("data-keyboard-navigation"),

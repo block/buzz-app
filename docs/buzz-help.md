@@ -1627,7 +1627,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
   **Custom** with your own text of up to 4 KiB, then **Save**. The other
   sections are always on, or Buzz sets them for the conversation; **All
-  sections** shows the default text of each. A choice applies to all your
+  sections** shows the default text of each. A plugin that is on can declare
+  sections that it replaces in the chats it manages: its install review lists
+  them. Each section that such a plugin declared names the plugin.
+  When you choose Off or Custom for one of them, your own choice also applies
+  in those chats. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it
   from its next turn. After the first choice that is not Default, older Codex
   conversations on this device start over once; older Codex conversations on

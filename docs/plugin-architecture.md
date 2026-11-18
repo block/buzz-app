@@ -2093,6 +2093,25 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
+A plugin that gives agents its own rules in the chats it manages declares the
+sections of the base instructions it can replace:
+
+```json
+{ "host": { "agentPromptSections": ["working-location", "progress"] } }
+```
+
+The base instructions are what Buzz tells every agent before the agent's own
+instructions, as named sections. A plugin can declare `callbacks`, `routing`,
+`publishing`, `progress`, `working-location` and `autonomy`; the manifest is
+refused when it names any other section, such as one that is always on. The
+access review lists each declared section by its title, and an update that adds
+one needs **Review permissions**. **Settings → Agent setup → Base
+instructions** names the plugins that are on and declare a section, and warns
+that the owner's own choice for a section also applies in those plugins' chats.
+`ctx.pluginOwner.agentPromptSections` holds the plugin's declared IDs, empty
+when it declares none. Hosts that do not support this field reject manifests
+that declare it.
+
 A plugin that needs a long-lived program, such as an agent CLI that speaks a
 JSON protocol on stdin and stdout, declares it under `host.processes`:
 

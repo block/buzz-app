@@ -125,7 +125,7 @@ for (const [path, name] of [
   ["../features/updates/UpdateSettings", "UpdateSettings"],
 ] as const)
   vi.doMock(path, () => ({ [name]: () => null }));
-const { Settings } = await import("./Settings");
+const { Settings, sectionPlugins } = await import("./Settings");
 const { SettingsSidebar } = await import("./SettingsSidebar");
 const pluginState = {
   configuration: { status: "loading" },
@@ -2253,6 +2253,32 @@ it("starts a section a link opens at its top, even with a kept place", async () 
   rerender(inPort("buzz.github/authors"));
   expect(port.scrollTop).toBe(0);
   expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
+it("names the plugins that are on and declare a base instruction section", () => {
+  const plugin = (name: string, enabled: boolean, section?: string) => ({
+    manifest: {
+      id: `example.${name.toLowerCase()}`,
+      name,
+      apiVersion: 1 as const,
+      ...(section ? { host: { agentPromptSections: [section] } } : {}),
+    },
+    source: "external" as const,
+    enabled,
+    revision: "one",
+    previous: null,
+    reloadable: false,
+    error: null,
+  });
+  const plugins = [
+    plugin("Tasks", true, "working-location"),
+    plugin("Notes", false, "working-location"),
+    plugin("Plans", true, "routing"),
+    plugin("Lists", true),
+  ];
+  expect(sectionPlugins(plugins, "working-location")).toEqual(["Tasks"]);
+  expect(sectionPlugins(plugins, "routing")).toEqual(["Plans"]);
+  expect(sectionPlugins(plugins, "progress")).toEqual([]);
 });
 
 it("links a decision provider's details to Decisions API", async () => {

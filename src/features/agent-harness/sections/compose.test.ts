@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { systemPrompt } from "../../../bundled/claude-code/prompt";
 import { developerInstructions } from "../../../bundled/codex/prompt";
@@ -9,7 +11,7 @@ import {
   sectionUpdates,
   startedSections,
 } from "./compose";
-import { type Facts, LAYOUT, locked, SECTIONS } from "./index";
+import { type Facts, LAYOUT, locked, pluginSection, SECTIONS } from "./index";
 
 const workspace = "/home/owner/.buzz/agents/example";
 const folder = "/home/owner/code/project";
@@ -114,6 +116,45 @@ describe("composeBase", () => {
         SECTIONS.flatMap(({ title }) => (title ? [`## ${title}`] : [])),
       );
     }
+  });
+
+  // The native plugin manager checks a manifest's sections against its own
+  // list, where a plugin is installed and each time it reads the installed
+  // plugins. So an ID stays in that list when its section goes.
+  it("lets a plugin declare each section a plugin can replace, and each ID that shipped", () => {
+    const native = readFileSync(
+      resolve(process.cwd(), "crates/plugin-manager/src/lib.rs"),
+      "utf8",
+    );
+    const [, list = ""] =
+      /pub const AGENT_PROMPT_SECTIONS: &\[&str\] = &\[([^\]]*)\];/.exec(
+        native,
+      ) ?? [];
+    const replaceable = SECTIONS.filter(({ plugin }) => plugin);
+    const declarable = [...list.matchAll(/"([^"]+)"/g)].map(
+      ([, id = ""]) => id,
+    );
+    expect(declarable).toEqual(
+      expect.arrayContaining(
+        replaceable.flatMap(({ id, aliases = [] }) => [id, ...aliases]),
+      ),
+    );
+    // The IDs that shipped stay, also when a section goes or a plugin can
+    // no longer replace it: `pluginSection` then gives none for the ID.
+    expect(declarable).toEqual(
+      expect.arrayContaining([
+        "callbacks",
+        "routing",
+        "publishing",
+        "progress",
+        "working-location",
+        "autonomy",
+      ]),
+    );
+    for (const section of replaceable)
+      expect(pluginSection(section.id)).toBe(section);
+    for (const id of ["trust", "etiquette", "session-model", "nope"])
+      expect(pluginSection(id)).toBeUndefined();
   });
 
   // Settings, plugins and saved sessions name a section by its id and title,

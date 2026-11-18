@@ -161,6 +161,9 @@ export class PluginRuntime {
         agentExecution: Object.freeze([
           ...(entry.plugin.manifest.host?.agentExecution ?? []),
         ]),
+        agentPromptSections: Object.freeze([
+          ...(entry.plugin.manifest.host?.agentPromptSections ?? []),
+        ]),
       });
       // The loader runs only the host's own module for a bundled source.
       const scope = this.root.extend({

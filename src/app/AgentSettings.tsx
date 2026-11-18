@@ -41,12 +41,15 @@ export function AgentSettings({
   active = true,
   navigation,
   onProvider,
+  sectionPlugins,
   keepAwakeAvailable = isTauri() && isApplePlatform(navigator.platform),
 }: {
   agents?: Agents | undefined;
   active?: boolean;
   navigation?: PageNavigation | undefined;
   onProvider?: ((provider?: string) => void) | undefined;
+  /** The names of the plugins that can replace a base instruction section. */
+  sectionPlugins?: ((section: string) => readonly string[]) | undefined;
   /** Only the macOS app can keep the computer awake. */
   keepAwakeAvailable?: boolean;
 }) {
@@ -121,7 +124,9 @@ export function AgentSettings({
           )}
         </SettingsGroup>
       </div>
-      {agents && <BaseInstructions store={agents.storage} />}
+      {agents && (
+        <BaseInstructions store={agents.storage} replacedBy={sectionPlugins} />
+      )}
       {active && mentionError && (
         <ToastNotice
           title="Agent preference wasn’t saved"

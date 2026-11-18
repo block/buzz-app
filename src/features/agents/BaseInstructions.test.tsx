@@ -261,7 +261,12 @@ it("keeps the owner's text when a later default is the same text, until they res
 
 it("lists every section's default text to read, and says who can change it", async () => {
   const user = userEvent.setup();
-  render(<BaseInstructions store={memory()} />);
+  render(
+    <BaseInstructions
+      store={memory()}
+      replacedBy={(id) => (id === "working-location" ? ["Example Plugin"] : [])}
+    />,
+  );
   // A row's name says its title and what it is.
   const row = (name: string) => screen.getByRole("button", { name });
   for (const name of [
@@ -270,7 +275,7 @@ it("lists every section's default text to read, and says who can change it", asy
     "Session Model, Set by Buzz",
     "Routing, Always on",
     "Progress, You can change this",
-    "Working location, Set by Buzz",
+    "Working location, Example Plugin can replace this in chats it manages.",
   ])
     expect(row(name)).toHaveTextContent(name.replace(", ", ""));
   await user.click(row("Trust, Always on"));
@@ -292,6 +297,33 @@ it("lists every section's default text to read, and says who can change it", asy
       row("Session Model, Set by Buzz").getAttribute("aria-controls") ?? "",
     ),
   ).toHaveTextContent("You are one session of your agent identity");
+});
+
+it("warns that the owner's choice also applies in the chats a plugin manages", async () => {
+  const user = userEvent.setup();
+  render(
+    <BaseInstructions
+      store={memory()}
+      replacedBy={(id) =>
+        id === "progress" ? ["Example Plugin", "Other Plugin"] : []
+      }
+    />,
+  );
+  const warning =
+    "Your choice also applies in chats that Example Plugin and Other Plugin manage.";
+  // The default text yields to a plugin: the row names the plugins.
+  expect(screen.queryByText(warning, { exact: false })).not.toBeInTheDocument();
+  expect(choice("Progress")).toHaveAccessibleDescription(
+    "Example Plugin and Other Plugin can replace this in chats they manage.",
+  );
+  await choose(user, "Progress", "Off");
+  expect(screen.getByText(warning, { exact: false })).toBeInTheDocument();
+  expect(screen.queryByText(/can replace this/)).not.toBeInTheDocument();
+  expect(choice("Progress")).toHaveAccessibleDescription(
+    expect.stringContaining(warning),
+  );
+  await choose(user, "Etiquette", "Off");
+  expect(screen.getAllByText(/Your choice also applies/)).toHaveLength(1);
 });
 
 it("says when the saved choices cannot be read, and shows choices that are no longer used", async () => {

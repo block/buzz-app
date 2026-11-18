@@ -171,3 +171,11 @@ export const SECTIONS: readonly Section[] = [
  * text. */
 export const locked = (section: Section) =>
   typeof section.text === "string" && !section.owner && !section.plugin;
+
+/** The section a plugin can replace under `id`, also by an ID the section
+ * had before. */
+export const pluginSection = (id: string) =>
+  SECTIONS.find(
+    (section) =>
+      section.plugin && (section.id === id || section.aliases?.includes(id)),
+  );

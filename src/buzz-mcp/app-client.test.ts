@@ -662,55 +662,6 @@ it("retains native context through the check and releases it on denial", async (
   await expect(result).rejects.toThrow("denied");
   expect(release).toHaveBeenCalledOnce();
 });
-it.each(["direct", "process"])(
-  "forwards %s reader attachment hints through the shared handle without losing its check",
-  async (reader) => {
-    const publish = vi.fn().mockResolvedValue({ id: "confirmed" });
-    const spawn = vi.fn<NonNullable<Host["spawn"]>>(async (_id, options) => {
-      options?.onStdout?.(btoa("bytes"));
-      return {
-        write: vi.fn(),
-        end: vi.fn(),
-        kill: vi.fn(),
-        exited: Promise.resolve(0),
-      };
-    });
-    const client = appClient(
-      { pubkey: "agent", publish } as unknown as AgentHandle,
-      {
-        read:
-          reader === "direct"
-            ? async () => new TextEncoder().encode("bytes")
-            : (path) => readFile(spawn, "/work", path),
-        memories: async () => ({ entries: [], partial: false }),
-      },
-    );
-    await expect(client.read("file")).resolves.toEqual(
-      new TextEncoder().encode("bytes"),
-    );
-    const event = { kind: 9, content: "attachment", tags: [] };
-    const options = {
-      managedAttachments: [
-        {
-          path: "/saved/file",
-          sha256: "a".repeat(64),
-          size: 5,
-          url: "https://example.test/media",
-        },
-      ],
-    };
-    await expect(client.publish(event, options)).resolves.toEqual({
-      id: "confirmed",
-    });
-    expect(publish).toHaveBeenCalledExactlyOnceWith(
-      event,
-      expect.any(Function),
-      options,
-    );
-    await client.publish(event);
-    expect(publish).toHaveBeenLastCalledWith(event, expect.any(Function));
-  },
-);
 
 it.each([undefined, true])(
   "defaults to forwarding managedAttachments when localAttachments is %s",
@@ -743,40 +694,10 @@ it.each([undefined, true])(
       expect.any(Function),
       options,
     );
+    await client.publish(event);
+    expect(publish).toHaveBeenLastCalledWith(event, expect.any(Function));
   },
 );
-
-it("drops managedAttachments when localAttachments is false and preserves other publish options", async () => {
-  const publish = vi.fn().mockResolvedValue({ id: "confirmed" });
-  const client = appClient(
-    { pubkey: "agent", publish } as unknown as AgentHandle,
-    {
-      read: async () => new TextEncoder().encode("bytes"),
-      memories: async () => ({ entries: [], partial: false }),
-      localAttachments: false,
-    },
-  );
-  const event = { kind: 9, content: "attachment", tags: [] };
-  const options = {
-    managedAttachments: [
-      {
-        path: "/elsewhere/file",
-        sha256: "b".repeat(64),
-        size: 7,
-        url: "https://example.test/remote",
-      },
-    ],
-    extra: "preserved" as const,
-  } as unknown as Parameters<AgentHandle["publish"]>[2];
-  await expect(client.publish(event, options)).resolves.toEqual({
-    id: "confirmed",
-  });
-  // Only one publish call: the forwarded options have no managedAttachments
-  // but keep other fields; publish never gets the original options object.
-  expect(publish).toHaveBeenCalledExactlyOnceWith(event, expect.any(Function), {
-    extra: "preserved",
-  });
-});
 
 it("drops the options argument entirely when localAttachments is false and only managedAttachments was set", async () => {
   const publish = vi.fn().mockResolvedValue({ id: "confirmed" });

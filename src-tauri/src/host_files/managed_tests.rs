@@ -1174,33 +1174,7 @@ fn host_release_confirmed_attachment_reclaims_only_native_consented_exact_file()
     let f = Fixture::new(true, false);
     let bytes = b"temporary";
     let hash = digest(bytes);
-    let headers = reqwest::header::HeaderMap::from_iter([
-        (
-            reqwest::header::HeaderName::from_static("x-buzz-plugin-id"),
-            "example.bytes".parse().unwrap(),
-        ),
-        (
-            reqwest::header::HeaderName::from_static("x-buzz-plugin-revision"),
-            f.revision.parse().unwrap(),
-        ),
-        (
-            reqwest::header::HeaderName::from_static("x-buzz-sha256"),
-            hash.parse().unwrap(),
-        ),
-        (
-            reqwest::header::HeaderName::from_static("x-buzz-release-after-send"),
-            "1".parse().unwrap(),
-        ),
-    ]);
-    let saved: serde_json::Value = f
-        .ipc(
-            "plugin_host_save_bytes",
-            tauri::ipc::InvokeBody::Raw(bytes.to_vec()),
-            headers,
-        )
-        .unwrap()
-        .deserialize()
-        .unwrap();
+    let saved = f.save_policy(bytes, &hash, true).unwrap();
     let sibling = f.save(bytes, &hash).unwrap();
     let path = saved["path"].as_str().unwrap();
     let owner =

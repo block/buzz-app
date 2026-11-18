@@ -199,14 +199,9 @@ export function appClient(
     },
     publish: (event, publishOptions) => {
       check();
-      // When this client reads from somewhere other than the desktop
-      // (`localAttachments === false`), strip managedAttachments before
-      // forwarding so a remote source cannot trigger local managed cleanup.
+      // A remote source cannot trigger local managed cleanup.
       const forwarded =
-        publishOptions && options.localAttachments === false
-          ? (({ managedAttachments: _, ...rest }) =>
-              Object.keys(rest).length ? rest : undefined)(publishOptions)
-          : publishOptions;
+        options.localAttachments === false ? undefined : publishOptions;
       return forwarded
         ? agent.publish(event, check, forwarded)
         : agent.publish(event, check);

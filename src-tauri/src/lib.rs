@@ -58,7 +58,11 @@ use nsec_backup::{
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod claude_key;
+#[cfg(unix)]
+mod cli_link;
 mod clipboard;
+#[cfg(any(target_os = "macos", test))]
+mod gpu_reaper;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -80,6 +84,7 @@ mod os_idle;
 mod packaged_plugins;
 mod plugin_url;
 mod repositories_folder;
+mod subject_lift;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
@@ -98,14 +103,15 @@ use identity::{
     identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
-    relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
-    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
-    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
-    relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
-    relay_upload_chunk, relay_verify_signatures, relay_workflow_runs,
+    file_download, media_copy_image, media_download, media_lift_subject, media_stream_base,
+    relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
+    relay_agent_resolve, relay_channel_publish, relay_channel_sign, relay_decode_read_state,
+    relay_decode_reminders, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
+    relay_http, relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign,
+    relay_project_git, relay_project_git_cancel, relay_publish_read_state, relay_sign,
+    relay_sign_read_state, relay_sign_reminder, relay_sign_sidebar, relay_upload,
+    relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_verify_signatures,
+    relay_workflow_runs,
 };
 use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
@@ -741,6 +747,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::federated_identity_ask_again,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
+        federated_identity::federated_identity_sign_in_link,
         federated_identity::federated_identity_sign_out,
         federated_identity::access::federated_identity_register,
         federated_identity::access::federated_identity_unregister,
@@ -788,6 +795,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         file_download,
         media_download,
         media_copy_image,
+        media_lift_subject,
+        subject_lift::media_lift_subject_supported,
         clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,
@@ -901,9 +910,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         sign_out::sign_out_wipe_refusal
     ]
 }
+
+#[cfg(target_os = "macos")]
+fn register_spellcheck_default() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+    let enabled = NSNumber::numberWithBool(true);
+    let enabled: &AnyObject = &enabled;
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("WebContinuousSpellCheckingEnabled")],
+        &[enabled],
+    );
+    // SAFETY: the dictionary maps an NSString key to an NSNumber value.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     credential_service::drop_inherited();
+    #[cfg(target_os = "macos")]
+    register_spellcheck_default();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(
@@ -1013,6 +1039,10 @@ pub fn run() {
                 if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
+                #[cfg(target_os = "macos")]
+                if let Err(error) = window_state::opaque_background(&window) {
+                    eprintln!("Could not set the Buzz window background: {error}");
+                }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
@@ -1021,12 +1051,33 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             #[cfg(target_os = "macos")]
+            gpu_reaper::install(app.handle());
+            #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
                 }
             }
-            tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            #[cfg(unix)]
+            if let (Some(home), Ok(cli)) = (
+                dirs::home_dir(),
+                app.path()
+                    .resource_dir()
+                    .map_err(std::io::Error::other)
+                    .and_then(|resources| resources.join("bin/buzz").canonicalize()),
+            ) {
+                if cli_link::owns(
+                    cli_link::development(tauri::is_dev()),
+                    &app.config().identifier,
+                    std::env::var_os("APPIMAGE").is_some(),
+                    &cli,
+                ) {
+                    if let Err(error) = cli_link::ensure(&home.join(".local/bin"), &cli) {
+                        eprintln!("Could not link the buzz command: {error}");
+                    }
+                }
+            }
+            tauri::async_runtime::spawn(host_command::load_login_shell_environment());
             if let Ok(manager) = &app.state::<PluginManager>().0 {
                 packaged_plugins::spawn(manager.clone());
             }

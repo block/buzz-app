@@ -29,9 +29,13 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -137,7 +141,7 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   where: Where;
   /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
-  /** An Attention prompt rebuilt when the host is ready to submit. */
+  /** A wake prompt rebuilt when the native queue is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
 };
 
@@ -407,11 +411,23 @@ export class PiRuntime {
         };
       });
   }
-  /** The usage of the agent's Buzz conversations since `since`. */
+  /** The usage of the agent's Buzz conversations and standalone turns'
+   * conversations since `since`. */
   async usage(agent: AgentKey, since: number, signal: AbortSignal) {
     // Reading opens its storage, which only an agent running here may hold.
     if (!this.running.has(agent)) return [];
-    return readUsage(this.pi, agent, await this.places(agent), since, signal);
+    // A standalone turn's conversation is in no place: `runOnce` recorded
+    // it, and it is read whenever it last answered.
+    const standalone = standaloneSessions(this.storage, "pi", agent)
+      .list()
+      .map(({ id }) => ({ conversation: Number(id) }));
+    return readUsage(
+      this.pi,
+      agent,
+      [...(await this.places(agent)), ...standalone],
+      since,
+      signal,
+    );
   }
   /** The conversations a Buzz request of the agent's is working in. */
   working(agent: AgentKey) {
@@ -527,6 +543,7 @@ export class PiRuntime {
     signal,
     step,
     acknowledged,
+    accepted,
     superseded,
     interruptible,
   }: Delivery) {
@@ -541,19 +558,18 @@ export class PiRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    // Only an Attention wake refreshes its Interest's instructions as Pi takes
-    // it, and keeps its own destination for a failure recovered after a stop.
+    // Attention refreshes its instructions and retains its recovery destination.
+    // Guarded plugin wakes use the same callback for their final guard.
     const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(this.reads(agent.key), agent.pubkey),
-      ))
-    )
-      return ignored?.();
+      );
+      if (authority !== "owner") return ignored?.(authority);
+    }
     signal.throwIfAborted();
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
@@ -622,6 +638,8 @@ export class PiRuntime {
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
               : {}),
           }),
+          channel,
+          key === channel ? undefined : root,
         );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
@@ -635,13 +653,13 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
-        ...(attention
+        ...(attention || accepted
           ? {
               prompt: async () => {
                 const text = await prompt();
-                return !interrupted && (!current || current())
-                  ? { text, steer: steerPrompt(text) }
-                  : undefined;
+                if (interrupted || (current && !current())) return;
+                accepted?.();
+                return { text, steer: steerPrompt(text) };
               },
             }
           : {}),
@@ -664,7 +682,8 @@ export class PiRuntime {
           text,
           steer: steerPrompt(text),
           request,
-          ...(attention ? { reply: where, refresh: true } : {}),
+          ...(attention ? { reply: where } : {}),
+          ...(attention || accepted ? { refresh: true } : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -784,6 +803,10 @@ export class PiRuntime {
         submission: number;
         conversation: number;
       }>("once", { agent: agent.key, text, request, ...turn });
+      // Outside any conversation, so no place lists it for its usage.
+      void standaloneSessions(this.storage, "pi", agent.key).add(
+        String(conversation),
+      );
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -1183,8 +1206,8 @@ export class PiRuntime {
 
   /** What a turn runs with: the agent's model and thinking level or the
    * owner's pick, its prompt, its `core` memory as read now (none when it
-   * could not be read), and its workspace. The memory is apart, as Pi keeps
-   * what a conversation was shown of it until a compaction. */
+   * could not be read), and its workspace. The memory is apart, so an edit
+   * re-sends only its own section. */
   private async turnOf(
     entry: Entry,
     agent: AgentKey,
@@ -1213,17 +1236,20 @@ export class PiRuntime {
       ...(memory === undefined
         ? {}
         : {
-            core: {
-              text: coreMemorySection(memory),
-              placeholder: coreMemorySection(null),
-            },
+            core: { text: coreMemorySection(memory) },
           }),
     };
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
+  /** `text` with the Buzz tools' end-of-turn note for its conversation, when
+   * they have one. */
+  private review(
+    entry: Entry,
+    text: string,
+    channelId: string,
+    root: string | undefined,
+  ) {
+    const note = turnNote(entry.handle, channelId, root);
     return note ? `${text}\n\n${note}` : text;
   }
 

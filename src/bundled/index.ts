@@ -7,18 +7,18 @@ import draftsSentManifest from "./drafts-sent/manifest.json";
 import * as draftsSent from "./drafts-sent";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
-import todosManifest from "./todos/manifest.json";
 import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
-import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
 import chartsManifest from "./charts/manifest.json";
 import * as charts from "./charts";
+import fileViewerManifest from "./file-viewer/manifest.json";
+import * as fileViewer from "./file-viewer";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -65,8 +65,6 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import linkPreviewsManifest from "./link-previews/manifest.json";
-import * as linkPreviews from "./link-previews";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -134,11 +132,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...todosManifest, apiVersion: 1 },
-    module: todos,
-    enabledByDefault: false,
-  },
-  {
     manifest: { ...diffsManifest, apiVersion: 1 },
     module: diffs,
     enabledByDefault: true,
@@ -151,6 +144,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...chartsManifest, apiVersion: 1 },
     module: charts,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...fileViewerManifest, apiVersion: 1 },
+    module: fileViewer,
     enabledByDefault: false,
   },
   {
@@ -176,11 +174,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...linksManifest, apiVersion: 1 },
     module: links,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...linkPreviewsManifest, apiVersion: 1 },
-    module: linkPreviews,
     enabledByDefault: true,
   },
   {

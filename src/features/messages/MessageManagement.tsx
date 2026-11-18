@@ -24,6 +24,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
+import { headReadPending } from "../relay/live-recovery";
 import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
@@ -31,7 +32,7 @@ import type { OutgoingEvent } from "../relay/outbox";
 import { followUpQueue } from "./follow-up-queue";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
-import { lastEditableMessage } from "./useMessageEdit";
+import { lastEditableMessage, useCloseAfterPaint } from "./useMessageEdit";
 import { readingDocumentActive } from "./use-reading";
 import styles from "./Messages.module.css";
 
@@ -109,7 +110,8 @@ type MessageVisit = Readonly<{
   session: RelaySession;
   channelId: string | undefined;
   token: object;
-  entryMessageIds: ReadonlySet<string>;
+  /** Unset when the window showed no verified page: the first one defines them. */
+  entryMessageIds: ReadonlySet<string> | undefined;
   entryHistoryComplete: boolean;
   entryReadRevision: number;
   entryAttention: ReadonlyMap<
@@ -234,34 +236,11 @@ export function MessageManagement({
 }) {
   const presented = useConversationPresentation();
   const [selection, setSelection] = useState<Deletion>();
-  const completions = useRef(new Map<string, () => void>());
   if (!presented && selection) setSelection(undefined);
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
   );
-  // Receipt/verified echo owns success; journal dismissal is not acceptance.
-  useEffect(() => {
-    const pending = completions.current;
-    const stop = session.outbox?.observeSend((event) =>
-      event.kind === 5
-        ? () => {
-            const done = pending.get(event.id);
-            pending.delete(event.id);
-            done?.();
-          }
-        : undefined,
-    );
-    return () => {
-      stop?.();
-      pending.clear();
-    };
-  }, [session]);
-  useEffect(() => {
-    for (const id of completions.current.keys())
-      if (!operations.some((item) => item.event.id === id))
-        completions.current.delete(id);
-  }, [operations]);
   const deletable = useListedChannel(
     session.channels,
     selection?.row.channelId,
@@ -296,6 +275,9 @@ export function MessageManagement({
   const captureVisit = () => {
     const window = channelId ? session.channels.window(channelId) : undefined;
     const rows = window?.rows ?? [];
+    // An older page can mark the window verified while the catch-up head read
+    // is still queued or in flight: those rows are not yet the head.
+    const headPending = !!channelId && headReadPending(session.live, channelId);
     const entryAttention = new Map<
       string,
       Pick<MessageAttention, "unread" | "forced"> | null
@@ -314,11 +296,21 @@ export function MessageManagement({
       session,
       channelId,
       visitChannelId,
-      entryMessageIds: new Set(rows.map((row) => row.id)),
+      // A window first opened this session or evicted since has no rows yet,
+      // and one restored from disk, or whose stream dropped, shows rows its
+      // head read has not verified. Either set would rule out every message
+      // that arrived while the channel was not being followed.
+      entryMessageIds:
+        window?.status === "ready" &&
+        window.freshness === "verified" &&
+        !headPending
+          ? new Set(rows.map((row) => row.id))
+          : undefined,
       entryHistoryComplete:
         window?.status === "ready" &&
         window.freshness === "verified" &&
         !window.refreshing &&
+        !headPending &&
         !window.loadingOlder &&
         !window.hasMore &&
         !window.historyLimited,
@@ -442,17 +434,14 @@ export function MessageManagement({
           session={session}
           selection={selection}
           operations={operations}
-          dispatched={(id, dialog) => {
-            const done = selection.done;
-            if (done && !completions.current.has(id))
-              completions.current.set(id, () =>
-                done(
-                  document.activeElement === document.body ||
-                    !!selection.focus?.()?.contains(document.activeElement) ||
-                    !!dialog?.contains(document.activeElement),
-                ),
-              );
-          }}
+          dispatched={(dialog) =>
+            // The row hides now; MessageManagementStatus owns a failed delete.
+            selection.done?.(
+              document.activeElement === document.body ||
+                !!selection.focus?.()?.contains(document.activeElement) ||
+                !!dialog?.contains(document.activeElement),
+            )
+          }
           close={() => setSelection(undefined)}
         />
       )}
@@ -718,7 +707,7 @@ function DeleteMessageDialog({
   session: RelaySession;
   selection: Deletion;
   operations: readonly OutgoingEvent[];
-  dispatched(id: string, dialog: Element | null): void;
+  dispatched(dialog: Element | null): void;
   close(): void;
 }) {
   const { row, authorization } = selection;
@@ -741,16 +730,8 @@ function DeleteMessageDialog({
   const pending = operation?.delivery === "sending" || discarding;
   const retryable =
     operation?.delivery === "failed" || operation?.delivery === "unknown";
-  useEffect(() => {
-    if (
-      operationId &&
-      (!operation ||
-        operation.delivery === "seen" ||
-        operation.delivery === "accepted")
-    ) {
-      close();
-    }
-  }, [operationId, operation, close]);
+  // The row hides optimistically; MessageManagementStatus owns failures.
+  useCloseAfterPaint(!!operationId && !retryable, close);
   const run = async (event: MouseEvent<HTMLButtonElement>) => {
     const dialog = event.currentTarget.closest('[role="alertdialog"]');
     setError(undefined);
@@ -787,11 +768,11 @@ function DeleteMessageDialog({
         close();
       } else if (operationId) {
         session.outbox?.retry(operationId);
-        dispatched(operationId, dialog);
+        dispatched(dialog);
       } else {
         const id = session.messages.remove([row.id], authorization);
         setOperationId(id);
-        dispatched(id, dialog);
+        dispatched(dialog);
       }
     } catch (cause) {
       setDiscarding(false);

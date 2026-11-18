@@ -483,6 +483,11 @@ function mount(
       presented = active;
       view.rerender(tree());
     },
+    /** A fresh composer for the same chat, as after navigating away and back. */
+    remount() {
+      view.rerender(<></>);
+      view.rerender(tree());
+    },
     setRows(next: readonly ChannelMessage[]) {
       act(() => {
         rows = next;
@@ -552,9 +557,11 @@ function mount(
     setLibrary(
       identities: AgentLibrarySnapshot["identities"],
       status: AgentLibrarySnapshot["status"] = "ready",
+      error?: string,
     ) {
       act(() => {
-        library = { ...library, identities, status };
+        const { error: _previous, ...rest } = library;
+        library = { ...rest, identities, status, ...(error ? { error } : {}) };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -1862,7 +1869,10 @@ function attachmentFile(name = "notes.txt", bytes = "notes") {
 }
 function attachByPaste(target: HTMLElement, file = attachmentFile()) {
   fireEvent.paste(target, {
-    clipboardData: { items: [{ kind: "file", getAsFile: () => file }] },
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => file }],
+      getData: () => "",
+    },
   });
 }
 function attachByDrop(target: HTMLElement, file = attachmentFile()) {
@@ -1882,7 +1892,13 @@ function attachByDrop(target: HTMLElement, file = attachmentFile()) {
 async function mountUploadComposer(
   options: {
     threadRootId?: string;
+    sourceMessages?: boolean;
+    sourcePrivacy?: "private" | "dm" | "solo" | "public";
+    destination?: string;
+    mediaTimeSeconds?: number;
+    mediaTargetUrl?: string;
     replyParentId?: string;
+    onSend?: MessageComposerProps["onSend"];
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
     profiles?: readonly RelayEvent[];
@@ -1932,6 +1948,15 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (
+          options.sourceMessages &&
+          filters.some((filter) => filter.ids?.length)
+        )
+          return publish.mock.calls
+            .map(([event]) => event)
+            .filter((event) =>
+              filters.some((filter) => filter.ids?.includes(event.id)),
+            );
         if (filters.some((filter) => filter.kinds?.includes(0)))
           return [...(options.profiles ?? [])];
         if (
@@ -1963,7 +1988,22 @@ async function mountUploadComposer(
                           1700000000,
                           [["private"], ["t", "stream"], ["ttl", "3600"]],
                         )
-                      : metadata(relay, "channel", "General", 1700000000),
+                      : metadata(
+                          relay,
+                          "channel",
+                          "General",
+                          1700000000,
+                          options.sourcePrivacy === "private"
+                            ? [["private"]]
+                            : options.sourcePrivacy === "dm"
+                              ? [["t", "dm"]]
+                              : options.sourcePrivacy === "solo"
+                                ? [
+                                    ["t", "stream"],
+                                    ["t", "buzz.solo"],
+                                  ]
+                                : [],
+                        ),
                   ]
                 : [],
         );
@@ -1990,6 +2030,8 @@ async function mountUploadComposer(
       { kinds: [39000], "#d": ["channel"], limit: 1 },
     ]),
   );
+  if (options.destination === "other") await otherMembership(true);
+  let destination = options.destination ?? "channel";
   const scope = `https://relay.example.test:${viewer.pubkey}`;
   const composer = (presented = true, shown = true) => (
     <AgentsContext.Provider value={options.agents}>
@@ -1998,8 +2040,12 @@ async function mountUploadComposer(
           shown={shown}
           session={owner.session}
           scope={scope}
-          channelId="channel"
-          channelName="General"
+          channelId={destination}
+          channelName={destination === "channel" ? "General" : "Random"}
+          {...(options.mediaTimeSeconds !== undefined
+            ? { mediaTimeSeconds: options.mediaTimeSeconds }
+            : {})}
+          mediaTargetUrl={options.mediaTargetUrl}
           defaultMention={options.defaultMention}
           requireMention={options.requireMention}
           {...(options.extensions ? { extensions: options.extensions } : {})}
@@ -2009,6 +2055,7 @@ async function mountUploadComposer(
           {...(options.replyParentId
             ? { replyParentId: options.replyParentId }
             : {})}
+          {...(options.onSend ? { onSend: options.onSend } : {})}
         />
       </ConversationPresentation>
     </AgentsContext.Provider>
@@ -2033,6 +2080,10 @@ async function mountUploadComposer(
     sign,
     publish,
     otherMembership,
+    retargetChannel: (id: string) => {
+      destination = id;
+      view.rerender(composer());
+    },
     present: (presented: boolean, shown = true) =>
       view.rerender(composer(presented, shown)),
   };
@@ -3189,6 +3240,32 @@ it("keeps a background send on its original thread when the composer moves", asy
   const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
   expect(tags).toContainEqual(["e", root, "", "reply"]);
   expect(tags.flat()).not.toContain("c".repeat(64));
+});
+
+it("reports a background reply in the task that publishes it", async () => {
+  const order: string[] = [];
+  const h = await mountUploadComposer({
+    threadRootId: "b".repeat(64),
+    onSend: () => order.push("onSend"),
+  });
+  const outbox = h.owner.session.outbox;
+  if (!outbox) throw new Error("Missing outbox");
+  let queued = false;
+  outbox.subscribe(() => {
+    if (queued || !outbox.snapshot().length) return;
+    queued = true;
+    // React renders an external store's subscribers in a microtask.
+    queueMicrotask(() => order.push("microtask"));
+  });
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(order).toHaveLength(2));
+  expect(order).toEqual(["onSend", "microtask"]);
 });
 
 it("names a failed background reply's thread and opens that thread", async () => {
@@ -7692,8 +7769,27 @@ it("serializes tool commands in one React batch and rejects malformed recipients
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    "Hi there @Honey and @Honey ",
+    `Hi there @Honey (${first.pubkey}) and @Honey (${second.pubkey}) `,
     [first.pubkey, second.pubkey],
+    [],
+  );
+});
+
+it("counts namesake qualifiers against the message limit", () => {
+  const h = mount();
+  // Room for a second bare chip, not for both qualifiers it adds.
+  const prose = "x".repeat(16000 - 30);
+  h.fill(prose);
+  act(() => {
+    const { insertMention } = h.commands();
+    expect(insertMention(first)).toBe(true);
+    expect(insertMention(second)).toBe(false);
+  });
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    `${prose}@Honey `,
+    [first.pubkey],
     [],
   );
 });
@@ -7733,17 +7829,17 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
   act(() => {
     expect(h.commands().insertText(":party:")).toBe(true);
   });
-  expect(h.input()).toHaveValue(":party:");
+  expect(h.input()).toHaveValue(":party: ");
   expect(h.input()).toHaveAttribute("data-single-emoji", "true");
   act(() => {
     expect(h.commands().insertText(":party:")).toBe(true);
   });
-  expect(h.input()).toHaveValue(":party::party:");
+  expect(h.input()).toHaveValue(":party: :party: ");
   expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(2);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    ":party::party:",
+    ":party: :party: ",
     [],
     [],
   );
@@ -7816,13 +7912,13 @@ const colon = (input: ComposerInputElement) =>
   fireEvent.keyDown(input, { key: ":", shiftKey: true });
 
 it.each([
-  ["hello :-1", "hello 👎"],
-  [":+1", "👍"],
-  ["say :SMILE", "say 😄"],
+  ["hello :-1", "hello 👎 "],
+  [":+1", "👍 "],
+  ["say :SMILE", "say 😄 "],
   // The second shortcode may follow a converted emoji with no space between them.
-  ["😄:wave", "😄👋"],
+  ["😄:wave", "😄👋 "],
 ])(
-  "replaces an exact shortcode with its emoji on the closing colon: %s",
+  "replaces an exact shortcode with its emoji and a space on the closing colon: %s",
   async (typed, expected) => {
     const h = mountEmojiTypeahead();
     h.fill(typed);
@@ -7860,7 +7956,7 @@ it.each([{ altKey: true }, { altKey: true, shiftKey: true }])(
     expect(fireEvent.keyDown(h.input(), { key: ":", ...keys })).toBe(true);
     expect(h.input()).toHaveValue("hello :-1");
     expect(colon(h.input())).toBe(false);
-    expect(h.input()).toHaveValue("hello 👎");
+    expect(h.input()).toHaveValue("hello 👎 ");
   },
 );
 
@@ -7905,7 +8001,7 @@ it("waits for the community catalog before authorizing a Unicode replacement", a
   h.setEmoji([]);
   await screen.findByRole("option", { name: ":smile:" });
   expect(colon(h.input())).toBe(false);
-  expect(h.input()).toHaveValue("😄");
+  expect(h.input()).toHaveValue("😄 ");
 });
 
 it("keeps Unicode suggestions and retry without replacement after a community failure", async () => {
@@ -7943,7 +8039,7 @@ it("keeps custom suggestions and retry without replacement after a Unicode failu
     ).toBeNull(),
   );
   expect(colon(h.input())).toBe(false);
-  expect(h.input()).toHaveValue(":party:");
+  expect(h.input()).toHaveValue(":party: ");
 });
 
 it.each([
@@ -7964,20 +8060,169 @@ it.each([
   },
 );
 
+it("accepts an emoji with Tab in a list item without nesting it, then Tab nests", async () => {
+  const h = mountEmojiTypeahead();
+  await h.user.type(h.input(), "- one{Enter}:smil");
+  await screen.findByRole("option", { name: ":smile:" });
+  await h.user.keyboard("{Tab}");
+  expect(h.input()).toHaveValue("one\n😄 ");
+  expect(h.input().querySelector("ul ul")).toBeNull();
+  expect(h.input()).toHaveFocus();
+  await h.user.keyboard("{Tab}");
+  expect(h.input().querySelector("ul ul > li")).toHaveTextContent("😄");
+  await h.user.keyboard("{Shift>}{Tab}{/Shift}");
+  expect(h.input().querySelector("ul ul")).toBeNull();
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.input()).toHaveFocus();
+});
+
+it("types on after a custom shortcode as a separate word", async () => {
+  const h = mountEmojiTypeahead();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  h.fill("go :party");
+  await screen.findByRole("option", { name: ":party:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("go :party: ");
+  await h.user.keyboard("hi");
+  expect(h.input()).toHaveValue("go :party: hi");
+});
+
+it.each([
+  [
+    "Tab",
+    (h: ReturnType<typeof mountEmojiTypeahead>) =>
+      fireEvent.keyDown(h.input(), { key: "Tab" }),
+  ],
+  [
+    "Enter",
+    (h: ReturnType<typeof mountEmojiTypeahead>) =>
+      fireEvent.keyDown(h.input(), { key: "Enter" }),
+  ],
+  [
+    "click",
+    (h: ReturnType<typeof mountEmojiTypeahead>) =>
+      h.user.click(screen.getByRole("option", { name: ":smile:" })),
+  ],
+])("adds a space after an emoji chosen by %s", async (_, choose) => {
+  const h = mountEmojiTypeahead();
+  h.fill("say :smil");
+  await screen.findByRole("option", { name: ":smile:" });
+  await act(async () => {
+    await choose(h);
+  });
+  expect(h.input()).toHaveValue("say 😄 ");
+  await h.user.keyboard("hi");
+  expect(h.input()).toHaveValue("say 😄 hi");
+});
+
+it.each([
+  // Text after the caret keeps its place; the caret follows the new space.
+  ["a :-1b", 5, "a 👎 b", 5],
+  // An existing space or tab is reused; the caret moves past it.
+  ["a :-1 b", 5, "a 👎 b", 5],
+  ["a :-1\tb", 5, "a 👎\tb", 5],
+  // A line break is not a word separator on the same line.
+  ["a :-1\nb", 5, "a 👎 \nb", 5],
+])(
+  "spaces an emoji completed within text: %j",
+  async (text, caret, expected, after) => {
+    const h = mountEmojiTypeahead();
+    h.fill(text);
+    act(() => h.input().setSelectionRange(caret, caret));
+    fireEvent(document, new Event("selectionchange"));
+    await screen.findByRole("option", { name: ":-1:" });
+    expect(colon(h.input())).toBe(false);
+    expect(h.input()).toHaveValue(expected);
+    expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+      after,
+      after,
+    ]);
+    await h.user.keyboard("hi");
+    expect(h.input()).toHaveValue(
+      `${expected.slice(0, after)}hi${expected.slice(after)}`,
+    );
+  },
+);
+
+it("keeps the caret after a typed colon whose conversion exceeds the limit", async () => {
+  const h = mountEmojiTypeahead();
+  // The flag is two units longer than its shortcode: the colon fits, the
+  // conversion does not.
+  const typed = `${"x".repeat(15999 - 14)} :flag-wales `;
+  h.fill(typed);
+  const caret = typed.length - 1;
+  act(() => h.input().setSelectionRange(caret, caret));
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":flag-wales:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue(`${typed.slice(0, caret)}: `);
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+    caret + 1,
+    caret + 1,
+  ]);
+});
+
+it("undoes an emoji completed before an existing space in one step", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("a :-1 b");
+  act(() => h.input().setSelectionRange(5, 5));
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("a 👎 b");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("a :-1: b");
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([6, 6]);
+  act(() => h.input().undo(true));
+  expect(h.input()).toHaveValue("a 👎 b");
+});
+
+it.each([
+  ["ab", 1, 1, "😀", "a😀 b", 4],
+  ["a b", 1, 1, "😀", "a😀 b", 4],
+  ["a\tb", 1, 1, "😀", "a😀\tb", 4],
+  // A replaced selection reuses the space after it.
+  ["ax b", 1, 2, "😀", "a😀 b", 4],
+  ["ab", 1, 1, ":party:", "a:party: b", 9],
+  // Other tool text is inserted exactly as given.
+  ["ab", 1, 1, "x", "axb", 2],
+])(
+  "spaces emoji a composer tool inserts: %j",
+  async (text, start, end, inserted, expected, after) => {
+    const h = mount();
+    h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+    h.fill(text);
+    act(() => h.input().setSelectionRange(start, end));
+    act(() => {
+      expect(h.commands().insertText(inserted)).toBe(true);
+    });
+    expect(h.input()).toHaveValue(expected);
+    expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+      after,
+      after,
+    ]);
+    await h.user.keyboard("hi");
+    expect(h.input()).toHaveValue(
+      `${expected.slice(0, after)}hi${expected.slice(after)}`,
+    );
+  },
+);
+
 it("restores the typed colon and collapsed caret with one undo, and isolates subsequent typing", async () => {
   const h = mountEmojiTypeahead();
   h.fill("hello :-1");
   await screen.findByRole("option", { name: ":-1:" });
   expect(colon(h.input())).toBe(false);
-  expect(h.input()).toHaveValue("hello 👎");
+  expect(h.input()).toHaveValue("hello 👎 ");
   act(() => h.input().undo(false));
   expect(h.input()).toHaveValue("hello :-1:");
   expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([10, 10]);
   act(() => h.input().undo(true));
-  expect(h.input()).toHaveValue("hello 👎");
+  expect(h.input()).toHaveValue("hello 👎 ");
   await h.user.type(h.input(), "!");
+  expect(h.input()).toHaveValue("hello 👎 !");
   act(() => h.input().undo(false));
-  expect(h.input()).toHaveValue("hello 👎");
+  expect(h.input()).toHaveValue("hello 👎 ");
   act(() => h.input().undo(false));
   expect(h.input()).toHaveValue("hello :-1:");
 });
@@ -9231,7 +9476,7 @@ it("puts the default agent in a new chat's pill, never the text or a saved draft
   expect(readView("scope", "new-chat", null)).toBeNull();
 });
 
-it("keeps an agent the viewer picked in a new chat's pill across showing again, but a new mount starts from the main agent", async () => {
+it("keeps an agent the viewer picked in a new chat's pill across showing again and remounting", async () => {
   const h = mountNewSoloChat("Cached", first.pubkey);
   await waitFor(() => expect(pillSendingTo("Cached")).toBeInTheDocument());
   act(() =>
@@ -9245,7 +9490,7 @@ it("keeps an agent the viewer picked in a new chat's pill across showing again, 
   expect(h.input()).toHaveValue("");
   h.unmount();
   mountNewSoloChat("Cached", first.pubkey);
-  await waitFor(() => expect(pillSendingTo("Cached")).toBeInTheDocument());
+  await waitFor(() => expect(pillSendingTo("Saved")).toBeInTheDocument());
 });
 
 it("an untouched new chat's pill holds the current default after a remount", async () => {
@@ -9548,6 +9793,8 @@ it.each([
       canMarkUnread: () => false,
       markUnread: () => {},
       composer: () => null,
+      canQuote: () => false,
+      quote: () => false,
     });
     try {
       render(
@@ -9591,9 +9838,9 @@ it.each([
   },
 );
 
-it.each(["cancel", "accepted"])(
+it.each(["cancel", "submitted"])(
   "restores rich draft history and mention provenance after an edit is %s",
-  (finish) => {
+  async (finish) => {
     const h = mount({}, undefined, first.pubkey);
     h.setRows([editableMessage()]);
     act(() => h.commands().insertMention(second));
@@ -9611,7 +9858,9 @@ it.each(["cancel", "accepted"])(
     if (finish === "cancel") fireEvent.keyDown(h.input(), { key: "Escape" });
     else {
       h.submit();
-      h.setDelivery("accepted");
+      await waitFor(() =>
+        expect(screen.queryByText("Editing message")).not.toBeInTheDocument(),
+      );
     }
     act(() => h.input().undo(false));
     expect(h.input().innerHTML).toBe(formatted);
@@ -9711,7 +9960,7 @@ it("saves an edited fenced message on Enter instead of opening a block from its 
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
-it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
+it("saves only once and restores the new-message composer without waiting for delivery", async () => {
   const h = mount({}, undefined, first.pubkey);
   const row = editableMessage();
   h.setRows([row]);
@@ -9729,8 +9978,10 @@ it("saves only once, locks until delivery, and restores the new-message composer
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveAttribute("contenteditable", "false");
   expect(screen.getByRole("button", { name: "Close edit" })).toBeDisabled();
-  h.setDelivery("accepted");
-  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+  // The row shows the edit already; the editor closes a frame later.
+  await waitFor(() =>
+    expect(screen.queryByText("Editing message")).not.toBeInTheDocument(),
+  );
   expect(h.input()).toHaveValue("");
   expect(h.input()).toHaveFocus();
   expect(h.onSend).not.toHaveBeenCalled();
@@ -9738,12 +9989,13 @@ it("saves only once, locks until delivery, and restores the new-message composer
 
 it.each(["failed", "unknown"] as const)(
   "keeps a %s edit and retries the same operation, not a new message",
-  (delivery) => {
+  async (delivery) => {
     const h = mount({}, undefined, first.pubkey);
     h.setRows([editableMessage()]);
     fireEvent.keyDown(h.input(), { key: "ArrowUp" });
     h.fill("Revised");
     h.submit();
+    // A failure before the editor closes keeps it open with Retry.
     h.setDelivery(delivery);
     expect(h.input()).toHaveValue("Revised");
     expect(h.input()).toHaveAttribute("contenteditable", "false");
@@ -9751,7 +10003,7 @@ it.each(["failed", "unknown"] as const)(
     expect(h.session.outbox?.retry).toHaveBeenCalledExactlyOnceWith("edit-id");
     expect(h.messages.edit).toHaveBeenCalledTimes(1);
     h.setDelivery("seen");
-    expect(h.input()).toHaveValue("");
+    await waitFor(() => expect(h.input()).toHaveValue(""));
   },
 );
 
@@ -10974,7 +11226,31 @@ it("rejects a known archived recipient at send entry without clearing the draft"
   expect(h.input()).toHaveValue(`@${first.name} `);
   expect(
     screen.getByText(
-      "A selected recipient is archived. Remove it before sending.",
+      "A selected recipient is archived or being deleted. Remove it before sending.",
+    ),
+  ).toBeVisible();
+});
+
+it("refuses a recipient selected before its Delete started, at send", () => {
+  const viewer = localAgent.owner;
+  const control = localAgentsFixture();
+  const agent = { ...localAgent, ...first };
+  control.set({ agents: [agent] });
+  const h = mount(
+    { scope: `https://relay.example.test:${viewer}` },
+    control,
+    viewer,
+  );
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  act(() => control.set({ agents: [{ ...agent, deleting: true }] }));
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(
+    screen.getByText(
+      "A selected recipient is archived or being deleted. Remove it before sending.",
     ),
   ).toBeVisible();
 });
@@ -10994,7 +11270,7 @@ it("sends a resource between mentions and keeps both after a failed send", () =>
   expect(h.input()).toHaveTextContent("Resource: Fix login");
   h.submit();
   expect(h.messages.send.mock.calls.at(-1)?.slice(1, 3)).toEqual([
-    `@Honey [Fix login](${resource.uri}) @Honey `,
+    `@Honey (${first.pubkey}) [Fix login](${resource.uri}) @Honey (${second.pubkey}) `,
     [first.pubkey, second.pubkey],
   ]);
 });
@@ -13206,6 +13482,7 @@ function mountSoloAgents(
       channelWrites: {
         refreshMembership: async () => ({
           id: "channel",
+          channelType: "solo",
           members: options.refreshed ?? members,
         }),
         addAgents: vi.fn(),
@@ -13374,7 +13651,7 @@ it("an archived agent in the pill blocks the send and asks for another agent", (
   expect(h.input()).toHaveValue("hello");
   expect(
     screen.getByText(
-      "An agent you're sending to is archived. Choose another agent to send.",
+      "An agent you're sending to is archived or being deleted. Choose another agent to send.",
     ),
   ).toBeVisible();
 });
@@ -13958,6 +14235,227 @@ it("a member whose profile has not loaded turns pill routing off", async () => {
   expect(h.commands().audience).toBeDefined();
 });
 
+it("queues an agent follow-up that also references a person outside the Solo chat", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  const human = { pubkey: "e".repeat(64), name: "Teammate" };
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  h.setProfiles(new Map([[human.pubkey, { name: "Teammate" }]]));
+  const activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: () => () => {},
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(human);
+    h.commands().insertText("Follow up");
+  });
+  await choicesLoaded();
+  h.submit();
+  // A referenced person addresses nobody, so this is still an agent follow-up.
+  await screen.findByRole("region", { name: "Queued follow-ups" });
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("sends now a shared Solo chat message whose only tag is a reference, like untagged conversation", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  const guest = { pubkey: "d".repeat(64), name: "Guest" };
+  const outside = { pubkey: "e".repeat(64), name: "Teammate" };
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  h.setProfiles(
+    new Map([
+      [guest.pubkey, { name: "Guest" }],
+      [outside.pubkey, { name: "Teammate" }],
+    ]),
+  );
+  const activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey, guest.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: () => () => {},
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(outside);
+    h.commands().insertText("what did they say?");
+  });
+  await choicesLoaded();
+  h.submit();
+  // A reference addresses nobody: with a person in the chat this is
+  // conversation, which goes out now, not a queued agent follow-up.
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.[5]).toEqual([outside.pubkey]);
+  expect(
+    screen.queryByRole("region", { name: "Queued follow-ups" }),
+  ).toBeNull();
+});
+
+it.each(["joined", "left"] as const)(
+  "decides a follow-up's queue from the fresh roster when the named person %s",
+  async (change) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount();
+    const pat = { pubkey: "e".repeat(64), name: "Pat" };
+    h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+    h.setProfiles(new Map([[pat.pubkey, { name: "Pat" }]]));
+    const activity = {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    // The rendered roster and the send's fresh read disagree about Pat.
+    const before = ["viewer", first.pubkey];
+    const after = [...before, pat.pubkey];
+    const channel = (members: string[]) => ({
+      id: "channel",
+      channelType: "solo",
+      creator: "viewer",
+      members,
+    });
+    const channelList = {
+      status: "ready",
+      channels: [channel(change === "joined" ? before : after)],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        viewer: "viewer",
+        channels: { ...h.session.channels, list: () => channelList },
+        channelWrites: {
+          refreshMembership: async () =>
+            channel(change === "joined" ? after : before),
+          addAgents: vi.fn(),
+        },
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: () => () => {},
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(pat);
+      h.commands().insertText("Follow up");
+    });
+    await choicesLoaded();
+    h.submit();
+    if (change === "joined") {
+      // Pat is in the chat now, so the message addresses a person: it goes
+      // out at once instead of waiting in a queue it could not leave.
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+        first.pubkey,
+        pat.pubkey,
+      ]);
+      expect(
+        screen.queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull();
+    } else {
+      // Pat left, so Pat is only named and the agent follow-up is queued.
+      await screen.findByRole("region", { name: "Queued follow-ups" });
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+  },
+);
+
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
   const h = mount();
@@ -13979,10 +14477,18 @@ it("queues a tagged agent follow-up while agent choices no longer list it", asyn
       },
     ],
   };
-  // A store snapshot keeps its identity until the store changes.
+  // A store snapshot keeps its identity until the store changes. The
+  // working agent is a member, so it is never taken for a reference.
   const channelList = {
     status: "ready",
-    channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: [first.pubkey],
+      },
+    ],
   };
   h.retarget({
     ownSoloConversation: true,
@@ -14215,7 +14721,7 @@ it("withholds recording tools while a message edit cannot take attachments", asy
 });
 
 it.each([true, false])(
-  "Solo human addressing is explicit for owner=%s and never enrolls outsiders",
+  "Solo human addressing is explicit for owner=%s and only references outsiders",
   async (owner) => {
     const h = mount();
     const human = { pubkey: "e".repeat(64), name: "Teammate" };
@@ -14241,17 +14747,264 @@ it.each([true, false])(
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
     expect(h.messages.send.mock.calls[0]?.[2]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
-    // Previously selected human loses membership before the fresh send check.
+    // A selected human loses membership before the fresh send check: they
+    // become a reference, which addresses nobody.
     act(() => h.commands().insertMention(human));
     channel.members = [first.pubkey];
     h.submit();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "already in this chat",
+      "Tag an agent to send.",
     );
     expect(h.messages.send).toHaveBeenCalledOnce();
+    // With an agent tagged, the outside human goes out as a reference.
+    act(() => h.commands().insertMention(first));
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
+    expect(h.messages.send.mock.calls[1]?.[5]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
   },
 );
+
+it("adds a known agent while one agent source failed, but refuses a name it cannot tell from a reference", async () => {
+  const h = mount();
+  const stranger = { pubkey: "e".repeat(64), name: "Stranger" };
+  const channel = {
+    id: "channel",
+    name: "Work",
+    channelType: "solo" as const,
+    members: ["viewer"],
+  };
+  const list = { status: "ready" as const, channels: [channel] };
+  const addAgents = vi.fn();
+  h.retarget({
+    soloConversation: true,
+    ownSoloConversation: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { list: () => list, subscribeList: () => () => {} },
+      channelWrites: { refreshMembership: async () => channel, addAgents },
+    } as unknown as RelaySession,
+  });
+  // One source failed; the other still lists the viewer's agent.
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("hi");
+  });
+  await choicesLoaded();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(addAgents).toHaveBeenCalledOnce();
+  // A key the partial list lacks may be an agent it failed to read, so the
+  // composer does not take it as a reference.
+  h.fill("");
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(stranger);
+  });
+  expect(
+    screen.getByText(
+      "This recipient is no longer available. Remove it or refresh choices.",
+    ),
+  ).toBeVisible();
+  expect(h.commands().recipients.map((p) => p.pubkey)).not.toContain(
+    stranger.pubkey,
+  );
+  // One picked while the read was complete is refused if the send's read is not.
+  h.setLibrary([first]);
+  act(() => {
+    h.commands().insertMention(stranger);
+    h.commands().insertText("ask her");
+  });
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
+  h.submit();
+  expect(
+    await screen.findByText("Could not load your agents. Retry."),
+  ).toBeVisible();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])(
+  "a reference in an agents-only Solo chat never joins the pill's agents (agent tagged=%s)",
+  async (tagged) => {
+    const { h, ada, sendingTo } = mountSoloAgents();
+    const carol = { pubkey: "e".repeat(64), name: "Carol" };
+    act(() => {
+      if (tagged) h.commands().insertMention(ada);
+      h.commands().insertMention(carol);
+      h.commands().insertText("what did she say?");
+    });
+    // A reference addresses nobody, so it does not replace the pill's agent.
+    expect(sendingTo("Ada")).toBeInTheDocument();
+    expect(h.commands().audience?.named).toBe(tagged);
+    // The agent menu cannot route to a reference either.
+    act(() => h.commands().audience?.toggle(carol));
+    expect(sendingTo("Ada")).toBeInTheDocument();
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([ada.pubkey]);
+    expect(h.messages.send.mock.calls[0]?.[5]).toEqual([carol.pubkey]);
+    // The next message keeps the agent, not the person this one named.
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+    expect(sendingTo("Ada")).toBeInTheDocument();
+    h.fill("thanks");
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual([ada.pubkey]);
+    expect(h.messages.send.mock.calls[1]?.[5] ?? []).toEqual([]);
+  },
+);
+
+it("keeps an owned agent's chip on the pill while the agent read refreshes", () => {
+  // Bea is the viewer's agent but not yet in the chat.
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  // A refresh drops the agents until it completes; the chip is still an
+  // agent, not a reference, and the send keeps its recipient.
+  h.setLibrary([first, second], "loading");
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.setLibrary([first, second]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+});
+
+it("keeps an owned agent's chip on the pill when its composer remounts during a refresh", () => {
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.setLibrary([first, second], "loading");
+  // Away and back before the read completes: the restored draft's chip is
+  // still classified by the last complete read, not lost with the composer.
+  h.remount();
+  expect(h.input()).toHaveTextContent("@Bea hi");
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.setLibrary([first, second]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+});
+
+it("takes an agent a partial read lists as an agent, even when an older complete read lacks it", async () => {
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  // The last complete read predates Bea; a newer partial read lists her. A
+  // reference chip, removed again, classified names under the older read.
+  h.setLibrary([first]);
+  act(() =>
+    h.commands().insertMention({ pubkey: "e".repeat(64), name: "Carol" }),
+  );
+  h.fill("");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.setLibrary([first, second], "ready", "Relay inventory unavailable");
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  // Tagging Bea replaces the pill's Ada, as for any agent.
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.recipients).toEqual([bea]);
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([bea.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[5] ?? []).toEqual([]);
+});
+
+it("sends only to a restored agent chip a cold partial read has not listed yet", async () => {
+  // An earlier session saved a draft tagging Bea, the viewer's agent outside
+  // the chat.
+  const before = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    before.h.commands().insertMention(before.bea);
+    before.h.commands().insertText("hi");
+  });
+  before.h.unmount();
+  // The draft's saved pick is Ada.
+  writeView("scope", "draft:channel:agents", [before.ada]);
+  // A fresh session: its first read lists Ada but not Bea, and no read has
+  // completed.
+  const h = mount({}, undefined, "viewer");
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const list = {
+    ...soloList,
+    channels: [{ ...soloList.channels[0], members: [first.pubkey] }],
+  };
+  h.retarget({
+    soloConversation: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => list },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          channelType: "solo",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveTextContent("@Bea hi");
+  // The send's refresh completes the read, and it lists Bea.
+  vi.mocked(h.session.agentLibrary.refresh).mockImplementation(async () =>
+    h.setLibrary([first, second]),
+  );
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  // Bea is the only recipient: the pill's Ada does not join her.
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[5] ?? []).toEqual([]);
+});
+
+it("does not seed the pill with another person's agent outside the Solo chat", () => {
+  setDefaultAgent("scope", first.pubkey);
+  const viewer = "f".repeat(64);
+  const theirs = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([], "loading");
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "channel", channelType: "solo" as const, members: [first.pubkey] },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [theirs, { name: "Otto", isAgent: true }],
+    ]),
+  );
+  // The viewer last sent to an agent that has since left the chat.
+  h.setRows([editableMessage({ authorId: viewer, mentions: [theirs] })]);
+  h.setLibrary([first]);
+  // The main agent stands in instead.
+  expect(
+    screen.getByRole("status", { name: "Sending to Ada. Change agents" }),
+  ).toBeInTheDocument();
+});
 
 it("recovers an uploaded follow-up instead of queuing it after its chat disappeared", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
@@ -14993,12 +15746,12 @@ it("keeps the separator typed after the words a pending chip extends over, so la
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
 });
 
-it("extends a chip held on punctuation over the rest of the longer directory name it starts", async () => {
+it("extends a chip held on punctuation over the rest of the longer member name it starts", async () => {
   // A member name still loading keeps `Pat O` from selecting, so `'` holds
-  // it. The search then finds `Pat O'Brien`; the words typed after the chip
-  // start with the `'` that held it and complete that name.
+  // it. The search then finds that member, `Pat O'Brien`; the words typed
+  // after the chip start with the `'` that held it and complete that name.
   const h = mountDirectoryMention();
-  const pat = { pubkey: "f".repeat(64), name: "Pat O'Brien" };
+  const pat = { pubkey: second.pubkey, name: "Pat O'Brien" };
   h.setProfiles(new Map([[first.pubkey, { name: "Pat O" }]]));
   await h.user.type(h.input(), "@Pat O");
   await screen.findByText("Searching community…");
@@ -15013,20 +15766,41 @@ it("extends a chip held on punctuation over the rest of the longer directory nam
   expect(h.chip("Pat O'Brien")).toBeNull();
   expect(h.recipients()).toHaveLength(1);
   h.submit();
-  expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Pat O'Brien is not in this channel.",
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
-  );
   await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(h.messages.send).toHaveBeenCalledOnce();
   expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
     "channel",
     "@Pat O'Brien",
-    [],
+    [pat.pubkey],
   ]);
-  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([pat.pubkey]);
+});
+
+it("resolves a chip held on punctuation to the member's name when only a longer outside name continues it", async () => {
+  // As above, but `Pat O'Brien` is outside the channel: an outside name
+  // never makes a member's exact name ambiguous, so the chip mentions the
+  // member and the rest stays prose.
+  const h = mountDirectoryMention();
+  const outside = { pubkey: "f".repeat(64), name: "Pat O'Brien" };
+  h.setProfiles(new Map([[first.pubkey, { name: "Pat O" }]]));
+  await h.user.type(h.input(), "@Pat O");
+  await screen.findByText("Searching community…");
+  await h.user.keyboard("'s here");
+  expect(h.chip("Pat O")).toHaveAttribute("aria-busy", "true");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [outside], hasMore: false });
+  await waitFor(() => expect(h.chip("Pat O")).toBeNull());
+  expect(h.input()).toHaveValue("@Pat O's here");
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Pat O's here",
+    [first.pubkey],
+  ]);
 });
 
 it("selects a longer directory name on the Space that completes it when its page arrived before the first Space", async () => {
@@ -15098,6 +15872,204 @@ it.each([
     );
   },
 );
+
+it.each([
+  ["Wes", "Wes Smith"],
+  ["Pat O", "Pat O'Brien"],
+])(
+  "mentions the member %j when the listed outside %j is typed out in full",
+  async (member, outside) => {
+    // An outside longer name never blocks a member's exact name, so the Space
+    // or punctuation inside it selects the member and the rest stays text.
+    // Only the list can choose the outside name (README section 5).
+    const h = mountDirectoryMention();
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: member }],
+        [second.pubkey, { name: "Another Member" }],
+      ]),
+    );
+    await h.user.type(h.input(), `@${member}`);
+    await waitFor(() => expect(h.people).toHaveBeenCalled());
+    await h.release({
+      people: [{ pubkey: "f".repeat(64), name: outside }],
+      hasMore: false,
+    });
+    await screen.findByRole("option", { name: new RegExp(outside) });
+    await h.user.keyboard(`${outside.slice(member.length)} hi`);
+    expect(h.input()).toHaveValue(`@${outside} hi`);
+    expect(h.recipients()).toHaveLength(1);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `@${outside} hi`,
+      [first.pubkey],
+      [],
+    );
+  },
+);
+
+/** A saved Solo chat as the app mounts it: the personal composer's roster
+ * over the real chooser. The chat's signed member list has the viewer and
+ * `Claude`; the viewer also owns `Claude Code`, which the roster offers from
+ * outside the chat. */
+function mountSavedSoloMention() {
+  const viewer = "e".repeat(64);
+  const claude = { pubkey: first.pubkey, name: "Claude" };
+  const code = { pubkey: second.pubkey, name: "Claude Code" };
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount(
+    {
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: {
+          snapshot: () => completions,
+          subscribe: () => () => {},
+        },
+      },
+      soloConversation: true,
+      ownSoloConversation: true,
+      requireMention: true,
+    },
+    undefined,
+    viewer,
+  );
+  const saved = {
+    id: "channel",
+    channelType: "solo" as const,
+    members: [viewer, claude.pubkey],
+  };
+  const list = { status: "ready" as const, channels: [saved] };
+  const addAgents = vi.fn(async () => {});
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => list,
+        ensureList: () => {},
+      },
+      channelWrites: { refreshMembership: async () => saved, addAgents },
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [viewer, { name: "Viewer" }],
+      [claude.pubkey, { name: claude.name, isAgent: true }],
+      [code.pubkey, { name: code.name, isAgent: true }],
+    ]),
+  );
+  return {
+    ...h,
+    claude,
+    code,
+    addAgents,
+    /** The mention chips in the draft, by their text. */
+    chips: () =>
+      [...h.input().querySelectorAll("[data-source]")].map(
+        (chip) => chip.textContent,
+      ),
+  };
+}
+
+it("selects a saved Solo chat's member on Space beside the owner's longer-named agent outside it", async () => {
+  // The roster offers every available agent, but only the chat's own member
+  // list makes a name a member's (README section 5).
+  const h = mountSavedSoloMention();
+  h.setLibrary([h.claude, h.code]);
+  await h.user.type(h.input(), "@Claude");
+  // The agent outside the chat stays listed.
+  await screen.findByRole("option", { name: /^Claude Code/ });
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@Claude ");
+  expect(h.chips()).toEqual(["@Claude"]);
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Claude ",
+    [h.claude.pubkey],
+  ]);
+  expect(h.addAgents).not.toHaveBeenCalled();
+});
+
+it("mentions a saved Solo chat's member when the owner's longer-named agent outside it is typed out in full", async () => {
+  const h = mountSavedSoloMention();
+  h.setLibrary([h.claude, h.code]);
+  await h.user.type(h.input(), "@Claude");
+  await screen.findByRole("option", { name: /^Claude Code/ });
+  await h.user.keyboard(" Code hi");
+  expect(h.input()).toHaveValue("@Claude Code hi");
+  expect(h.chips()).toEqual(["@Claude"]);
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Claude Code hi",
+    [h.claude.pubkey],
+  ]);
+  expect(h.addAgents).not.toHaveBeenCalled();
+});
+
+it("resolves a saved Solo chat member's name held while the owner's agents load, beside the longer-named agent outside it", async () => {
+  // No agent is listed until the library loads, so Space holds the name. The
+  // resolver then applies the same rule over the settled roster.
+  const h = mountSavedSoloMention();
+  h.setLibrary([], "loading");
+  await h.user.type(h.input(), "@Claude");
+  await screen.findByText("Loading recipients…");
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@Claude ");
+  expect(
+    within(h.input()).getByRole("img", { name: "Resolving mention Claude" }),
+  ).toHaveAttribute("aria-busy", "true");
+  h.setLibrary([h.claude, h.code]);
+  await waitFor(() =>
+    expect(
+      within(h.input()).queryByRole("img", { name: /^Resolving mention / }),
+    ).toBeNull(),
+  );
+  expect(h.chips()).toEqual(["@Claude"]);
+  expect(h.input()).toHaveValue("@Claude ");
+});
+
+it("still picks the owner's agent outside a saved Solo chat from the list, and sending adds it", async () => {
+  const h = mountSavedSoloMention();
+  h.setLibrary([h.claude, h.code]);
+  await h.user.type(h.input(), "@Claude");
+  const outside = await screen.findByRole("option", { name: /^Claude Code/ });
+  // Listed as before: the roster's rows carry no "Adds to chat" detail.
+  expect(outside).not.toHaveTextContent("Adds to chat");
+  await h.user.keyboard("{ArrowDown}{Enter}");
+  expect(h.input()).toHaveValue("@Claude Code ");
+  expect(h.chips()).toEqual(["@Claude Code"]);
+  await h.user.keyboard("hi");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Claude Code hi",
+    [h.code.pubkey],
+  ]);
+  expect(h.addAgents).toHaveBeenCalledOnce();
+  expect(h.addAgents.mock.calls[0]?.slice(0, 2)).toEqual([
+    "channel",
+    [h.code.pubkey],
+  ]);
+});
 
 it("extends a pending chip to the one longer name the typed words complete when several continue it", async () => {
   const h = mountDirectoryMention();
@@ -16249,4 +17221,323 @@ it("shows an annotator's marks in the composer and retires them with the destina
   await waitFor(() =>
     expect(h.input().querySelector('[aria-invalid="spelling"]')).toBeNull(),
   );
+});
+
+it.each([false, true])(
+  "pastes a source locator, preserves the card while typing, and forwards through normal send (thread=%s)",
+  async (thread) => {
+    const root = "b".repeat(64);
+    const h = await mountUploadComposer(
+      thread
+        ? { threadRootId: root, sourceMessages: true }
+        : { sourceMessages: true },
+    );
+    const id = h.owner.session.messages.send("channel", "Original **message**");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    const { forwardClipboard } = await import("./forward-clipboard");
+    const { readForward } = await import("../relay/forwarded-message");
+    const payload = forwardClipboard(
+      {
+        version: 1,
+        origin: "https://relay.example.test",
+        channelId: "channel",
+        id,
+      },
+      "Untrusted clipboard text",
+    );
+    const paste = () =>
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      });
+    paste();
+    await screen.findByRole("button", { name: "Remove forwarded message" });
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    expect(
+      screen.queryByText("Untrusted clipboard text"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(h.input(), { target: { value: "My note" } });
+    paste();
+    expect(
+      await screen.findByText(/Only one forwarded message can be attached/),
+    ).toBeVisible();
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    const event = h.publish.mock.calls[1]?.[0];
+    expect(event && readForward(event)?.snapshot.content).toBe(
+      "Original **message**",
+    );
+    expect(event && readForward(event)?.note).toBe("My note");
+    if (thread) expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Remove forwarded message" }),
+      ).not.toBeInTheDocument(),
+    );
+  },
+);
+it("keeps the note and disables Send for an inaccessible pasted forward until removed", async () => {
+  const h = await mountUploadComposer();
+  fireEvent.change(h.input(), { target: { value: "Keep this note" } });
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://another.example",
+      channelId: "private",
+      id: "c".repeat(64),
+    },
+    "fake text",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  expect(await screen.findByText(/belongs to another community/)).toBeVisible();
+  expect(h.send()).toBeDisabled();
+  expect(h.input()).toHaveValue("Keep this note");
+  const remove = screen.getByRole("button", {
+    name: "Remove forwarded message",
+  });
+  remove.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(h.input()).toHaveFocus();
+  expect(h.send()).toBeEnabled();
+  expect(h.input()).toHaveValue("Keep this note");
+});
+
+it("preserves the selected video when pasting a timed forward into a two-video thread", async () => {
+  const second = `https://relay.example.test/media/${"b".repeat(64)}.mp4`;
+  const options = {
+    sourceMessages: true,
+    threadRootId: "",
+    mediaTimeSeconds: 21,
+    mediaTargetUrl: second,
+  };
+  const h = await mountUploadComposer(options);
+  const source = h.owner.session.messages.send("channel", "Original message");
+  const root = h.owner.session.messages.send(
+    "channel",
+    "Two videos",
+    [],
+    [
+      {
+        ...uploadDescriptor("first.mp4"),
+        url: `https://relay.example.test/media/${"a".repeat(64)}.mp4`,
+        type: "video/mp4",
+      },
+      {
+        ...uploadDescriptor("second.mp4"),
+        url: second,
+        sha256: "b".repeat(64),
+        type: "video/mp4",
+      },
+    ],
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  options.threadRootId = root;
+  h.present(true);
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const { readForward } = await import("../relay/forwarded-message");
+  const { foldMessages } = await import("../relay/fold");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://relay.example.test",
+      channelId: "channel",
+      id: source,
+    },
+    "fallback",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.change(h.input(), { target: { value: "Review this cut" } });
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(3));
+  const event = h.publish.mock.calls[2]?.[0];
+  expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+  expect(event?.tags).toContainEqual(["buzz:media", second]);
+  expect(event && readForward(event)?.note).toBe("⏱ 0:21 — Review this cut");
+  const rows = foldMessages(
+    "channel",
+    h.owner.session.viewer ?? "",
+    h.publish.mock.calls.map(([value]) => value),
+    { includeReplies: true },
+  );
+  expect(
+    rows
+      .find((row) => row.id === root)
+      ?.attachments.filter((item) => item.kind === "video"),
+  ).toHaveLength(2);
+  expect(rows.find((row) => row.id === event?.id)?.mediaTargetUrl).toBe(second);
+});
+
+it.each([
+  ["private", "other", true],
+  ["dm", "other", true],
+  ["solo", "other", true],
+  ["private", "channel", false],
+  ["dm", "channel", false],
+  ["solo", "channel", false],
+  ["public", "other", false],
+] as const)(
+  "discloses pasted %s source in %s only when privacy requires it",
+  async (sourcePrivacy, destination, expected) => {
+    const h = await mountUploadComposer({
+      sourceMessages: true,
+      sourcePrivacy,
+      destination,
+    });
+    const id = h.owner.session.messages.send("channel", "Source message");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    const { forwardClipboard } = await import("./forward-clipboard");
+    const payload = forwardClipboard(
+      {
+        version: 1,
+        origin: "https://relay.example.test",
+        channelId: "channel",
+        id,
+      },
+      "Untrusted clipboard text",
+    );
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        getData: (type: string) =>
+          type === "text/html" ? payload.html : payload.text,
+        items: [],
+      },
+    });
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    const composer = within(screen.getByRole("form"));
+    const disclosure = composer.queryByText(
+      /will be able to read this message, even if they can’t see where it came from/,
+    );
+    expect(Boolean(disclosure)).toBe(expected);
+    if (expected) {
+      expect(disclosure).toHaveTextContent("Everyone in #Random");
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toHaveTextContent(/Everyone in #Random will be able to read/);
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toHaveAttribute("aria-live", "polite");
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toHaveAttribute("aria-atomic", "true");
+      expect(h.send()).toHaveAccessibleDescription(
+        /Everyone in #Random will be able to read/,
+      );
+      // Reopen the same saved forward in its source conversation: destination is
+      // derived from the live composer, not persisted alongside the locator.
+      await waitFor(() =>
+        expect(readView(h.scope, "draft:other", null)).toHaveProperty(
+          "forward",
+        ),
+      );
+      writeView(
+        h.scope,
+        "draft:channel",
+        readView(h.scope, "draft:other", null),
+      );
+      h.retargetChannel("channel");
+      await waitFor(() => expect(h.send()).toBeEnabled());
+      expect(
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
+      ).not.toBeInTheDocument();
+      h.retargetChannel("other");
+      await waitFor(() =>
+        expect(h.send()).toHaveAccessibleDescription(
+          /Everyone in #Random will be able to read/,
+        ),
+      );
+      const region = document.getElementById(
+        `${h.input().id}-forward-announcement`,
+      );
+      for (const [active, shown] of [
+        [false, true],
+        [true, false],
+      ] as const) {
+        h.present(active, shown);
+        expect(region).toBeInTheDocument();
+        expect(region).toBeEmptyDOMElement();
+        h.present(true);
+        await waitFor(() =>
+          expect(region).toHaveTextContent(
+            /Everyone in #Random will be able to read/,
+          ),
+        );
+      }
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove forwarded message" }),
+      );
+      expect(
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
+      ).not.toBeInTheDocument();
+      expect(region).toBeInTheDocument();
+      expect(region?.parentElement).toBe(document.body);
+      expect(region).toBeEmptyDOMElement();
+      // The source is warm: repasting must update the existing live region.
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      });
+      await waitFor(() => expect(h.send()).toBeEnabled());
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toBe(region);
+      expect(region).toHaveTextContent(
+        /Everyone in #Random will be able to read/,
+      );
+      expect(h.send()).toHaveAccessibleDescription(
+        /Everyone in #Random will be able to read/,
+      );
+    }
+  },
+);
+
+it("pastes a copied forward literally inside a code block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://relay.example.test",
+      channelId: "source",
+      id: "ab".repeat(32),
+    },
+    "Literal copied text",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+    },
+  });
+  expect(h.input().querySelector("pre code")).toHaveTextContent(payload.text);
+  expect(
+    screen.queryByRole("button", { name: "Remove forwarded message" }),
+  ).not.toBeInTheDocument();
 });

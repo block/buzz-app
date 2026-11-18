@@ -1628,9 +1628,10 @@ export function SearchResults({
     ...new Set(
       [
         ...unreadThreads.values(),
-        ...[...reasons.values()].flatMap(({ mention }) =>
-          mention ? [mention] : [],
-        ),
+        ...[...reasons.values()].flatMap(({ mention, thread }) => [
+          ...(mention ? [mention] : []),
+          ...(thread ? [thread] : []),
+        ]),
         ...latestUnread.values(),
       ].map(({ authorId, workflowOwnerId }) => workflowOwnerId ?? authorId),
     ),
@@ -1683,10 +1684,14 @@ export function SearchResults({
   const unread = unreadChannels.map((channel): SearchDestination => {
     const reason = reasons.get(channel.id);
     const mention = reason?.mention;
+    // A mixed channel opens to its conversation, but its row still shows
+    // the reply that earned it the Thread tier.
+    const thread = !mention && !unreadThreads.has(channel.id) && reason?.thread;
     const row = suggestion(channel);
-    const latest = unreadThreads.has(channel.id)
-      ? undefined
-      : latestUnread.get(channel.id);
+    const latest =
+      unreadThreads.has(channel.id) || thread
+        ? undefined
+        : latestUnread.get(channel.id);
     // Only a group conversation names who wrote it.
     const shown =
       latest?.preview.trim() &&
@@ -1704,6 +1709,13 @@ export function SearchResults({
     return {
       ...row,
       ...(shown && { detail: shown }),
+      ...(thread && {
+        detailIcon: ThreadIcon,
+        detailIconLabel: "Thread reply",
+        detail: thread.preview.trim()
+          ? `${authorName(thread, channel)}: ${thread.preview}`
+          : `${authorName(thread, channel)} replied in a thread`,
+      }),
       ...(mention && {
         detailIcon: AtIcon,
         detailIconLabel: "Mention",
@@ -2292,6 +2304,7 @@ export function SearchResults({
         scope={
           scopedChannelId && onScopeChange
             ? {
+                id: scopedChannelId,
                 label:
                   names.get(scopedChannelId) ??
                   session.channels.get?.(scopedChannelId)?.name ??

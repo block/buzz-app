@@ -179,7 +179,8 @@ export type SearchInputProps = {
   onQueryChange: (query: string) => void;
   input: RefObject<HTMLElement | null>;
   label?: string;
-  scope?: { label: string; onRemove: () => void } | undefined;
+  /** One conversation the search is narrowed to, by `id`. */
+  scope?: { id: string; label: string; onRemove: () => void } | undefined;
   /** A control that refines the results, inside the field after Clear. */
   fieldAction?: ReactNode;
   chips?: readonly SearchChip[] | undefined;
@@ -435,6 +436,7 @@ export function SearchChoices({
     isAction,
     highlightEmpty,
     followFirst: !!peek?.ranked,
+    within: scope?.id,
     // A kept place keeps its row: Enter never chooses a row scrolled away.
     ...(place?.key && keys.includes(place.key)
       ? { initial: place.key }

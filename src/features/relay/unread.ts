@@ -111,6 +111,11 @@ export type ThreadActivityItem = Readonly<{
   createdAt: number;
   preview: string;
   unreadCount: number;
+  /** An unread reply is in a conversation of the viewer's own, rather than
+   * counting only as a mention or broadcast. */
+  participating?: true;
+  /** The newest unread reply that mentions the viewer. */
+  mention?: MentionActivityItem;
 }>;
 export type MentionActivityItem = Readonly<{
   channelId: string;
@@ -1356,6 +1361,28 @@ export function createUnread({
         continue;
       const current = grouped.get(rootId);
       const preview = previewOf(event);
+      const participating = conversation(evidence)
+        ? true
+        : current?.participating;
+      const mention =
+        category(evidence, dm) === "mention" &&
+        (!current?.mention ||
+          event.created_at > current.mention.createdAt ||
+          (event.created_at === current.mention.createdAt &&
+            event.id < current.mention.messageId))
+          ? Object.freeze({
+              channelId,
+              messageId: event.id,
+              authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, workflowAuthority),
+              createdAt: event.created_at,
+              preview,
+            })
+          : current?.mention;
+      const marks = {
+        ...(participating ? { participating } : {}),
+        ...(mention ? { mention } : {}),
+      };
       if (!current) {
         grouped.set(
           rootId,
@@ -1368,6 +1395,7 @@ export function createUnread({
             createdAt: event.created_at,
             preview,
             unreadCount: 1,
+            ...marks,
           }),
         );
         continue;
@@ -1389,6 +1417,7 @@ export function createUnread({
           createdAt: latest ? event.created_at : current.createdAt,
           preview: latest ? preview : current.preview,
           unreadCount: current.unreadCount + 1,
+          ...marks,
         }),
       );
     }
@@ -1432,7 +1461,11 @@ export function createUnread({
             item.workflowOwnerId === other.workflowOwnerId &&
             item.createdAt === other.createdAt &&
             item.preview === other.preview &&
-            item.unreadCount === other.unreadCount
+            item.unreadCount === other.unreadCount &&
+            item.participating === other.participating &&
+            item.mention?.messageId === other.mention?.messageId &&
+            item.mention?.authorId === other.mention?.authorId &&
+            item.mention?.preview === other.mention?.preview
           );
         }))) &&
     (a.mentions?.length ?? 0) === (b.mentions?.length ?? 0) &&

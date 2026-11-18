@@ -571,13 +571,15 @@ it("previews the newest unread reply of a channel unread only through threads an
       ),
     );
     expect(row("blank")).toHaveTextContent("Larry replied in a thread");
-    // Unread channel messages keep the channel's own preview and destination.
-    expect(row("mixed")).not.toHaveTextContent("Larry:");
-    expect(row("mixed")).not.toHaveTextContent("Thread reply,");
+    // Unread channel messages keep the channel's destination, but the row
+    // still shows the reply that earned its Thread tag.
+    expect(row("mixed")).toHaveTextContent("Thread reply, Larry: mixed reply");
     fireEvent.click(row("mixed") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("mixed");
     // So does a channel marked unread, whatever its threads hold.
-    expect(row("marked")).not.toHaveTextContent("Larry:");
+    expect(row("marked")).toHaveTextContent(
+      "Thread reply, Larry: marked reply",
+    );
     fireEvent.click(row("marked") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("marked");
     // A DM shares one read marker, so only a single unread thread leads it.
@@ -722,6 +724,109 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
     // Muted without a mention stays quiet.
     expect(rows.some((row) => row.startsWith("quiet "))).toBe(false);
     expect(rows.filter((row) => row.startsWith("quiet"))).toHaveLength(1);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("counts a reply that mentions you, even muted, and tiers Thread only for threads you're in", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    larry = keypair();
+  const discovery = [
+    profile(larry, { name: "Larry" }),
+    ...["muted-reply", "aside", "mixed"].flatMap((id) => [
+      metadata(relay, id, id),
+      roster(relay, id, [viewer.pubkey, larry.pubkey]),
+    ]),
+  ];
+  let live: LiveCallbacks | undefined;
+  let journal: ReadJournal | undefined;
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      readState: {
+        decode: async (events) => decodeReadState(events, viewer.secret),
+        sign: async (intent: ReadStateSigning) =>
+          signReadState(intent, viewer.secret),
+        publish: async () => {},
+      },
+      async query(filters) {
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+      decodeSidebarPreferences: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: ["muted-reply"],
+      }),
+    },
+    {
+      readStateFloor: () => 0,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        capture: async () => structuredClone(journal),
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
+    },
+  );
+  const mention = [["p", viewer.pubkey]];
+  const reply = (root: { id: string }) => ["e", root.id, "", "reply"];
+  const mutedRoot = message(larry, "muted-reply", "muted root", 10);
+  const asideRoot = message(larry, "aside", "aside root", 10);
+  const mixedRoot = message(viewer, "mixed", "my root", 10);
+  const rowsOf = (group: string) =>
+    within(screen.getByRole("group", { name: group })).getAllByRole("option");
+  try {
+    await owner.session.sidebarPreferences.refresh();
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(3));
+    assert(live);
+    const callbacks = live;
+    act(() =>
+      callbacks.receive([
+        mutedRoot,
+        asideRoot,
+        mixedRoot,
+        message(larry, "muted-reply", "are you around", 12, [
+          reply(mutedRoot),
+          ...mention,
+        ]),
+        message(larry, "aside", "for everyone", 13, [
+          reply(asideRoot),
+          ["broadcast", "1"],
+        ]),
+        message(larry, "mixed", "top-level news", 14),
+        message(larry, "mixed", "answering you", 15, [reply(mixedRoot)]),
+      ]),
+    );
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(3));
+    const rows = rowsOf("Unread").map((row) => row.textContent ?? "");
+    expect(rows[0]).toMatch(/^muted-reply.*Larry: are you around.*Mentioned$/);
+    expect(rows[1]).toMatch(/^mixed.*Larry: answering you.*Thread$/);
+    expect(rows[2]).toMatch(/^aside/);
+    expect(rows[2]).not.toMatch(/(Mentioned|Thread)$/);
   } finally {
     cleanup();
     owner.dispose();
@@ -1189,6 +1294,7 @@ it("offers more messages in overall search when the first page shows none", asyn
   }
 });
 
+// Searches several signed pages; a busy runner has taken over 5 s.
 it("sorts a conversation newest first across pages and restarts paging when the order changes", async () => {
   const relay = keypair();
   const viewer = keypair();
@@ -1366,8 +1472,9 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     cleanup();
     owner.dispose();
   }
-});
+}, 15_000);
 
+// Searches several signed pages; a busy runner has taken over 5 s.
 it.each([
   { path: "the scope chip", scopedChannelId: "crew", query: "sortword" },
   { path: "a single in: channel", query: "in:#crew sortword" },
@@ -1467,6 +1574,7 @@ it.each([
       owner.dispose();
     }
   },
+  15_000,
 );
 
 it.each([
@@ -2931,6 +3039,69 @@ it("holds an early Enter for an open channel over Show more messages", async () 
     await act(async () => resolved());
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
     expect(wire.pending).toHaveLength(0);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("drops a held Enter when search narrows to this conversation", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "general", "general"),
+    roster(relay, "general", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "lobby", [keypair().pubkey]),
+  ];
+  let resolved!: () => void;
+  const held = new Promise<void>((release) => (resolved = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters, signal) {
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return wire.transport.query(filters, signal);
+      if (filters.some((filter) => filter["#d"]?.includes("lobby"))) await held;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  const props = {
+    session: owner.session,
+    query: "crew",
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    currentChannelId: "general",
+    onScopeChange: () => {},
+    openNewMessage: () => {},
+    openConversation,
+  };
+  try {
+    const { rerender } = render(<SearchResults {...props} />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    // Enter waits for the lobby lookup, then ⌘F narrows the same text.
+    fireEvent.keyDown(field, { key: "Enter" });
+    rerender(<SearchResults {...props} scopedChannelId="general" />);
+    await act(async () => resolved());
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    const hit = message(viewer, "general", "crew standup", 1700000001);
+    while (wire.pending.length)
+      await act(async () => wire.next().respond([hit]));
+    expect(screen.getByRole("option", { name: /crew standup/ })).toBeVisible();
+    expect(openConversation).not.toHaveBeenCalled();
   } finally {
     cleanup();
     owner.dispose();

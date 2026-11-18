@@ -527,7 +527,11 @@ function CommunitySearch({
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
         scope={
           scopedChannelId
-            ? { label: "This conversation", onRemove: () => onScopeChange() }
+            ? {
+                id: scopedChannelId,
+                label: "This conversation",
+                onRemove: () => onScopeChange(),
+              }
             : undefined
         }
         groups={

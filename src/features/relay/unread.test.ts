@@ -1220,9 +1220,17 @@ it("lists unread top-level mentions apart from thread activity, never for a DM o
   h.emit([newer, message(h.alice, "dm", "Direct ask", 25, tag)]);
 
   expect(changed).toHaveBeenCalled();
-  // The reply's mention stays with its thread.
+  // The reply's mention stays with its thread, which also says the viewer
+  // is in it.
   expect(h.session.unread.activity("room")).toMatchObject({
-    items: [{ rootId: root.id, latestMessageId: reply.id }],
+    items: [
+      {
+        rootId: root.id,
+        latestMessageId: reply.id,
+        participating: true,
+        mention: { messageId: reply.id, preview: "In your thread" },
+      },
+    ],
     mentions: [
       {
         channelId: "room",

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { MENTION_PROMPT } from "../../features/agent-harness/base-prompt";
 import type { EventData } from "../../features/relay/events";
-import { developerInstructions, turnInput } from "./prompt";
+import { developerInstructions, sessionPlace, turnInput } from "./prompt";
 
 const event = {
   id: "1".repeat(64),
@@ -79,4 +79,12 @@ it("tells a Codex agent that it is one of several sessions", () => {
   expect(developerInstructions(agent, "channel")).toContain(
     "## Session Model\n\nYou are one per-channel session of your agent identity",
   );
+  expect(
+    developerInstructions(agent, "thread", undefined, "conversation"),
+  ).toContain("This session is one whole conversation");
+});
+
+it("calls a conversation without a root a whole conversation", () => {
+  expect(sessionPlace({ root: "a".repeat(64) })).toBe("thread");
+  expect(sessionPlace({})).toBe("conversation");
 });

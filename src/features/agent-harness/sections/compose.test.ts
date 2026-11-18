@@ -72,6 +72,29 @@ describe("composeBase", () => {
     expect(model("channel")).toContain("You are one per-channel session");
   });
 
+  it("describes the session itself when the harness says what it is", () => {
+    const model = (facts: Facts) =>
+      composeBase(facts).text.split("## Session Model")[1];
+    expect(model({ scope: "thread", place: "thread" })).toContain(
+      "This session is one thread",
+    );
+    expect(model({ scope: "thread", place: "conversation" })).toContain(
+      "This session is one whole conversation: a DM, a personal chat, a huddle",
+    );
+    expect(model({ scope: "channel", place: "conversation" })).toContain(
+      "You are one per-channel session",
+    );
+    for (const scope of ["thread", "channel"] as const)
+      expect(model({ scope, place: "standalone" })).toContain(
+        "This run joins no conversation",
+      );
+    // Sessions in other workspaces do not share files.
+    for (const place of ["thread", "conversation", "standalone"] as const)
+      expect(model({ scope: "thread", place })).toContain(
+        "they share files on disk when they use the same workspace",
+      );
+  });
+
   it("names the workspace exactly as given", () => {
     // `$&` and `$1` mean something to a string replacement.
     const { text } = composeBase({

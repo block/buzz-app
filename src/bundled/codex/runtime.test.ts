@@ -3665,6 +3665,37 @@ it("reports a failed huddle text mention without a reply tag", async () => {
     ],
   });
 });
+it("describes the session that started: a huddle's room, and a watch's run", async () => {
+  const f = fixture();
+  f.huddleChannels.add("channel");
+  await f.runtime.run(f.delivery("@Codex work", root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = (ephemeral: boolean) =>
+    f.sent.find(
+      (wire) =>
+        wire.method === "thread/start" &&
+        ((wire.params as { ephemeral?: boolean }).ephemeral === true) ===
+          ephemeral,
+    )?.params as { developerInstructions: string } | undefined;
+  // A thread-scoped agent's huddle is one conversation, not a thread.
+  expect(started(false)?.developerInstructions).toContain(
+    "This session is one whole conversation",
+  );
+  await f.complete(0, "");
+  const running = f.runtime.runOnce({
+    delivery: f.delivery("check"),
+    key: "source/check",
+    signal: new AbortController().signal,
+    prompt: async () => "check",
+  });
+  await vi.waitFor(() => expect(started(true)).toBeDefined());
+  expect(started(true)?.developerInstructions).toContain(
+    "This run joins no conversation",
+  );
+  await f.complete(1, "");
+  await running;
+  f.runtime.dispose();
+});
 /** A plugin's wake; its id is its own, which nothing may publish. */
 const WAKE_ID = "8".repeat(64);
 const pluginWake = (

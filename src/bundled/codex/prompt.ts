@@ -7,6 +7,7 @@ import {
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
 import { composeBase } from "../../features/agent-harness/sections/compose";
+import type { Facts } from "../../features/agent-harness/sections/index";
 import type { AgentKey } from "../../features/agents/membership";
 import type { AgentHandle } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
@@ -38,12 +39,20 @@ export function developerInstructions(
   /** The agent's workspace, absolute, when the thread runs in a folder of
    * the conversation's own instead. */
   workspace?: string,
+  /** What the thread is: see `sessionPlace`. */
+  place?: Facts["place"],
 ) {
   return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
 The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Prefer these tools for Buzz operations. You may use the buzz CLI through the agent-specific BUZZ_CREDENTIAL_PROVIDER supplied by the runtime to this thread's shell commands. The host handles access and signing as this agent without exposing private keys. If that provider is unavailable or refuses an operation, use the available Buzz tools or report the blocker. Do not look for credentials, read private keys, change the provider, or pair the CLI as your owner. Use Codex's native coding tools in the workspace.
 
-${composeBase({ scope, ownFolder: workspace }).text}`;
+${composeBase({ scope, ownFolder: workspace, place }).text}`;
 }
+/** What a conversation's Codex thread is. A conversation without a root is
+ * a whole one, as every conversation of an agent with channel scope is. */
+export const sessionPlace = (conversation: {
+  root?: string | undefined;
+}): NonNullable<Facts["place"]> =>
+  conversation.root ? "thread" : "conversation";
 
 /** Codex truncates the middle of any additional-context value over 1,000
  * tokens, which it estimates as 4 UTF-8 bytes each. */

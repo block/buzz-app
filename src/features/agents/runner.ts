@@ -478,6 +478,7 @@ export type RunnerHost = {
   ownershipChanged?(): void;
   /** A failed watch read set or cleared its retry status. */
   watchReadFailuresChanged(): void;
+  transitionChanged?(): void;
   /** The agent, while its community is live to run it in. */
   ready(key: AgentKey): Agent | undefined;
   /** A running agent, in any community. */
@@ -1134,6 +1135,7 @@ export class AgentRunners {
     this.transitions.add(pubkey);
     for (const other of held) other.transitioning = true;
     try {
+      this.host.transitionChanged?.();
       if (!(await this.claimForRetype(runner)))
         throw new Error(
           "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",
@@ -1147,6 +1149,7 @@ export class AgentRunners {
         other.transitioning = false;
         void this.drain(other);
       }
+      this.host.transitionChanged?.();
     }
   }
   /** Retires every runner, as when the host stops. */

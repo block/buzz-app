@@ -19665,6 +19665,69 @@ it.each(["command"])(
   },
 );
 
+it("restarts an unchanged command watch after changing the agent's harness", async () => {
+  const { service, plugin, ctx, watching } = await setup();
+  const kill = vi.fn(async () => {});
+  let exit!: (code: number | null) => void;
+  const exited = new Promise<number | null>((resolve) => {
+    exit = resolve;
+  });
+  const spawn = vi
+    .fn(heldCommand)
+    .mockImplementationOnce(async () => ({
+      ...(await heldCommand()),
+      exited,
+      kill,
+    }));
+  ctx.provide("host", {
+    spawn,
+    serveMcp: async () => ({
+      url: "http://127.0.0.1/mcp",
+      headers: [],
+      closed: new Promise<void>(() => {}),
+      close: async () => {},
+    }),
+  });
+  plugin.agents.register({
+    id: "replacement",
+    title: "Replacement",
+    defaults: () => ({ config: {} }),
+    run: async () => {},
+  });
+  const core = plugin.extend({
+    pluginOwner: { id: "buzz.agents", revision: "bundled" },
+  });
+  registerAttention({ agents: core.agents });
+  try {
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/saved": {
+          type: "source",
+          provider: "attention/command",
+          interest_id: "default",
+          enabled: true,
+          config: { command: ["check"] },
+        },
+      },
+    });
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    const watch = service.find(bot)?.attention["watch/saved"];
+
+    await service.retype(bot, "example/replacement");
+
+    expect(service.find(bot)?.attention["watch/saved"]).toBe(watch);
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+    expect(spawn).toHaveBeenCalledTimes(1);
+    exit(null);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+  } finally {
+    exit(null);
+    await watching?.dispose();
+  }
+});
+
 it.each(["spawn", "exit"])(
   "retains a saved command watch after %s failure and retries when re-enabled",
   async (failure) => {

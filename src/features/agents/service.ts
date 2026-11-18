@@ -2556,6 +2556,7 @@ export class AgentsService extends Service implements Agents {
         this.notify();
       },
       watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
+      transitionChanged: () => this.notify(),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       savedAttention: (key) => this.records[key]?.attention ?? EMPTY,
@@ -3938,7 +3939,10 @@ export class AgentsService extends Service implements Agents {
       sources.reconcile(
         this.attentionProvider(source),
         source,
-        this.state.running.filter((agent) => this.runners.runs(agent.key)),
+        this.state.running.filter(
+          ({ key }) =>
+            this.runners.runs(key) && !this.runners.transitioning(key),
+        ),
       );
     const unsubscribe = this.subscribe(update);
     update();

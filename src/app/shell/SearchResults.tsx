@@ -2506,14 +2506,19 @@ export function SearchResults({
           )
         }
         isAction={isSearchAction}
+        // The guide's rows add filters; Tab doesn't complete into them.
         completing={
-          pickerPrompt ||
-          showAmbiguousPicker ||
-          showDateChoices ||
-          showChannelPicker
+          !guideOpen &&
+          (pickerPrompt ||
+            showAmbiguousPicker ||
+            showDateChoices ||
+            showChannelPicker)
         }
         completionPending={
-          showAuthorPicker && !authorAnswer && !authorChoices.length
+          !guideOpen &&
+          showAuthorPicker &&
+          !authorAnswer &&
+          !authorChoices.length
         }
         conversationShortcut={
           currentChannelId && !scopedChannelId && !offline && onScopeChange

@@ -6446,6 +6446,21 @@ it("keeps the filter guide to itself: a waiting Enter, Settings rows and a resto
     });
     expect(openSetting).not.toHaveBeenCalled();
     cleanup();
+    // Opened over an unfinished filter, Tab keeps the query and the guide.
+    for (const initial of ["during:", "from:zz"]) {
+      change.mockClear();
+      render(<Harness initial={initial} />);
+      await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+      fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+      const tabbed = fireEvent.keyDown(
+        screen.getByRole("combobox", { name: "Search Buzz" }),
+        { key: "Tab" },
+      );
+      expect(tabbed).toBe(true);
+      expect(screen.getByRole("group", { name: "Filters" })).toBeVisible();
+      expect(change).not.toHaveBeenCalled();
+      cleanup();
+    }
     // A remembered from:me comes back as its chip.
     render(<Harness initial="from:me deploy" />);
     expect(

@@ -22,6 +22,7 @@ const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
     title: "Emoji",
     component: ({ session, scope, disabled, insertText }) => (
       <EmojiPicker
+        remember
         session={session}
         scope={scope}
         gifRequests={gifRequests}

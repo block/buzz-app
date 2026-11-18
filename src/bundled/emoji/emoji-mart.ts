@@ -69,6 +69,7 @@ export function mountEmojiMart({
   colorMode,
   autoFocus = true,
   preview = false,
+  remember = false,
   scope,
   perLine,
   emojiSize,
@@ -88,6 +89,8 @@ export function mountEmojiMart({
   autoFocus?: boolean;
   /** Show the hovered or keyboard-selected emoji, its name and shortcode. */
   preview?: boolean;
+  /** Learn accepted message/reaction choices for scoped autocomplete ranking. */
+  remember?: boolean;
   scope: string;
   perLine: number;
   emojiSize: number;
@@ -107,9 +110,9 @@ export function mountEmojiMart({
 }) {
   active?.();
   let disposed = false;
-  const choose = (value: string, id: string, customEmoji?: string) => {
+  const choose = (value: string, id?: string, customEmoji?: string) => {
     if (select(value, customEmoji) === false) return false;
-    rememberEmoji(scope, id);
+    if (remember && id) rememberEmoji(scope, id);
     return true;
   };
   const values = new Map<string, { literal: string; shortcode: string }>();
@@ -183,8 +186,8 @@ export function mountEmojiMart({
     onEmojiSelect: (emoji: { native?: string; id?: string }) => {
       if (disposed) return;
       if (emoji.native) {
-        if (emoji.id && !promptSkinTone(emoji.id))
-          choose(emoji.native, `unicode/${emoji.id}`);
+        if (!promptSkinTone(emoji.id))
+          choose(emoji.native, emoji.id ? `unicode/${emoji.id}` : undefined);
         return;
       }
       const custom = values.get(emoji.id ?? "");

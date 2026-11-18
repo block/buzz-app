@@ -61,6 +61,7 @@ export function createReactionPicker(addEmoji?: AddEmoji) {
         />
         {open && !disabled && (
           <EmojiPicker
+            remember
             session={session}
             scope={scope}
             disabled={disabled}

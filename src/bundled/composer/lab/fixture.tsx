@@ -142,6 +142,7 @@ const tools: readonly Contribution<ComposerTool>[] = [
     title: "Emoji",
     component: ({ session, scope, disabled, insertText }) => (
       <EmojiPicker
+        remember
         session={session}
         scope={scope}
         disabled={disabled}

@@ -2545,7 +2545,7 @@ function ChannelWorkspace({
             workspace={
               filed && fresh
                 ? {
-                    preferences: queries.soloPreferences,
+                    preferences: queries.sidebarPreferences,
                     choose: (id) =>
                       void filed
                         .file(id || undefined)
@@ -2630,6 +2630,7 @@ function ChannelWorkspace({
           {composingMessage ? (
             <LiveNewMessage
               intent={messageDraft?.intent}
+              workspace={messageDraft?.workspace}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}

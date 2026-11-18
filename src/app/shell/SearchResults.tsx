@@ -2275,6 +2275,15 @@ export function SearchResults({
           )
         }
         isAction={isSearchAction}
+        completing={
+          pickerPrompt ||
+          showAmbiguousPicker ||
+          showDateChoices ||
+          showChannelPicker
+        }
+        completionPending={
+          showAuthorPicker && !authorAnswer && !authorChoices.length
+        }
         footer={offline}
         peek={{
           // A filter or a conversation's own search asks for messages

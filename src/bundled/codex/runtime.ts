@@ -1453,9 +1453,9 @@ export class CodexRuntime {
     // v11 added literal message keywords; v12 added self-handoff; v13 added
     // memory versions and search; v14 splits canvas into canvas_get and
     // canvas_set; v15 removes message keywords; v16 splits channel and
-    // channels into the channel_* tools; v17 splits members into the
-    // member_* tools.
-    return `buzz.codex.sessions.v17:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // channels into the channel_* tools; v17 split members into the
+    // member_* tools; v18 adds search and removes read's q.
+    return `buzz.codex.sessions.v18:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -2480,6 +2480,10 @@ export class CodexRuntime {
       // Its tool registry reviews every call, Buzz's dynamic tools included.
       ...(!this.target ? { nativeCall: check } : {}),
       nativeToolGate: true,
+      // Execution-target reads come from somewhere other than this desktop;
+      // suppress managed-attachment hints at publish so a remote source cannot
+      // trigger local managed cleanup. No remote deletion is added.
+      localAttachments: !this.target,
       protectionContext: async () => {
         const rpc =
           active?.rpc ??

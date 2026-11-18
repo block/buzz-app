@@ -14,7 +14,7 @@ import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
-import { messageLinkParts } from "./message-link-parts";
+import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { labelText } from "./label-text";
 import {
   ReferenceText,
@@ -614,29 +614,31 @@ function PreparedMessageMarkdown({
     );
   const renderText = (text: string) => {
     let offset = 0;
-    return messageLinkParts(text).map((part) => {
-      // A trailing bare link yields two empty text parts at the same offset.
-      if (!part.url && !part.text) return null;
-      const key = `${offset}:${part.text}`;
-      offset += part.text.length;
-      return part.url ? (
-        <span key={key}>{renderLink(part.url, part.label)}</span>
-      ) : (
-        <ReferenceText
-          channelId={row.channelId}
-          key={key}
-          text={part.text}
-          mentions={[]}
-          directory={directory}
-          renderText={renderInline}
-          onOpenLink={onOpenLink}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          interactive={interactive}
-        />
-      );
-    });
+    return messageLinkParts(text)
+      .flatMap((part) => (part.url ? [part] : bareHostParts(part.text)))
+      .map((part) => {
+        // A trailing bare link yields two empty text parts at the same offset.
+        if (!part.url && !part.text) return null;
+        const key = `${offset}:${part.text}`;
+        offset += part.text.length;
+        return part.url ? (
+          <span key={key}>{renderLink(part.url, part.label)}</span>
+        ) : (
+          <ReferenceText
+            channelId={row.channelId}
+            key={key}
+            text={part.text}
+            mentions={[]}
+            directory={directory}
+            renderText={renderInline}
+            onOpenLink={onOpenLink}
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            interactive={interactive}
+          />
+        );
+      });
   };
 
   const profiles = participantProfiles ?? directory.profiles;

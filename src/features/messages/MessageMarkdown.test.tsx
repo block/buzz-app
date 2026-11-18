@@ -967,6 +967,27 @@ describe("Markdown inline extensions", () => {
     );
   });
 
+  it.each([
+    ["let me check example.com", "https://example.com"],
+    ["**builderlab.xyz/a.**", "https://builderlab.xyz/a"],
+    [
+      "see www.example.com and docs.rs.io",
+      "http://www.example.com/",
+      "https://docs.rs.io",
+    ],
+  ])("links a scheme-less host as authored: %s", (content, ...hrefs) => {
+    const html = render(content);
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual(
+      hrefs,
+    );
+    expect(html.replace(/<[^>]*>/g, "")).toBe(content.replaceAll("**", ""));
+  });
+
+  it("leaves scheme-less hosts in code and file names as text", () => {
+    const html = render("`example.com` and main.rs");
+    expect(html).not.toContain("href=");
+  });
+
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };
     const html = render(":party_parrot:", {

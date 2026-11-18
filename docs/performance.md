@@ -266,6 +266,12 @@ work-completion checks, not new timing counters. The workload covers populated
 thread mounting and panel reflow, not video playback, gallery interaction,
 expanding nested replies or live agent streaming.
 
+`thread-unread-open-60` and `thread-unread-open-200` open a strict-window thread
+of 60 or 200 replies that are all unread. The reader pages older to the first
+unread reply before it reveals the thread. The production broker answers each
+older page after a modeled 150ms round trip. They report `firstRowsMs` and
+`olderReads`.
+
 ## Thread scrolling
 
 `--scenario thread-scroll` measures the long-thread workload behind the

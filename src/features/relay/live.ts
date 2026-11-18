@@ -27,7 +27,12 @@ import {
 } from "./events.ts";
 import { yieldToHost } from "./yield.ts";
 import { EMOJI_SET } from "./emoji.ts";
-import { SIDEBAR_COORDINATES } from "./sidebar-preferences.ts";
+import {
+  SIDEBAR_COORDINATES,
+  WORKSPACE_PREFERENCE_COORDINATES,
+} from "./sidebar-preferences.ts";
+import { legacyWorkspaceRecipeCoordinate } from "../channel-templates/model.ts";
+import { relayOrigin } from "../communities/destination.ts";
 import {
   ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncFilter,
@@ -1377,7 +1382,16 @@ export function subscribeRelayTraffic(
               {
                 kinds: [30078],
                 authors: [viewer],
-                "#d": [...SIDEBAR_COORDINATES],
+                "#d": [
+                  ...SIDEBAR_COORDINATES,
+                  ...WORKSPACE_PREFERENCE_COORDINATES.filter(
+                    (coordinate) =>
+                      !SIDEBAR_COORDINATES.some(
+                        (legacy) => legacy === coordinate,
+                      ),
+                  ),
+                  legacyWorkspaceRecipeCoordinate(relayOrigin(url)),
+                ],
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },

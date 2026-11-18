@@ -4073,6 +4073,7 @@ function routes(route: GatewayRoute) {
   const seam: GatewaySeam = {
     routeReady: async () => route,
     routeFor: () => route,
+    routeForTurn: async () => route,
     subscribeRoute: () => () => {},
     invalidateRoute: () => {},
     bindSession: () => ({
@@ -4238,4 +4239,54 @@ it("notes a wake's fallback on its own turn, and leaves a mention's to its reque
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("admits a model request made during a reload once its community and the new access check are ready", async () => {
+  const r = routes(eligible);
+  const pending = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  let route = pending;
+  const reloaded = deferred<void>();
+  const probed = deferred<void>();
+  const settle = vi.fn(async () => reloaded.promise);
+  const routeForTurn = vi.fn(async () => {
+    await probed.promise;
+    return route;
+  });
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => route,
+    routeForTurn,
+    bindingAdmits: (current) =>
+      current.kind === "eligible"
+        ? { ok: true, revision: 2 }
+        : {
+            ok: false,
+            reason: "binding_changed",
+            message: "Checking the model gateway",
+            revision: 1,
+          },
+  });
+  Object.assign(f.agent, { settle });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  const admit = process?.tool(
+    { op: "admit", agent: self, binding: { v: 1 } },
+    "gateway",
+  );
+  await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  reloaded.resolve();
+  await vi.waitFor(() => expect(routeForTurn).toHaveBeenCalled());
+  route = { ...eligible, revision: 2 };
+  probed.resolve();
+  await expect(admit).resolves.toMatchObject({
+    result: { ok: true, revision: 2 },
+  });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
 });

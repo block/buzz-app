@@ -317,6 +317,9 @@ type Runner = {
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
   protectionRevision: number;
+  /** Its type or protection changed since its community was last ready, so
+   * a reload in place no longer holds its custody. */
+  changed?: true;
   controller: AbortController;
   /** Events waiting to run in each lane, mentions first; due timers are found
    * when a run starts instead. */
@@ -846,6 +849,7 @@ export class AgentRunners {
         runner.protectionRevision !== (identity.protectionRevision ?? 0)
       ) {
         runner.protectionRevision = identity.protectionRevision ?? 0;
+        if (!this.host.ready(identity.key)) runner.changed = true;
         runner.controller.abort();
         runner.controller = new AbortController();
         runner.type = type;
@@ -858,14 +862,25 @@ export class AgentRunners {
    * another host takes over without waiting for an event or tick. `ready` is
    * the agents whose community is live now. */
   resume(ready: ReadonlySet<string>) {
-    for (const runner of this.runners.values())
+    const connected = new Set<string>();
+    for (const runner of this.runners.values()) {
+      const live =
+        ready.has(runner.key) &&
+        (!!this.host.ready(runner.key) || this.retained(runner));
+      if (live) connected.add(runner.key);
       if (
         runner.queues.mention.length ||
         runner.queues.watch.length ||
-        ready.has(runner.key) !== this.connected.has(runner.key)
+        live !== this.connected.has(runner.key)
       )
         void this.drain(runner);
-    this.connected = new Set(ready);
+    }
+    this.connected = connected;
+  }
+  /** Whether a reload in place holds the runner's custody: only while its
+   * type and protection are those it had when its community was last ready. */
+  private retained(runner: Runner) {
+    return !runner.changed && !!this.host.reloading?.(runner.key);
   }
   /** Wakes each runner, which starts any timer that is due. */
   tick() {
@@ -1068,7 +1083,7 @@ export class AgentRunners {
       // A reload in place keeps the handle; its calls wait for the session.
       const agent =
         this.host.ready(key) ??
-        (this.host.reloading?.(key) ? this.host.agent(key) : undefined);
+        (runner && this.retained(runner) ? this.host.agent(key) : undefined);
       return runner?.type &&
         (pluginId === undefined || runner.type.pluginId === pluginId) &&
         !runner.transitioning &&
@@ -2907,10 +2922,11 @@ export class AgentRunners {
     runner.running = true;
     while (this.runners.get(runner.key) === runner) {
       const agent = this.host.ready(runner.key);
+      if (agent) delete runner.changed;
       const type = runner.type;
       const run = type?.run;
       // A reload pauses new starts; custody and queued work wait for it.
-      if (!agent && type && run && this.host.reloading?.(runner.key)) break;
+      if (!agent && type && run && this.retained(runner)) break;
       // An agent this copy cannot run is left to another copy of the app.
       if (!agent || !type || !run) {
         if (agent) {

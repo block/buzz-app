@@ -23267,17 +23267,60 @@ describe("reload in place", () => {
     expect(native.release).not.toHaveBeenCalled();
   });
 
-  it("keeps custody through a reload that fails for good, until disconnected", async () => {
-    const { service, native, reload, connect } = await setup();
+  it("keeps custody and the working turn through a reload that fails for good, until disconnected", async () => {
+    const { service, run, emit, native, reload, connect } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+    let finish: () => void = () => {};
+    let signal: AbortSignal | undefined;
+    run.mockImplementationOnce((delivery) => {
+      signal = delivery.signal;
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    emit({ events: [event("1", { tags: [["p", bot]] })] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     reload();
     reload({ denied: true });
+    await settle();
+    expect(signal?.aborted).toBe(false);
+    finish();
     await settle();
     expect(native.release).not.toHaveBeenCalled();
     connect(false);
     await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
   });
+
+  it.each([
+    ["its protection", { protectionRevision: 1 }],
+    ["its type", { type: "other/relay" }],
+  ])(
+    "releases custody held by a reload that fails for good when %s changes",
+    async (_label, change) => {
+      const identities: AgentIdentity[] = [];
+      const { ctx, service, native, reload } = await setup({ identities });
+      ctx
+        .extend({
+          pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+        })
+        .agents.register({
+          id: "relay",
+          title: "Relay",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+      reload();
+      reload({ denied: true });
+      await settle();
+      expect(native.release).not.toHaveBeenCalled();
+      const identity = identities[0];
+      if (!identity) throw new Error("Missing native identity");
+      identities[0] = { ...identity, ...change };
+      await service.refresh();
+      await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+    },
+  );
 
   it("releases custody when a reload is disconnected", async () => {
     const { service, native, reload, connect } = await setup();

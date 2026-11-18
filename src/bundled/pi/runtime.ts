@@ -89,6 +89,7 @@ import {
 import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
+import { TURN_READINESS_WAIT_MS } from "../../features/agents/gateway/route";
 import { answerGateway, gatewayRoute, type GatewaySeam } from "./gateway";
 
 export type Config = Readonly<{
@@ -293,7 +294,24 @@ export class PiRuntime {
           );
         },
         event: (event) => this.event(event),
-        gateway: async (call) => answerGateway(this.seam, call),
+        gateway: async (call, signal) => {
+          // A model request waits out a reload in place and the new
+          // session's access check, then is admitted against them.
+          if (call.op === "admit" && this.seam) {
+            const handle =
+              this.agents.get(call.agent)?.handle ?? this.handle(call.agent);
+            await handle?.settle?.(signal);
+            await this.seam.routeForTurn(
+              call.agent,
+              AbortSignal.any([
+                signal,
+                AbortSignal.timeout(TURN_READINESS_WAIT_MS),
+              ]),
+            );
+            signal.throwIfAborted();
+          }
+          return answerGateway(this.seam, call);
+        },
         prompt: ({ agent, request }) =>
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
           Promise.resolve(undefined),

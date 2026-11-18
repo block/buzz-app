@@ -12,6 +12,7 @@ import {
 import {
   invalidateRoute,
   routeFor,
+  routeForTurn,
   routeReady,
   subscribeRoute,
   type GatewayRoute,
@@ -39,6 +40,7 @@ export const gatewayRoute = (route: Route) =>
 export type GatewaySeam = Readonly<{
   routeReady: typeof routeReady;
   routeFor: typeof routeFor;
+  routeForTurn: typeof routeForTurn;
   subscribeRoute: typeof subscribeRoute;
   invalidateRoute: typeof invalidateRoute;
   bindSession: typeof bindSession;
@@ -53,6 +55,7 @@ export type GatewaySeam = Readonly<{
 export const GATEWAY_SEAM: GatewaySeam = Object.freeze({
   routeReady,
   routeFor,
+  routeForTurn,
   subscribeRoute,
   invalidateRoute,
   bindSession,

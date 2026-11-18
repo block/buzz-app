@@ -82,7 +82,7 @@ export type PiGatewayAnswer =
   | { ok: false; message: string };
 type Handlers = Readonly<{
   hook?(call: PiHookCall): Promise<unknown>;
-  gateway?(call: PiGatewayCall): Promise<PiGatewayAnswer>;
+  gateway?(call: PiGatewayCall, signal: AbortSignal): Promise<PiGatewayAnswer>;
   tool(call: ToolCall, signal: AbortSignal): Promise<ToolResult>;
   event(event: PiEvent): void;
   prompt?(call: {
@@ -477,7 +477,10 @@ export class Pi {
           method === "hook"
             ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
             : method === "gateway"
-              ? ((await this.handlers.gateway?.(params as PiGatewayCall)) ?? {
+              ? ((await this.handlers.gateway?.(
+                  params as PiGatewayCall,
+                  signal,
+                )) ?? {
                   ok: false,
                   message: "The model gateway is not available here",
                 })

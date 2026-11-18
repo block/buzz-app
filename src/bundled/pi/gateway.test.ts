@@ -45,6 +45,7 @@ function seam(
     ...GATEWAY_SEAM,
     routeReady: async () => found,
     routeFor: () => found,
+    routeForTurn: async () => found,
     subscribeRoute: () => () => {},
     invalidateRoute: vi.fn(),
     upstreamFor: (harness) => (harness === "pi" ? upstream : undefined),

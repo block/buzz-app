@@ -1,11 +1,19 @@
-import { test, expect } from "./source-fixture.mjs";
+import { test, expect } from "./playwright-test.mjs";
+import { previewFixtures } from "./vite-server.mjs";
+
+let fixtures;
+test.beforeAll(async () => {
+  fixtures = await previewFixtures(["tests/fixtures/agent-library.html"]);
+});
+test.afterAll(() => fixtures?.close());
 
 test("reverts incompatible agent settings from Previous Versions", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-library.html?settingsRecovery", {
-    waitUntil: "domcontentloaded",
-  });
+  await page.goto(
+    `${fixtures.origin}/tests/fixtures/agent-library.html?settingsRecovery`,
+    { waitUntil: "domcontentloaded" },
+  );
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
   const history = page.getByRole("button", { name: "Open Previous Versions" });
   await history.focus();

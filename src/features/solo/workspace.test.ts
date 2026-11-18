@@ -322,10 +322,13 @@ it("prints a generated workspace block again for the agent, by where the convers
       "- Before starting new work, fetch the latest `main` branch from origin.",
       "- For each repository that needs changes, create a new worktree under `~/trees` from `origin/main`.",
       "- Make code changes in that new worktree. A task that only reads code, or does not use a repository, usually does not need one.",
+      // Follow-up work keeps its branch, which Canvases do not hold.
+      "- These steps are for new work. For follow-up work on an existing branch or pull request, keep using that branch: reuse its linked worktree, or add one under `~/trees` if it has none.",
       "",
       "Notes",
     ].join("\n"),
   );
+  expect(saved).not.toContain("These steps are for new work.");
   // A Canvas saved with the earlier rule reads the same.
   expect(
     agentCanvas(

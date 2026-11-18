@@ -29,6 +29,8 @@ const folderRule =
   "Make changes in these folders, on a branch that is not the default branch. Do not create a worktree.";
 const ownerRule =
   "The owner wrote the worktree rules of this block. They replace this conversation's working-location rule.";
+const followUpRule = (location: string) =>
+  `- These steps are for new work. For follow-up work on an existing branch or pull request, keep using that branch: reuse its linked worktree, or add one under \`${location}\` if it has none.`;
 export const emptyWorkspace = (): Workspace => ({ folders: [], canvas: "" });
 
 export function validateWorkspace(value: Workspace): Workspace {
@@ -185,6 +187,8 @@ export function agentCanvas(content: string, ownFolder = false): string {
     ownFolder ? { ...value, worktree: undefined } : value,
   );
   if (!ownFolder && !value.worktree) lines.push("", folderRule);
+  if (!ownFolder && value.worktree)
+    lines.push(followUpRule(value.worktree.location));
   return `${lines.join("\n")}\n\n${value.canvas}`;
 }
 

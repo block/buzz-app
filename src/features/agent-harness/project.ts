@@ -95,17 +95,16 @@ export async function ownerCanvas(
   return undefined;
 }
 
-/** The chat's project from `read`, or undefined when it could not be read in
+/** The chat's Canvas from `read`, or undefined when it could not be read in
  * time or there is no reader: the caller keeps what it knew. */
-export async function readProject(
+export async function readCanvas(
   read: (() => Promise<string | undefined>) | undefined,
-  ownFolder = false,
-): Promise<Project | undefined> {
+): Promise<{ text: string | undefined } | undefined> {
   if (!read) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return project(
-      await Promise.race([
+    return {
+      text: await Promise.race([
         read(),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
@@ -114,12 +113,20 @@ export async function readProject(
           );
         }),
       ]),
-      ownFolder,
-    );
+    };
   } catch (error) {
     console.warn("Could not read the chat's Canvas", error);
     return undefined;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The chat's project from `read`, or undefined as for `readCanvas`. */
+export async function readProject(
+  read: (() => Promise<string | undefined>) | undefined,
+  ownFolder = false,
+): Promise<Project | undefined> {
+  const canvas = await readCanvas(read);
+  return canvas && project(canvas.text, ownFolder);
 }

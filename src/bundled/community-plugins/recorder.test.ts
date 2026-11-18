@@ -18,6 +18,8 @@ const notes: InstalledPlugin = {
 };
 const board: InstalledPlugin = { id: "octo.board", source: "local" };
 
+const listed = async () => new Set(["octo.notes", "octo.board"]);
+
 const recorders: Recorder[] = [];
 afterEach(() => {
   for (const recorder of recorders.splice(0)) recorder.stop();
@@ -44,7 +46,12 @@ function start(
   relay: Parameters<typeof createRecorder>[0]["relay"],
   plugins: ReturnType<typeof inventory>,
 ) {
-  const recorder = createRecorder({ relay, inventory: plugins, delayMs: 1 });
+  const recorder = createRecorder({
+    relay,
+    inventory: plugins,
+    listed,
+    delayMs: 1,
+  });
   recorders.push(recorder);
   return recorder;
 }
@@ -221,6 +228,7 @@ it("holds an opt-out the device couldn't save", async () => {
   const recorder = createRecorder({
     relay: community.relay,
     inventory: plugins,
+    listed,
     delayMs: 1,
     storage: {
       getItem: () => null,
@@ -272,6 +280,7 @@ it("reports a withdrawal that failed and retries it", async () => {
   const recorder = createRecorder({
     relay: community.relay,
     inventory: inventory([notes]),
+    listed,
     delayMs: 1,
     retryMs: 5,
   });
@@ -324,4 +333,47 @@ it("records in the channel the counts moved to, though nothing installed changed
         ),
     ).toBe(true),
   );
+});
+
+it("records only plugins the index lists, and withdraws one it stops listing", async () => {
+  const community = fakeCommunity();
+  const private_: InstalledPlugin = { id: "acme.secret", source: "local" };
+  let ids = new Set(["octo.notes", "octo.board"]);
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes, board, private_]),
+    listed: async () => ids,
+    delayMs: 1,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  expect(on(community)).toEqual(["octo.board", "octo.notes"]);
+  expect(
+    community.store
+      .heads()
+      .some((event) => event.tags.some((t) => t[1] === "acme.secret")),
+  ).toBe(false);
+  ids = new Set(["octo.notes"]);
+  await recorder.sync();
+  expect(on(community)).toEqual(["octo.notes"]);
+});
+
+it("withdraws nothing when the index can't be read", async () => {
+  const community = fakeCommunity();
+  let fail = false;
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    listed: async () => {
+      if (fail) throw new Error("offline");
+      return new Set(["octo.notes"]);
+    },
+    delayMs: 1,
+    retryMs: 60_000,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  fail = true;
+  await expect(recorder.sync()).rejects.toThrow("offline");
+  expect(on(community)).toEqual(["octo.notes"]);
 });

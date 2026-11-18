@@ -63,12 +63,15 @@ class Superseded extends Error {}
 export function createRecorder({
   relay,
   inventory,
+  listed,
   storage = defaultStorage(),
   delayMs = 2_000,
   retryMs = RETRY_MS,
 }: Readonly<{
   relay: RelayData;
   inventory: Inventory;
+  /** Manifest ids the community index lists. Only those are recorded. */
+  listed: () => Promise<ReadonlySet<string>>;
   storage?: Storage | undefined;
   delayMs?: number;
   retryMs?: number;
@@ -108,16 +111,19 @@ export function createRecorder({
 
   async function once(force: boolean) {
     const session = readyPage(relay);
-    const installed = inventory.installed();
-    if (!session || !installed) return;
+    const everything = inventory.installed();
+    if (!session || !everything) return;
     const on = recordingIn(session);
-    const fingerprint = JSON.stringify([
-      on,
-      [...installed].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-    ]);
-    if (!force && done.get(session)?.fingerprint === fingerprint) return;
     let wrote = false;
+    let fingerprint = "";
     try {
+      const ids = on ? await listed() : new Set<string>();
+      const installed = everything.filter((plugin) => ids.has(plugin.id));
+      fingerprint = JSON.stringify([
+        on,
+        [...installed].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+      ]);
+      if (!force && done.get(session)?.fingerprint === fingerprint) return;
       const channel =
         on && installed.length
           ? await ensureChannel(session)

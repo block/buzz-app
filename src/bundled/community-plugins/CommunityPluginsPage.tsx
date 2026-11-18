@@ -9,14 +9,12 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Host } from "../../features/host/service";
-import { useIdentityNames } from "../../features/identity-names/react";
 import { DOCUMENT_PROFILE } from "../../features/markdown/document-profile";
 import {
   MarkdownDocument,
   sharedComponents,
 } from "../../features/markdown/MarkdownDocument";
 import type { RelayData } from "../../features/relay/service";
-import type { RelaySession } from "../../features/relay/session";
 import type { PluginInstaller } from "../../plugins/installer";
 import {
   ArrowLeftIcon,
@@ -622,12 +620,6 @@ function Detail({
           that Buzz shows commit {listing.source.commit} before installing.
         </p>
       )}
-      {ready && counts.session && (
-        <Installers
-          session={counts.session}
-          pubkeys={counts.installers(listing.id)}
-        />
-      )}
       <section className={styles.section}>
         <InlineHeader title="Audit" />
         <p className="text-body-sm">
@@ -734,39 +726,6 @@ function Detail({
         </section>
       )}
     </article>
-  );
-}
-
-/** Names shown before the rest are summarized. */
-const SHOWN_INSTALLERS = 12;
-
-function Installers({
-  session,
-  pubkeys,
-}: {
-  session: RelaySession;
-  pubkeys: readonly string[];
-}) {
-  const name = useIdentityNames(session.names);
-  const shown = pubkeys.slice(0, SHOWN_INSTALLERS);
-  const key = shown.join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `shown`.
-  useEffect(() => {
-    if (shown.length)
-      void session.profiles.ensure(shown, "background").catch(() => {});
-  }, [session, key]);
-  if (!pubkeys.length) return null;
-  const rest = pubkeys.length - shown.length;
-  return (
-    <section className={styles.section}>
-      <InlineHeader title="Installed here by" />
-      <p className="text-body-sm">
-        {shown
-          .map((pubkey) => name(pubkey, `${pubkey.slice(0, 8)}…`))
-          .join(", ")}
-        {rest > 0 ? ` and ${rest.toLocaleString("en-US")} more` : ""}
-      </p>
-    </section>
   );
 }
 

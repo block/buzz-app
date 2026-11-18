@@ -78,6 +78,7 @@ async function setup(
   const openPluginSettings = vi.fn();
   const recorder = createRecorder({
     relay: relay.relay,
+    listed: async () => new Set([listing().id, popular.id]),
     delayMs: 0,
     inventory: {
       installed: () =>
@@ -227,6 +228,7 @@ it("installs the indexed commit, records it here, then allows an upvote", async 
     expect(screen.getByRole("button", { name: "Upvote" })).toBeEnabled(),
   );
   expect(screen.getByText(/Installed by 2 people here/)).toBeInTheDocument();
+  expect(screen.queryByText("Installed here by")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Upvote" }));
   expect(
     await screen.findByRole("button", { name: "Upvoted" }),

@@ -147,7 +147,7 @@ the background, at startup, whenever the installed set changes and whenever
 another community is selected, it brings the member's records in that
 community in line with what is installed, adding missing ones and withdrawing
 those for removed plugins. It writes only what differs, at most 50 records per
-pass. A member's install or upvote is one NIP-AR artifact (type
+pass, for the plugins the index lists; other installed plugins aren't recorded, and a plugin the index stops listing has its records withdrawn. A member's install or upvote is one NIP-AR artifact (type
 `buzz.plugin.install` or `buzz.plugin.vote`) with the plugin's manifest id in a
 `plugin` tag and the writer in an `installer` tag. An install also records the
 kind of source in a `source` tag, `git` or `local`, never the repository, which

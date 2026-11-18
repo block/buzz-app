@@ -162,7 +162,6 @@ export function useCommunityCounts(
     vote,
     installs: (id: string) => installCount(counts?.tally, id),
     upvotes: (id: string) => upvoteCount(counts?.tally, id),
-    installers: (id: string) => [...(counts?.tally.installers.get(id) ?? [])],
     voted: (id: string) => !!counts?.myVotes.has(id),
     mine: (id: string) => !!counts?.myInstalls.has(id),
   };

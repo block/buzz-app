@@ -1,5 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import type { PluginInstaller } from "../../plugins/installer";
+import { loadIndex } from "./catalog";
 import { communityIndexUrl, listingRepository } from "./config";
 import { CommunityPluginsPage } from "./CommunityPluginsPage";
 import { createRecorder } from "./recorder";
@@ -23,6 +24,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     indexUrl && host
       ? createRecorder({
           relay: ctx.relay,
+          listed: listedIds(host, indexUrl),
           inventory: {
             installed: () => inventory.installed(),
             subscribe: (listener) => inventory.subscribe(listener),
@@ -54,3 +56,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
 };
+
+const LISTED_TTL_MS = 10 * 60_000;
+
+/** The index's manifest ids, read again after a while; a failed read isn't kept. */
+function listedIds(host: Parameters<typeof loadIndex>[0], url: string) {
+  let cached: { at: number; ids: Promise<ReadonlySet<string>> } | undefined;
+  return () => {
+    if (!cached || Date.now() - cached.at > LISTED_TTL_MS) {
+      const ids = loadIndex(host, url).then(
+        (index) => new Set(index.plugins.map((plugin) => plugin.id)),
+      );
+      const entry = { at: Date.now(), ids };
+      cached = entry;
+      ids.catch(() => {
+        if (cached === entry) cached = undefined;
+      });
+    }
+    return cached.ids;
+  };
+}

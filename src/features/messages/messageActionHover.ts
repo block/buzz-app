@@ -63,6 +63,7 @@ function hoverOwner(document: Document) {
   let current: Hover | undefined;
   let origin: Point | undefined;
   let previous: Point | undefined;
+  let closest: Point | undefined;
   let timer: number | undefined;
   const cancel = () => {
     view.clearTimeout(timer);
@@ -73,7 +74,7 @@ function hoverOwner(document: Document) {
     if (current === next) return;
     current?.changed(false);
     current = next;
-    origin = previous = pointers.get(document)?.point;
+    origin = previous = closest = pointers.get(document)?.point;
     current?.changed(true);
   };
   const candidate = (target: EventTarget | null) => {
@@ -99,7 +100,7 @@ function hoverOwner(document: Document) {
     pointers.set(document, { target, point });
     if (current?.hit(target)) {
       cancel();
-      origin = previous = point;
+      origin = previous = closest = point;
       return;
     }
     if (
@@ -108,7 +109,7 @@ function hoverOwner(document: Document) {
       current?.retain(target, point)
     ) {
       cancel();
-      previous = point;
+      previous = closest = point;
       return;
     }
     const scope =
@@ -120,16 +121,21 @@ function hoverOwner(document: Document) {
       current &&
       origin &&
       previous &&
+      closest &&
       target instanceof Element &&
       scope?.contains(target) &&
       current.bar.matches(":popover-open") &&
       current.bar.getBoundingClientRect().width > 0
     ) {
       const box = current.bar.getBoundingClientRect();
+      const nextDistance = distance(point, box);
+      const closestDistance = distance(closest, box);
+      // Apply the tolerance to the closest point so small reversals cannot add up.
       if (
         inToolbarRoute(point, origin, box) &&
-        distance(point, box) <= distance(previous, box) + 0.5
+        nextDistance <= closestDistance + 0.5
       ) {
+        if (nextDistance < closestDistance) closest = point;
         if (
           point.x !== previous.x ||
           point.y !== previous.y ||

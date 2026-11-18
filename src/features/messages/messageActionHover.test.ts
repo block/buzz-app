@@ -113,6 +113,25 @@ it.each([
     close();
   }
 });
+it("releases after small moves away exceed the travel tolerance together", () => {
+  vi.useFakeTimers();
+  const { a, b, close } = setup();
+  try {
+    fireEvent.pointerMove(b.content, point(190, 150));
+    for (const y of [150.25, 150.5]) {
+      vi.advanceTimersByTime(20);
+      fireEvent.pointerMove(b.content, point(190, y));
+      expect(b.changed).not.toHaveBeenCalled();
+    }
+    vi.advanceTimersByTime(20);
+    fireEvent.pointerMove(b.content, point(190, 150.75));
+    expect(a.changed).toHaveBeenLastCalledWith(false);
+    expect(b.changed).toHaveBeenLastCalledWith(true);
+  } finally {
+    close();
+  }
+});
+
 it("keeps slow progress and toolbar interaction, then releases on leaving the surface", () => {
   vi.useFakeTimers();
   const { a, b, close } = setup();

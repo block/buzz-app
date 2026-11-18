@@ -42,3 +42,34 @@ export const artifactTypePolicyAccess = (
     }
   },
 });
+
+/** Calls a plugin may have running at once through one session. */
+const ARTIFACT_TYPE_POLICY_MAX_CALLS = 4;
+
+/** `access` as the session hands it to plugins: frozen, refused once `open()`
+ * is false or `ARTIFACT_TYPE_POLICY_MAX_CALLS` calls are running, and each
+ * call aborts with `lifetime()`. */
+export const sessionTypePolicy = (
+  access: ArtifactTypePolicyAccess,
+  open: () => boolean,
+  lifetime: () => AbortSignal,
+): ArtifactTypePolicyAccess => {
+  let running = 0;
+  const call = async <T>(
+    signal: AbortSignal,
+    run: (signal: AbortSignal) => Promise<T>,
+  ) => {
+    if (!open() || running >= ARTIFACT_TYPE_POLICY_MAX_CALLS)
+      throw new Error("Artifact type policy unavailable");
+    running++;
+    try {
+      return await run(AbortSignal.any([signal, lifetime()]));
+    } finally {
+      running--;
+    }
+  };
+  return Object.freeze({
+    read: (type, signal) => call(signal, (bound) => access.read(type, bound)),
+    set: (change, signal) => call(signal, (bound) => access.set(change, bound)),
+  });
+};

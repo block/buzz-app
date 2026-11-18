@@ -60,6 +60,7 @@ async function harness(
     authority: async () => ({
       relayAuthor: getPublicKey(key),
       artifactSupport: true,
+      ...options.authority,
     }),
     upstreamFetch: async (url, init) => {
       upstream.push(String(url));
@@ -1058,13 +1059,14 @@ test("production interest controls preserve socket/global routes and pending wri
 });
 
 test.each([
-  ["restricted: not a member", true, "Not a member"],
+  // Outside the type policy route, an authorization refusal stays unsent.
+  ["restricted: not a member", true, "Relay request failed (503)"],
   [
     "blocked: you are banned from this community",
     true,
-    "You are banned from this community",
+    "Relay request failed (503)",
   ],
-  ["auth-required: sign in first", true, "auth-required: sign in first"],
+  ["auth-required: sign in first", true, "Relay request failed (503)"],
   [
     'invalid: an open channel named "Launch" already exists',
     true,
@@ -1116,6 +1118,42 @@ test.each([
         transport.query([{ kinds: [0], limit: 1 }]),
       ).resolves.toEqual([]);
       expect(h.upstream.some((url) => url.endsWith("/events"))).toBe(false);
+    } finally {
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
+    }
+  },
+);
+
+test.each([
+  ["restricted: only owners and admins may set it", false],
+  ["auth-required: sign in first", true],
+])(
+  "a type policy command refused with %s returns the reason only when final",
+  async (reason, unsent) => {
+    const community = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+    const h = await harness(0, undefined, {
+      authority: { artifactCommunity: community },
+    });
+    let traffic;
+    try {
+      browserFetch(h.base);
+      const transport = await connectBrokerTransport(h.base);
+      traffic = transport.subscribe(callbacks);
+      await until(() => h.requests.length >= 1);
+      const result = transport.artifactTypePolicy.set(
+        { type: "example.settings", policy: "admins", prev: "0" },
+        new AbortController().signal,
+      );
+      await until(() => h.publications.length === 1);
+      const [{ event }] = h.publications;
+      await h.sockets[0].receive(["OK", event.id, false, reason]);
+      expect(await result).toEqual({
+        id: event.id,
+        ok: false,
+        message: unsent ? "" : reason,
+      });
     } finally {
       traffic?.dispose();
       vi.unstubAllGlobals();

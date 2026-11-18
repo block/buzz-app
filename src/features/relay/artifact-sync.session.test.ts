@@ -233,6 +233,20 @@ it("cancels the pending retry when a listener restarts the view", async () => {
 const COMMUNITY = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 
 it.each([
+  ["without community scope", {}, "unsupported", 0],
+  ["with community scope", { artifactCommunity: COMMUNITY }, "loading", 1],
+])("opens a community sync only on a relay %s", (_, host, status, opened) => {
+  const { owner, sinks } = harness(true, host);
+  const view = owner.session.artifacts.sync({
+    artifact: "current",
+    scope: "community",
+    "#type": ["example.settings"],
+  });
+  expect(view.snapshot().status).toBe(status);
+  expect(sinks).toHaveLength(opened);
+});
+
+it.each([
   ["no community scope", {}],
   ["a community without a policy route", { artifactCommunity: COMMUNITY }],
 ])("offers no community or type policy with %s", (_, host) => {
@@ -241,14 +255,81 @@ it.each([
   expect(artifacts).not.toHaveProperty("typePolicy");
 });
 
-it("offers the host's community id and type policy as they are", () => {
-  const artifactTypePolicy = { read: vi.fn(), set: vi.fn() };
-  const { artifacts } = harness(false, {
+it("offers the host's type policy only while the session lasts", async () => {
+  // A read stays open until its signal aborts.
+  const read = vi.fn(
+    (_type: string, signal: AbortSignal) =>
+      new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      ),
+  );
+  const set = vi.fn(async () => ({
+    id: "e".repeat(64),
+    ok: true,
+    message: "",
+  }));
+  const { owner } = harness(false, {
     artifactCommunity: COMMUNITY,
-    artifactTypePolicy,
-  }).owner.session;
+    artifactTypePolicy: { read, set },
+  });
+  const { artifacts } = owner.session;
+  const typePolicy = artifacts.typePolicy;
+  if (!typePolicy) throw new Error("missing type policy");
   expect(artifacts.communityId).toBe(COMMUNITY);
-  expect(artifacts.typePolicy).toBe(artifactTypePolicy);
+  expect(Object.isFrozen(artifacts)).toBe(true);
+  expect(Object.isFrozen(typePolicy)).toBe(true);
+  const signal = new AbortController().signal;
+  const change = {
+    type: "example.settings",
+    policy: "admins",
+    prev: "0",
+  } as const;
+  await expect(typePolicy.set(change, signal)).resolves.toMatchObject({
+    ok: true,
+  });
+  const open = Array.from({ length: 4 }, () =>
+    typePolicy
+      .read("example.settings", signal)
+      .catch((error: unknown) => error),
+  );
+  await expect(typePolicy.read("example.settings", signal)).rejects.toThrow(
+    "Artifact type policy unavailable",
+  );
+  owner.dispose();
+  for (const error of await Promise.all(open))
+    expect(error).toHaveProperty("name", "AbortError");
+  await expect(typePolicy.set(change, signal)).rejects.toThrow(
+    "Artifact type policy unavailable",
+  );
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(set).toHaveBeenCalledOnce();
+});
+
+it("aborts open type policy calls when the viewer's access changes", async () => {
+  const read = vi.fn(
+    (_type: string, signal: AbortSignal) =>
+      new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      ),
+  );
+  const h = harness(false, {
+    artifactCommunity: COMMUNITY,
+    artifactTypePolicy: { read, set: vi.fn() },
+  });
+  const typePolicy = h.owner.session.artifacts.typePolicy;
+  if (!typePolicy) throw new Error("missing type policy");
+  h.emit([roster(relay, C1, [viewer.pubkey], 10)]);
+  const signal = new AbortController().signal;
+  const before = typePolicy.read("example.settings", signal);
+  h.emit([roster(relay, C1, [], 11)]);
+  await expect(before).rejects.toHaveProperty("name", "AbortError");
+  // The session stays open, so a new call gets a fresh lifetime.
+  void typePolicy.read("example.settings", signal).catch(() => {});
+  expect(nth(read.mock.calls, 1)[1].aborted).toBe(false);
 });
 
 function nth<T>(items: readonly T[], index: number): T {

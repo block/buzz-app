@@ -3263,13 +3263,13 @@ export function relayBrokerPlugin({
                 )
               )
                 return json(res, 400, { error: failure.reason });
-              // A proven authorization refusal is 403, as over HTTP, so the
-              // writer sees a refusal rather than an unsent publication.
+              // A proven authorization refusal of a type policy command is 403,
+              // as over HTTP, so `typePolicy.set` can show the relay's reason.
+              // Other routes, and `auth-required:` (recoverable), stay unsent.
               if (
+                typePolicyCommand &&
                 failure?.sent === false &&
-                /^(restricted|blocked|auth-required):/.test(
-                  failure.reason ?? "",
-                )
+                /^(restricted|blocked):/.test(failure.reason ?? "")
               )
                 return json(res, 403, { error: failure.reason });
               return json(res, conflict ? 409 : 503, {

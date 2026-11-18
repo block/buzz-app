@@ -17,6 +17,7 @@ import type {
   AgentUpdateRequest,
   NewAgent,
   AgentViewProps,
+  Team,
 } from "../../src/features/agents/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
@@ -450,6 +451,10 @@ const agents = {
   configHistory: () => undefined,
   agentSync: () => undefined,
   teamSync: () => ({ local: undefined }),
+  teamHere: () => false,
+  holdTeam: () => () => {},
+  saveTeam: async () =>
+    ({ id: "team", name: "Team", instructions: "", members: [] }) as Team,
   addedTabs: () => [],
   registerTab: () => {},
   controlAttention: () => {},

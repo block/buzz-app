@@ -510,7 +510,7 @@ const Places = defineDoc({
   initial: () => ({}),
   checkpointWhen,
 });
-/** An Attention wake's reply destination belongs to its request, independently
+/** A request's reply destination is stored independently
  * of the conversation's tool defaults. Recorded before submission for recovery. */
 const Replies = defineDoc({
   kind: "buzz.replies",
@@ -2560,7 +2560,10 @@ export function serve({
             delete (await tx.doc(Replies))[request];
           }, context);
         } catch (error) {
-          console.warn("Pi could not clear a wake's reply destination", error);
+          console.warn(
+            "Pi could not clear a request's reply destination",
+            error,
+          );
         }
       }
       return result;

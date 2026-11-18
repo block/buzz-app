@@ -3131,6 +3131,88 @@ it.each(["thread", "community"] as const)(
   },
 );
 
+it("persists a community mention's destination separately from the tool context", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  f.solo.add(channel);
+  const event = reply("2", "first");
+  const turn = f.deliver(
+    { type: "mention", event },
+    { config: { ...DEFAULT_CONFIG, scope: "community" } },
+  );
+  try {
+    await turn.run;
+    await f.settled(turn);
+    expect(f.host.requests("deliver")[0]?.params).toMatchObject({
+      request: event.id,
+      reply: { channel, root: root.id, topLevel: true },
+    });
+    expect(f.host.requests("wait")[0]?.params).toMatchObject({
+      request: event.id,
+    });
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("uses a recovered community mention's saved destination and skips unknown destinations", async () => {
+  const saved = "4".repeat(64);
+  const legacy = "5".repeat(64);
+  const other = "other";
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          key: "@community",
+          request: saved,
+          context: { channel },
+          reply: { channel: other, root: root.id, topLevel: true },
+        },
+        {
+          submission: 42,
+          conversation: CONVERSATION,
+          key: "@community",
+          request: legacy,
+          context: { channel },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41 || submission === 42
+        ? {
+            status: "unanswered",
+            reason: "error",
+            detail: `Failed ${submission}`,
+          }
+        : { status: "done", answer: 1, text: "done" },
+  });
+  try {
+    const next = f.deliver(
+      { type: "mention", event: reply("2", "after restart") },
+      { config: { ...DEFAULT_CONFIG, scope: "community" } },
+    );
+    await next.run;
+    await f.settled(next);
+    expect(
+      f.host.requests("wait").map(({ params }) => params.submission),
+    ).toEqual(expect.arrayContaining([41, 42]));
+    expect(f.published).toEqual([
+      expect.objectContaining({
+        content: expect.stringContaining("Failed 41"),
+        tags: [
+          ["h", other],
+          ["p", alice],
+        ],
+      }),
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("drains a recovered destinationless community wake before another turn", async () => {
   const drained = deferred<unknown>();
   const f = setup({

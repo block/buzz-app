@@ -7993,10 +7993,11 @@ it("shares a community session across channels and Solo chats while retaining ea
   f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("SOURCE_CANVAS"));
   await f.runtime.run(community("first in Solo"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "SOLO ANSWER");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
   await f.runtime.run(community("next in another channel", "other"));
-  expect(f.starts()).toHaveLength(1);
-  expect(f.sent.filter((item) => item.method === "turn/steer")).toEqual([]);
-  f.complete(0, "SOLO ANSWER");
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   const first = f.starts()[0]?.params as { threadId: string };
   expect(f.starts()[1]?.params).toMatchObject({ threadId: first.threadId });
@@ -8021,6 +8022,52 @@ it("shares a community session across channels and Solo chats while retaining ea
     channelId: "other",
     community: true,
   });
+});
+
+it("steers a working community thread with a Solo message and replies to both requests", async () => {
+  const f = fixture();
+  const thread = f.delivery("Work in the channel");
+  const solo = f.delivery("Quick question in Solo", "e".repeat(64));
+  const config = { ...(thread.config as object), scope: "community" };
+  f.soloChannels.add("channel");
+  await f.runtime.run({ ...thread, channelId: "other", config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...solo, config });
+  const steers = () => f.sent.filter((wire) => wire.method === "turn/steer");
+  await vi.waitFor(() => expect(steers()).toHaveLength(1));
+  expect(inputText(steers()[0])).toContain("Quick question in Solo");
+  expect(f.starts()).toHaveLength(1);
+
+  if (thread.trigger.type !== "mention" || solo.trigger.type !== "mention")
+    throw new Error("Expected mentions");
+  await f.tool("send", {
+    audience: "everyone",
+    channel: "channel",
+    request: solo.trigger.event.id,
+    text: "SOLO ANSWER",
+  });
+  await f.tool("send", {
+    audience: "everyone",
+    channel: "other",
+    reply: root,
+    request: thread.trigger.event.id,
+    text: "CHANNEL ANSWER",
+    final: true,
+  });
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).tags),
+  ).toEqual([
+    expect.arrayContaining([
+      ["h", "channel"],
+      ["buzz:request", solo.trigger.event.id],
+    ]),
+    expect.arrayContaining([
+      ["h", "other"],
+      ["e", root, "", "reply"],
+      ["buzz:request", thread.trigger.event.id],
+    ]),
+  ]);
+  await f.complete(0, "");
 });
 
 it("keeps community sessions apart for memberships of the same identity", async () => {
@@ -8987,6 +9034,7 @@ it("Stop cancels only the selected queued Codex community request", async () => 
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     await f.runtime.run({
       ...f.delivery("STOPPED_REQUEST"),
+      effort: "high",
       config,
       channelId: "other",
       interruptible,
@@ -9868,7 +9916,7 @@ it("interrupts queued community text before attaching Huddle audio", async () =>
 
   await f.runtime.run({ ...first, config });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.runtime.run({ ...f.delivery("queued text"), config });
+  await f.runtime.run({ ...f.delivery("queued text"), effort: "high", config });
   const inspect = vi.fn(async () => undefined);
   Object.assign(f.runtime, { inspect });
   const opened = vi.mocked(openVoice).mock.calls.length;

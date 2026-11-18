@@ -4009,7 +4009,7 @@ describe("a conversation given its own folder", () => {
 });
 
 it.each([false, true])(
-  "shares a community session across channels without steering into another destination (scope changed: %s)",
+  "steers a community session across channels (scope changed: %s)",
   async (changed) => {
     const f = setup([], {
       hold: true,
@@ -4057,6 +4057,7 @@ it.each([false, true])(
         },
         { config, channelId: "other" },
       );
+      await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
       if (changed)
         f.runtime.sync([
           {
@@ -4064,10 +4065,7 @@ it.each([false, true])(
             config: { ...config, scope: "thread" },
           } as unknown as Agent,
         ]);
-      expect(worker.prompts).toHaveLength(1);
-      worker.finish();
-      const prompts = () => f.claudes().flatMap((p) => p.prompts);
-      await vi.waitFor(() => expect(prompts()).toHaveLength(2));
+      const prompts = () => worker.prompts;
       expect(prompts()[1]).toContain("Session scope: community");
       expect(prompts()[1]).toContain("other");
       expect(worker.prompts[0]).toContain("SOURCE_ONLY");
@@ -4077,11 +4075,10 @@ it.each([false, true])(
         "Disregard any earlier <owner-instructions>",
       );
       expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
-      const next = f
-        .claudes()
-        .find((p) => p.prompts.includes(prompts()[1] ?? ""));
-      if (!next) throw new Error("missing next worker");
-      next.finish();
+      expect(prompts()[1]).toContain(
+        "new-message-arrived-while-you-were-working",
+      );
+      worker.finish();
       await vi.waitFor(() =>
         expect(f.runtime.conversations(self)).toHaveLength(1),
       );
@@ -4508,17 +4505,19 @@ it("keeps a community predecessor's reply destination after later admission fail
       },
       { config, channelId: "other" },
     );
-    await flush(10);
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(3));
     await mcp(worker, 1, "tools/call", {
       name: "send",
-      arguments: { text: "A reply", audience: "everyone" },
+      arguments: {
+        channel,
+        request: message("2", "A").id,
+        text: "A reply",
+        audience: "everyone",
+      },
     });
     expect(
       f.published.find((event) => event.content === "A reply")?.tags,
     ).toContainEqual(["h", channel]);
-    expect(worker.prompts).toHaveLength(2);
-    worker.finish();
-    await vi.waitFor(() => expect(worker.prompts).toHaveLength(3));
     worker.finish();
   } finally {
     for (const worker of f.claudes()) worker.finish();

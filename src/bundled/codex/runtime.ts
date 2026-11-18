@@ -126,6 +126,7 @@ type Request = {
   unaddressed?: Pick<StandaloneTurn, "prompt" | "signal">;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
+  event?: EventData;
   /** Publish/activity root; unlike toolRoot, retained in DMs. */
   replyRoot?: string;
   agent: AgentHandle;
@@ -2158,6 +2159,19 @@ export class CodexRuntime {
           })
         : undefined;
     if (communityLane) entry.lanes.set(key, communityLane);
+    const activeCommunityTurn = communityLane?.active;
+    const queueCommunity =
+      communityLane &&
+      (!activeCommunityTurn?.turnId ||
+        activeCommunityTurn.finished ||
+        activeCommunityTurn.stopped ||
+        communityLane.queued ||
+        communityLane.voice ||
+        request.wake ||
+        activeCommunityTurn.reply.wake ||
+        activeCommunityTurn.reply.unaddressed ||
+        (request.model && request.model !== activeCommunityTurn.model) ||
+        (request.effort && request.effort !== activeCommunityTurn.effort));
     entry.waiting.add(request);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
     const handoff = this.controls.deliver(
@@ -2173,7 +2187,7 @@ export class CodexRuntime {
             request.sessionContext = admitted.context;
           else delete request.sessionContext;
         }
-        if (communityLane) return;
+        if (queueCommunity) return;
         const text = textOf(request.event, agent.name);
         let lane = entry.lanes.get(key);
         if (!lane) {
@@ -2209,8 +2223,10 @@ export class CodexRuntime {
                 active.finished ||
                 active.stopped ||
                 current.queued ||
-                request.conversation.topLevel !==
-                  active.reply.conversation.topLevel ||
+                (communityLane
+                  ? active !== activeCommunityTurn
+                  : request.conversation.topLevel !==
+                    active.reply.conversation.topLevel) ||
                 (request.model && request.model !== active.model) ||
                 (request.effort && request.effort !== active.effort)
               ) {
@@ -2236,13 +2252,24 @@ export class CodexRuntime {
                 return;
               }
               request.accepted?.();
+              const project = communityLane
+                ? entry.project.preview(
+                    request.conversation.channelId,
+                    request.solo ? request.canvas : NO_PROJECT,
+                  ).section
+                : undefined;
               await active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+                  `${context}${project ? `${project}\n\n` : ""}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
                 ),
               });
+              if (communityLane)
+                entry.project.resolve(
+                  request.conversation.channelId,
+                  request.solo ? request.canvas : NO_PROJECT,
+                );
               active.reply = request;
               active.requests.push(request);
               entry.waiting.delete(request);
@@ -2300,12 +2327,13 @@ export class CodexRuntime {
           current.steering = accepted.catch((error) =>
             console.error("Codex steering failed", error),
           );
+          if (communityLane) await current.steering;
           return;
         }
         this.start(request, text, key, lane, entry);
       },
     );
-    if (communityLane)
+    if (queueCommunity)
       this.start(
         request,
         textOf(request.event, agent.name),
@@ -2900,8 +2928,14 @@ export class CodexRuntime {
     )
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
-    const request = active?.reply;
     const answering = active ? [...active.requests] : [];
+    const request =
+      active?.reply.settings.scope === "community" &&
+      (call.tool === "send" || call.tool === "reply_in_subthread") &&
+      typeof args.request === "string"
+        ? (answering.find((pending) => pending.event?.id === args.request) ??
+          active.reply)
+        : active?.reply;
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {

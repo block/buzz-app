@@ -2643,7 +2643,7 @@ it("runs an agent on Recommended on the current candidate", () => {
 });
 
 it.each([false, true])(
-  "uses one ordered community session across source channels (scope changed: %s)",
+  "steers one community session across source channels (scope changed: %s)",
   async (changed) => {
     const f = setup({
       hold: true,
@@ -2683,6 +2683,7 @@ it.each([false, true])(
         }),
         { channelId: "other" },
       );
+      await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
       if (changed)
         f.runtime.sync([
           {
@@ -2694,23 +2695,15 @@ it.each([false, true])(
           } as unknown as Agent,
         ]);
       expect(process.turns).toHaveLength(1);
-      expect(process.turns[0]?.steered).toEqual([]);
-      process.turns[0]?.finish();
-      await vi.waitFor(() => expect(process.turns).toHaveLength(2));
-      if (!changed)
-        expect(process.turns[1]?.sessionId).toBe(process.turns[0]?.sessionId);
-      expect(process.turns[1]?.text).toContain("Session scope: community");
-      expect(process.turns[1]?.text).toContain("other");
+      const steered = process.turns[0]?.steered[0];
+      expect(steered).toContain("Session scope: community");
+      expect(steered).toContain("other");
       expect(process.turns[0]?.text).toContain("SOURCE_ONLY");
       expect(process.turns[0]?.text).toContain("SOURCE_CANVAS");
-      expect(process.turns[1]?.text).toContain(
-        "Disregard any earlier workspace Canvas",
-      );
-      expect(process.turns[1]?.text).toContain(
-        "Disregard any earlier <owner-instructions>",
-      );
+      expect(steered).toContain("Disregard any earlier workspace Canvas");
+      expect(steered).toContain("Disregard any earlier <owner-instructions>");
       expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
-      process.turns[1]?.finish();
+      process.turns[0]?.finish();
     } finally {
       f.runtime.dispose();
     }
@@ -2755,6 +2748,7 @@ it("stops only the queued community request selected by the user", async () => {
     const worker = f.goose();
     if (!worker) throw new Error("No Goose process");
     await f.deliver(message("2", "queued"), {
+      effort: "high",
       interruptible,
       workingUntil,
       agent: {

@@ -2684,10 +2684,11 @@ it.each(["stop", "retire"])(
   },
 );
 
-it("hands different channels to the same community conversation key", async () => {
+it("offers another channel’s message as steering while the community session is busy", async () => {
+  const finished = deferred<unknown>();
   const f = setup(
     {
-      wait: () => ({ status: "done", answer: 1, text: "Done" }),
+      wait: () => finished.promise,
     },
     [],
     { content: "SOURCE_CANVAS" },
@@ -2718,7 +2719,7 @@ it("hands different channels to the same community conversation key", async () =
       { config },
     );
     await first.run;
-    await f.settled(first);
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
     const next = f.deliver(
       {
         type: "mention",
@@ -2732,7 +2733,7 @@ it("hands different channels to the same community conversation key", async () =
       { config, channelId: "other" },
     );
     await next.run;
-    await f.settled(next);
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
     const requests = f.host.requests("deliver");
     expect(requests).toHaveLength(2);
     expect(requests.map((request) => request.params.key)).toEqual([
@@ -2740,7 +2741,10 @@ it("hands different channels to the same community conversation key", async () =
       "@community",
     ]);
     expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
-    expect(requests[1]?.params.text).toContain("Session scope: community");
+    expect(requests[1]?.params.steer).toContain(
+      "new-message-arrived-while-you-were-working",
+    );
+    expect(requests[1]?.params.steer).toContain("Session scope: community");
     expect(requests[0]?.params.text).toContain("SOURCE_ONLY");
     expect(requests[0]?.params.text).toContain("SOURCE_CANVAS");
     expect(requests[1]?.params.text).toContain(
@@ -2750,7 +2754,10 @@ it("hands different channels to the same community conversation key", async () =
       "Disregard any earlier <owner-instructions>",
     );
     expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
+    finished.resolve({ status: "done", answer: 1, text: "Done" });
+    await Promise.all([f.settled(first), f.settled(next)]);
   } finally {
+    finished.resolve({ status: "done", answer: 1, text: "Done" });
     f.runtime.dispose();
   }
 });

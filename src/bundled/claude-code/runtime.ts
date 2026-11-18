@@ -193,6 +193,7 @@ type Entry = {
     string,
     {
       topLevel: boolean;
+      steerable?(): boolean;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -1148,11 +1149,20 @@ export class ClaudeRuntime {
       return handoff.done;
     }
     const prior = entry.policies.get(key);
-    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const same =
+      key === COMMUNITY_SESSION
+        ? !wake &&
+          !model &&
+          !effort &&
+          entry.config.scope === "community" &&
+          prior?.steerable?.() === true
+        : prior?.topLevel === topLevel;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
-            [...entry.policies.values()].map((policy) => policy.settled),
+            [...entry.policies.entries()].map(([other, policy]) =>
+              same && other === key ? policy.handed : policy.settled,
+            ),
           )
         : prior && (same ? prior.handed : prior.settled);
     let delivered!: Promise<Settled>;
@@ -1318,8 +1328,13 @@ export class ClaudeRuntime {
       },
       (error: unknown): Settled => ({ ok: false, error: String(error) }),
     );
+    let foregroundDone = false;
+    void done.then(() => {
+      foregroundDone = true;
+    });
     const policy = {
       topLevel,
+      steerable: () => !wake && !interrupted && !foregroundDone,
       cancel() {
         interrupted = true;
         prior?.cancel();
@@ -1327,7 +1342,7 @@ export class ClaudeRuntime {
       handed: handed.catch(() => undefined),
       settled: Promise.allSettled([
         wait,
-        same ? prior.settled : undefined,
+        same ? prior?.settled : undefined,
         done,
       ]).then(() =>
         key === COMMUNITY_SESSION ? entry.sessions.idle(key) : undefined,

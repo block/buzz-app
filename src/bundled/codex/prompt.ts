@@ -122,7 +122,11 @@ export function turnInput(
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.community ? "community" : conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake ? "" : `${MENTION_PROMPT}\n`}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
+  const replyGuidance =
+    steering && conversation.community
+      ? "When answering requests from different conversations, use Buzz send with the request ID for each reply. You can answer one request and continue working on another."
+      : "";
+  return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.community ? "community" : conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake ? "" : `${MENTION_PROMPT}\n`}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${replyGuidance ? `\n\n${replyGuidance}` : ""}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

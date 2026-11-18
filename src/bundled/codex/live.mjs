@@ -379,6 +379,57 @@ try {
       ),
     );
     assert.equal(runtime.conversations(pubkey)[0].threadId, initial);
+    const first = shared(
+      "Start a shell with yield_time_ms 1000. Run: touch community-started; while [ ! -f community-release ]; do sleep 0.1; done. If the shell is still running, poll it with write_stdin and yield_time_ms 1000. When it finishes, send CHANNEL_DONE to this request's thread.",
+    );
+    first.config.instructions =
+      "During this test a new request may arrive while you work. Use buzz.send with the named request ID for each reply. Answer a steering question immediately with final false and continue the first request. Finish the original work with final true.";
+    await runtime.run(first);
+    try {
+      await condition(
+        () => exists("community-started"),
+        "community shell started",
+      );
+      const before = acceptedSteers;
+      const solo = shared(
+        "Quick question: reply SOLO_NOW here with a non-final Buzz send and then continue the earlier task.",
+        "solo",
+      );
+      await runtime.run(solo);
+      await condition(
+        () => acceptedSteers > before,
+        "Community Solo steer accepted",
+      );
+      await condition(
+        () => published.some((event) => event.content === "SOLO_NOW"),
+        "Solo answer while the channel task is still running",
+      );
+      const quick = published.find((event) => event.content === "SOLO_NOW");
+      assert.deepEqual(quick.tags, [
+        ["h", "solo"],
+        ["buzz:request", solo.trigger.event.id],
+      ]);
+      assert.equal(await exists("community-release"), false);
+    } finally {
+      await writeFile(join(workspace, "community-release"), "go");
+    }
+    await condition(
+      () =>
+        published.some((event) => event.content === "CHANNEL_DONE") &&
+        runtime.sessions(pubkey)[0]?.status === "Idle",
+      "original channel task completed",
+    );
+    const original = published.find(
+      (event) => event.content === "CHANNEL_DONE",
+    );
+    assert.deepEqual(original.tags, [
+      ["h", "test-channel"],
+      ["e", root, "", "reply"],
+      ["buzz:request", first.trigger.event.id],
+    ]);
+    console.log(
+      "PASS Community Solo steering and explicit replies during a live channel turn",
+    );
     runtime.dispose();
     await condition(() => children.size === 0, "community runtime shutdown");
     communityRuntime = new CodexRuntime(

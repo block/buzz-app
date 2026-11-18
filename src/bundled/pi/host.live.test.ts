@@ -344,13 +344,23 @@ storage.scanEntries = scan;
 out.sessions = { n0: n0.session, n1: n1.session, n2: n2.session, n3: n3.session, last: last.session, reset, page: page.session, more: !!page.next, oldest: page.entries.at(-1)?.id, shown: page.entries.length, pageRead, deliverRead };
 // Community scope keeps one native conversation across different tool destinations and a host restart.
 const shared = (request, text, channel) => ({...turn(request, text), key: "@community", context: {channel}});
-faux.setResponses([fauxAssistantMessage("community first")]);
+const communityGate = held();
+let communityMessages, communitySteering;
+faux.setResponses([
+  async () => {
+    await communityGate.gate;
+    return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" });
+  },
+  (context) => {
+    communitySteering = context.messages.filter((message) => message.role === "user").map((message) => message.content);
+    return fauxAssistantMessage("community next");
+  },
+]);
 const communityFirst = await pi.rpc("deliver", shared("COMMUNITY1", "community secret 1729", "one"));
-await pi.rpc("wait", {agent, submission: communityFirst.submission});
-let communityMessages;
-faux.setResponses([(context) => { communityMessages = context.messages; return fauxAssistantMessage("community next"); }]);
+await started(pi.events, "COMMUNITY1");
 const communityNext = await pi.rpc("deliver", shared("COMMUNITY2", "use that context", "two"));
-await pi.rpc("wait", {agent, submission: communityNext.submission});
+communityGate.release();
+await Promise.all([communityFirst, communityNext].map(({submission}) => pi.rpc("wait", {agent, submission})));
 await pi.stop();
 pi = start();
 await pi.rpc("open", {agent, tools});
@@ -363,7 +373,7 @@ faux.setResponses([(context) => { isolatedMessages = context.messages; return fa
 const isolated = await pi.rpc("deliver", {...shared("ISOLATED", "other community request", "one"), agent: secondary});
 await pi.rpc("wait", {agent: secondary, submission: isolated.submission});
 await pi.rpc("close", {agent: secondary});
-out.community = {first: communityFirst.conversation, next: communityNext.conversation, restored: communityRestored.conversation, messages: JSON.stringify(communityMessages), isolated: JSON.stringify(isolatedMessages)};
+out.community = {steering: communitySteering, first: communityFirst.conversation, next: communityNext.conversation, restored: communityRestored.conversation, messages: JSON.stringify(communityMessages), isolated: JSON.stringify(isolatedMessages)};
 
 // A tool loaded on search is offered once tool_search finds it.
 const offered = [];
@@ -901,6 +911,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       more: true,
     });
     expect(out.community.next).toBe(out.community.first);
+    expect(out.community.steering.slice(-2)).toEqual([
+      "community secret 1729",
+      "steer: use that context",
+    ]);
     expect(out.community.restored).toBe(out.community.first);
     expect(out.community.messages).toContain("community secret 1729");
     expect(out.community.isolated).not.toContain("community secret 1729");

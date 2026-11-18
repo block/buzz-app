@@ -179,6 +179,7 @@ type Entry = {
     string,
     {
       topLevel: boolean;
+      steerable?(): boolean;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -568,11 +569,20 @@ export class GooseRuntime {
     let noteRoot: string | undefined;
     let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
     const prior = entry.policies.get(key);
-    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const same =
+      key === COMMUNITY_SESSION
+        ? !wake &&
+          !model &&
+          !effort &&
+          entry.config.scope === "community" &&
+          prior?.steerable?.() === true
+        : prior?.topLevel === topLevel;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
-            [...entry.policies.values()].map((policy) => policy.settled),
+            [...entry.policies.entries()].map(([other, policy]) =>
+              same && other === key ? policy.handed : policy.settled,
+            ),
           )
         : prior && (same ? prior.handed : prior.settled);
     let delivered!: ReturnType<AgentSessions["deliver"]>;
@@ -694,10 +704,15 @@ export class GooseRuntime {
         error: String(error),
         undelivered: true,
       }));
+    let foregroundDone = false;
+    void done.then(() => {
+      foregroundDone = true;
+    });
     const policy = {
       topLevel,
+      steerable: () => !wake && !interrupted && !foregroundDone,
       handed,
-      settled: Promise.all([same ? prior.settled : undefined, done]).then(() =>
+      settled: Promise.all([same ? prior?.settled : undefined, done]).then(() =>
         entry.sessions.idle(key),
       ),
       cancel() {

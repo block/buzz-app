@@ -1158,8 +1158,9 @@ available rather than silently discarding it.
   thread's context separate. **One session per channel** lets threads in the
   same channel share context. **One session per community** shares one session
   across that agent's channels, threads, DMs, Solo chats and huddles in the same
-  community. Work joins that shared session in order, and replies keep the
-  current request's destination. New and Compact affect that shared session
+  community. A new message can reach the agent while it's working. The agent
+  can reply in that conversation and continue the earlier work. Background wakes
+  and requests that need a new turn wait in order. New and Compact affect that shared session
   from any conversation. Community scope does not grant additional channel
   access or share context with another community. Under the thread and channel
   choices, each DM, huddle room and Solo chat remains its own continuing

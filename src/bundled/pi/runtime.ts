@@ -183,6 +183,7 @@ type Entry = {
     string,
     {
       topLevel: boolean;
+      steerable?(): boolean;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -658,11 +659,20 @@ export class PiRuntime {
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
     const prior = entry.policies.get(key);
-    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const same =
+      key === COMMUNITY_SESSION
+        ? !wake &&
+          !model &&
+          !effort &&
+          entry.config.scope === "community" &&
+          prior?.steerable?.() === true
+        : prior?.topLevel === topLevel;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
-            [...entry.policies.values()].map((policy) => policy.settled),
+            [...entry.policies.entries()].map(([other, policy]) =>
+              same && other === key ? policy.handed : policy.settled,
+            ),
           )
         : prior && (same ? prior.handed : prior.settled);
     const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
@@ -680,10 +690,10 @@ export class PiRuntime {
       await this.adopted(entry, agent.key, { current: request });
       await Promise.all(
         [...entry.receipts.values()]
-          .filter(
-            (receipt) =>
-              key === COMMUNITY_SESSION ||
-              (receipt.key === key && receipt.where?.topLevel !== topLevel),
+          .filter((receipt) =>
+            key === COMMUNITY_SESSION
+              ? !same || receipt.key !== key || !receipt.where
+              : receipt.key === key && receipt.where?.topLevel !== topLevel,
           )
           .map((receipt) => receipt.settled),
       );
@@ -828,8 +838,13 @@ export class PiRuntime {
         // A removed agent's turn continues when it is back.
         return entry.closed ? { ok: true } : result;
       });
+    let foregroundDone = false;
+    void settled.then(() => {
+      foregroundDone = true;
+    });
     const policy = {
       topLevel,
+      steerable: () => !wake && !interrupted && !foregroundDone,
       cancel: () => {
         interrupted = true;
         prior?.cancel();

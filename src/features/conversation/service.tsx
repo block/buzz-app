@@ -28,6 +28,7 @@ import type {
   ComposerAccessory,
   ComposerCompletion,
   ComposerAnnotator,
+  ComposerSendCheck,
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
@@ -85,6 +86,10 @@ export type Conversation = {
   annotators: ContributionReader<ComposerAnnotator>;
   /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
   registerAnnotator(annotator: ComposerAnnotator): void;
+  sendChecks: ContributionReader<ComposerSendCheck>;
+  /** Runs before every composer send and may rewrite or hold it; see
+   * `ComposerSendCheck`. */
+  registerSendCheck(check: ComposerSendCheck): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -187,6 +192,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly completionEntries;
   readonly annotators;
   private readonly annotatorEntries;
+  readonly sendChecks;
+  private readonly sendCheckEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -239,6 +246,12 @@ export class ConversationService extends Service implements Conversation {
     this.annotators = {
       snapshot: annotators.snapshot,
       subscribe: annotators.subscribe,
+    };
+    const sendChecks = createContributions<ComposerSendCheck>(ctx);
+    this.sendCheckEntries = sendChecks;
+    this.sendChecks = {
+      snapshot: sendChecks.snapshot,
+      subscribe: sendChecks.subscribe,
     };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
@@ -405,6 +418,17 @@ export class ConversationService extends Service implements Conversation {
   registerAnnotator(value: ComposerAnnotator) {
     validate(value);
     this.annotatorEntries.register(this.ctx, value);
+  }
+  registerSendCheck(value: ComposerSendCheck) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      typeof value.check !== "function"
+    )
+      throw new Error("A send check needs an id, title and check");
+    this.sendCheckEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

@@ -17,6 +17,7 @@ import {
   mergedAnnotations,
   proseSpans,
   replaceAnnotation,
+  replaceDraftRange,
   showAnnotations,
   shownAnnotations,
   type AnnotationMark,
@@ -455,5 +456,79 @@ describe("annotation state", () => {
       state.tr.setSelection(TextSelection.create(state.doc, 1)),
     );
     expect(decorations(state)).toBe(1);
+  });
+});
+
+describe("draft range replacement", () => {
+  const value = (state: EditorState) =>
+    projectComposerDocument(state.doc).draft.text;
+  const create = (node: EditorNode) =>
+    EditorState.create({ doc: node, plugins: [history()] });
+  const replaced = (
+    state: EditorState,
+    start: number,
+    end: number,
+    replacement: string,
+  ) =>
+    replaceDraftRange(
+      state,
+      annotationRevision(state.doc),
+      start,
+      end,
+      replacement,
+    );
+
+  it("rewrites a run of text, code included, in its own undo step", () => {
+    let state = create(
+      doc(
+        paragraph(
+          text("key "),
+          text("sk-123", schema.marks.code.create()),
+          text(" here"),
+        ),
+      ),
+    );
+    const tr = replaced(state, 4, 10, "[KEY]");
+    if (!tr) throw new Error("not replaced");
+    state = state.apply(tr);
+    expect(value(state)).toBe("key [KEY] here");
+    expect(
+      state.doc
+        .child(0)
+        .child(1)
+        .marks.map((m) => m.type.name),
+    ).toEqual(["code"]);
+    let undone = state;
+    undo(state, (next) => {
+      undone = state.apply(next);
+    });
+    expect(value(undone)).toBe("key sk-123 here");
+  });
+
+  it("refuses stale, empty or out-of-range spans, mentions and line breaks", () => {
+    const state = create(
+      doc(
+        paragraph(
+          text("hi "),
+          text(
+            "@Ada",
+            schema.marks.recipient.create({
+              pubkey: "a".repeat(64),
+              name: "Ada",
+            }),
+          ),
+          text(" there"),
+        ),
+        paragraph(text("next")),
+      ),
+    );
+    const revision = annotationRevision(state.doc);
+    expect(replaceDraftRange(state, revision + 1, 0, 2, "yo")).toBeUndefined();
+    expect(replaced(state, 2, 2, "x")).toBeUndefined();
+    expect(replaced(state, 0, 999, "x")).toBeUndefined();
+    expect(replaced(state, 3, 7, "someone")).toBeUndefined();
+    expect(replaced(state, 2, 4, "x")).toBeUndefined();
+    expect(replaced(state, 10, 15, "x")).toBeUndefined();
+    expect(replaced(state, 0, 2, "yo")).toBeDefined();
   });
 });

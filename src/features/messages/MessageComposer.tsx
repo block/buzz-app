@@ -157,6 +157,7 @@ import { useShowingDraft } from "./draft-places";
 import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
+import { runSendChecks } from "../conversation/send-checks";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
@@ -2652,6 +2653,46 @@ function Composer({
     }
     return { recipients, references };
   }
+  /** Runs the registered send checks; false when one held the send or the
+   * attempt was abandoned, with the reason shown. */
+  async function passesSendChecks() {
+    if (sendAttempt.current) return false;
+    const wait = new AbortController();
+    sendAttempt.current = wait;
+    setSending(true);
+    setError(undefined);
+    let held: string | undefined;
+    try {
+      held = await runSendChecks(
+        extensions?.sendChecks?.snapshot() ?? [],
+        input.current,
+        () => composerMarkdown(valueRef.current),
+        {
+          session,
+          scope,
+          channelId,
+          threadRootId,
+          inviteAgents: agentChoices && !editing.target,
+        },
+        wait.signal,
+      );
+    } finally {
+      if (sendAttempt.current === wait) {
+        sendAttempt.current = null;
+        if (live.current) setSending(false);
+      }
+    }
+    if (wait.signal.aborted || !live.current || !permitted.current)
+      return false;
+    if (held) setError(held);
+    return !held;
+  }
+  /** A tool's `send()`: the Send button's path, send checks included. */
+  function sendFromTool() {
+    if (!permitted.current || sendAttempt.current) return false;
+    send();
+    return true;
+  }
   async function send() {
     if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
@@ -2679,6 +2720,11 @@ function Composer({
           });
         }
         return;
+      }
+      if (extensions?.sendChecks?.snapshot().length) {
+        const checkpoint = beforeEdit.current;
+        if (!(await passesSendChecks()) || beforeEdit.current !== checkpoint)
+          return;
       }
       editing.save(
         composerMarkdown(valueRef.current),
@@ -2764,6 +2810,11 @@ function Composer({
         return;
       }
     }
+    if (
+      extensions?.sendChecks?.snapshot().length &&
+      !(await passesSendChecks())
+    )
+      return;
     const recipientsNow = sendRecipients();
     if (needsRecipient && !recipientsNow.length) {
       setError(recipientHint);
@@ -4033,6 +4084,7 @@ function Composer({
                     replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
+                    send={sendFromTool}
                   />
                 ) : (
                   renderLeadingTools(null)

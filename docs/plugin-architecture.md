@@ -3131,6 +3131,12 @@ If later edits or restore would stop it from sending as that link (a preceding `
 surrounding backticks, code/link formatting), the host turns it into the ordinary
 text that will actually be sent, as it does for broken mention intent.
 
+`send()` sends the draft exactly as the Send button would, through the same
+checks, send checks included. It returns `true` when a send started, which may
+still be held or refused with the composer's own message, and `false` while
+the composer cannot send or a send is already running. It is revoked like the
+other commands; older hosts omit it.
+
 **User intent outlives the tool that created it.** If the built-in Mentions chooser
 is unavailable because activation failed, selected recipients, their inline chips
 and avatar removal controls, scoped drafts and pending messages remain available.
@@ -3359,6 +3365,63 @@ The jsdom suites cover the contract with an annotator registered through the
 real runtime. Native WebKit right-click selection and context-menu behavior,
 screen reader announcement of `aria-invalid`, and IME composition in the
 desktop app are not exercised there.
+
+### Composer send checks
+
+`ctx.conversation.registerSendCheck({ id, title, check })` runs a plugin's
+check before every send from a composer: the Send button, the send key, a
+tool's `send()` and saving an edit of a sent message. A check can let the
+message go, rewrite parts of it first, for example to redact personal data, or
+hold it with a reason the composer shows. It is a plain function, not a
+component.
+
+```ts
+import type { Context, SendCheckProps } from "@buzz/author";
+export const inject = ["conversation"];
+async function check({ draft, replaceRange }: SendCheckProps) {
+  const at = draft.text.indexOf("secret");
+  if (at < 0) return true;
+  // Offsets are UTF-16 into `draft.text`; each rewrite returns the next revision.
+  return (
+    replaceRange(at, at + 6, "[redacted]", draft.revision) !== false ||
+    "Remove the secret before sending."
+  );
+}
+export function apply(ctx: Context) {
+  ctx.conversation.registerSendCheck({
+    id: "example",
+    title: "Example check",
+    check,
+  });
+}
+```
+
+`check` receives the completion context (`session`, `scope`, `channelId`,
+`threadRootId`, `inviteAgents`), the frozen `draft` and `replaceRange`:
+
+- `draft.text` is the whole editable-text projection annotators see, not only
+  its prose: code, link labels, mention text and chips as their source are
+  included. `draft.markdown` is exactly what would be published, link targets
+  included, for checks that must look at those too. `draft.revision` names
+  this document.
+- `replaceRange(start, end, text, revision)` rewrites UTF-16 `[start, end)` of
+  the text at `revision` as one undo step and returns the rewritten draft's
+  revision, which the next call names; work from the end so earlier offsets
+  hold. It returns `false` for a stale revision, an empty or out-of-range span,
+  a span that is not one uniformly formatted run of text (a line break, chip or
+  mixed formatting), mention text, or once the check has settled. A link's
+  target is not part of its label's range.
+
+The check resolves `true` to send or a non-empty string to hold the message
+with that reason; the draft stays. Checks run one at a time, in contribution
+order, each seeing the draft as the previous one left it, and the host sends
+the draft as the last one left it. Sending fails closed: a check that throws,
+rejects, returns anything else or takes longer than five seconds
+(`SEND_CHECK_TIMEOUT_MS`) holds the message with "*title* could not check this
+message, so it was not sent." So does an edit by the person while a check
+runs, and a composer that is composing with an IME. Changing destination,
+disabling the composer or unmounting it abandons the attempt without sending.
+Composers without send checks send as before, with no added wait.
 
 ## Desktop browser
 

@@ -82,6 +82,7 @@ import {
   annotationRevision,
   proseSpans,
   replaceAnnotation,
+  replaceDraftRange,
   showAnnotations,
   shownAnnotations,
   type AnnotationMark,
@@ -2640,6 +2641,43 @@ export function EditableInput({
               }),
             };
           return observed.value;
+        },
+      },
+      sendObservation: {
+        configurable: true,
+        value: () => {
+          if (view.current !== editor || composing.current || editor.composing)
+            return null;
+          return Object.freeze({
+            revision: annotationRevision(editor.state.doc),
+            text: projection().draft.text,
+          });
+        },
+      },
+      replaceRange: {
+        configurable: true,
+        value: (revision: number, start: number, end: number, text: string) => {
+          if (
+            view.current !== editor ||
+            !editable() ||
+            composing.current ||
+            editor.composing
+          )
+            return false;
+          const tr = replaceDraftRange(
+            editor.state,
+            revision,
+            start,
+            end,
+            text,
+          );
+          if (!tr) return false;
+          const before = editor.state;
+          editor.dispatch(tr);
+          if (editor.state === before) return false;
+          // Typing after the rewrite starts its own undo step.
+          separateHistory = true;
+          return annotationRevision(editor.state.doc);
         },
       },
       showAnnotations: {

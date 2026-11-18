@@ -928,6 +928,9 @@ and are asked to sign in again in Buzz.
   grammar checker, adds its own wavy underlines; right-click one, or put the
   caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
   replacement. ⌘Z undoes the change.
+  A plugin can also check a message when you send it, for example to redact
+  personal data. It can rewrite parts of the message before it goes, as one
+  step ⌘Z undoes, or hold it and say why; the draft stays for you to edit.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus

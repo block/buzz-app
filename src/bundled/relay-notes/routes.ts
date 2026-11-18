@@ -1,6 +1,11 @@
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
 
-export type NotesRoute = { author: string; note?: string; profile?: string };
+export type NotesRoute = {
+  author: string;
+  note?: string;
+  profile?: string;
+  grouping?: "agent" | "tag";
+};
 export function notesRoute(
   value: JsonValue | undefined,
 ): NotesRoute | undefined {
@@ -8,8 +13,16 @@ export function notesRoute(
   const route = value as Record<string, JsonValue>;
   if (
     Object.keys(route).some(
-      (key) => key !== "author" && key !== "note" && key !== "profile",
+      (key) =>
+        key !== "author" &&
+        key !== "note" &&
+        key !== "profile" &&
+        key !== "grouping",
     ) ||
+    (route.grouping !== undefined &&
+      route.grouping !== "agent" &&
+      route.grouping !== "tag") ||
+    (route.grouping === "tag" && route.author !== "") ||
     (route.profile !== undefined &&
       (typeof route.profile !== "string" ||
         !/^[a-f0-9]{64}$/.test(route.profile))) ||
@@ -23,6 +36,9 @@ export function notesRoute(
     return;
   return {
     author: route.author,
+    ...(route.grouping === "agent" || route.grouping === "tag"
+      ? { grouping: route.grouping }
+      : {}),
     ...(typeof route.profile === "string" ? { profile: route.profile } : {}),
     ...(typeof route.note === "string" ? { note: route.note } : {}),
   };

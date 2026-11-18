@@ -10,6 +10,43 @@ export const noteKey = (event: EventData) =>
 export const noteTitle = (event: EventData) =>
   noteTag(event, "title").trim() || noteTag(event, "d") || "Untitled note";
 
+/** Group loaded notes across authors by each distinct tag; keep untagged notes visible. */
+export function noteGroups(notes: readonly EventData[]) {
+  const groups = new Map<string, EventData[]>();
+  for (const note of notes) {
+    const tags = new Set(
+      note.tags
+        .filter(([key]) => key === "t")
+        .map(([, value]) => value?.trim() ?? "")
+        .filter(Boolean),
+    );
+    if (!tags.size) tags.add("");
+    for (const tag of tags) {
+      const items = groups.get(tag) ?? [];
+      items.push(note);
+      groups.set(tag, items);
+    }
+  }
+  return [...groups]
+    .sort(([a], [b]) =>
+      a === ""
+        ? 1
+        : b === ""
+          ? -1
+          : a.localeCompare(b, undefined, { numeric: true }),
+    )
+    .map(([tag, items]) => ({
+      tag,
+      notes: items.sort(
+        (a, b) =>
+          noteTitle(a).localeCompare(noteTitle(b), undefined, {
+            sensitivity: "base",
+            numeric: true,
+          }) || noteKey(a).localeCompare(noteKey(b)),
+      ),
+    }));
+}
+
 /** Retain one head per author/identifier, using NIP-01's timestamp/ID order. */
 export function noteHeads(
   events: readonly EventData[],

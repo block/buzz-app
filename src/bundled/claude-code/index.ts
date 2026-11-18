@@ -354,7 +354,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       // A remote target runs Recommended on its own default.
       if (agent && (await agents.inspectExecution(agent.key))) return;
       await (agent?.protection
-        ? setup.protectedInstalled(signal)
+        ? setup.protectedInstalled(signal, () => runtime.room())
         : setup.installed(signal));
       await follow(agent);
     }),

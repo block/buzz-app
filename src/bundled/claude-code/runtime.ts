@@ -140,6 +140,9 @@ export type SavedConversation = Conversation &
     at: number;
   };
 
+/** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
+ * process. */
+const STOP_WAIT_MS = 5_000;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -233,6 +236,7 @@ export class ClaudeRuntime {
   private credentials = 0;
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
+    // Started ahead of need, it never stops a conversation to make room.
     (id, options) => this.spawn(id, options),
     (_conversation, message) =>
       respond(undefined, {}, message, this.added(), listing(this.added())),
@@ -454,6 +458,38 @@ export class ClaudeRuntime {
     const { spawn } = this.host;
     if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
+  }
+
+  /** Makes a place when the host already runs all the processes it allows,
+   * which every plugin's processes share: stops the spare, else the
+   * conversation process of any agent that has been idle longest, and waits
+   * for it to exit, or until the host has had time to kill it. False when
+   * neither is there to stop. Idle processes
+   * would stop on their own after `IDLE_MS`; until then they hold places a
+   * new conversation needs. */
+  async room() {
+    // The spare, started ahead of need, goes before any conversation's. Both
+    // are chosen now: a wait that runs out never stops another later.
+    let stopping = this.spare.free();
+    if (!stopping) {
+      let idlest: ReturnType<AgentSessions["idlest"]>;
+      for (const entry of this.agents.values()) {
+        const candidate = entry.sessions.idlest();
+        if (candidate && (!idlest || candidate.used < idlest.used))
+          idlest = candidate;
+      }
+      if (!idlest) return false;
+      stopping = idlest.stop();
+    }
+    // A descendant holding its output can keep it from ever reporting exit;
+    // its place may still be held, so the caller then asks again.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      stopping,
+      new Promise((done) => (timer = setTimeout(done, STOP_WAIT_MS))),
+    ]);
+    clearTimeout(timer);
+    return true;
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
@@ -1124,6 +1160,8 @@ export class ClaudeRuntime {
         const wait = prior && (same ? prior.handed : prior.settled);
         let delivered!: Promise<Settled>;
         let interrupted = false;
+        // Its idle process stays while the turn is prepared.
+        const arriving = entry.sessions.incoming(key);
         const handed = (async () => {
           await wait;
           if (interrupted) {
@@ -1213,6 +1251,8 @@ export class ClaudeRuntime {
             () => undefined,
           );
         })();
+        // `deliver` marks it from then on.
+        void handed.then(arriving, arriving);
         const done = handed.then(
           () => delivered,
           (error: unknown): Settled => ({ ok: false, error: String(error) }),
@@ -1618,6 +1658,7 @@ export class ClaudeRuntime {
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
+      room: () => this.room(),
       ...(!this.target ? { spare: this.spare } : {}),
       strictResume: !!this.target,
       store: {

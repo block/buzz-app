@@ -4,7 +4,7 @@ import {
   type ArtifactTypePolicyAccess,
 } from "./artifact-community";
 import { PublishNotSent, PublishRejected } from "./outbox";
-import type { RelayWriter } from "./transport";
+import type { ReadTransport, RelayWriter } from "./transport";
 
 /** The plugin-facing type policy for `community`: `read` fetches the relay's
  * answer, `set` signs and publishes only the kind-9034 command via `writer`. */
@@ -46,14 +46,19 @@ export const artifactTypePolicyAccess = (
 /** Calls a plugin may have running at once through one session. */
 const ARTIFACT_TYPE_POLICY_MAX_CALLS = 4;
 
-/** `access` as the session hands it to plugins: frozen, refused once `open()`
- * is false or `ARTIFACT_TYPE_POLICY_MAX_CALLS` calls are running, and each
- * call aborts with `lifetime()`. */
+/** The session's community fields for plugins, present only with a type
+ * policy: `communityId` and a frozen `typePolicy`, refused once `open()` is
+ * false or `ARTIFACT_TYPE_POLICY_MAX_CALLS` calls are running. Each call aborts
+ * with `lifetime` or `cancel()` (an access change). */
 export const sessionTypePolicy = (
-  access: ArtifactTypePolicyAccess,
+  {
+    artifactCommunity: communityId,
+    artifactTypePolicy: access,
+  }: Pick<ReadTransport, "artifactCommunity" | "artifactTypePolicy">,
   open: () => boolean,
-  lifetime: () => AbortSignal,
-): ArtifactTypePolicyAccess => {
+  lifetime: AbortSignal,
+) => {
+  let calls = new AbortController();
   let running = 0;
   const call = async <T>(
     signal: AbortSignal,
@@ -63,13 +68,30 @@ export const sessionTypePolicy = (
       throw new Error("Artifact type policy unavailable");
     running++;
     try {
-      return await run(AbortSignal.any([signal, lifetime()]));
+      return await run(AbortSignal.any([signal, calls.signal, lifetime]));
     } finally {
       running--;
     }
   };
-  return Object.freeze({
-    read: (type, signal) => call(signal, (bound) => access.read(type, bound)),
-    set: (change, signal) => call(signal, (bound) => access.set(change, bound)),
-  });
+  return {
+    artifacts:
+      communityId && access
+        ? {
+            /** The community's id, when the relay keeps community-scoped
+             * artifacts; always with `typePolicy`. */
+            communityId,
+            /** Each type's write policy (kind 9034), set as the viewer. */
+            typePolicy: Object.freeze<ArtifactTypePolicyAccess>({
+              read: (type, signal) =>
+                call(signal, (bound) => access.read(type, bound)),
+              set: (change, signal) =>
+                call(signal, (bound) => access.set(change, bound)),
+            }),
+          }
+        : {},
+    cancel() {
+      calls.abort();
+      calls = new AbortController();
+    },
+  };
 };

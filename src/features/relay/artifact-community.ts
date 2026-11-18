@@ -120,11 +120,7 @@ export function validTypePolicy(event: EventTemplate, community: string): void {
 }
 
 /** The policy read, sent as `[filter]` to `/query`. Throws on a malformed type. */
-export function typePolicyFilter(type: string): {
-  artifact: "policy";
-  scope: "community";
-  "#type": [string];
-} {
+export function typePolicyFilter(type: string) {
   if (!artifactTypeName(type)) throw new Error("Invalid artifact type");
   return { artifact: "policy", scope: "community", "#type": [type] };
 }

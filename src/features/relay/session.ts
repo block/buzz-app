@@ -484,8 +484,7 @@ export function createRelaySession(
       lifecycle.cancel(ids);
       details.cancel();
       memberAdministration.clear();
-      typePolicyCalls.abort();
-      typePolicyCalls = new AbortController();
+      typePolicy.cancel();
       typing.clear();
       // Saved owner inventory, read-state and profiles do not depend on channel access.
       // Preserve only those narrow reads; broad, mixed, ID and channel reads
@@ -1210,16 +1209,11 @@ export function createRelaySession(
       !closed && !revoking && !cacheClearing && canReadRemote(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
   });
-  // Type policy calls end with the session or an access change, as the
-  // administrative writers above do.
-  let typePolicyCalls = new AbortController();
-  const typePolicy =
-    transport?.artifactTypePolicy &&
-    sessionTypePolicy(
-      transport.artifactTypePolicy,
-      () => !closed,
-      () => AbortSignal.any([typePolicyCalls.signal, lifetime.signal]),
-    );
+  const typePolicy = sessionTypePolicy(
+    transport ?? {},
+    () => !closed,
+    lifetime.signal,
+  );
   const workflows = createWorkflows({
     profiles: profiles.queries,
     reader: transport ? verified : undefined,
@@ -3103,28 +3097,17 @@ export function createRelaySession(
      * this relay has no sync; use read() with `artifact: "current"` instead.
      * Dispose with the plugin's scope. */
     artifacts: Object.freeze({
-      ...(transport?.artifactCommunity && typePolicy
-        ? {
-            /** The community's id, when the relay keeps community-scoped
-             * artifacts; always with `typePolicy`. */
-            communityId: transport.artifactCommunity,
-            /** Each type's write policy (kind 9034), set as the viewer. */
-            typePolicy,
-          }
-        : {}),
+      ...typePolicy.artifacts,
       sync(filter: unknown): ArtifactSyncView {
         if (closed || artifactSyncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
           throw new Error("Artifact sync capacity unavailable");
-        // A community sync needs a relay that keeps community artifacts.
-        const community =
-          typeof filter === "object" &&
-          filter !== null &&
-          (filter as { scope?: unknown }).scope === "community";
         const view = createArtifactSyncView(
           filter,
           transport?.artifactSync &&
             transport.subscribe &&
-            (!community || transport.artifactCommunity)
+            // A community sync needs a relay that keeps community artifacts.
+            (transport.artifactCommunity ||
+              !(filter as { scope?: unknown } | null)?.scope)
             ? (input, sink) => {
                 // Live traffic can start after the plugin asks; retry until it does.
                 if (traffic?.syncArtifacts)

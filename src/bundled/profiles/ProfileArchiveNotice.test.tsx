@@ -64,15 +64,21 @@ function delta(
 }
 /** `extra` events answer every filter of their kind, whatever its authors:
  * a relay that ignores the authors filter. While `failing.deltas` is set,
- * delta reads fail. */
+ * delta reads fail. While `held.snapshots` is set, snapshot reads wait for it. */
 function mount(
   events: RelayEvent[],
   extra: RelayEvent[] = [],
   { ownedBy }: { ownedBy?: (viewer: string) => Agents } = {},
 ) {
   const failing = { deltas: false };
-  const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    filters.flatMap((filter) => {
+  const held: { snapshots?: Promise<void> } = {};
+  const query = vi.fn(async (filters: readonly ReadFilter[]) => {
+    if (
+      held.snapshots &&
+      filters.some((filter) => filter.kinds?.includes(13535))
+    )
+      await held.snapshots;
+    return filters.flatMap((filter) => {
       if (failing.deltas && filter.kinds?.includes(8002))
         throw new Error("relay unavailable");
       const matches = events
@@ -91,8 +97,8 @@ function mount(
       return matches.concat(
         extra.filter((event) => filter.kinds?.includes(event.kind)),
       );
-    }),
-  );
+    });
+  });
   const viewer = keypair().pubkey;
   let live: LiveCallbacks | undefined;
   const owner = createRelaySession({
@@ -155,6 +161,7 @@ function mount(
     open,
     push,
     failing,
+    held,
     archives: owner.session.archives,
     reconnect,
     reopen,
@@ -500,7 +507,7 @@ it("adds nothing to an owned agent's profile when its key is not archived", asyn
 });
 
 it("reads an archived key's deltas once per opening", async () => {
-  const { query, reopen } = mount([
+  const { query, reopen, held } = mount([
     ...people,
     snapshot([old.pubkey]),
     delta(old.pubkey, [["replaced-by", successor.pubkey]]),
@@ -512,13 +519,17 @@ it("reads an archived key's deltas once per opening", async () => {
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
   await waitFor(() => expect(reads(8002)).toBe(1));
   const snapshots = reads(13535);
+  let release!: () => void;
+  held.snapshots = new Promise((resolve) => {
+    release = resolve;
+  });
   reopen();
   await waitFor(() => expect(reads(13535)).toBe(snapshots + 1));
+  // The reread is in flight, so the opening waits to read deltas.
+  await act(async () => {});
+  expect(reads(8002)).toBe(1);
+  await act(async () => release());
   await waitFor(() => expect(reads(8002)).toBe(2));
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  });
-  expect(reads(8002)).toBe(2);
   expect(
     screen.getByRole("button", { name: "Open new key profile: New Key" }),
   ).toBeVisible();

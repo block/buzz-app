@@ -52,11 +52,13 @@ export function ProfileArchiveNotice({
   // an interruption or a failure left unanswered.
   const readAt = snapshot.readAt;
   // A reread in progress answers again when it lands, so a lookup now would
-  // be read twice.
+  // be read twice. The live status counts: the opening's refresh, in the same
+  // commit, has already started one.
   const loading = snapshot.status === "loading";
   useEffect(() => {
     void readAt;
-    if (!archived || loading) return;
+    void loading;
+    if (!archived || archives.snapshot().status === "loading") return;
     const controller = new AbortController();
     void archives.replacement(pubkey, controller.signal).then(
       (key) => {

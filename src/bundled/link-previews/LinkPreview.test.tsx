@@ -162,7 +162,7 @@ it("draws a page it has already read on its first render", () => {
   expect(screen.getByRole("link", { name: /Seen before/ })).toBeTruthy();
 });
 
-it("splits a hostname so subdomains give way before the registered name", () => {
+it("splits a hostname so subdomains give way before the name that identifies it", () => {
   expect(splitHost("docs.platform.example-company.com")).toEqual({
     subdomains: "docs.platform.",
     name: "example-company",
@@ -173,9 +173,37 @@ it("splits a hostname so subdomains give way before the registered name", () => 
     name: "bank",
     suffix: ".co.uk",
   });
+  expect(splitHost("support.portal.example-shop.ne.jp")).toEqual({
+    subdomains: "support.portal.",
+    name: "example-shop",
+    suffix: ".ne.jp",
+  });
+  expect(splitHost("docs.example.de")).toEqual({
+    subdomains: "",
+    name: "docs",
+    suffix: ".example.de",
+  });
   expect(splitHost("example.com")).toEqual({
     subdomains: "",
     name: "example",
     suffix: ".com",
   });
+});
+
+it("drops the root dot from the domain it shows", async () => {
+  render(
+    <LinkPreview
+      url="https://docs.example-company.com./start"
+      messageId="m"
+      open={() => true}
+      loader={loader({
+        url: "https://docs.example-company.com./start",
+        title: "Start",
+      })}
+    />,
+  );
+  await screen.findByRole("link", { name: /Start/ });
+  expect(screen.getByTitle("docs.example-company.com").textContent).toBe(
+    "docs.example-company.com",
+  );
 });

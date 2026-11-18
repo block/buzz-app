@@ -54,7 +54,7 @@ export function previewable(href: string): URL | null {
  * as another site. */
 export const domainOf = (url: string) => {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    return new URL(url).hostname.replace(/\.+$/, "").replace(/^www\./, "");
   } catch {
     return url;
   }
@@ -68,20 +68,15 @@ export const wantsCard = (href: string) =>
   agentCardLinkId(href) === null &&
   !!previewable(href);
 
-const SECOND_LEVEL = new Set(["co", "com", "net", "org", "gov", "edu", "ac"]);
-
-/** A hostname as its subdomains, the label its owner registered, and the
- * suffix after it, so a card short of room can drop subdomains first. Without
- * the public suffix list, a two-letter country code takes one common second
- * level with it, as in co.uk. */
+/** A hostname as its subdomains, the label most likely to name its owner, and
+ * a suffix that is always shown, so a card short of room drops subdomains
+ * first. Without the public suffix list, a two-letter country code keeps the
+ * label before it in the suffix, which covers co.uk and ne.jp and, under a
+ * country that registers directly, shows one label more than it needs. */
 export function splitHost(host: string) {
-  const labels = host.split(".");
-  const tld = labels.at(-1) ?? "";
-  const wide =
-    labels.length > 2 &&
-    tld.length === 2 &&
-    SECOND_LEVEL.has(labels.at(-2) ?? "");
-  const at = Math.max(0, labels.length - (wide ? 3 : 2));
+  const labels = host.split(".").filter(Boolean);
+  const keep = labels.length > 2 && labels.at(-1)?.length === 2 ? 2 : 1;
+  const at = Math.max(0, labels.length - keep - 1);
   return {
     subdomains: labels
       .slice(0, at)

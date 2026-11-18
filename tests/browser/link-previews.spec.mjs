@@ -88,38 +88,55 @@ test("link previews draw web cards below messages and let a plugin claim its own
     await expect(third.getByRole("link")).toHaveCount(3);
 
     // On a narrow card, the site name and then the subdomains give way, but
-    // the registered domain stays whole.
-    const narrow = rows
-      .nth(4)
-      .getByRole("link", { name: /Getting started with the platform/ });
-    await expect(narrow).toBeVisible();
-    await expect(narrow.locator("img")).toBeVisible();
-    const host =
-      "docs.platform-engineering.developer-tools.example-company.com";
-    const hostname = narrow.locator(`[title="${host}"]`);
-    await expect(hostname).toHaveText(host);
-    const shown = await hostname.evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const site = element.parentElement.getBoundingClientRect();
-      const [subdomains, registered] = element.children;
-      const kept = registered.getBoundingClientRect();
-      return {
-        subdomains: subdomains.scrollWidth > subdomains.clientWidth,
-        registered: registered.textContent,
-        whole: [...registered.children].every(
-          (part) => part.scrollWidth <= part.clientWidth,
-        ),
-        inside: kept.left >= box.left && kept.right <= box.right + 0.5,
-        withinSite: box.left >= site.left && box.right <= site.right + 0.5,
-      };
-    });
-    expect(shown).toEqual({
-      subdomains: true,
-      registered: "example-company.com",
-      whole: true,
-      inside: true,
-      withinSite: true,
-    });
+    // the label that identifies the host and its suffix stay whole.
+    for (const [row, title, host, registered] of [
+      [
+        4,
+        /Getting started with the platform/,
+        "docs.platform-engineering.developer-tools.example-company.com",
+        "example-company.com",
+      ],
+      [
+        5,
+        /Rooted hostname/,
+        "docs.platform-engineering.developer-tools.example-company.com",
+        "example-company.com",
+      ],
+      [
+        6,
+        /Shop help under a second level/,
+        "support.customer-portal.help-center.example-shop.ne.jp",
+        "example-shop.ne.jp",
+      ],
+    ]) {
+      const narrow = rows.nth(row).getByRole("link", { name: title });
+      await expect(narrow).toBeVisible();
+      await expect(narrow.locator("img")).toBeVisible();
+      const hostname = narrow.locator(`[title="${host}"]`);
+      await expect(hostname).toHaveText(host);
+      const shown = await hostname.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const site = element.parentElement.getBoundingClientRect();
+        const [subdomains, kept] = element.children;
+        const rect = kept.getBoundingClientRect();
+        return {
+          subdomains: subdomains.scrollWidth > subdomains.clientWidth,
+          registered: kept.textContent,
+          whole: [...kept.children].every(
+            (part) => part.scrollWidth <= part.clientWidth,
+          ),
+          inside: rect.left >= box.left && rect.right <= box.right + 0.5,
+          withinSite: box.left >= site.left && box.right <= site.right + 0.5,
+        };
+      });
+      expect(shown, host).toEqual({
+        subdomains: true,
+        registered,
+        whole: true,
+        inside: true,
+        withinSite: true,
+      });
+    }
 
     await launch.click();
     await expect(page.getByRole("status")).toHaveText(

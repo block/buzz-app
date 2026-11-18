@@ -177,6 +177,41 @@ describe("createLoader", () => {
     ).toHaveLength(1);
   });
 
+  it("never sends a thumbnail whose card let go while it waited behind a read", async () => {
+    let finish: () => void = () => {};
+    const readPage = vi.fn(
+      () =>
+        new Promise<{ status: number; preview: { title: string } }>(
+          (resolve) => {
+            finish = () => resolve({ status: 200, preview: { title: "Held" } });
+          },
+        ),
+    );
+    const requestBytes = vi.fn(async (_request: { url: string }) => ({
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+      body: new Uint8Array([1]),
+    }));
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => "blob:test/0");
+    try {
+      const loader = createLoader({ readPage, requestBytes });
+      const page = loader.page("https://held.example.com/");
+      const gone = loader.image("https://img.example.com/gone.png");
+      const kept = loader.image("https://img.example.com/kept.png");
+      expect(requestBytes).not.toHaveBeenCalled();
+      gone.release();
+      finish();
+      await page.value;
+      expect(await kept.src).toBe("blob:test/0");
+      expect(await gone.src).toBeNull();
+      expect(requestBytes.mock.calls.map(([request]) => request.url)).toEqual([
+        "https://img.example.com/kept.png",
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("revokes an evicted image only after every card using it lets go", async () => {
     let made = 0;
     const create = vi

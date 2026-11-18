@@ -47,6 +47,23 @@ const pages: Record<string, HostPage> = {
         image: "https://img.example.com/wide.png",
       },
     },
+  "https://docs.platform-engineering.developer-tools.example-company.com./guides/start":
+    {
+      status: 200,
+      preview: {
+        siteName: "Example Company Developer Documentation",
+        title: "Rooted hostname",
+        image: "https://img.example.com/wide.png",
+      },
+    },
+  "https://support.customer-portal.help-center.example-shop.ne.jp/help": {
+    status: 200,
+    preview: {
+      siteName: "Example Shop Customer Support Center",
+      title: "Shop help under a second level",
+      image: "https://img.example.com/wide.png",
+    },
+  },
   "https://spoof.example.net/login": {
     status: 200,
     preview: {
@@ -205,6 +222,14 @@ const rows = [
     "narrow",
     "Narrow: https://docs.platform-engineering.developer-tools.example-company.com/guides/start",
   ),
+  message(
+    "rooted",
+    "Rooted: https://docs.platform-engineering.developer-tools.example-company.com./guides/start",
+  ),
+  message(
+    "second-level",
+    "Second level: https://support.customer-portal.help-center.example-shop.ne.jp/help",
+  ),
 ];
 const profiles = new Map([["a".repeat(64), { name: "Morgan" }]]);
 const directory = { status: "ready", channels: [] };
@@ -283,7 +308,14 @@ function Preview() {
         </button>
       </div>
       {rows.map((row) => (
-        <div key={row.id} style={row.id === "narrow" ? { width: 440 } : {}}>
+        <div
+          key={row.id}
+          style={
+            ["narrow", "rooted", "second-level"].includes(row.id)
+              ? { width: 440 }
+              : {}
+          }
+        >
           <conversation.ui.Message
             row={row}
             session={session}

@@ -234,8 +234,9 @@ you or your agents own.
 
 The **Workflows** page lists automations by channel. A workflow message's
 **Workflow** byline opens its owner; its details offer **View workflows in
-#channel**. A selected workflow's channel name opens that channel. A finished
-run's **Open posted message** opens the message it sent. After **Run now**
+#channel**. A channel's heading in the list and a selected workflow's channel
+name open that channel. A finished run's **Open posted message** opens the
+message it sent. After **Run now**
 succeeds, **View run** shows its run history. Back restores your selection;
 closing its tab does not.
 

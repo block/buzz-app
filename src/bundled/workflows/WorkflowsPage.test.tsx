@@ -2441,8 +2441,56 @@ it("opens the channel and a posted message from the detail pane and reports refu
   ).toBeVisible();
 });
 
+it("opens a channel, archived or not, from its list heading and reports a refusal", async () => {
+  const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  const fixture = mount(fixtureYaml, fixtureViewer, true, {}, (session) => (
+    <WorkflowCommunity
+      session={session}
+      viewer={fixtureViewer}
+      scope={pageScope}
+      navigator={{ open } as unknown as Navigation}
+    />
+  ));
+  const heading = await screen.findByRole("heading", {
+    level: 2,
+    name: "Fixture channel",
+  });
+  const link = () =>
+    within(heading).getByRole("button", { name: "Fixture channel" });
+  fireEvent.click(link());
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: pageScope,
+    channelId: fixtureChannel,
+  });
+  await waitFor(() => expect(open).toHaveReturnedTimes(1));
+  expect(screen.queryByText(/could not be opened/)).toBeNull();
+  // Opening the channel leaves the list alone: no workflow is selected.
+  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  act(() =>
+    fixture.setChannels({
+      status: "ready",
+      channels: [
+        { id: fixtureChannel, name: "Fixture channel", archived: true },
+      ],
+    }),
+  );
+  open.mockResolvedValueOnce({ status: "failed", reason: "denied" });
+  fireEvent.click(link());
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(
+    await screen.findByText("This channel could not be opened."),
+  ).toBeVisible();
+});
+
 it("names the channel without links when the host offers no navigation", async () => {
   mount();
+  const heading = await screen.findByRole("heading", {
+    level: 2,
+    name: "Fixture channel",
+  });
+  expect(within(heading).queryByRole("button")).toBeNull();
   fireEvent.click(
     await screen.findByRole("button", { name: /^Open Message helper:/ }),
   );

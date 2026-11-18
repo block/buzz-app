@@ -2307,7 +2307,7 @@ it.each([
   },
 );
 
-it("reads the type policy through signed /query and signs 9034 only for this community's typed route", async () => {
+it("reads the type policy through signed /query and sets it through this community's typed route", async () => {
   discovery = {
     supported_extensions: ["nip-ar"],
     artifacts: {
@@ -2340,25 +2340,30 @@ it("reads the type policy through signed /query and signs 9034 only for this com
     1700000010,
   );
   const event = signed(viewer, template);
-  vi.mocked(invoke).mockResolvedValueOnce(event);
-  expect(await policy.writer.sign(template, signal)).toEqual(event);
-  expect(vi.mocked(invoke).mock.lastCall).toEqual([
-    "relay_channel_sign",
-    { community, route: "artifact-type-policy", event: template },
-  ]);
-  const elsewhere = typePolicyTemplate(
-    "11111111-1111-4111-8111-111111111111",
-    type,
-    "admins",
-    revision,
-    1700000010,
-  );
-  const calls = vi.mocked(invoke).mock.calls.length;
-  await expect(policy.writer.sign(elsewhere, signal)).rejects.toThrow();
+  vi.mocked(invoke)
+    .mockResolvedValueOnce(event)
+    .mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        accepted: true,
+        event_id: event.id,
+        message: "confirmed",
+      }),
+    });
   await expect(
-    policy.writer.publish(signed(viewer, elsewhere), signal),
-  ).rejects.toThrow();
-  expect(vi.mocked(invoke).mock.calls).toHaveLength(calls);
+    policy.set({ type, policy: "admins", prev: revision }, signal),
+  ).resolves.toEqual({ id: event.id, ok: true, message: "confirmed" });
+  expect(vi.mocked(invoke).mock.calls.slice(-2)).toEqual([
+    [
+      "relay_channel_sign",
+      { community, route: "artifact-type-policy", event: template },
+    ],
+    [
+      "relay_channel_publish",
+      { community, route: "artifact-type-policy", event },
+    ],
+  ]);
 });
 
 it.each([

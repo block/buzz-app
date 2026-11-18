@@ -339,7 +339,6 @@ async function relayAuthority(fetch, relay) {
   const artifactSupport =
     Array.isArray(nip11.supported_extensions) &&
     nip11.supported_extensions.includes("nip-ar");
-  // NIP-AR community scope: the relay keeps this community's artifacts.
   const artifactCommunity = communityScope(nip11.artifacts, artifactSupport);
   return {
     relayAuthor: author,

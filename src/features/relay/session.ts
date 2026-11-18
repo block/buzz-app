@@ -119,7 +119,6 @@ import {
 import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
-  PublishNotSent,
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
@@ -149,10 +148,6 @@ import {
   type ArtifactSyncView,
   createArtifactSyncView,
 } from "./artifact-sync";
-import {
-  typePolicyTemplate,
-  type ArtifactTypePolicyValue,
-} from "./artifact-community";
 import {
   retainEvents,
   matchesEvent,
@@ -2486,8 +2481,6 @@ export function createRelaySession(
     if (connected && !liveWasConnected) recovery?.retryNow(liveRecovery);
     liveWasConnected = connected;
   });
-  const artifactCommunity = transport?.artifactCommunity;
-  const artifactTypePolicy = transport?.artifactTypePolicy;
   const session = Object.freeze({
     artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
@@ -3097,55 +3090,13 @@ export function createRelaySession(
      * this relay has no sync; use read() with `artifact: "current"` instead.
      * Dispose with the plugin's scope. */
     artifacts: {
-      ...(artifactCommunity && artifactTypePolicy
+      ...(transport?.artifactCommunity && transport.artifactTypePolicy
         ? {
             /** The community's id, when the relay keeps community-scoped
              * artifacts; always with `typePolicy`. */
-            communityId: artifactCommunity,
+            communityId: transport.artifactCommunity,
             /** Each type's write policy (kind 9034), set as the viewer. */
-            typePolicy: {
-              read: (type: string, signal: AbortSignal) =>
-                artifactTypePolicy.read(type, signal),
-              /** Signs (filling community and created_at) and publishes once.
-               * Resolves with the command id and the relay's answer; a
-               * transport failure resolves ok:false with an empty message.
-               * Rejects only on a malformed change, a signing failure or an
-               * aborted signal. */
-              async set(
-                change: Readonly<{
-                  type: string;
-                  policy: ArtifactTypePolicyValue;
-                  prev: string;
-                }>,
-                signal: AbortSignal,
-              ) {
-                const { writer } = artifactTypePolicy;
-                const event = await writer.sign(
-                  typePolicyTemplate(
-                    artifactCommunity,
-                    change.type,
-                    change.policy,
-                    change.prev,
-                    Math.floor(Date.now() / 1000),
-                  ),
-                  signal,
-                );
-                try {
-                  const message = (await writer.publish(event, signal)) ?? "";
-                  return { id: event.id, ok: true, message };
-                } catch (error) {
-                  signal.throwIfAborted();
-                  const refused =
-                    error instanceof PublishRejected &&
-                    !(error instanceof PublishNotSent);
-                  return {
-                    id: event.id,
-                    ok: false,
-                    message: refused ? (error.reason ?? error.message) : "",
-                  };
-                }
-              },
-            },
+            typePolicy: transport.artifactTypePolicy,
           }
         : {}),
       sync(filter: unknown): ArtifactSyncView {

@@ -69,10 +69,10 @@ import { observerFrame } from "../agents/observer";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import {
   communityScope,
-  parseTypePolicy,
   typePolicyFilter,
   validTypePolicy,
 } from "./artifact-community";
+import { artifactTypePolicyAccess } from "./artifact-type-policy";
 import {
   acceptPublish,
   acceptReadStatePublish,
@@ -986,8 +986,9 @@ export async function connectNativeTransport(
     ...(artifactCommunity
       ? {
           artifactCommunity,
-          artifactTypePolicy: {
-            async read(type: string, signal: AbortSignal) {
+          artifactTypePolicy: artifactTypePolicyAccess(
+            artifactCommunity,
+            async (type, signal) => {
               const filters = [typePolicyFilter(type)];
               const response = await admitSignedRequest(
                 origin,
@@ -998,12 +999,12 @@ export async function connectNativeTransport(
               signal.throwIfAborted();
               if (!response.ok)
                 throw new Error((await readApiFailure(response)).error);
-              return parseTypePolicy(await response.json());
+              return response.json();
             },
-            writer: commandWriter("artifact-type-policy", (event) =>
+            commandWriter("artifact-type-policy", (event) =>
               validTypePolicy(event, artifactCommunity),
             ),
-          },
+          ),
         }
       : {}),
     verifiedProfiles: verifiedProfileAuthority(info),

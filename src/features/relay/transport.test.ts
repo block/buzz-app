@@ -452,11 +452,10 @@ it("reads and sets community artifact type policy through the broker's typed rou
     policy: "admins",
     revision: command.id,
   });
-  const { created_at, kind, content, tags } = command;
-  await policy.writer.publish(
-    await policy.writer.sign({ kind, content, tags, created_at }, signal),
-    signal,
-  );
+  const { kind, content, tags } = command;
+  expect(
+    await policy.set({ type, policy: "admins", prev: "0" }, signal),
+  ).toMatchObject({ id: command.id, ok: true });
   expect(
     fetcher.mock.calls.map(([url, init]) => [
       url,
@@ -467,7 +466,7 @@ it("reads and sets community artifact type policy through the broker's typed rou
     ["/api/relay/artifact-type-policy", { type }],
     [
       "/api/relay/artifact-type-policy-sign",
-      { kind, content, tags, created_at },
+      { kind, content, tags, created_at: expect.any(Number) },
     ],
     [
       "/api/relay/artifact-type-policy-publish",

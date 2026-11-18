@@ -74,9 +74,9 @@ import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import {
   artifactCommunityId,
-  parseTypePolicy,
-  type ArtifactTypePolicyState,
+  type ArtifactTypePolicyAccess,
 } from "./artifact-community";
+import { artifactTypePolicyAccess } from "./artifact-type-policy";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { directMessageRefusal } from "./direct-message-policy";
 import {
@@ -177,13 +177,9 @@ export interface ReadTransport {
   /** This community's id from NIP-11 `artifacts.community_scope` version 1:
    * the relay keeps community-scoped artifacts. */
   readonly artifactCommunity?: string;
-  /** Present only with `artifactCommunity`: the community's per-type write
-   * policy read, and a writer that signs and publishes only the kind-9034
-   * command for this community. Never supplied to the outbox. */
-  readonly artifactTypePolicy?: Readonly<{
-    read(type: string, signal: AbortSignal): Promise<ArtifactTypePolicyState>;
-    writer: RelayWriter;
-  }>;
+  /** Present only with `artifactCommunity`; signs and publishes only the
+   * kind-9034 command for this community. */
+  readonly artifactTypePolicy?: ArtifactTypePolicyAccess;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -937,8 +933,9 @@ export async function connectBrokerTransport(
     ...(artifactCommunityId(session.artifactCommunity)
       ? {
           artifactCommunity: session.artifactCommunity,
-          artifactTypePolicy: {
-            async read(type: string, signal: AbortSignal) {
+          artifactTypePolicy: artifactTypePolicyAccess(
+            session.artifactCommunity,
+            async (type, signal) => {
               const response = await fetch(`${endpoint}/artifact-type-policy`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -947,10 +944,10 @@ export async function connectBrokerTransport(
                 signal,
               });
               if (!response.ok) throw await readResponseError(response);
-              return parseTypePolicy(await response.json());
+              return response.json();
             },
-            writer: routeWriter("artifact-type-policy"),
-          },
+            routeWriter("artifact-type-policy"),
+          ),
         }
       : {}),
     ...(session.channelKit

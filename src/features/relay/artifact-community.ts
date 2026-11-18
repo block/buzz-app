@@ -13,11 +13,26 @@ export type ArtifactTypePolicyState = Readonly<{
   policy: ArtifactTypePolicyValue;
   revision: string | null;
 }>;
+/** What the host offers a plugin for a community's per-type write policy. */
+export type ArtifactTypePolicyAccess = Readonly<{
+  read(type: string, signal: AbortSignal): Promise<ArtifactTypePolicyState>;
+  /** Signs (filling community and created_at) and publishes once. Resolves
+   * with the command id and the relay's answer; a transport failure resolves
+   * ok:false with an empty message. Rejects only on a malformed change, a
+   * signing failure or an aborted signal. */
+  set(
+    change: Readonly<{
+      type: string;
+      policy: ArtifactTypePolicyValue;
+      prev: string;
+    }>,
+    signal: AbortSignal,
+  ): Promise<Readonly<{ id: string; ok: boolean; message: string }>>;
+}>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const EVENT_ID = /^[0-9a-f]{64}$/;
 
-/** A canonical lowercase, non-nil community UUID. */
 export const artifactCommunityId = (value: unknown): value is string =>
   typeof value === "string" &&
   UUID.test(value) &&

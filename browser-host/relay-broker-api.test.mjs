@@ -3578,16 +3578,17 @@ test("type policy commands use dedicated exact-shape routes for the relay's own 
     }
     const signal = new AbortController().signal;
     expect((await h.post("sign", template)).status).toBe(400);
-    const signed = await transport.artifactTypePolicy.writer.sign(
-      template,
+    live = await openBrokerSocket(transport);
+    const result = await transport.artifactTypePolicy.set(
+      { type: "example.settings", policy: "admins", prev: "0" },
       signal,
     );
+    const [signed] = h.publications;
+    expect(result).toEqual({ id: signed.id, ok: true, message: "" });
     expect(verifyEvent(signed)).toBe(true);
-    expect(signed).toMatchObject(template);
+    const { kind, content, tags } = template;
+    expect(signed).toMatchObject({ kind, content, tags });
     expect((await h.post("publish", signed)).status).toBe(400);
-    live = await openBrokerSocket(transport);
-    await transport.artifactTypePolicy.writer.publish(signed, signal);
-    expect(h.publications.map((event) => event.id)).toEqual([signed.id]);
     const foreign = finalizeEvent(
       { ...template, tags: template.tags.map((tag) => [...tag]) },
       new Uint8Array(32).fill(5),

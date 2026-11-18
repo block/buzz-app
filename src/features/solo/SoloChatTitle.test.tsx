@@ -42,8 +42,9 @@ it("keeps the latest rename during exit and reveals whole graphemes", async () =
 
 it("settles on the original title when renamed back during the reveal", async () => {
   const { first, characters, rename, expectSettled } = setup();
-  rename("Second");
-  await waitFor(() => expect(characters().join("")).toBe("Second"));
+  const title = "Second ΩЯ漢かなカナ한";
+  rename(title);
+  await waitFor(() => expect(characters().join("")).toBe(title));
 
   rename(first);
   await waitFor(() => expect(characters().join("")).toBe(first));
@@ -58,6 +59,9 @@ it.each([
   ["right-to-left isolate", "Plan \u2067ABC"],
   ["Phoenician", "Plan \u{10900}"],
   ["Adlam", "Plan \u{1e900}"],
+  ["Myanmar", "မြန်မာ"],
+  ["Kannada", "ಕನ್ನಡ"],
+  ["Mongolian mixed with Latin", "Plan ᠮᠣᠩᠭᠣᠯ"],
 ])("keeps %s in one text run as the new title appears", async (_, title) => {
   const { value, rename } = setup();
   rename(title);

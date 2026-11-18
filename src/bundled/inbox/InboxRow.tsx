@@ -23,7 +23,7 @@ import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
 import rowStyles from "../../features/messages/MessageListRow.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
-import { PreviewText, mentionedIds } from "../../features/messages/PreviewText";
+import { PreviewText } from "../../features/messages/PreviewText";
 
 type ResolveName = (
   key: string,
@@ -84,14 +84,12 @@ export function rowIdentity(
   return { sender, context, profile };
 }
 
-/** Profiles a row names: its sender or workflow owner, the people its preview
- * mentions and up to three DM participants. */
+/** Profiles a row names: its sender or workflow owner and up to three DM participants. */
 export const rowProfileIds = (
-  item: Partial<Pick<InboxItem, "workflowOwnerId" | "previewMentions">>,
+  item: Pick<InboxItem, "workflowOwnerId">,
   channel: ChannelSummary | undefined,
 ): string[] => [
   ...(item.workflowOwnerId ? [item.workflowOwnerId] : []),
-  ...(item.previewMentions ? mentionedIds(item.previewMentions) : []),
   ...(channel?.channelType === "dm"
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),

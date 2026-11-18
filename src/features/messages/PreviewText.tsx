@@ -2,10 +2,12 @@ import { useMemo } from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { plainText, sourceEnd } from "../notifications/content";
 import { profileKey } from "../profiles/target";
+import { PROFILE_CACHE_BASE } from "../relay/budget";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import referenceStyles from "../../shared/InlineReference.module.css";
+import { normalizeWrappedLinks } from "./message-link-parts";
 import { renderedProfileMentionParts } from "./profile-mentions";
 import { MentionLabel, useReferenceDirectory } from "./ReferenceText";
 
@@ -22,6 +24,68 @@ export const mentionedIds = (mentioned: PreviewMentions) => [
   ...mentioned.mentions,
   ...(mentioned.mentionReferences ?? []),
 ];
+
+/** `ids`, then the identities `mentioned` previews name, within the profile
+ * directory's default budget: a request over it reads nobody. */
+export const withMentionedIds = (
+  ids: readonly string[],
+  mentioned: readonly PreviewMentions[],
+) => {
+  const named = new Set(ids);
+  return [...new Set([...named, ...mentioned.flatMap(mentionedIds)])].slice(
+    0,
+    Math.max(named.size, PROFILE_CACHE_BASE),
+  );
+};
+
+/**
+ * `parts` bound on `raw` after wrapped-link repair, placed back on `raw`,
+ * which previews flatten. Repair is the only rewrite, and a reference inside
+ * a repaired link is literal; undefined where the repair cannot be retraced.
+ */
+function rawParts(raw: string, parts: Part[]): Part[] | undefined {
+  const repaired = parts.map((part) => part.text).join("");
+  if (repaired === raw) return parts;
+  // Each repaired link: its raw start and end and its repaired start and end.
+  const edits: [number, number, number, number][] = [];
+  let [rawAt, at] = [0, 0];
+  normalizeWrappedLinks(raw, (start, end) => {
+    at += start - rawAt;
+    const source = raw.slice(start, end);
+    const link = normalizeWrappedLinks(source, () => false);
+    const applied = link !== source && repaired.startsWith(link, at);
+    if (applied) edits.push([start, end, at, at + link.length]);
+    at += applied ? link.length : source.length;
+    rawAt = end;
+    return true;
+  });
+  let rebuilt = "";
+  rawAt = 0;
+  for (const [start, end, from, to] of edits) {
+    rebuilt += raw.slice(rawAt, start) + repaired.slice(from, to);
+    rawAt = end;
+  }
+  if (rebuilt + raw.slice(rawAt) !== repaired) return undefined;
+  const placed: Part[] = [];
+  let [offset, plain, shift] = [0, 0, 0];
+  for (const part of parts) {
+    const start = offset;
+    offset += part.text.length;
+    let edit = edits[0];
+    while (edit && edit[3] <= start) {
+      shift += edit[1] - edit[0] - (edit[3] - edit[2]);
+      edits.shift();
+      edit = edits[0];
+    }
+    if (!part.target || (edit && edit[2] < offset)) continue;
+    if (start + shift > plain)
+      placed.push({ text: raw.slice(plain, start + shift) });
+    placed.push(part);
+    plain = offset + shift;
+  }
+  if (plain < raw.length) placed.push({ text: raw.slice(plain) });
+  return placed;
+}
 
 // Private-use marks around a reference's interior, then its index.
 const OPEN = "\uE010";
@@ -162,6 +226,8 @@ export function PreviewText({
   const resolveName = useChannelIdentityNames(session, channelId);
   // Flattening parses the body's Markdown; do it once per body and directory.
   const parts = useMemo(() => {
+    // Only signed, unedited bodies bind; skip preparing the rest.
+    if (mentions.edited || !mentionedIds(mentions).length) return [{ text }];
     // Only the binder's fields, as the conversation passes them.
     const message = {
       content: mentions.content,
@@ -169,7 +235,6 @@ export function PreviewText({
       ...(mentions.mentionReferences
         ? { mentionReferences: mentions.mentionReferences }
         : {}),
-      ...(mentions.edited ? { edited: true as const } : {}),
       ...(mentions.attachmentSeams
         ? { attachmentSeams: mentions.attachmentSeams }
         : {}),
@@ -179,7 +244,8 @@ export function PreviewText({
       directory.profiles,
       directory.agents,
     );
-    return previewParts(bound, full, text, start) ?? [{ text }];
+    const placed = rawParts(mentions.content, bound);
+    return (placed && previewParts(placed, full, text, start)) ?? [{ text }];
   }, [mentions, directory.profiles, directory.agents, full, text, start]);
   // Code points before each part, as `matches` count them.
   let point = 0;

@@ -11,7 +11,7 @@ import { MatchedLabel } from "../../features/search/MatchedLabel";
 import {
   type PreviewMentions,
   PreviewText,
-  mentionedIds,
+  withMentionedIds,
 } from "../../features/messages/PreviewText";
 import { termMatches } from "../../features/search/snippet";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
@@ -195,14 +195,10 @@ function useLines(
             setState({ key, lines });
             void session.profiles
               .ensure(
-                [
-                  ...new Set(
-                    lines.flatMap((line) => [
-                      line.authorId,
-                      ...mentionedIds(line.mentioned),
-                    ]),
-                  ),
-                ],
+                withMentionedIds(
+                  lines.map((line) => line.authorId),
+                  lines.map((line) => line.mentioned),
+                ),
                 "background",
               )
               .catch(() => {});

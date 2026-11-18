@@ -128,7 +128,10 @@ import {
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
-import { PreviewText, mentionedIds } from "../../features/messages/PreviewText";
+import {
+  PreviewText,
+  withMentionedIds,
+} from "../../features/messages/PreviewText";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -1042,21 +1045,21 @@ export function SearchResults({
   const slowChannels = useDelayedSearch(publicChannels.loading);
   const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
-  const profileKey = [
-    ...new Set([
+  const profileKey = withMentionedIds(
+    [
       ...channels.flatMap((channel) =>
         channel.channelType === "dm" ? (channel.participants ?? []) : [],
       ),
       ...search.messages.flatMap((message) => [
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
-        ...mentionedIds(message.mentioned),
       ]),
       ...personDirectory.people.flatMap((person) =>
         person.ownerPubkey ? [person.ownerPubkey] : [],
       ),
-    ]),
-  ]
+    ],
+    search.messages.map((message) => message.mentioned),
+  )
     .sort()
     .slice(0, 1024)
     .join(":");

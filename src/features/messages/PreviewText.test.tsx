@@ -1,13 +1,26 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { messagePreview } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { snippet } from "../search/snippet";
-import { type PreviewMentions, PreviewText } from "./PreviewText";
+import {
+  type PreviewMentions,
+  PreviewText,
+  withMentionedIds,
+} from "./PreviewText";
+import { renderedProfileMentionParts } from "./profile-mentions";
+
+vi.mock("./profile-mentions", async (original) => {
+  const actual = await original<typeof import("./profile-mentions")>();
+  return {
+    ...actual,
+    renderedProfileMentionParts: vi.fn(actual.renderedProfileMentionParts),
+  };
+});
 
 afterEach(cleanup);
 
@@ -277,4 +290,36 @@ it("keeps search highlights around chips, counting code points", () => {
   expect(marks.map((mark) => mark.textContent)).toEqual(["tomb", "getting"]);
   expect(marks[0]?.querySelector("[data-mention-kind]")).not.toBeNull();
   expect(view).toHaveTextContent("😀 tomb now getting");
+});
+
+it("keeps chips beside a repaired wrapped link", () => {
+  const body =
+    "[docs]\\(https://example.org/a) @tomb, [@Mic]\\(https://example.org/b) and `[x]\\(https://example.test)` @Wes";
+  const text = messagePreview(body);
+  const view = preview(body, { mentions: [tomb, mic, wes] }, { text });
+  expect(chips(view)).toEqual(["tomb", "Wes"]);
+  expect(view).toHaveTextContent(
+    text.replace("@tomb", "tomb").replace("@Wes", "Wes"),
+  );
+});
+
+it("does not prepare a body without signed mentions", () => {
+  vi.mocked(renderedProfileMentionParts).mockClear();
+  const body = `**${"x ".repeat(5000)}** @tomb`;
+  const view = preview(body, { mentions: [] }, { text: messagePreview(body) });
+  expect(chips(view)).toEqual([]);
+  expect(renderedProfileMentionParts).not.toHaveBeenCalled();
+});
+
+it("reads named identities before the optional mentioned ones, within budget", () => {
+  const ids = ["a", "b"];
+  const mentioned = Array.from({ length: 1100 }, (_, index) => ({
+    content: "",
+    mentions: [`m${index}`, "a"],
+  }));
+  const read = withMentionedIds(ids, mentioned);
+  expect(read).toHaveLength(1024);
+  expect(read.slice(0, 3)).toEqual(["a", "b", "m0"]);
+  const many = Array.from({ length: 1030 }, (_, index) => `n${index}`);
+  expect(withMentionedIds(many, mentioned)).toEqual(many);
 });

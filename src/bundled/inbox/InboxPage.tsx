@@ -28,6 +28,7 @@ import {
   rowIdentity,
   rowProfileIds,
 } from "./InboxRow";
+import { withMentionedIds } from "../../features/messages/PreviewText";
 import {
   useChannelList,
   useProfileGeneration,
@@ -664,12 +665,12 @@ function InboxList({
         selectedShown: shown,
       });
   });
-  const profileKey = [
-    ...new Set([
+  const profileKey = withMentionedIds(
+    [
       ...authorIds,
       ...reactionItems.slice(0, 50).flatMap((item) =>
         rowProfileIds(
-          { previewMentions: item.message },
+          {},
           list.channels.find((entry) => entry.id === item.channelId),
         ),
       ),
@@ -679,8 +680,12 @@ function InboxList({
           list.channels.find((entry) => entry.id === item.channelId),
         ),
       ),
-    ]),
-  ]
+    ],
+    [
+      ...reactionItems.slice(0, 50).map((item) => item.message),
+      ...visible.slice(0, 50).map((item) => item.previewMentions),
+    ],
+  )
     .sort()
     .join(":");
   const profileIds = useMemo(

@@ -827,6 +827,103 @@ it("does not send a transform's result after the draft changes", async () => {
   expect(h.input()).toHaveValue("/md slow, edited");
 });
 
+it("transforms a thread reply and replies with the result", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(({ text }) => ({
+    text: text.slice(4).toUpperCase(),
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform)];
+  const h = mount({ threadRootId: "root" });
+  h.fill("/md thread");
+  h.submit();
+  await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+  expect(h.messages.reply).toHaveBeenCalledWith(
+    "channel",
+    "root",
+    "THREAD",
+    [],
+    [],
+  );
+  expect(transform.mock.calls[0]?.[1]).toMatchObject({
+    channelId: "channel",
+    threadRootId: "root",
+  });
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("frees the composer when a send is cancelled under a transform that ignores its signal", async () => {
+  let started = false;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise<never>(() => {
+          started = true;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md stuck");
+  h.submit();
+  await waitFor(() => expect(started).toBe(true));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  await act(async () => {});
+  h.fill("plain");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "plain", [], []);
+});
+
+it("refuses more than 32 returned recipients before any membership change", async () => {
+  const many = Array.from({ length: 33 }, (_, index) => ({
+    pubkey: (index + 1).toString(16).padStart(64, "0"),
+    name: "x",
+  }));
+  sendTransforms = [sendTransform(() => ({ text: "hi", mentions: many }))];
+  const h = mount();
+  h.fill("/md crowd");
+  h.submit();
+  expect(
+    await screen.findByText(/test: tagged more than 32 recipients/),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/md crowd");
+});
+
+it("asks to invite a plugin-added outsider under the host's name, not the plugin's", async () => {
+  sendTransforms = [
+    sendTransform(() => ({
+      text: "hi",
+      mentions: [{ pubkey: first.pubkey, name: "Mallory" }],
+    })),
+  ];
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const add = vi.fn(async () => {});
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  h.fill("/md hello");
+  h.submit();
+  expect(
+    await screen.findByText(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/Mallory/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
+});
+
 it("sends an unclaimed message synchronously, as without any transform", () => {
   sendTransforms = [
     sendTransform(() => ({ text: "x", mentions: [] }), {
@@ -871,9 +968,7 @@ it("checks a plugin-added recipient like a typed one", async () => {
   h.fill("hello");
   h.submit();
   expect(
-    await screen.findByText(
-      "A selected recipient is archived or being deleted. Remove it before sending.",
-    ),
+    await screen.findByText("test: tagged someone who can't be tagged here."),
   ).toBeVisible();
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveValue("hello");
@@ -9646,13 +9741,12 @@ it("seeds a Berd draft's pill with the default agent once, never its text", asyn
   );
 });
 
-it("submits a new chat's transformed text and recipients", async () => {
-  sendTransforms = [
-    sendTransform(() => ({
-      text: "rewritten",
-      mentions: [{ pubkey: first.pubkey, name: "Explicit" }],
-    })),
-  ];
+it("leaves a new chat's first message to its submission, untransformed", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(() => ({
+    text: "rewritten",
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform, { matches: () => true })];
   const { h, submit } = mountBerdDraft({
     pubkey: second.pubkey,
     name: "Selected",
@@ -9664,11 +9758,8 @@ it("submits a new chat's transformed text and recipients", async () => {
   await choicesLoaded();
   h.submit();
   await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-  expect(submit.mock.calls[0]?.slice(0, 3)).toEqual([
-    { text: "rewritten", recipients: [] },
-    expect.objectContaining({ prepareForSend: expect.any(Function) }),
-    [{ pubkey: first.pubkey, name: "Explicit" }],
-  ]);
+  expect(submit.mock.calls[0]?.[0]).toMatchObject({ text: "/md hello" });
+  expect(transform).not.toHaveBeenCalled();
 });
 
 it("a Berd draft with nobody addressed needs a tag to send", async () => {
@@ -13724,6 +13815,7 @@ function mountSoloAgents(
 ) {
   if (options.main) setDefaultAgent("scope", options.main);
   const members = options.members ?? [first.pubkey, second.pubkey];
+  const addAgents = vi.fn();
   const list = {
     ...soloList,
     channels: [{ ...soloList.channels[0], members }],
@@ -13760,7 +13852,7 @@ function mountSoloAgents(
           channelType: "solo",
           members: options.refreshed ?? members,
         }),
-        addAgents: vi.fn(),
+        addAgents,
       },
     } as unknown as RelaySession,
   });
@@ -13769,7 +13861,7 @@ function mountSoloAgents(
   act(() => h.commands().audience?.only([ada]));
   const sendingTo = (names: string) =>
     screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
-  return { h, ada, bea, sendingTo };
+  return { h, ada, bea, sendingTo, addAgents };
 }
 
 it("typing a mention then deleting it falls back to the main agent, not the remembered pair", async () => {
@@ -13828,32 +13920,35 @@ it("a person who joined since the pill was shown stops its untagged send", async
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
-it("treats a plugin's agent tag like a typed one and keeps the toolbar's agents", async () => {
-  const person = "f".repeat(64);
+it("refuses a Solo recipient a plugin adds and keeps the toolbar's agents", async () => {
+  let tagged: readonly { pubkey: string; name: string }[] = [];
   sendTransforms = [
-    sendTransform(
-      () => ({
-        text: "hi",
-        mentions: [{ pubkey: second.pubkey, name: "Bea" }],
-      }),
-      { matches: () => true },
-    ),
+    sendTransform(() => ({ text: "hi", mentions: tagged }), {
+      matches: () => true,
+    }),
   ];
-  const { h, sendingTo } = mountSoloAgents({
-    refreshed: [first.pubkey, second.pubkey, person],
-  });
+  const { h, sendingTo, addAgents } = mountSoloAgents();
   h.setProfiles(
     new Map([
       [first.pubkey, { name: "Ada", isAgent: true }],
       [second.pubkey, { name: "Bea", isAgent: true }],
-      [person, { name: "Pat" }],
     ]),
   );
   h.fill("hello");
+  tagged = [{ pubkey: second.pubkey, name: "Bea" }];
+  h.submit();
+  expect(
+    await screen.findByText(/test: tried to tag someone you did not choose/),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(addAgents).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("hello");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+
+  tagged = [{ pubkey: first.pubkey, name: "Whoever the plugin says" }];
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
-  // Bea heard this message only because the plugin tagged her.
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   await waitFor(() => expect(h.input()).toHaveValue(""));
   expect(sendingTo("Ada")).toBeInTheDocument();
 });

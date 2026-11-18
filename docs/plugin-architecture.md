@@ -3391,35 +3391,52 @@ export function apply(ctx) {
   match, one winner is chosen as for other contributions (lowest `order`, then the
   contribution key); transforms never chain.
 - `transform(draft, { session, channelId, threadRootId, signal })` resolves to the
-  `{ text, mentions }` to send instead. `mentions` become exactly the message's
-  `p` tags and need not appear in `text`, so a plugin can add or drop silent
-  recipients. Omitted `mentions` means none. `session` is the host session, so a
-  transform can react to or edit messages; `signal` aborts when the person
-  cancels or leaves.
+  `{ text, mentions }` to send instead. Return both fields, `mentions: []` for
+  none: a result without `mentions` is invalid, so a rewrite cannot drop the
+  typed recipients by accident. `mentions` become exactly the message's `p`
+  tags and need not appear in `text`, so a plugin can drop recipients or, outside
+  Solo chats, add silent ones. `session` is the host session, so a transform can
+  react to or edit messages. `signal` aborts when the person cancels or leaves;
+  the host stops waiting then even if the plugin ignores `signal`, re-enables
+  Send and discards any late result.
 - Returning empty text with no mentions consumes the message: nothing is
-  published and the draft clears, as for a composer command such as `/leave`.
-  Anything that is not `{ text: string, mentions?: { pubkey, name }[] }` with
-  64-hex pubkeys, or mentions with no text, is rejected like a throw, naming
-  the plugin.
+  published, no prompt opens and the draft clears, as for a composer command
+  such as `/leave`. Anything that is not `{ text: string, mentions: { pubkey, name }[] }`
+  with 64-hex pubkeys, or mentions with no text, is rejected like a throw.
 - A throw or rejection sends nothing, keeps the original draft and shows the
-  error under the composer. A send that fails afterwards restores the original
+  error under the composer, prefixed with the plugin's id so a person can tell
+  which plugin to disable. A send that fails afterwards restores the original
   draft, and Retry on the failed message does not run the transform again.
-- Recipients a transform returns go through the same checks as typed mentions:
-  archived or deleted agents, Solo eligibility, channel membership and the
-  prompts to add or reference people outside the channel. A plugin is no more
-  privileged than a typed mention. In a Solo chat, a recipient a transform adds
-  hears that message only; it does not join the toolbar's agents.
+- Side effects. The transform runs before the checks and prompts below, and a
+  prompt the person dismisses leaves the draft unsent, so the next Send runs the
+  transform again. A transform that writes through `session` (an edit or a
+  reaction) should therefore consume the message by returning empty text. A
+  transform that returns text to send should not write.
+- Recipients a transform returns go through the checks typed mentions get, before
+  any membership change or prompt: each new key must be admitted by the composer
+  (archived or deleted agents, closed rosters and the channel's rules), at most 32
+  are allowed, and then the usual prompts to add or reference people outside the
+  channel apply. A key the send already addressed keeps its name. Any other key
+  is named from the host's profiles and agent lists, never from the plugin's
+  `name`, and one the host cannot name is refused. A plugin is no more
+  privileged than a typed mention.
+- In a Solo chat a transform can drop recipients but cannot add any: a send that
+  returns someone the send did not already address is refused with an error
+  and the draft stays. So a plugin cannot add an agent to a chat, and only the
+  agents you chose can ever seed the toolbar again after a reopen. In other
+  channels a recipient the transform tagged is tagged like a typed one, and
+  the next composer seeds the agents the latest message tagged as for any
+  message.
 - The transform runs once per send, after a composer command (`/leave`) and
   before those checks. It is skipped for edits of sent messages, forwards,
-  drafts with attachments, GIFs, chat cards or unresolved chips, other detached
-  composers such as huddle windows and agent or MCP sends. It does run when the
-  draft has mentions. Signed chips stay on the message only if the transform
-  leaves the text unchanged.
-- There is no preview or undo; both are left open for later.
-
-Because a new Solo chat's first message is sent through the same composer, a
-transform also applies there, with the returned text and recipients starting
-the chat.
+  drafts with attachments, GIFs, chat cards or unresolved chips, composers that
+  start a conversation (New Message and a new Solo chat), other detached
+  composers such as huddle windows and agent or MCP sends. It does run in thread
+  replies and when the draft has mentions. Signed chips stay on the message only
+  if the transform leaves the text unchanged.
+- There is no preview or undo; both are left open for later. A transform that
+  never settles and ignores `signal` holds Send until the person cancels (switches
+  the reply target or leaves); there is no timeout.
 
 The jsdom suites cover the composer and the registration through the real
 runtime. Behavior in the desktop app is exercised by hand with a local plugin.

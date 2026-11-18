@@ -895,8 +895,8 @@ and are asked to sign in again in Buzz.
 - A plugin can rewrite or take over a new message when you press Send, for example
   to format it, edit your previous message, or react to one instead of posting
   text. If it fails, nothing is sent and your draft stays with the error under the
-  message box. Attachments, GIFs and forwards skip it, as do edits and agent
-  messages.
+  message box. Attachments, GIFs and forwards skip it, as do edits, agent
+  messages, New Message and a new Solo chat's first message.
 - **Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
   makes plain Up Arrow edit your most recent editable message when the channel
   or thread composer is empty, instead of selecting messages. This device-local

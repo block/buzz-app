@@ -453,7 +453,9 @@ export type ComposerCompletion = Readonly<{
 }>;
 
 /** A new message as the composer would send it: Markdown and the exact
- * notified recipients (`p` tags). A name need not appear in the text. */
+ * notified recipients (`p` tags). A name need not appear in the text. A
+ * transform returns both fields, `mentions: []` for none; the host names
+ * returned recipients itself and ignores the `name` it is given. */
 export type SendDraft = Readonly<{
   text: string;
   mentions: readonly Readonly<{ pubkey: string; name: string }>[];
@@ -468,8 +470,10 @@ export type SendTransformContext = Readonly<{
 /**
  * Rewrites, consumes or blocks a new message typed in a composer, once, before
  * it is published. One transform runs per send; see `MatchOrder`. Edits,
- * attachments, GIFs and agent sends never reach it. Returned mentions pass the
- * same archive, eligibility and membership checks as typed ones.
+ * attachments, GIFs, agent sends and New Message or new Solo chat composers
+ * never reach it. Returned mentions pass the same admission, 32-recipient,
+ * archive and membership checks as typed ones; a Solo chat takes no recipient
+ * the send did not already address.
  */
 export type SendTransform = Readonly<{
   id: string;
@@ -478,7 +482,10 @@ export type SendTransform = Readonly<{
   /** Pure and synchronous; a throwing matcher is skipped. */
   matches(draft: SendDraft): boolean;
   /** Resolve the message to send instead; empty text with no mentions sends
-   * nothing and clears the draft. Throw to keep the draft and show the error. */
+   * nothing and clears the draft. Throw to keep the draft and show the error.
+   * A transform that writes (edits, reacts) should consume the message; a
+   * rewrite should not write, since a prompt or refusal after it can leave
+   * the draft unsent and a second Send runs it again. */
   transform(
     draft: SendDraft,
     context: SendTransformContext,

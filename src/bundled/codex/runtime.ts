@@ -372,6 +372,7 @@ export class CodexRuntime {
     Set<{ abort: AbortController; done: Promise<void> }>
   >();
   private server: Server | undefined;
+  private closingSharedServer: Server | undefined;
   private protectedServers = new Map<AgentKey, Server>();
   private stopping = new Map<AgentKey, Promise<void>>();
   private stopped = new Map<AgentKey, Entry>();
@@ -977,6 +978,8 @@ export class CodexRuntime {
     const entry = this.entries.get(agent) ?? this.stopped.get(agent);
     const protectedServer =
       this.protectedServers.get(agent) ?? this.unretired.get(agent);
+    const sharedServer = this.server;
+    const closingSharedServer = this.closingSharedServer;
     const actions = [...(this.actions.get(agent) ?? [])];
     for (const action of actions) action.abort.abort();
     entry?.abort.abort();
@@ -1002,8 +1005,11 @@ export class CodexRuntime {
         ? [
             (async () => {
               if (protectedServer) await this.shutdown(agent, protectedServer);
-              const server = protectedServer ?? this.server;
-              if (server) await this.stop(server, agent, entry);
+              await this.stop(protectedServer ?? sharedServer, agent, entry);
+              if (!protectedServer)
+                await this.waitForSharedExit(
+                  closingSharedServer ?? this.closingSharedServer,
+                );
               if (this.stopped.get(agent) === entry) this.stopped.delete(agent);
             })(),
           ]
@@ -1093,7 +1099,7 @@ export class CodexRuntime {
    * themselves. Then the shells its finished turns left are ended, which its
    * own process used to do by exiting. Until then, the same agent starting
    * again waits rather than resuming a thread that is still letting go. */
-  private stop(server: Server, agent: AgentKey, entry: Entry) {
+  private stop(server: Server | undefined, agent: AgentKey, entry: Entry) {
     const stopped = (async () => {
       await Promise.all([
         ...[...entry.lanes.values()].map((lane) =>
@@ -1101,6 +1107,7 @@ export class CodexRuntime {
         ),
         ...[...entry.onces].map((once) => once.released),
       ]);
+      if (!server) return;
       for (const [threadId, owner] of server.threads)
         if (owner === agent) {
           if (
@@ -1149,6 +1156,13 @@ export class CodexRuntime {
     this.unretired.clear();
     void this.server?.rpc.close();
     this.server = undefined;
+  }
+  private async waitForSharedExit(server: Server | undefined) {
+    if (!server) return;
+    await server.opening.catch(() => {});
+    await server.rpc.close();
+    if (this.closingSharedServer === server)
+      this.closingSharedServer = undefined;
   }
   private open(agent?: Pick<AgentHandle, "key" | "pubkey" | "protection">) {
     if (agent?.protection) {
@@ -1235,9 +1249,8 @@ export class CodexRuntime {
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
-    const server: Server = {
-      rpc,
-      opening: rpc.open(
+    const open = () =>
+      rpc.open(
         (id, options) =>
           this.spawn(id, {
             ...options,
@@ -1247,13 +1260,20 @@ export class CodexRuntime {
             ],
           }),
         defaults.workspace,
-      ),
+      );
+    const previous = this.closingSharedServer;
+    const server: Server = {
+      rpc,
+      opening: previous ? this.waitForSharedExit(previous).then(open) : open(),
       threads: new Map(),
     };
-    // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
-      if (wire.method === "connection/closed" && this.server === server)
-        this.server = undefined;
+      if (wire.method !== "connection/closed" || this.server !== server) return;
+      this.server = undefined;
+      if (rpc.exited) return;
+      // Disconnecting rejects native followers before the process itself exits.
+      this.closingSharedServer = server;
+      void this.waitForSharedExit(server).catch(() => {});
     });
     void server.opening.catch(() => {
       if (this.server === server) this.server = undefined;

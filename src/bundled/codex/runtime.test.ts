@@ -8261,6 +8261,63 @@ it("retires a cancelled community wake whose interrupt never completes", async (
   }
 });
 
+it("holds sibling retirement after a cancelled wake closes the shared connection", async () => {
+  const f = fixture();
+  const base = f.delivery("wake");
+  const config = { ...(base.config as object), scope: "community" };
+  const abort = new AbortController();
+  const sibling = "f".repeat(64);
+  const siblingDelivery = {
+    ...f.delivery("sibling work"),
+    config,
+    agent: { ...base.agent, key: sibling, pubkey: sibling },
+  };
+  const abortReplacement = new AbortController();
+  const replacement = {
+    ...f.delivery("replacement work"),
+    config,
+    agent: siblingDelivery.agent,
+    current: () => !abortReplacement.signal.aborted,
+  };
+  f.delayedInterruptCompletions.add("turn-1");
+  f.process.end.mockResolvedValue(undefined);
+  const once = f.runtime.runOnce({
+    delivery: { ...base, config },
+    key: "watch",
+    signal: abort.signal,
+    prompt: async () => "check",
+  });
+  let retiring: Promise<unknown> | undefined;
+  try {
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run(siblingDelivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    vi.useFakeTimers();
+    abort.abort(new Error("deadline"));
+    await expect(once).resolves.toEqual({ ok: false, error: "deadline" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).toHaveBeenCalledOnce();
+    const retired = vi.fn();
+    retiring = f.runtime.retire(sibling).then(retired);
+    await f.runtime.run(replacement);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(retired).not.toHaveBeenCalled();
+    expect(f.starts()).toHaveLength(2);
+    abortReplacement.abort();
+    f.exits.resolve(0);
+    await retiring;
+    expect(retired).toHaveBeenCalledOnce();
+  } finally {
+    abort.abort();
+    abortReplacement.abort();
+    f.exits.resolve(0);
+    f.runtime.dispose();
+    await retiring;
+    await once;
+    vi.useRealTimers();
+  }
+});
+
 it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
   const f = fixture();
   const base = f.delivery("first");

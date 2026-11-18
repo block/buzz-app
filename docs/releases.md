@@ -58,7 +58,10 @@ Authenticode-signed Windows releases or evidence of completed desktop acceptance
 
 Previews build from three triggers:
 
-- **Daily**, from `main`'s head (09:37 UTC).
+- **Daily**, from `main`'s head (09:37 UTC). Sunday's run first deletes `main`'s
+  release, Rust CI and pnpm caches, then rebuilds them from scratch alongside a
+  full CI run, because a cache restored by prefix and saved under a new key only
+  grows.
 - **After each stable release.** When **Desktop stable release** succeeds for a
   `vX.Y.Z` tag, the workflow builds `main`'s head, which includes that release.
   Betas start no preview.

@@ -88,6 +88,7 @@ import {
 import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
+import { answerGateway, gatewayRoute, type GatewaySeam } from "./gateway";
 
 export type Config = Readonly<{
   /** A Pi provider; empty uses the one Pi's settings name. */
@@ -265,6 +266,8 @@ export class PiRuntime {
     ) => () => void = () => () => {},
     /** Agent storage, where what each session started with is kept. */
     private readonly storage: AgentStore = localStore(),
+    /** The model gateway's routes and context; none: all external. */
+    private readonly seam?: GatewaySeam,
   ) {
     this.pi = new Pi(
       () => this.spawn,
@@ -283,6 +286,7 @@ export class PiRuntime {
           );
         },
         event: (event) => this.event(event),
+        gateway: async (call) => answerGateway(this.seam, call),
         prompt: ({ agent, request }) =>
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
           Promise.resolve(undefined),
@@ -541,7 +545,19 @@ export class PiRuntime {
         if ([...entry.receipts.values()].some((taken) => taken.key === key))
           throw new Error("Wait for the active turn to finish first.");
       }
-      await this.pi.request("session", { agent: agent.key, key, action });
+      // An owner's compaction is its own request, through the gateway while
+      // the agent's route is there. No signed event caused it, so its
+      // context is the conversation's place with no message.
+      const gateway =
+        action === "compact" &&
+        this.seam &&
+        gatewayRoute(this.seam.routeFor(agent.key));
+      await this.pi.request("session", {
+        agent: agent.key,
+        key,
+        action,
+        ...(gateway ? { gatewayTurn: placeContext(agent, place) } : {}),
+      });
     };
     if (action === "interrupt") {
       const entry = this.agents.get(agent.key);
@@ -593,6 +609,8 @@ export class PiRuntime {
       accepted,
       superseded,
       interruptible,
+      gateway,
+      gatewayFallback,
     } = delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
@@ -782,6 +800,14 @@ export class PiRuntime {
           request,
           ...(attention ? { reply: where } : {}),
           ...(attention || accepted ? { refresh: true } : {}),
+          // A mention's request row notes how it ran; a wake has none, so
+          // its turn in this conversation's Activity does.
+          ...(wake && gatewayFallback
+            ? { notice: gatewayFallback.notice }
+            : {}),
+          ...(this.seam
+            ? { gatewayTurn: this.seam.turnContext(gateway ? { gateway } : {}) }
+            : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -866,6 +892,11 @@ export class PiRuntime {
       interrupted = true;
       stopping ??= (async () => {
         if (!submitting) return;
+        // Withdraw the host delivery if it is waiting for a gateway mode change.
+        if (submitted === undefined)
+          await this.pi
+            .request("cancel", { agent: agent.key, key, request })
+            .catch(() => undefined);
         await handed;
         if (!submitted) return;
         await this.pi.request("abort", {
@@ -1000,6 +1031,7 @@ export class PiRuntime {
               .join("\n\n")
           : text,
         request,
+        ...(this.seam ? { gatewayTurn: this.seam.turnContext(delivery) } : {}),
         ...turn,
         ...(community
           ? { key: COMMUNITY_SESSION, at: Date.now() / 1000, context: {} }
@@ -1673,6 +1705,16 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkeyOf(agent));
   }
 }
+
+/** The gateway turn context of a conversation itself, for work no signed
+ * event caused: its channel, its thread unless it spans the channel, and no
+ * message. */
+const placeContext = (agent: Agent, place: SessionPlace) => ({
+  channel_id: place.channelId,
+  message_id: null,
+  thread_id:
+    config(agent.config).scope === "channel" || !place.root ? null : place.root,
+});
 
 /** The conversation key session controls in `place` act on, as `key` makes
  * it: a DM or Solo chat has no root here. */

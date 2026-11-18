@@ -442,12 +442,22 @@ and are asked to sign in again in Buzz.
   without sharable attachment metadata (including custom emoji), show an
   explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
-- Select text in a message, such as by double-clicking a word, and choose
-  **Quote** (or press Q) to add it to the end of that conversation's draft as a
-  quote, ready for your reply below it. A selection in a thread quotes into the
-  thread's reply box. Quoting keeps formatting and links but does not notify
-  anyone mentioned in the quoted text. The floating Quote button hides while
-  a menu, picker, or dialog is open.
+- Select text in a message, such as by double-clicking a word, then right-click
+  the highlight and choose **Quote highlight** (or press Q) to add it to that
+  conversation's draft as a quote, ready for your reply below it. Published
+  messages include a “From” attribution linking to the original above the quote,
+  followed by a blank line for your reply. A selection
+  in a thread quotes into the thread's reply box. Quoting keeps formatting and
+  links but does not notify anyone mentioned in the quoted text. **Copy highlight**
+  keeps formatting and links where supported, with a plain-text alternative.
+  Both highlight actions appear above the usual message actions when you right-click
+  highlighted text. On a selected link, **Copy link URL** copies the link's
+  destination; **Copy message link** copies the message's permalink.
+  Supported browsers keep that text highlighted while the menu is
+  open. On touch devices, select text and open the message's **⋯** menu for these
+  highlight actions. Only messages included in the selection offer them; a
+  selection spanning messages works from any included message. Long presses
+  keep the native text-selection menu.
 - Copying or quoting a selection that takes in a message from its start, such
   as one dragged from beside the message or across several messages, puts
   that message's author and time on one line above its text. The time is left
@@ -807,7 +817,10 @@ and are asked to sign in again in Buzz.
   a count and why it ranks there. Messages lead when the text reads like a
   phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
-  and after it, or a channel's or person's latest messages. Tab and Shift+Tab,
+  and after it, or a channel's or person's latest messages. Up and Down move
+  the highlight; add your own keys under **Previous search result** and
+  **Next search result** in Settings → Shortcuts, for example ⌃K and ⌃J on a
+  Mac, and the key hints show them. Up and Down keep working. Tab and Shift+Tab,
   or the group filter buttons above the results, show one group whole, as
   does choosing a group's heading when it has more; Escape goes back. Groups
   reorder as slower results arrive until you move the highlight; after that
@@ -1607,6 +1620,18 @@ available rather than silently discarding it.
   the feed; the dialog identifies it in words and offers no restore action.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
+- Some builds run a Pi agent in certain communities through a model gateway.
+  Its Settings, providers and models stay Pi's own, with no gateway entry:
+  Buzz sends the agent's chosen Anthropic or OpenAI model through the gateway
+  in the background. A gateway turn on another provider's model fails with a
+  note to choose an Anthropic or OpenAI model in its Identity tab, and a model
+  the gateway doesn't serve fails with the gateway's answer; neither runs
+  without the gateway. When Buzz can't use the gateway for a turn (for example
+  readiness or network), the turn runs on the agent's own configured provider
+  and model, and only then does its prompt note "Ran without the agent
+  gateway" with the reason. A sign-in the gateway refuses fails the turn
+  instead. Buzz never resends work already sent through the gateway without
+  it.
 - **Agents → Your teams → Previous versions**, in a team's editor, lists the
   saved versions of a team that syncs to a community, the same way. Reverting
   restores its instructions and keeps its current name; members are not

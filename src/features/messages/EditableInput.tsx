@@ -540,6 +540,25 @@ export function EditableInput({
     };
   }, []);
 
+  // A selection keeps painting after focus leaves the editor or its window,
+  // where :focus no longer matches. Selected tokens follow the selection.
+  useLayoutEffect(() => {
+    const root = mount.current;
+    const document = root?.ownerDocument;
+    if (!root || !document) return;
+    const track = () => {
+      const selection = document.getSelection();
+      root.toggleAttribute(
+        "data-selection-inside",
+        !!selection?.rangeCount &&
+          root.contains(selection.anchorNode) &&
+          root.contains(selection.focusNode),
+      );
+    };
+    document.addEventListener("selectionchange", track);
+    return () => document.removeEventListener("selectionchange", track);
+  }, []);
+
   useLayoutEffect(() => {
     if (!mount.current) return;
     const initial = readComposerDocument(
@@ -1063,11 +1082,12 @@ export function EditableInput({
       editor.focus();
       return { from, to: editor.state.selection.to };
     };
-    /** Quote copied timeline content after the draft, wherever its caret is,
-     * and continue on a new line below it. A blank last paragraph, such as an
-     * empty draft's, gives way to the quote. Quoted identity links stay
-     * references: unlike a paste, quoting someone never notifies them. */
-    const insertQuote = (html: string) => {
+    /** Quote copied timeline content with its source links after the draft,
+     * wherever its caret is, and leave a blank line for the reply.
+     * A blank last paragraph, such as an empty draft's, gives way to the quote.
+     * Quoted identity links stay references: unlike a paste, quoting someone
+     * never notifies them. */
+    const insertQuote = (html: string, sourceLinks: readonly string[] = []) => {
       if (!editable() || composing.current || editor.composing) return false;
       const copy = buzzCopyDocument(html);
       if (!copy?.textContent.trim()) return false;
@@ -1079,8 +1099,18 @@ export function EditableInput({
         last?.type === nodes.paragraph && !last.content.size
           ? end - last.nodeSize
           : end;
+      const previous = tr.doc.resolve(from).nodeBefore;
       tr.replaceWith(from, end, [
+        ...(sourceLinks.length &&
+        previous?.type === nodes.paragraph &&
+        previous.content.size
+          ? [nodes.paragraph.create()]
+          : []),
+        ...sourceLinks.map((link) =>
+          nodes.paragraph.create(null, composerSchema.text(`From ${link}:`)),
+        ),
         nodes.blockquote.create(null, copy.content),
+        ...(sourceLinks.length ? [nodes.paragraph.create()] : []),
         nodes.paragraph.create(),
       ]);
       tr.setSelection(Selection.atEnd(tr.doc));

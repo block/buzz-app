@@ -1,5 +1,7 @@
 import { matchRank } from "../../features/search/match";
 import {
+  createContext,
+  useContext,
   useLayoutEffect,
   useRef,
   useEffect,
@@ -17,7 +19,11 @@ import { Badge } from "../../shared/design-system/ui/Badge";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { isApplePlatform } from "../../features/shortcuts/format";
+import { matches, type KeyBinding } from "../../features/shortcuts/bindings";
+import {
+  formatBinding,
+  isApplePlatform,
+} from "../../features/shortcuts/format";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import { channelIconClass } from "../../shared/inline-reference";
@@ -137,6 +143,15 @@ export type SearchPeek = {
    * with the reason shown while it's chosen. */
   unsearched?: Readonly<Record<string, ReactNode>> | undefined;
 };
+
+/** The person's keys for the previous and next result, which the field
+ * matches and the key hints show. */
+export type SearchSteps = { previous: KeyBinding; next: KeyBinding };
+export const DEFAULT_SEARCH_STEPS: SearchSteps = {
+  previous: { key: "ArrowUp" },
+  next: { key: "ArrowDown" },
+};
+export const SearchStepsContext = createContext(DEFAULT_SEARCH_STEPS);
 
 /** Top results shows this many rows of its first group, and of the rest. */
 const LEAD_ROWS = 5;
@@ -414,6 +429,7 @@ export function SearchChoices({
   });
   const selected = highlight.active;
   const moved = previewing && highlight.moved;
+  const steps = useContext(SearchStepsContext);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
   useLayoutEffect(() => {
     if (!moved || frozen.current) return;
@@ -811,6 +827,29 @@ export function SearchChoices({
           autoComplete="off"
           maxLength={256}
           onKeyDown={(event) => {
+            const native = event.nativeEvent;
+            // The person's result keys come first, so no other key in the
+            // field takes a chord Settings accepted for them. Bare Up and
+            // Down always move too, as a combobox's arrows do. As in the
+            // dispatcher, composition and AltGr never match.
+            if (!native.isComposing && native.keyCode !== 229) {
+              const step = (
+                [
+                  [steps.next, true],
+                  [steps.previous, false],
+                  [DEFAULT_SEARCH_STEPS.next, true],
+                  [DEFAULT_SEARCH_STEPS.previous, false],
+                ] as const
+              ).find(([binding]) => matches([binding], native, apple));
+              if (step && !native.getModifierState("AltGraph")) {
+                event.preventDefault();
+                restore.current = 0;
+                highlight.move(step[1]);
+                return;
+              }
+              // Other arrow chords, such as Shift+Down, edit the text.
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
+            }
             const shortcutNumber = /^Digit([1-9])$/.exec(event.code)?.[1];
             if (
               !event.nativeEvent.isComposing &&
@@ -838,8 +877,6 @@ export function SearchChoices({
               onEditLastChip?.();
               return;
             }
-            if (event.key === "ArrowDown" || event.key === "ArrowUp")
-              restore.current = 0;
             // Tab moves between groups, and stays in the field while results
             // are still landing. Past the first or last group it moves on as
             // Tab does, so retry and other controls stay in reach.
@@ -1151,8 +1188,8 @@ export function SearchChoices({
           aria-hidden="true"
         >
           <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> Move
+            <kbd>{formatBinding(steps.previous, apple).text}</kbd>
+            <kbd>{formatBinding(steps.next, apple).text}</kbd> Move
           </span>
           {ranked.length > 0 && (
             <span>

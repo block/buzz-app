@@ -119,6 +119,7 @@ import {
 import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
+  PublishNotSent,
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
@@ -148,6 +149,10 @@ import {
   type ArtifactSyncView,
   createArtifactSyncView,
 } from "./artifact-sync";
+import {
+  typePolicyTemplate,
+  type ArtifactTypePolicyValue,
+} from "./artifact-community";
 import {
   retainEvents,
   matchesEvent,
@@ -2481,6 +2486,8 @@ export function createRelaySession(
     if (connected && !liveWasConnected) recovery?.retryNow(liveRecovery);
     liveWasConnected = connected;
   });
+  const artifactCommunity = transport?.artifactCommunity;
+  const artifactTypePolicy = transport?.artifactTypePolicy;
   const session = Object.freeze({
     artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
@@ -3085,10 +3092,62 @@ export function createRelaySession(
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
     /** NIP-AR sync: an exact, kept-current set of current artifacts for a
-     * filter that names its channels with `#h`. Status `unsupported` means
+     * filter that names its channels with `#h`, or for one `#type` of this
+     * community with `"scope": "community"`. Status `unsupported` means
      * this relay has no sync; use read() with `artifact: "current"` instead.
      * Dispose with the plugin's scope. */
     artifacts: {
+      ...(artifactCommunity && artifactTypePolicy
+        ? {
+            /** The community's id, when the relay keeps community-scoped
+             * artifacts; always with `typePolicy`. */
+            communityId: artifactCommunity,
+            /** Each type's write policy (kind 9034), set as the viewer. */
+            typePolicy: {
+              read: (type: string, signal: AbortSignal) =>
+                artifactTypePolicy.read(type, signal),
+              /** Signs (filling community and created_at) and publishes once.
+               * Resolves with the command id and the relay's answer; a
+               * transport failure resolves ok:false with an empty message.
+               * Rejects only on a malformed change, a signing failure or an
+               * aborted signal. */
+              async set(
+                change: Readonly<{
+                  type: string;
+                  policy: ArtifactTypePolicyValue;
+                  prev: string;
+                }>,
+                signal: AbortSignal,
+              ) {
+                const { writer } = artifactTypePolicy;
+                const event = await writer.sign(
+                  typePolicyTemplate(
+                    artifactCommunity,
+                    change.type,
+                    change.policy,
+                    change.prev,
+                    Math.floor(Date.now() / 1000),
+                  ),
+                  signal,
+                );
+                try {
+                  const message = (await writer.publish(event, signal)) ?? "";
+                  return { id: event.id, ok: true, message };
+                } catch (error) {
+                  signal.throwIfAborted();
+                  const refused =
+                    error instanceof PublishRejected &&
+                    !(error instanceof PublishNotSent);
+                  return {
+                    id: event.id,
+                    ok: false,
+                    message: refused ? (error.reason ?? error.message) : "",
+                  };
+                }
+              },
+            },
+          }
+        : {}),
       sync(filter: unknown): ArtifactSyncView {
         if (closed || artifactSyncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
           throw new Error("Artifact sync capacity unavailable");

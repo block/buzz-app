@@ -1,8 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { EventTemplate } from "nostr-tools";
 import { createRelaySession } from "./session";
 import type { RelayEvent } from "./events";
 import { keypair, roster, scriptedTransport, signed } from "./testing";
 import type { ArtifactSyncSink } from "./artifact-sync";
+import { PublishNotSent, PublishRejected } from "./outbox";
+import type { ReadTransport } from "./transport";
 
 const viewer = keypair(),
   relay = keypair();
@@ -14,7 +17,7 @@ afterEach(() => {
 const C1 = "11111111-1111-4111-8111-111111111111";
 const filter = { artifact: "current", "#h": [C1] };
 
-function harness(artifactSync: boolean) {
+function harness(artifactSync: boolean, host: Partial<ReadTransport> = {}) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const sinks: ArtifactSyncSink[] = [];
   const closes = vi.fn();
@@ -27,6 +30,7 @@ function harness(artifactSync: boolean) {
     ...wire.transport,
     scope: "https://one.example",
     ...(artifactSync ? { artifactSync: true as const } : {}),
+    ...host,
     subscribe(callbacks) {
       incoming = callbacks.receive;
       callbacks.state({ status: "connected", routes: [] });
@@ -226,6 +230,147 @@ it("cancels the pending retry when a listener restarts the view", async () => {
   expect(h.sinks).toHaveLength(2);
   view.dispose();
   expect(h.closes).toHaveBeenCalledOnce();
+});
+
+const COMMUNITY = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+const TYPE = "example.settings";
+const change = { type: TYPE, policy: "admins", prev: "0" } as const;
+
+/** A host with community-scoped artifacts; `publish` scripts the relay. */
+function policyHost(
+  publish: (signal: AbortSignal) => Promise<string> = async () => "",
+) {
+  const read = vi.fn(async () => ({
+    policy: "admins" as const,
+    revision: null,
+  }));
+  const writer = {
+    sign: vi.fn(async (template: EventTemplate) => signed(viewer, template)),
+    publish: vi.fn((_event: RelayEvent, signal: AbortSignal) =>
+      publish(signal),
+    ),
+  };
+  const { owner } = harness(false, {
+    artifactCommunity: COMMUNITY,
+    artifactTypePolicy: { read, writer },
+  });
+  const { communityId, typePolicy } = owner.session.artifacts;
+  if (!typePolicy) throw new Error("missing typePolicy");
+  return { communityId, typePolicy, read, writer };
+}
+
+it.each([
+  ["no community scope", {}],
+  ["a community without a policy route", { artifactCommunity: COMMUNITY }],
+])("offers no community or type policy with %s", (_, host) => {
+  const { artifacts } = harness(false, host).owner.session;
+  expect(artifacts).not.toHaveProperty("communityId");
+  expect(artifacts).not.toHaveProperty("typePolicy");
+});
+
+it("offers the community id and reads a type's policy through the host", async () => {
+  const h = policyHost();
+  expect(h.communityId).toBe(COMMUNITY);
+  const { signal } = new AbortController();
+  await expect(h.typePolicy.read(TYPE, signal)).resolves.toEqual({
+    policy: "admins",
+    revision: null,
+  });
+  expect(h.read).toHaveBeenCalledWith(TYPE, signal);
+});
+
+it.each([
+  ["accepted", async () => "", true, ""],
+  [
+    "refused with the relay's reason",
+    () =>
+      Promise.reject(
+        new PublishRejected(
+          "You don't have permission.",
+          "restricted: community artifact access denied",
+        ),
+      ),
+    false,
+    "restricted: community artifact access denied",
+  ],
+  [
+    "refused with only a message",
+    () =>
+      Promise.reject(
+        new PublishRejected(
+          "conflict: the relay state changed; reload before writing again",
+        ),
+      ),
+    false,
+    "conflict: the relay state changed; reload before writing again",
+  ],
+  [
+    "not sent",
+    () => Promise.reject(new PublishNotSent("rate-limited: slow down")),
+    false,
+    "",
+  ],
+  [
+    "unconfirmed",
+    () =>
+      Promise.reject(new Error("Relay delivery could not be confirmed (502)")),
+    false,
+    "",
+  ],
+])(
+  "signs this community's command once and reports %s",
+  async (_, publish, ok, message) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_123_456 });
+    const h = policyHost(publish);
+    const result = await h.typePolicy.set(change, new AbortController().signal);
+    expect(h.writer.sign).toHaveBeenCalledOnce();
+    expect(h.writer.sign.mock.calls[0]?.[0]).toEqual({
+      kind: 9034,
+      created_at: 1_700_000_123,
+      content: "",
+      tags: [
+        ["community", COMMUNITY],
+        ["type", TYPE],
+        ["policy", "admins"],
+        ["prev", "0"],
+      ],
+    });
+    const event = await h.writer.sign.mock.results[0]?.value;
+    expect(h.writer.publish).toHaveBeenCalledOnce();
+    expect(h.writer.publish.mock.calls[0]?.[0]).toBe(event);
+    expect(result).toEqual({ id: event.id, ok, message });
+  },
+);
+
+it("refuses a malformed change before signing", async () => {
+  const h = policyHost();
+  await expect(
+    h.typePolicy.set(
+      { ...change, prev: "A".repeat(64) },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+  expect(h.writer.sign).not.toHaveBeenCalled();
+});
+
+it("rejects when signing fails or the caller aborts the publish", async () => {
+  const h = policyHost(
+    (signal) =>
+      new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      ),
+  );
+  h.writer.sign.mockRejectedValueOnce(new Error("Signer unavailable"));
+  await expect(
+    h.typePolicy.set(change, new AbortController().signal),
+  ).rejects.toThrow("Signer unavailable");
+  expect(h.writer.publish).not.toHaveBeenCalled();
+
+  const controller = new AbortController();
+  const pending = h.typePolicy.set(change, controller.signal);
+  await vi.waitFor(() => expect(h.writer.publish).toHaveBeenCalledOnce());
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 });
 
 function nth<T>(items: readonly T[], index: number): T {

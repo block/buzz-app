@@ -5,6 +5,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ProfileQueries } from "../relay/profile-directory";
 import type { AgentLibrary } from "../agents/library";
 import { createContributions } from "../../plugins/contributions";
+import type { IdentityArchives } from "../relay/identity-archives";
 
 export type NamingPolicy = {
   id: string;
@@ -23,6 +24,10 @@ export type NameSource = {
   viewer?: string | undefined;
   relayUrl?: string | undefined;
   profiles: ProfileQueries;
+  /** Known archives label an identity without letting it displace a live name. */
+  archives?:
+    | Pick<IdentityArchives, "snapshot" | "subscribe" | "ensure">
+    | undefined;
   agentLibrary: {
     snapshot(): AgentLibrary & { status: string };
     subscribe(listener: () => void): () => void;
@@ -149,6 +154,7 @@ export function bindNames(
     emit();
   };
   const stops = [source.profiles.subscribe(emit)];
+  if (source.archives) stops.push(source.archives.subscribe(emit));
   if (providers) stops.push(providers.subscribe(select));
   select();
   // Callers resolve many keys against one candidate array (a channel's

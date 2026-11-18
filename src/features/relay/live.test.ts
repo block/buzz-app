@@ -118,6 +118,7 @@ function setup(
   batchSize = 10,
   random?: () => number,
   signatures?: SignatureVerifier,
+  archiveAuthority?: string,
 ) {
   const key = keypair(),
     sockets: Socket[] = [];
@@ -144,6 +145,7 @@ function setup(
     batchSize,
     random,
     signatures,
+    archiveAuthority,
   );
   owner.update(channels);
   const first = sockets[0];
@@ -4499,6 +4501,57 @@ it("receives public agent metadata on the existing profile route without another
         phase: "live",
       });
     }
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("carries the archive authority's 13535 snapshots on the profile route, replay and live", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  expect(() =>
+    setup([], undefined, undefined, undefined, undefined, "invalid"),
+  ).toThrow("Invalid archive authority");
+  const h = setup([], undefined, undefined, undefined, undefined, relay.pubkey);
+  try {
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const route = h.first
+      .requests()
+      .find((request) => request[2].kinds.includes(10100));
+    assert.exists(route);
+    expect(route.slice(2, 4)).toEqual([
+      { kinds: [0, 10100, 30177], since: expect.any(Number), limit: 500 },
+      {
+        kinds: [13535],
+        authors: [relay.pubkey],
+        since: route[2].since,
+        limit: 500,
+      },
+    ]);
+    // No extra wire: the archive filter rides the existing global.
+    expect(h.first.requests()).toHaveLength(2);
+    const replayed = signed(relay, {
+      kind: 13535,
+      content: "",
+      tags: [["-"]],
+      created_at: 10,
+    });
+    await h.first.receive(["EVENT", route[1], replayed]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([replayed], {
+      phase: "replay",
+    });
+    await h.first.receive(["EOSE", route[1]]);
+    const live = signed(relay, {
+      kind: 13535,
+      content: "",
+      tags: [["-"]],
+      created_at: 11,
+    });
+    await h.first.receive(["EVENT", route[1], live]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([live], {
+      phase: "live",
+    });
   } finally {
     h.owner.dispose();
   }

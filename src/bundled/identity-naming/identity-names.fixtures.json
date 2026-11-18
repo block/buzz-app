@@ -1782,6 +1782,136 @@
           "qualifier": null
         }
       }
+    },
+    {
+      "name": "archived_namesake_never_suffixes_live_identity",
+      "identities": [
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Honey",
+          "archived": true
+        },
+        {
+          "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "name": "Honey"
+        }
+      ],
+      "viewer": "1111111111111111111111111111111111111111111111111111111111111111",
+      "expected": {
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": {
+          "name": "Honey",
+          "qualifier": null
+        },
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+          "name": "Honey · pktz",
+          "qualifier": "pktz"
+        }
+      }
+    },
+    {
+      "name": "archived_human_loses_to_live_agent",
+      "identities": [
+        {
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Wes"
+        },
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Honey",
+          "archived": true
+        },
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Honey",
+          "isAgent": true,
+          "ownerPubkey": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "viewer": "1111111111111111111111111111111111111111111111111111111111111111",
+      "candidates": [
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "expected": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+          "name": "Honey",
+          "qualifier": null
+        },
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+          "name": "Honey · pktz",
+          "qualifier": "pktz"
+        }
+      }
+    },
+    {
+      "name": "live_namesakes_stay_distinct_beside_archived",
+      "identities": [
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Honey",
+          "archived": true
+        },
+        {
+          "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "name": "Honey"
+        },
+        {
+          "pubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "name": "Honey"
+        }
+      ],
+      "viewer": "1111111111111111111111111111111111111111111111111111111111111111",
+      "expected": {
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+          "name": "Honey · pktz",
+          "qualifier": "pktz"
+        },
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": {
+          "name": "Honey · dmpv",
+          "qualifier": "dmpv"
+        },
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+          "name": "Honey · nwcq",
+          "qualifier": "nwcq"
+        }
+      }
+    },
+    {
+      "name": "archived_human_does_not_qualify_live_agents",
+      "identities": [
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Honey",
+          "archived": true
+        },
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Honey",
+          "isAgent": true,
+          "ownerPubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Honey",
+          "isAgent": true,
+          "ownerPubkey": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "viewer": "1111111111111111111111111111111111111111111111111111111111111111",
+      "expected": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+          "name": "Honey · rcaj",
+          "qualifier": "rcaj"
+        },
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+          "name": "Honey · 04hu",
+          "qualifier": "04hu"
+        },
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+          "name": "Honey · pktz",
+          "qualifier": "pktz"
+        }
+      }
     }
   ]
 }

@@ -2,6 +2,7 @@ import { scopeKeys, type NamingIdentity } from "./policy";
 import type { NameProvider, NameSource, NamingPolicy } from "./service";
 import type { LocalAgents } from "../agents/local";
 import { relayOrigin } from "../communities/destination";
+import { archiveHides } from "../relay/identity-archives";
 
 function sameCommunity(left: string, right: string) {
   try {
@@ -69,7 +70,14 @@ export function createNameProvider(
     const relayUrl = source.relayUrl;
     const library = source.agentLibrary.snapshot();
     const profiles = source.profiles.snapshot();
-    const inputs = [library, native, profiles, relayUrl, source.viewer];
+    const inputs = [
+      library,
+      native,
+      profiles,
+      relayUrl,
+      source.viewer,
+      source.archives?.snapshot().archived,
+    ];
     if (base && inputs.every((input, index) => input === base?.inputs[index]))
       return base;
     const names = new Map<string, string>();
@@ -160,11 +168,28 @@ export function createNameProvider(
         return row ? [row] : [];
       });
     }
+    const scoped = [
+      ...[...rows].filter((row) => !displayedKeys.has(row.pubkey)),
+      ...displayed,
+    ];
+    // Archives are read lazily: a namesake collision is the first demand for
+    // them here, since live replay alone misses an older snapshot.
+    const holders = new Map<string, string>();
+    for (const { name, pubkey } of scoped) {
+      const key = pubkey.toLowerCase();
+      const holder = holders.get(name.trim()) ?? key;
+      holders.set(name.trim(), holder);
+      if (holder !== key) {
+        void source.archives?.ensure();
+        break;
+      }
+    }
     return policy.resolve(
-      [
-        ...[...rows].filter((row) => !displayedKeys.has(row.pubkey)),
-        ...displayed,
-      ],
+      scoped.map((row) =>
+        archiveHides(source.archives, row.pubkey.toLowerCase(), source.viewer)
+          ? { ...row, archived: true }
+          : row,
+      ),
       source.viewer,
       selection,
     );

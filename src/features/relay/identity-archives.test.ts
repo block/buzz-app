@@ -585,6 +585,132 @@ it.each(["cancel", "cache", "dispose"] as const)(
     }
   },
 );
+
+/** Answers every read until the wire is quiet; returns the archive reads. */
+async function drain(h: ReturnType<typeof harness>, archive: RelayEvent[]) {
+  let reads = 0;
+  for (let quiet = 0; quiet < 3; ) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!h.wire.pending.length) quiet++;
+    else quiet = 0;
+    for (const entry of h.wire.pending.splice(0)) {
+      const archives = entry.filters.some((f) => f.kinds?.includes(13535));
+      if (archives) reads++;
+      entry.respond(archives ? archive : []);
+    }
+  }
+  return reads;
+}
+it("applies live relay-signed snapshots under the same validation and ordering fence", () => {
+  const h = harness();
+  h.live.receive([snapshot(5)]);
+  expect(h.archives.snapshot()).toMatchObject({ status: "ready" });
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  // Foreign authors, older snapshots and losing equal-time ties change nothing.
+  h.live.receive([
+    signed(other, {
+      kind: 13535,
+      created_at: 9,
+      content: "",
+      tags: [["-"]],
+    }),
+    snapshot(4, []),
+  ]);
+  const head = h.archives.snapshot();
+  // Signatures are random per run: search for a tie that loses on id.
+  let tie: RelayEvent;
+  for (let i = 0; ; i++) {
+    tie = snapshot(5, [i.toString(16).padStart(64, "0")]);
+    if (tie.id > (head.eventId ?? "")) break;
+  }
+  h.live.receive([tie]);
+  expect(h.archives.snapshot()).toBe(head);
+  // A malformed relay snapshot makes state unknown but keeps known archives.
+  h.live.receive([
+    signed(relay, { kind: 13535, created_at: 6, content: "x", tags: [["-"]] }),
+  ]);
+  expect(h.archives.snapshot().status).toBe("error");
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(true);
+  h.live.receive([snapshot(7, [])]);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  expect(h.query).not.toHaveBeenCalled();
+});
+it.each([
+  ["an older snapshot", [snapshot(4)]],
+  ["no snapshot", []],
+  ["a failed read", new Error("unreachable")],
+])(
+  "a live snapshot that overtakes a read wins over %s",
+  async (_, response) => {
+    const h = harness();
+    const pending = h.archives.refresh();
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    h.live.receive([snapshot(5, [])]);
+    const request = h.wire.next();
+    if (response instanceof Error) request.fail(response);
+    else request.respond(response);
+    await pending;
+    expect(h.archives.snapshot()).toMatchObject({
+      status: "ready",
+      createdAt: 5,
+    });
+    expect(h.archives.snapshot().error).toBeUndefined();
+    expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  },
+);
+it("reconnect resumes on a continuous replay, rereads once when cut, and never reads undemanded", async () => {
+  const h = harness();
+  const reconnect = (continuous?: boolean) => {
+    h.live.state({ status: "retrying", routes: [] });
+    h.live.state({ status: "connected", routes: [] });
+    if (continuous === undefined) h.live.established();
+    else h.live.established(undefined, { route: "profiles", continuous });
+  };
+  await drain(h, []);
+  // Never demanded: no reconnect of either kind reads archives.
+  reconnect(false);
+  expect(await drain(h, [])).toBe(0);
+  await read(h, [snapshot(1)]);
+  reconnect(true);
+  // Disconnected evidence is retained but not current.
+  expect(await drain(h, [])).toBe(0);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  expect(h.archives.snapshot().status).toBe("ready");
+  // A replayed snapshot arrives before establishment and is applied.
+  h.live.state({ status: "retrying", routes: [] });
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  h.live.state({ status: "connected", routes: [] });
+  h.live.receive([snapshot(2, [])], { phase: "replay" });
+  h.live.established(undefined, { route: "profiles", continuous: true });
+  expect(await drain(h, [])).toBe(0);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  // A cut replay, or a host that reports no route, rereads once.
+  reconnect(false);
+  expect(await drain(h, [snapshot(3)])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  reconnect();
+  expect(await drain(h, [snapshot(3)])).toBe(1);
+  // A failed reread leaves nothing to resume: the next continuous one reads.
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  await vi.waitFor(() =>
+    expect(
+      h.wire.pending.some((entry) =>
+        entry.filters.some((f) => f.kinds?.includes(13535)),
+      ),
+    ).toBe(true),
+  );
+  for (const entry of h.wire.pending.splice(0))
+    entry.filters.some((f) => f.kinds?.includes(13535))
+      ? entry.fail(new Error("refused"))
+      : entry.respond([]);
+  await vi.waitFor(() => expect(h.archives.snapshot().status).toBe("error"));
+  reconnect(true);
+  expect(await drain(h, [snapshot(3)])).toBe(1);
+  expect(h.archives.snapshot().status).toBe("ready");
+});
 it.each(
   outOfBounds().map(([label, conditions]) => [
     `a ${label} profile proof`,
@@ -752,4 +878,138 @@ it("a proof that can't be issued archives nothing", async () => {
     ),
   ).rejects.toThrow("Set up your identity first");
   expect(fixture.signedBy).toEqual([]);
+});
+
+it("a malformed replay cannot make retained archives current on a continuous reconnect", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  h.live.receive([snapshot(5)]);
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.receive(
+    [
+      signed(relay, {
+        kind: 13535,
+        created_at: 6,
+        content: "x",
+        tags: [["-"]],
+      }),
+    ],
+    { phase: "replay" },
+  );
+  h.live.established(undefined, { route: "profiles", continuous: true });
+  expect(await drain(h, [])).toBe(0);
+  expect(h.archives.snapshot().status).toBe("error");
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(true);
+  // Neither an old replay nor an explicit read of it can restore freshness.
+  h.live.receive([snapshot(5)]);
+  await read(h, [snapshot(5)]);
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  h.live.receive([snapshot(7, [])]);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+});
+it.each([
+  ["an older snapshot", [snapshot(4)]],
+  ["the previous head", [snapshot(5)]],
+  ["no snapshot", []],
+  ["a failed read", new Error("unreachable")],
+])(
+  "a malformed live snapshot fences an outstanding read returning %s",
+  async (_, response) => {
+    const h = harness();
+    h.live.receive([snapshot(5)]);
+    const pending = h.archives.refresh();
+    const request = h.wire.next();
+    h.live.receive([
+      signed(relay, {
+        kind: 13535,
+        created_at: 6,
+        content: "x",
+        tags: [["-"]],
+      }),
+    ]);
+    if (response instanceof Error) request.fail(response);
+    else request.respond(response);
+    await pending;
+    expect(h.archives.snapshot().status).toBe("error");
+    expect(h.archives.state(target.pubkey)).toBe("unknown");
+    expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(true);
+    await read(h, [snapshot(7, [])]);
+    expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  },
+);
+it("a malformed first live snapshot fences an empty outstanding read", async () => {
+  const h = harness();
+  const pending = h.archives.refresh();
+  const request = h.wire.next();
+  h.live.receive([
+    signed(relay, { kind: 13535, created_at: 6, content: "x", tags: [["-"]] }),
+  ]);
+  request.respond([]);
+  await pending;
+  expect(h.archives.snapshot().status).toBe("error");
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+});
+it("ensure records demand after a live snapshot so a cut reconnect repairs once", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  h.live.receive([snapshot(5)]);
+  await h.archives.ensure();
+  expect(h.query).not.toHaveBeenCalled();
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  expect(await drain(h, [snapshot(6, [])])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+});
+it("a read completed during the outage doesn't stand in for catch-up after a cut reconnect", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  await read(h, [snapshot(1, [])]);
+  h.live.state({ status: "retrying", routes: [] });
+  // An HTTP read while the stream is down makes the list ready again...
+  await read(h, [snapshot(1, [])]);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  // ...but a change after it reaches no one until the stream re-establishes.
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  expect(await drain(h, [snapshot(2)])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  // A continuous replay still covers the gap without a read.
+  h.live.state({ status: "retrying", routes: [] });
+  await read(h, [snapshot(2)]);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: true });
+  expect(await drain(h, [])).toBe(0);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+});
+it("a read outstanding across a cut reconnect is fenced and replaced by a fresh one", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  await read(h, [snapshot(1, [])]);
+  h.live.state({ status: "retrying", routes: [] });
+  const early = h.archives.ensure();
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  const outage = h.wire.next();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  // Re-establishment issues its own read rather than reusing the outstanding one.
+  await vi.waitFor(() =>
+    expect(
+      h.wire.pending.filter((entry) =>
+        entry.filters.some((f) => f.kinds?.includes(13535)),
+      ),
+    ).toHaveLength(1),
+  );
+  // The read issued before re-establishment answers with the old head.
+  outage.respond([snapshot(1, [])]);
+  await early;
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  expect(await drain(h, [snapshot(2)])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
 });

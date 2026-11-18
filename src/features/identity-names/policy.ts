@@ -5,6 +5,8 @@ export type NamingIdentity = {
   name: string;
   isAgent?: boolean;
   ownerPubkey?: string;
+  /** Known-archived (NIP-IA): still labeled, but never displaces a live name. */
+  archived?: boolean;
 };
 
 /** A scope's naming input: its selected keys and the owners of selected
@@ -69,7 +71,15 @@ export function resolveIdentityNames(
         identity,
         base: identity.name.trim(),
         label: identity.name.trim(),
-        priority: identity.isAgent ? (mine ? 2 : 3) : key === viewer ? 0 : 1,
+        priority: identity.archived
+          ? 4
+          : identity.isAgent
+            ? mine
+              ? 2
+              : 3
+            : key === viewer
+              ? 0
+              : 1,
         mine,
         length: 0,
         suffix: undefined as string | undefined,
@@ -104,7 +114,10 @@ export function resolveIdentityNames(
           row.identity.isAgent && !row.length
             ? !row.mine && owner
               ? `${owner}’s ${row.identity.name.trim()}`
-              : group.some((other) => !other.identity.isAgent)
+              : group.some(
+                    (other) =>
+                      !other.identity.isAgent && !other.identity.archived,
+                  )
                 ? `${row.identity.name.trim()} (agent)`
                 : row.base
             : row.base;

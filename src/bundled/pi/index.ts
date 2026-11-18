@@ -5,7 +5,7 @@ import { piHookOutput } from "../hook-output";
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
@@ -54,6 +54,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Without a Pi upstream in this build, every agent keeps its own
     // providers, as the runner sends every turn without the gateway.
     upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
+    (agent, signal, channelId) =>
+      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
   );
   ctx.agentProtection.registerModels({
     label: "Pi",

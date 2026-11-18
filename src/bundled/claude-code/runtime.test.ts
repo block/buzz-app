@@ -341,14 +341,16 @@ function setup(
       interruptible,
       ...(options.named ? { named: options.named } : {}),
       ...picks,
-      // The host's answer, as it is when asked.
-      current: () =>
-        trigger.type === "mention" ||
-        trigger.type === "plugin" ||
-        trigger.type === "attention" ||
-        (attention.on &&
-          objects.get(trigger.slug)?.enabled === true &&
-          !stale.has(trigger.slug)),
+      // The host's answer, as it is when asked, unless the test gives one.
+      current:
+        picks.current ??
+        (() =>
+          trigger.type === "mention" ||
+          trigger.type === "plugin" ||
+          trigger.type === "attention" ||
+          (attention.on &&
+            objects.get(trigger.slug)?.enabled === true &&
+            !stale.has(trigger.slug))),
     } as unknown as Delivery;
     if (
       trigger.type === "mention" ||
@@ -2539,6 +2541,75 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
     await f.deliver({ type: "mention", event }, { ignored });
     expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
     expect(f.claudes()).toHaveLength(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Claude workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event]);
+  try {
+    let live = true;
+    Object.assign(f.runtime, {
+      readyReads: async () => {
+        live = false;
+        return f.runtime["reads"](self);
+      },
+    });
+    const ignored = vi.fn();
+    await f.deliver(
+      { type: "mention", event },
+      { ignored, current: () => live },
+    );
+    expect(ignored).toHaveBeenCalledExactlyOnceWith();
+    expect(f.claudes()).toHaveLength(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event]);
+  try {
+    const readyReads = vi.fn(async () => f.runtime["reads"](self));
+    Object.assign(f.runtime, { readyReads });
+    await f.deliver({ type: "mention", event }, { ignored: vi.fn() });
+    expect(readyReads).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ owner: alice }),
+      expect.any(AbortSignal),
+      "chan-1",
+    );
+    await f.deliver(
+      { type: "mention", event: { ...event, pubkey: alice } },
+      { ignored: vi.fn() },
+    );
+    expect(readyReads).toHaveBeenCalledOnce();
   } finally {
     f.runtime.dispose();
   }

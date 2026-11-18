@@ -44,7 +44,7 @@ import {
   workflowOf,
 } from "../../features/agents/owner-attestation";
 import type { TranscriptTurn } from "../../features/agents/activity-transcript";
-import type { AgentReads } from "../../features/agents/reads";
+import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   agentFolders,
@@ -225,6 +225,9 @@ const listing = (added: readonly AddedTool[]): Listing => ({
 /** How long a session start waits for the agent's recent notes. */
 const NOTES_WAIT_MS = 2_000;
 
+/** A turn's run returns once Claude has it, so this bounds only the hand-over. */
+export const HANDOVER_MS = 2 * 60_000;
+
 export class ClaudeRuntime {
   private disposed = false;
   private readonly confirmedRemote = new Set<AgentKey>();
@@ -297,6 +300,13 @@ export class ClaudeRuntime {
     private readonly bound: (agent: AgentKey) => boolean = () => false,
     private readonly target?: AgentExecution,
     private readonly targetKey?: string,
+    /** The agent's reads once its community is ready, for a workflow's
+     * mention that arrived while it reconnects; rejects when `signal` aborts. */
+    private readonly readyReads?: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+      channelId: string | undefined,
+    ) => Promise<AgentReads | undefined>,
   ) {}
 
   /** A failed turn's error as its report says it, such as where to fix
@@ -449,6 +459,7 @@ export class ClaudeRuntime {
           undefined,
           execution,
           saved.key,
+          this.readyReads,
         );
         runtime.subscribe(() => this.notify());
         this.remote.set(key, { agent, conversation, runtime, execution });
@@ -1074,10 +1085,25 @@ export class ClaudeRuntime {
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
+      // A workflow's mention waits out a reconnect; the check below decides.
+      const ready = workflowMarked(trigger.event, agent.owner)
+        ? this.readyReads
+        : undefined;
+      const reads = ready
+        ? await ready(
+            agent,
+            signal,
+            channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+          )
+        : this.reads(agent.key);
+      if (ready) {
+        signal.throwIfAborted();
+        if (current && !current()) return ignored?.();
+      }
       const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
-        workflowOf(this.reads(agent.key), agent.pubkey),
+        workflowOf(reads, agent.pubkey),
       );
       if (authority !== "owner") return ignored?.(authority);
     }
@@ -1156,6 +1182,7 @@ export class ClaudeRuntime {
         `${agent.key}/${key}`,
         async (deferred) => {
           deferred ||= admittedDeferred;
+          const handover = deferred && AbortSignal.timeout(HANDOVER_MS);
           if (this.agents.get(agent.key) !== entry) return;
           const admitted = await admission(deferred);
           session = admitted?.session ?? session;
@@ -1167,9 +1194,14 @@ export class ClaudeRuntime {
             deferred ? undefined : signal,
           );
           if (reserved || !deferred) delivery.signal.throwIfAborted();
-          const accepted = deferred ? runtime.target?.signal : signal;
-          if (!accepted)
+          const lifetime = deferred ? runtime.target?.signal : signal;
+          if (!lifetime)
             throw new Error("The remote Claude lifetime is unavailable");
+          // Held work's deadline passed while it waited, so its hand-over
+          // gets its own from now; the turn itself outlives it.
+          const accepted = handover
+            ? AbortSignal.any([lifetime, handover])
+            : lifetime;
           await runtime.run({
             ...delivery,
             ...(session ? { session } : {}),

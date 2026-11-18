@@ -18,10 +18,11 @@ import type {
   RegisteredAgentType,
   TranscriptRequest,
 } from "./service";
-import { AgentSettingsRecovery } from "./AgentSettingsRecovery";
 import { AgentSaveButton } from "./AgentSaveButton";
 import { AgentConfigHistoryRow } from "./AgentConfigHistoryRow";
+import { Button } from "../../shared/design-system/ui/Button";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { incompatibleSettings } from "./agent-config-history";
 import { AgentExecutionNote } from "./AgentExecutionNote";
 import { agentExecution } from "./execution-location";
 
@@ -50,6 +51,7 @@ export function agentSections({
   communities,
   settingsSection,
   settingsContent,
+  openVersionHistory,
 }: {
   agents: Agents;
   agent: Agent;
@@ -67,6 +69,7 @@ export function agentSections({
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
+  openVersionHistory?: (() => void) | undefined;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
   memoryLinks?: MemoryLinks | undefined;
@@ -82,6 +85,10 @@ export function agentSections({
       </SettingsGroup>
     ) : undefined;
   const details = settingsContent ?? historyContent;
+  const recoverable =
+    agent.place === "here" &&
+    agent.configProblem &&
+    incompatibleSettings(agents.configHistory(agent.key));
   // Remote harnesses own their availability-dependent execution guidance.
   const execution = type?.remote ? undefined : agentExecution(agent, type);
   const typeTabs = type?.tabs ?? [];
@@ -105,6 +112,7 @@ export function agentSections({
           }
           agents={agents}
           agent={agent}
+          openVersionHistory={recoverable ? openVersionHistory : undefined}
         >
           {(save) => {
             const content = (
@@ -250,10 +258,12 @@ function EditorBase({
   agents,
   agent,
   children,
+  openVersionHistory,
 }: {
-  agents: Pick<Agents, "save" | "snapshot" | "configHistory">;
+  agents: Pick<Agents, "save" | "snapshot">;
   agent: Agent;
   children(save: AgentViewProps["save"]): ReactNode;
+  openVersionHistory?: (() => void) | undefined;
 }) {
   const [base, setBase] = useState(agent.configBase);
   const editor = children(async (config, options) => {
@@ -273,7 +283,13 @@ function EditorBase({
           <p role="alert" className="buzz-field-error">
             {agent.configProblem}
           </p>
-          <AgentSettingsRecovery agents={agents} agentKey={agent.key} />
+          {openVersionHistory && (
+            <div>
+              <Button variant="link" size="text" onClick={openVersionHistory}>
+                Open Previous Versions
+              </Button>
+            </div>
+          )}
         </div>
       )}
       {editor}

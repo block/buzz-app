@@ -9,7 +9,14 @@ import type {
   HistoryPresentation,
   HistorySelection,
 } from "./history-presentation";
-import { recalledHistory, type History } from "./agent-config-history";
+import { artifactOp } from "./agent-config-artifacts";
+import {
+  incompatibleSettings,
+  recalledHistory,
+  revisionProblem,
+  segments,
+  type History,
+} from "./agent-config-history";
 import type { Agents, ConfigHistory } from "./service";
 
 /** One settings disclosure; each track keeps its existing history owner. */
@@ -44,14 +51,18 @@ export function ConfigHistoryRow({
   const [localSelection, select] = useState<HistorySelection>();
   const selected = presentation ? presentation.selected : localSelection;
   const setSelected = presentation?.select ?? select;
+  const incompatible = incompatibleSettings(history);
   const [expanded, setExpanded] = useState<string[]>(() =>
-    selected || presentation?.active ? ["Previous versions"] : [],
+    selected || presentation?.active || incompatible
+      ? ["Previous versions"]
+      : [],
   );
   const selectionId = selected?.id;
   const active = presentation?.active;
   useEffect(() => {
-    if (selectionId || active) setExpanded(["Previous versions"]);
-  }, [selectionId, active]);
+    if (selectionId || active || incompatible)
+      setExpanded(["Previous versions"]);
+  }, [selectionId, active, incompatible]);
   const [counts, setCounts] = useState<
     Partial<Record<"settings" | "instructions", History>>
   >(() =>
@@ -101,6 +112,20 @@ export function ConfigHistoryRow({
         b.event.created_at - a.event.created_at ||
         a.event.id.localeCompare(b.event.id),
     );
+  const settings = incompatible
+    ? history.sides.find(({ side }) => side === "settings")
+    : undefined;
+  const loadedSettings = counts.settings;
+  const latestCompatible =
+    settings?.head && loadedSettings
+      ? segments(loadedSettings)
+          .find(({ revisions }) => revisions[0]?.id === settings.head?.id)
+          ?.revisions.find(
+            (event) =>
+              artifactOp(event) !== "delete" &&
+              !revisionProblem(settings.expected, event, history.settings),
+          )?.id
+      : undefined;
   return (
     <Accordion
       variant="settings"
@@ -130,6 +155,9 @@ export function ConfigHistoryRow({
                     expected={track.expected}
                     settings={
                       track.side === "settings" ? history.settings : undefined
+                    }
+                    latestCompatible={
+                      track.side === "settings" && latestCompatible === event.id
                     }
                     onSelect={() =>
                       setSelected({ side: track.side, id: event.id })

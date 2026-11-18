@@ -391,7 +391,7 @@ it("retains opening revisions for ordinary tabs and forwards explicitly reconcil
   });
 });
 
-it("repairs incompatible synced fields explicitly without changing unrelated settings", async () => {
+it("offers a direct history link for incompatible synced settings", async () => {
   const content = {
     version: 1,
     agentType: "test/echo",
@@ -420,6 +420,7 @@ it("repairs incompatible synced fields explicitly without changing unrelated set
     content: JSON.stringify(content),
   };
   const revise = vi.fn(async () => ({ status: "accepted" as const }));
+  const openVersionHistory = vi.fn();
   const history = {
     read: async () => [],
     sides: [{ side: "settings", expected, head, version: 1 }],
@@ -458,40 +459,17 @@ it("repairs incompatible synced fields explicitly without changing unrelated set
           'Settings can\'t be used: Setting "scope" has an unsupported value',
       },
       type,
+      openVersionHistory,
       memories: undefined,
     })
       .find((section) => section.value === "agent:settings")
       ?.render(),
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Repair settings" }));
-  const dialog = screen.getByRole("dialog", { name: "Repair settings" });
-  expect(dialog).toHaveTextContent("community");
-  expect(dialog).toHaveTextContent("voice");
-  expect(revise).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(revise).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Repair settings" }));
-  await user.click(screen.getByRole("combobox", { name: "scope" }));
-  await user.click(await screen.findByRole("option", { name: /^channel$/ }));
-  await user.type(
-    screen.getByRole("textbox", { name: "model" }),
-    "chosen-model",
-  );
   await user.click(
-    screen.getByRole("button", { name: "Save repaired settings" }),
+    screen.getByRole("button", { name: "Open Previous Versions" }),
   );
-  expect(revise).toHaveBeenCalledTimes(1);
-  const [side, template] = revise.mock.calls[0] as unknown as [
-    string,
-    { content: string; tags: string[][] },
-  ];
-  expect(side).toBe("settings");
-  expect(JSON.parse(template.content)).toEqual({
-    ...content,
-    settings: { scope: "channel", model: "chosen-model", effort: "high" },
-  });
-  expect(template.tags).toContainEqual(["prev", "broken"]);
-  expect(template.tags).toContainEqual(["op", "update"]);
+  expect(openVersionHistory).toHaveBeenCalledOnce();
+  expect(revise).not.toHaveBeenCalled();
   expect(agents.save).not.toHaveBeenCalled();
 });

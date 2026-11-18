@@ -358,6 +358,7 @@ export function AgentConfigVersionRow({
   expected,
   settings,
   label,
+  latestCompatible,
   onSelect,
 }: {
   event: RelayEvent;
@@ -365,6 +366,7 @@ export function AgentConfigVersionRow({
   expected: Expected;
   settings?: SettingsCheck | undefined;
   label?: string;
+  latestCompatible?: boolean;
   onSelect(): void;
 }) {
   useClockFormat();
@@ -402,7 +404,13 @@ export function AgentConfigVersionRow({
                   <span className="sr-only">· Current</span>
                 </>
               )}
-              {invalid ? " · Not valid" : ""}
+              {invalid
+                ? expected.type === "buzz.agent.settings" && settings
+                  ? " · Incompatible"
+                  : " · Not valid"
+                : latestCompatible
+                  ? " · Latest compatible"
+                  : ""}
             </span>
             {event.id === head?.id && (
               <span

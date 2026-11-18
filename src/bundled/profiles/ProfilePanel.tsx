@@ -482,6 +482,10 @@ function ProfileDetails({
           conversation: openedFrom(session, context),
           initialTranscript,
           close,
+          openVersionHistory:
+            tab === "agent:settings"
+              ? undefined
+              : () => setTab("agent:settings"),
           ...(openConversation && { openConversation }),
           ...(settings.settingsHost
             ? { settingsHost: settings.settingsHost }

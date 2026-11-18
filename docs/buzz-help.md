@@ -1289,9 +1289,9 @@ default Huddle voice.
   conversation in that target's workspace. Stop ends its active turn.
   Remote Claude usage totals and transcripts are unavailable.
 
-### Repair incompatible agent settings
+### Recover incompatible agent settings
 
-If an agent’s Identity settings report an unsupported saved field or invalid value, choose **Repair settings**. Review the saved values, replace invalid values with supported choices, and remove fields this build does not recognize. **Save repaired settings** changes only those entries in the shared settings; the other settings stay in place and previous values remain in History. Cancel leaves the saved settings untouched. If another device changes the settings first, close and reopen the repair to review the latest version.
+If an agent reports incompatible synced settings, choose **Open Previous Versions** to go to its Settings tab. Versions this client cannot use are marked **Incompatible**. Open an older compatible Settings version and choose **Revert to this** to restore its settings as a new version. Reverting keeps the agent’s instructions. If you cannot find a compatible version, use a newer client to change the settings.
 
 ### Builderlab accounts and remote agents
 

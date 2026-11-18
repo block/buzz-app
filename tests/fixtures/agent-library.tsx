@@ -4,7 +4,10 @@ import {
   AgentConfigStore,
   syncedSettings,
 } from "../../src/features/agents/agent-config";
-import { artifactTemplate } from "../../src/features/agents/agent-config-artifacts";
+import {
+  artifactTemplate,
+  type SnapshotRead,
+} from "../../src/features/agents/agent-config-artifacts";
 import { localStore } from "../../src/features/agents/store";
 import { createConfigWriter } from "../../src/features/agents/config-writes";
 import { createAppearance } from "../../src/shared/theme/service";
@@ -604,12 +607,26 @@ if (new URLSearchParams(location.search).has("settingsRecovery")) {
       effort: ["low", "high"],
     },
   } as const;
+  const previous = finalizeEvent(
+    artifactTemplate({
+      ...expected,
+      op: "create",
+      title: "Agent settings",
+      content: JSON.stringify({
+        version: 1,
+        agentType: first.type,
+        settings: { scope: "channel", model: "older-model", effort: "high" },
+      }),
+    }),
+    secret,
+  ) as RelayEvent;
   let head: RelayEvent =
     JSON.parse(localStorage.getItem("fixture-recovery-head") ?? "null") ??
     finalizeEvent(
       artifactTemplate({
         ...expected,
-        op: "create",
+        op: "update",
+        prev: previous.id,
         title: "Agent settings",
         content: JSON.stringify({
           version: 1,
@@ -651,9 +668,12 @@ if (new URLSearchParams(location.search).has("settingsRecovery")) {
     };
     for (const listener of listeners) listener();
   };
+  const older = [previous];
+  const readHistory: SnapshotRead = async ([filter]) =>
+    filter?.artifact === "history" ? [head, ...older] : [head];
   const writer = createConfigWriter({
     store,
-    read: async () => [head],
+    read: readHistory,
     online: () => true,
     signal: new AbortController().signal,
     maxEventBytes: 512 * 1024,
@@ -662,6 +682,7 @@ if (new URLSearchParams(location.search).has("settingsRecovery")) {
       publish: async (event) => {
         if (event.tags.find(([name]) => name === "prev")?.[1] !== head.id)
           throw new Error("stale prev");
+        older.unshift(head);
         head = event;
         localStorage.setItem("fixture-recovery-head", JSON.stringify(head));
       },
@@ -673,7 +694,7 @@ if (new URLSearchParams(location.search).has("settingsRecovery")) {
       : {
           sides: [{ side: "settings", expected, head, version: 1 }],
           settings: check,
-          read: async () => [head],
+          read: readHistory,
           revise: async (_side, template) => {
             const result = await writer.revise(
               { subject, expected, title: "Agent settings" },

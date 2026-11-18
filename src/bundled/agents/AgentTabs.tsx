@@ -55,6 +55,7 @@ export function AgentTabs(props: {
   );
   const supplied = agentSections({
     ...props,
+    openVersionHistory: () => choose("agent:management"),
     ...(split ? { settingsSection: "identity" as const } : {}),
   });
   const identity = supplied.find(

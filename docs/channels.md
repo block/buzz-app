@@ -1518,9 +1518,10 @@ this client has sent since that summary placed first, so your own reply's avatar
 is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
 On a supporting relay, the panel opens at the newest 10 replies and loads older
-pages of 50 when you scroll upward; there is no Load more replies button. It validates
-signed NIP-CW thread bounds on every page. A prior scroll gesture wins over initial
-bottom placement. New replies arrive through the existing session and the panel
+pages of 50 when you scroll upward; there is no Load more replies button. An opening
+that starts at the root, or at a remembered reply older than the loaded pages, loads
+older pages first. It validates signed NIP-CW thread bounds on every page. A prior
+scroll gesture wins over initial placement. New replies arrive through the existing session and the panel
 follows near the bottom, preserving reading position above it. Sending a reply is
 explicit navigation intent and reveals the new local row.
 

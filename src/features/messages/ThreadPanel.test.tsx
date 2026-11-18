@@ -128,6 +128,7 @@ vi.mock("./MessageComposer", () => ({
 }));
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -1057,7 +1058,7 @@ it("shows a visible inactive preview and read resumed rows at once, without a li
   h.render();
   expect(h.element).not.toHaveAttribute("data-positioning");
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
-  expect(h.element.scrollTop).toBe(4000 - 600);
+  expect(h.element.scrollTop).toBe(0);
 });
 it("waits for resumed rows to refresh and a failed read to recover before deciding the line", () => {
   const h = messagesHarness(ordinaryNavigation());
@@ -1122,17 +1123,23 @@ it("keeps a place the reader chose after a failed read when it recovers", () => 
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(h.element.scrollTop).toBe(4000 - 600);
 });
-it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
+it("opens a read thread at its root once its history loads, and an explicit target at itself, without a line", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply } = unreadReplies(h);
   h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [reply("read", 2), reply("also read", 3)];
   h.render();
-  expect(h.view.loadMore).not.toHaveBeenCalled();
+  // Older replies follow the root, so the opening waits for them.
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [reply("oldest", 1), ...h.snapshot.replies];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
   expect(h.element).not.toHaveAttribute("data-positioning");
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
-  expect(h.element.scrollTop).toBe(4000 - 600);
+  expect(h.element.scrollTop).toBe(0);
   h.unmount();
   cleanup();
 
@@ -1786,7 +1793,8 @@ it.each([
     h.snapshot.replies = [{ ...row, id: "history" }];
     h.resize(4800);
     h.render();
-    expect(h.element.scrollTop).toBe(4200);
+    // A routed opening with nothing unread starts at the root.
+    expect(h.element.scrollTop).toBe(routed ? 0 : 4200);
     expect(h.view.loadMore).toHaveBeenCalledTimes(1);
     // A live update follows without completing the same visit twice.
     h.snapshot.replies = [...h.snapshot.replies, { ...row, id: "live" }];
@@ -1898,7 +1906,8 @@ it("a presented ordinary thread survives the real navigation deadline while hist
     h.snapshot.status = "ready";
     h.snapshot.canLoadMore = false;
     h.render();
-    expect(h.element.scrollTop).toBe(3400);
+    expect(h.element).not.toHaveAttribute("data-positioning");
+    expect(h.element.scrollTop).toBe(0);
     expect(navigation.complete).toHaveBeenCalledTimes(1);
     h.unmount();
   } finally {
@@ -2723,7 +2732,7 @@ it.each([
 
 it.each([
   ["reveals its linked message again", true],
-  ["opens an ordinary thread at its end again", false],
+  ["opens an ordinary thread at its root again", false],
 ])("Back to a place no longer loaded %s", async (_, exact) => {
   const { places, visit, linked } = visitPlaces();
   // An older page the reopened thread has not loaded.
@@ -2738,7 +2747,7 @@ it.each([
   h.snapshot.targetStatus = "ready";
   h.render();
   if (!exact) {
-    expect(h.element.scrollTop).toBe(3400);
+    expect(h.element.scrollTop).toBe(0);
     return;
   }
   const root = h.element.querySelector(`[data-message-id="${row.id}"]`);
@@ -2779,12 +2788,57 @@ it("records a visit's place when the reader leaves, not as replies arrive", () =
   // A return with no recorded place opens as it first did.
   const h = messagesHarness(visit("thread-visit", true));
   h.render();
-  expect(h.element.scrollTop).toBe(3400);
+  expect(h.element.scrollTop).toBe(0);
   h.snapshot.replies = [threadReply("d", row.id)];
   h.render();
   expect(places.has("thread-visit:thread")).toBe(false);
   h.unmount();
   expect(places.has("thread-visit:thread")).toBe(true);
+});
+
+it("opens a read thread where this device last left it: at a reply, loading older pages to it, or at its end", () => {
+  const { visit } = visitPlaces();
+  const [first, second] = [threadReply("d", row.id), threadReply("e", row.id)];
+  layOutRows([row.id, first.id, second.id]);
+  const left = messagesHarness(visit("left"));
+  left.snapshot.replies = [first, second];
+  left.render();
+  expect(left.element.scrollTop).toBe(0);
+  // The first reply is the reader's first visible row, 100 px above the top.
+  left.scroll(2100);
+  left.unmount();
+  cleanup();
+  // An opening whose read failed showed no place, so it records none.
+  const failed = messagesHarness(visit("failed"));
+  failed.snapshot.direction = "older";
+  failed.snapshot.replies = [first, second];
+  failed.snapshot.status = "error";
+  failed.snapshot.error = "offline";
+  failed.render();
+  failed.unmount();
+  cleanup();
+
+  const back = messagesHarness(visit("back"));
+  back.snapshot.direction = "older";
+  back.snapshot.canLoadMore = true;
+  back.snapshot.replies = [second];
+  back.render();
+  expect(back.view.loadMore).toHaveBeenCalledOnce();
+  expect(back.element).toHaveAttribute("data-positioning");
+  back.snapshot.canLoadMore = false;
+  back.snapshot.replies = [first, second];
+  back.render();
+  expect(back.element).not.toHaveAttribute("data-positioning");
+  expect(back.element.scrollTop).toBe(2100);
+  // Left at the latest reply, it reopens there.
+  back.scroll(3400);
+  back.unmount();
+  cleanup();
+
+  const end = messagesHarness(visit("end"));
+  end.snapshot.replies = [first, second];
+  end.render();
+  expect(end.element.scrollTop).toBe(3400);
 });
 
 it("a reader still shown after its route is withdrawn records its place when it leaves", async () => {
@@ -2798,7 +2852,7 @@ it("a reader still shown after its route is withdrawn records its place when it 
   const props = h.props as ThreadPanelProps;
   Object.assign(props, { retainThread: true });
   h.render();
-  expect(h.element.scrollTop).toBe(3400);
+  expect(h.element.scrollTop).toBe(0);
   // A link in the timeline routes elsewhere; the thread stays open beside it
   // and the reader keeps scrolling.
   Object.assign(props, { navigation: undefined });

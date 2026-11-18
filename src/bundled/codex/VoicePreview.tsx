@@ -1,8 +1,16 @@
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Select } from "../../shared/design-system/ui/Select";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
@@ -334,19 +342,39 @@ export function VoicePreview({
                   }}
                 />
               )}
-              {(groups.get(shownLocale) ?? []).map(row)}
+              {!!locales.length && (
+                <>
+                  <div className="pt-2">
+                    <InlineHeader title="Voices" />
+                  </div>
+                  <div className="grid gap-1">
+                    {(groups.get(shownLocale) ?? []).map((value, index) => (
+                      <Fragment key={value}>
+                        {index > 0 && (
+                          <div
+                            aria-hidden="true"
+                            className="border-t border-standard"
+                          />
+                        )}
+                        {row(value)}
+                      </Fragment>
+                    ))}
+                  </div>
+                </>
+              )}
             </RadioGroup>
           </Field>
-          {(previewLoading || playing) && (
+          {previewLoading && (
             <p role="status" className="m-0 text-body-sm text-subtle">
-              {previewLoading
-                ? "Loading voice samples…"
-                : playing?.loading
-                  ? "Loading preview…"
-                  : "Playing preview…"}
+              Loading voice samples…
             </p>
           )}
-          {failure}
+          {failure ??
+            (!previewLoading && (
+              <p role="status" className="sr-only">
+                {playing?.loading ? "Loading preview…" : ""}
+              </p>
+            ))}
         </div>
       </Dialog>
     </>

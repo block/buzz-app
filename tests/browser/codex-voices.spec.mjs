@@ -68,6 +68,15 @@ test("Codex Voices persist separately through the settings host", async ({
   expect((await defaultVoice.boundingBox()).y).toBeLessThan(
     (await locale.boundingBox()).y,
   );
+  const voicesHeading = chooserRows.getByRole("heading", { name: "Voices" });
+  const firstVoice = chooserRows.getByRole("radio", { name: "Cove" });
+  await expect(voicesHeading).toBeVisible();
+  const headingBounds = await voicesHeading.boundingBox();
+  const localeBounds = await locale.boundingBox();
+  expect(headingBounds.y).toBeGreaterThan(localeBounds.y + localeBounds.height);
+  expect(headingBounds.y + headingBounds.height).toBeLessThan(
+    (await firstVoice.boundingBox()).y,
+  );
   await expect(locale).toContainText("American English");
   await expect(
     page.getByRole("radio", { name: "Vale", exact: true }),

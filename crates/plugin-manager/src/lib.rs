@@ -14,8 +14,8 @@ use std::{
 };
 
 pub mod access;
-pub mod gateway;
 pub mod automatic;
+pub mod gateway;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;

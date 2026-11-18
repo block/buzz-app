@@ -543,8 +543,6 @@ const blocked = (
 /** This app's routes, from this build's descriptor. */
 export const gatewayRoutes = new GatewayRoutes(gatewayDescriptor);
 export const routeFor = (key: AgentKey) => gatewayRoutes.routeFor(key);
-export const routeForTurn = (key: AgentKey, wait?: AbortSignal) =>
-  gatewayRoutes.routeForTurn(key, wait);
 export const routeReady = (key: AgentKey, signal: AbortSignal) =>
   gatewayRoutes.routeReady(key, signal);
 export const subscribeRoute = (key: AgentKey, listener: () => void) =>

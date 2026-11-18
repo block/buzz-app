@@ -23332,6 +23332,46 @@ describe("reload in place", () => {
     await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
   });
 
+  it("holds a request made after a reload is ready until its new gateway check answers", async () => {
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    const checked = vi
+      .spyOn(gatewayRoutes, "routeForTurn")
+      .mockImplementation(async () => {
+        await answered;
+        return { kind: "external", revision: 2 } as never;
+      });
+    try {
+      const { service, plugin, reload, connect } = await setup();
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+      const handle = plugin.agents.handle(bot);
+      if (!handle?.settle) throw new Error("Expected a handle that settles");
+      const signal = new AbortController().signal;
+      // Outside a reload nothing waits on the gateway.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).not.toHaveBeenCalled();
+      reload();
+      await settle();
+      connect(true);
+      await settle();
+      // A fresh request after relay-ready still waits for the new check.
+      let waited: boolean | undefined;
+      const call = handle.settle(signal).then((result) => (waited = result));
+      await vi.waitFor(() => expect(checked).toHaveBeenCalledOnce());
+      await settle();
+      expect(waited).toBeUndefined();
+      answer();
+      await call;
+      expect(waited).toBe(true);
+      // Once answered, the marker is gone.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).toHaveBeenCalledOnce();
+    } finally {
+      checked.mockRestore();
+    }
+  });
+
   it("holds a mem_get during a reload and answers it from the new session", async () => {
     const { service, plugin, relay, reload, connect } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });

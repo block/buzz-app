@@ -271,6 +271,7 @@ import {
   type EligibleRoute,
   type FallbackReason,
   gatewayRoutes,
+  TURN_READINESS_WAIT_MS,
 } from "./gateway/route";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
@@ -2139,6 +2140,8 @@ type Bound = {
   binding?: Binding | undefined;
   /** When its failed connection was last tried again. */
   retried?: number;
+  /** Whether its relay is reloading in place. */
+  reloading?: true;
 };
 /** A saved identity, which is the agent's membership in one community, with
  * that membership's key. */
@@ -2364,6 +2367,9 @@ export class AgentsService extends Service implements Agents {
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
+  /** Agents whose community a reload made ready, with that session, until
+   * their first wait sees its gateway access check answer or time out. */
+  private reloaded = new Map<AgentKey, RelaySession>();
   /** The local memberships gateway routing was last told about. */
   private gatewayKeys = new Set<AgentKey>();
   private readonly runners: AgentRunners;
@@ -2592,13 +2598,28 @@ export class AgentsService extends Service implements Agents {
       ready: (key) => this.ready(key),
       reloading: (key) => this.reloading(key),
       settle: async (agent, signal) => {
-        if (!this.reloading(agent.key)) return false;
-        await readyOwnerReads(
-          this.relay(agent.key),
-          agent,
-          AbortSignal.any([signal, AbortSignal.timeout(RELOAD_WAIT_MS)]),
-        ).catch(() => {});
+        const reloading = this.reloading(agent.key);
+        if (reloading)
+          await readyOwnerReads(
+            this.relay(agent.key),
+            agent,
+            AbortSignal.any([signal, AbortSignal.timeout(RELOAD_WAIT_MS)]),
+          ).catch(() => {});
         signal.throwIfAborted();
+        // Then the gateway access check the reloaded session started.
+        const session = this.reloaded.get(agent.key);
+        if (!session || this.bindingOf(agent)?.session !== session)
+          return reloading;
+        await gatewayRoutes.routeForTurn(
+          agent.key,
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(TURN_READINESS_WAIT_MS),
+          ]),
+        );
+        signal.throwIfAborted();
+        if (this.reloaded.get(agent.key) === session)
+          this.reloaded.delete(agent.key);
         return true;
       },
       agent: (key) => this.agent(key),
@@ -8249,6 +8270,17 @@ export class AgentsService extends Service implements Agents {
       });
       this.notify();
       notified = true;
+    }
+    // A reload's agents wait for its session's gateway check once it is ready.
+    for (const [origin, bound] of this.bound) {
+      const { reloading, status, session } = bound.relay.snapshot();
+      if (reloading) bound.reloading = true;
+      else if (bound.reloading) {
+        delete bound.reloading;
+        for (const agent of running)
+          if (originOf(agent.relay) === origin && status === "ready" && session)
+            this.reloaded.set(agent.key, session);
+      }
     }
     // A community reloading in place keeps its agents held meanwhile.
     this.runners.resume(

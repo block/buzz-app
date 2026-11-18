@@ -68,6 +68,7 @@ it.each([
   "reverse",
   "press",
   "scroll",
+  "document scroll",
   "cancel",
   "blur",
   "unmount",
@@ -94,6 +95,7 @@ it.each([
       expect(b.changed).toHaveBeenLastCalledWith(true);
     }
     if (action === "scroll") fireEvent.scroll(scope);
+    if (action === "document scroll") fireEvent.scroll(document);
     if (action === "touch")
       fireEvent.pointerDown(b.content, {
         ...point(150, 160),
@@ -112,6 +114,26 @@ it.each([
     close();
   }
 });
+it("keeps travel active when another message pane scrolls", () => {
+  vi.useFakeTimers();
+  const { a, b, close } = setup();
+  const anotherPane = document.createElement("div");
+  anotherPane.setAttribute("data-message-scroller", "");
+  document.body.append(anotherPane);
+  try {
+    fireEvent.pointerMove(b.content, point(150, 160));
+    fireEvent.scroll(anotherPane);
+    vi.advanceTimersByTime(MESSAGE_ACTION_TRAVEL_IDLE_MS - 1);
+    expect(a.changed).toHaveBeenLastCalledWith(true);
+    expect(b.changed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(a.changed).toHaveBeenLastCalledWith(false);
+    expect(b.changed).toHaveBeenLastCalledWith(true);
+  } finally {
+    close();
+  }
+});
+
 it("releases after small moves away exceed the travel tolerance together", () => {
   vi.useFakeTimers();
   const { a, b, close } = setup();

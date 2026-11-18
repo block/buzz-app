@@ -163,8 +163,15 @@ function hoverOwner(document: Document) {
   const move = (event: PointerEvent) => update(event);
   const press = (event: PointerEvent) => update(event, true);
   const clear = () => select(undefined);
-  const scroll = () => {
-    if (timer !== undefined) clear();
+  const scroll = ({ target }: Event) => {
+    if (
+      timer !== undefined &&
+      current &&
+      target instanceof Node &&
+      (target.contains(current.row) || target.contains(current.bar))
+    ) {
+      clear();
+    }
   };
   const events = ["pointerover", "pointerout", "pointermove"] as const;
   for (const type of events) document.addEventListener(type, move, true);

@@ -3767,9 +3767,7 @@ export class AgentRunners {
               const previous = before.attention[slug]?.value;
               const prior =
                 previous?.type === "interest" ? undefined : previous;
-              const enabling =
-                !prior?.enabled ||
-                sourceCompleted(before.sourceRuns, before.attention[slug]);
+              const enabling = !prior?.enabled;
               const channels =
                 value.type === "event" && value.channels !== "all"
                   ? value.channels.filter(
@@ -3793,9 +3791,13 @@ export class AgentRunners {
                       `Cannot receive events from channel ${channel}. Check channel access and retry this write after metadata is confirmed.`,
                     );
               }
+              // An enabled source write replaces its producer, even if the
+              // destination is unchanged and the previous run failed.
               if (
                 value.channel &&
-                (enabling || prior?.channel !== value.channel)
+                (enabling ||
+                  value.type === "source" ||
+                  prior?.channel !== value.channel)
               ) {
                 const member = this.host.member(agent, {
                   tags: [["h", value.channel]],

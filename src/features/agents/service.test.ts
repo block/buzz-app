@@ -15528,14 +15528,20 @@ describe("Attention plugin sources", () => {
       expect(texts(service)).toEqual(["final output"]);
     },
   );
-  it.each(["cached", "private"] as const)(
-    "refuses completed source restarts without losing output when destination is %s",
-    async (state) => {
+  it.each([
+    ["completed", "cached"],
+    ["completed", "private"],
+    ["failed", "cached"],
+    ["failed", "private"],
+  ] as const)(
+    "refuses %s source restarts without losing output when destination is %s",
+    async (outcome, state) => {
       const { service, run, plugin, native, session } = await sourceFixture();
       run.mockRejectedValue(new Error("delivery failed"));
       const produce = vi.fn(
         async ({ emit }: Parameters<AttentionSource["run"]>[0]) => {
           emit("final output");
+          if (outcome === "failed") throw new Error("producer failed");
         },
       );
       plugin.agents.addAttentionSource({ id: "command", run: produce });
@@ -15543,9 +15549,10 @@ describe("Attention plugin sources", () => {
       await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       await service.save(bot, { attentionEnabled: true, attention: watches });
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() =>
-        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
-      );
+      await settle();
+      const marker = service.find(bot)?.sourceRuns?.["watch/pr"];
+      if (outcome === "completed") expect(marker).toBeDefined();
+      else expect(marker).toBeUndefined();
       const list = session.channels.list();
       const channels = vi.spyOn(session.channels, "list").mockReturnValue({
         ...list,

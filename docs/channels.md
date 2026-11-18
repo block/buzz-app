@@ -556,18 +556,18 @@ fallback if that entry has gone away). Archive retains the current conversation,
 messages, membership and open Settings, replacing Archive with Unarchive once
 the confirmed metadata arrives. The conversation stays selected after reload; archived
 write restrictions still apply. Archived conversations and their threads replace the
-message composer with the lower archived-channel notice. If that composer owned
+message composer with an archive notice in the footer. If that composer owned
 focus, focus moves to the retained message history. Nonempty unsent text, including
 an in-progress message edit, is offered through a host-owned **Copy text** toast;
 empty composers and focus elsewhere do not trigger it. Copy failure retains a retry
-action, and recovery stays available until used or dismissed. The lower
-archived-channel notice also holds channel recovery. It explains that the channel
+action, and recovery stays available until used or dismissed. The thread footer
+shows the archive status. The main channel footer explains that the channel
 is read-only and, for members, hidden from the sidebar until unarchived. Preview
-readers see that the archived channel is read-only. Where live
-channel state already allows Unarchive (a direct owner/admin, or owner-agent
-evidence), the pill offers **Unarchive**, which opens the same confirmation as
-Settings and rechecks the relay when confirmed. Cancelling returns focus to that
-button; confirming removes it, so the restored composer takes focus. Solo chats
+readers see that the archived channel is read-only. Where live channel state
+allows it (a direct owner/admin, or owner-agent evidence), the main channel
+footer offers **Unarchive**, which opens the same confirmation as Settings and
+rechecks the relay when confirmed. Cancelling returns focus to that button.
+Confirming removes it, so the restored composer takes focus. Solo chats
 keep their existing header actions. Archived and read-only histories drop the
 empty state's “Start the conversation below.” hint. Unarchiving restores the
 composer and its saved text draft. A remote unarchive in the same open conversation

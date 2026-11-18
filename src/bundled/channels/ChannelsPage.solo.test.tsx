@@ -2100,6 +2100,43 @@ it("shows only the archived pill to a preview reader without Unarchive permissio
   ).toBeNull();
 });
 
+it("waits for preview history before offering Join after remote unarchive", async () => {
+  const f = fixture({
+    type: "stream",
+    archived: true,
+    preview: {},
+    emptyHistory: true,
+  });
+  const channels: RelaySession["channels"] = f.session.channels;
+  const settled = channels.window(id);
+  const history = vi
+    .spyOn(channels, "window")
+    .mockReturnValue({ ...settled, status: "loading" });
+  const listeners = new Set<() => void>();
+  vi.spyOn(channels, "subscribeWindow").mockImplementation(
+    (_channelId, listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  );
+  f.mount();
+  const archive = await screen.findByRole("region", {
+    name: "Archived channel",
+  });
+  expect(archive).toBeVisible();
+  act(() => f.setArchived(false));
+  expect(archive).toHaveAttribute("inert");
+  expect(screen.queryByRole("button", { name: /^Join$/ })).toBeNull();
+
+  act(() => {
+    history.mockReturnValue(settled);
+    for (const listener of listeners) listener();
+  });
+  expect(await screen.findByRole("button", { name: /^Join$/ })).toBeVisible();
+});
+
 it.each(["private", "public"] as const)(
   "explains lost membership of the open %s channel and leads back to channels",
   async (visibility) => {

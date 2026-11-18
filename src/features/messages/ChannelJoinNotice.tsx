@@ -18,6 +18,7 @@ import styles from "./Messages.module.css";
 export function ChannelJoinNotice({
   channelId,
   ready = true,
+  showArchivedWhileLoading = false,
   lifecycle,
   joinable,
   guest = false,
@@ -31,6 +32,7 @@ export function ChannelJoinNotice({
 }: {
   channelId: string;
   ready?: boolean;
+  showArchivedWhileLoading?: boolean;
   lifecycle?: ChannelLifecycleCapability | undefined;
   joinable: boolean;
   guest?: boolean;
@@ -47,7 +49,10 @@ export function ChannelJoinNotice({
   // Notices float above Join, not over it.
   useToastClearance(notice);
   const [revealedChannel, setRevealedChannel] = useState<string>();
-  const visible = ready || revealedChannel === channelId;
+  const visible =
+    (archived && showArchivedWhileLoading) ||
+    ready ||
+    revealedChannel === channelId;
   useEffect(() => {
     if (ready) setRevealedChannel(channelId);
   }, [ready, channelId]);
@@ -114,7 +119,9 @@ export function ChannelJoinNotice({
         data-ready={visible}
         className={`${styles.channelJoinSurface} pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 p-1.5`}
       >
-        <p className="my-2 max-w-md px-2 text-center text-body-sm text-subtle">
+        <p
+          className={`max-w-md px-2 text-center text-body-sm text-subtle${archived && archivedMessage ? " my-2" : ""}`}
+        >
           {archived
             ? (archivedMessage ?? `This ${place} is archived`)
             : readOnly

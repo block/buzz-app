@@ -779,7 +779,8 @@ and are asked to sign in again in Buzz.
 - **Archived channels** show a notice below their messages explaining that
   they're read-only. Archived channels are hidden from the sidebar and can be
   found in search. If you own or administer the channel, choose **Unarchive**
-  in the notice to restore it for everyone.
+  in the main channel's notice to restore it for everyone. The thread footer
+  shows the archive status.
 - **No longer a member**: if you're removed from the channel you're reading,
   or it's deleted, or you leave it on another device, it says **You’re no
   longer a member of** that channel. Choose **Back to channels** to move on. A

@@ -1575,6 +1575,7 @@ export class CodexRuntime {
     // Voice runs on this computer; a plugin execution target has no voice seat.
     if (await this.inspect?.(agent.key))
       throw new Error("Voice is unsupported for agents on an execution target");
+    seat.signal.throwIfAborted();
     const reads = this.reads(agent.key);
     if (!reads) throw new Error("Connect to the agent's community first");
     const settings = this.resolveConfig(seat.config);
@@ -1589,6 +1590,7 @@ export class CodexRuntime {
       let interrupted = Promise.resolve();
       let interrupting: Active | undefined;
       const interrupt = () => {
+        if (seat.signal.aborted) return;
         const entry = this.entries.get(agent.key);
         const active = entry?.lanes.get(key)?.active;
         if (entry && active && !active.finished && active !== interrupting) {
@@ -1633,6 +1635,7 @@ export class CodexRuntime {
       settings.scope === "community" ? COMMUNITY_SESSION : channelId,
       channelId,
     );
+    seat.signal.throwIfAborted();
     const entry = this.entry(agent.key, reads.scope);
     const lane = entry.lanes.get(key) ?? {
       tail:

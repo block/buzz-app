@@ -9674,6 +9674,62 @@ it.each(["channel", "community"] as const)(
   },
 );
 
+it.each(["channel", "community"] as const)(
+  "leaves active %s work running when voice is cancelled during inspection",
+  async (scope) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("typed work");
+    const config = { ...(d.config as object), scope };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const channelId = scope === "community" ? "room" : "channel";
+    const seat = new AbortController();
+    const inspecting = deferred<void>();
+    const release = deferred<void>();
+    f.huddleChannels.add(channelId);
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    Object.assign(f.runtime, {
+      inspect: async () => {
+        inspecting.resolve();
+        await release.promise;
+      },
+    });
+
+    const opened = vi.mocked(openVoice).mock.calls.length;
+    const opening = f.runtime.voice(
+      {
+        config,
+        agent,
+        conversation: { channelId },
+        signal: seat.signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+
+    try {
+      await inspecting.promise;
+      seat.abort();
+      release.resolve();
+      expect(await opening.catch((error: unknown) => error)).toBe(
+        seat.signal.reason,
+      );
+      expect(f.sent.filter((wire) => wire.method === "turn/interrupt")).toEqual(
+        [],
+      );
+      expect(openVoice).toHaveBeenCalledTimes(opened);
+      await f.complete(0);
+    } finally {
+      seat.abort();
+      release.resolve();
+      f.runtime.dispose();
+    }
+  },
+);
+
 it.each(["channel", "community"])(
   "waits for Codex exit when %s voice preemption never completes",
   async (scope) => {

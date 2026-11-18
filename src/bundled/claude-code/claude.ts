@@ -554,6 +554,15 @@ export class ClaudeProcess {
     if (!this.alive || !this.active) return Promise.resolve();
     return new Promise((resolve) => this.idleWaiters.add(resolve));
   }
+  /** Reports the activity change since `active`, its earlier state. */
+  private edge(active: boolean) {
+    if (!this.active) this.stopping = false;
+    if (active !== this.active) this.onActivity?.();
+    if (active && !this.active) {
+      this.onQuiet?.();
+      this.releaseIdle();
+    }
+  }
   private releaseIdle() {
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();
@@ -827,12 +836,7 @@ export class ClaudeProcess {
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
       if (!this.working && this.pending) this.done();
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) {
-        this.onQuiet?.();
-        this.releaseIdle();
-      }
+      this.edge(active);
       return;
     }
     if (
@@ -861,12 +865,7 @@ export class ClaudeProcess {
           return typeof id === "string" ? [id] : [];
         }),
       );
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) {
-        this.onQuiet?.();
-        this.releaseIdle();
-      }
+      this.edge(active);
       return;
     }
     // `/compact` ends in a successful result even when compacting failed.
@@ -934,12 +933,7 @@ export class ClaudeProcess {
       this.continuation = undefined;
       this.callEpoch++;
       if (this.pending) this.done();
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) {
-        this.onQuiet?.();
-        this.releaseIdle();
-      }
+      this.edge(active);
     }
   }
   private done() {

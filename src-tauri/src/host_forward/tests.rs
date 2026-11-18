@@ -21,7 +21,8 @@ struct Seen {
 /// A fake gateway on loopback. `x-test` picks its answer: `hold` streams one
 /// event and never ends (reporting when the connection drops), `flood`
 /// streams 64 MiB in 1 MiB chunks (reporting a drop too),
-/// `redirect` answers 307 to elsewhere, `busy` answers 503 as text, `hop`
+/// `300`, `305` and `307` answer with a Location, `304` with an ETag,
+/// `busy` answers 503 as text, `hop`
 /// nominates `x-hop` in `Connection`; otherwise 200 JSON.
 struct FakeGateway {
     origin: &'static str,
@@ -117,9 +118,18 @@ fn answer(mode: Option<&HeaderValue>, body: Bytes, dropped: mpsc::UnboundedSende
                     .boxed(),
             )
             .unwrap(),
-        Some("redirect") => Response::builder()
-            .status(StatusCode::TEMPORARY_REDIRECT)
+        Some(status @ ("300" | "305" | "307")) => Response::builder()
+            .status(StatusCode::from_bytes(status.as_bytes()).unwrap())
             .header(header::LOCATION, "https://elsewhere.example/v1/messages")
+            .body(
+                Full::new(Bytes::new())
+                    .map_err(|never| match never {})
+                    .boxed(),
+            )
+            .unwrap(),
+        Some("304") => Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, "\"catalog\"")
             .body(
                 Full::new(Bytes::new())
                     .map_err(|never| match never {})
@@ -702,21 +712,45 @@ async fn passes_upstream_status_and_refuses_redirects() {
     assert_eq!(busy.text().await.unwrap(), "busy");
     recv(&mut gateway.seen).await;
 
-    let redirected = messages(&generation.url)
-        .header("x-test", "redirect")
-        .body("{}")
+    let redirects = ["300", "305", "307"];
+    for status in redirects {
+        let redirected = messages(&generation.url)
+            .header("x-test", status)
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            redirected.status(),
+            StatusCode::BAD_GATEWAY,
+            "upstream {status}"
+        );
+        assert!(redirected.headers().get(header::LOCATION).is_none());
+    }
+
+    let cached = reqwest::Client::new()
+        .get(format!("{}/api/2.0/serving-endpoints", generation.url))
+        .header("x-test", "304")
+        .header(header::IF_NONE_MATCH, "\"catalog\"")
         .send()
         .await
         .unwrap();
-    assert_eq!(redirected.status(), StatusCode::BAD_GATEWAY);
-    assert!(redirected.headers().get(header::LOCATION).is_none());
+    assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(cached.headers()[header::ETAG], "\"catalog\"");
+    assert!(cached.bytes().await.unwrap().is_empty());
+
     let mut events = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..2 * (redirects.len() + 2) {
         events.push(recv(&mut generation.events).await);
     }
-    // The first response's end may race the second request's admission.
+    // One response's end may race the next request's admission.
+    for request in 2..2 + redirects.len() {
+        assert!(events.contains(
+            &serde_json::json!({ "type": "finished", "request": request, "status": 502, "aborted": false })
+        ));
+    }
     assert!(events.contains(
-        &serde_json::json!({ "type": "finished", "request": 2, "status": 502, "aborted": false })
+        &serde_json::json!({ "type": "finished", "request": redirects.len() + 2, "status": 304, "aborted": false })
     ));
 }
 

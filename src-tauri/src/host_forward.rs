@@ -803,11 +803,12 @@ async fn forward(state: &HostForward, request: Request<Incoming>) -> Reply {
     let Ok(response) = response else {
         return finished.answer(StatusCode::BAD_GATEWAY, "upstream_failed");
     };
-    if matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+    let status = response.status();
+    if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
         return finished.answer(StatusCode::BAD_GATEWAY, "upstream_redirected");
     }
-    finished.status = Some(response.status().as_u16());
-    let mut reply = Response::builder().status(response.status());
+    finished.status = Some(status.as_u16());
+    let mut reply = Response::builder().status(status);
     {
         let hop = hop(response.headers());
         for (name, value) in response.headers() {

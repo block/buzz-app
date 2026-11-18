@@ -206,6 +206,9 @@ if that desktop app is up and running.
   model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
+- **Animated avatars.** Uploaded animated avatars play during responses and in
+  the expanded agent profile. Cards, sidebar entries and completed replies use
+  a still portrait. Reduce Motion keeps uploaded avatars still.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

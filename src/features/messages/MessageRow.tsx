@@ -2207,6 +2207,14 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
         ]}
         stackPrevious={!failure && activity?.container !== "standalone"}
         picture={author.picture}
+        responding={
+          active &&
+          !failure &&
+          !activity?.followed &&
+          author.shape === "squircle"
+            ? { source: props.profile?.picture, media }
+            : undefined
+        }
         layout={props.layout === "thread" ? "thread" : "timeline"}
       >
         <div className={styles.standaloneActivity}>{content}</div>

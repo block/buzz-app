@@ -693,7 +693,12 @@ An agent hands off to itself in another of its conversations with the
 a channel the agent can see, as `send` does, and a thread in that channel (any
 message of it names its root) unless the channel is a Solo chat. It refuses the
 current conversation, which is the whole channel in a DM, a Solo chat or a
-channel-scoped session. It is the same `plugin` trigger with `from`, the
+channel-scoped session. A channel-level watch or timer turn of an agent whose
+type runs one session per thread (its `sessionControls.scope`) is apart from
+that channel's threads outside a DM, Solo chat or huddle room, so it can hand off into one of
+them. Agents decides this for every harness through the run's handle
+(`threadsApart`); a type with no session controls keeps the channel one
+conversation. It is the same `plugin` trigger with `from`, the
 conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
 section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a

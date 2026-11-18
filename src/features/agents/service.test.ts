@@ -2,9 +2,11 @@ import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
 import { UnattestedProfile } from "../relay/identity-archives";
-import { createSoloPreferences } from "../relay/solo-preferences";
-import type { ChannelKit } from "../channel-templates/capability";
-import type { KitEntry, KitValue } from "../channel-templates/model";
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
+import type {
+  SidebarAssignmentIntent,
+  SidebarPreferences,
+} from "../relay/sidebar-preferences";
 import { federatedFixture } from "../federated-identity/testing";
 import { workingAgentDetails } from "../../bundled/channels/working-agents";
 import { completionTarget } from "../notifications/agent-completions";
@@ -78,7 +80,9 @@ import {
   type AgentVoiceSeat,
   type ConfigBinding,
   type Delivery,
+  type StandaloneTurn,
   type Trigger,
+  type TurnResult,
   fromOwner,
   HOSTED_INSTRUCTIONS_CHANGED,
   teamPrompt,
@@ -2359,6 +2363,55 @@ describe("a plugin's wake", () => {
     });
     expect(trigger).not.toHaveProperty("plugin");
   });
+  it.each([
+    ["one session per thread", "thread", true],
+    ["one session per channel", "channel", false],
+    ["no session controls", undefined, false],
+  ] as const)(
+    "tells its run whether a channel's threads have sessions apart: %s",
+    async (_kind, scope, apart) => {
+      const f = await setup(
+        scope
+          ? {
+              sessionControls: {
+                state: () => "idle",
+                run: async () => {},
+                scope: () => scope,
+              } as never,
+            }
+          : {},
+      );
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await held(f.native);
+      let handle: Delivery<Config>["agent"] | undefined;
+      f.run.mockImplementationOnce(async ({ agent }) => {
+        handle = agent;
+      });
+      f.plugin.agents.wake(bot, { channel, root, text: "first" });
+      await vi.waitFor(() => expect(handle).toBeDefined());
+      expect(handle?.threadsApart?.(channel)).toBe(apart);
+      // A channel not known yet cannot be told apart, under thread scope.
+      expect(handle?.threadsApart?.("unknown-channel")).toBe(
+        scope === "thread" ? undefined : false,
+      );
+      // A DM, Solo chat or huddle room is one conversation under either
+      // scope: harnesses run a huddle room's text turns in its one session.
+      const list = f.session.channels.list();
+      for (const patch of [
+        { channelType: "dm" },
+        { channelType: "solo" },
+        { description: huddleDescription(crypto.randomUUID()) },
+      ] as const) {
+        vi.spyOn(f.session.channels, "list").mockReturnValue({
+          ...list,
+          channels: list.channels.map((row) =>
+            row.id === channel ? { ...row, ...patch } : row,
+          ),
+        });
+        expect(handle?.threadsApart?.(channel)).toBe(false);
+      }
+    },
+  );
   it("is dropped like a mention when the agent stops running here", async () => {
     const { service, run, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
@@ -14110,7 +14163,7 @@ it("binds run-only Solo placement to the owner, community and just-created confi
   ]);
   Object.assign(f.session, {
     channelKit: { refresh: vi.fn(async () => {}) },
-    soloPreferences: preferences,
+    sidebarPreferences: preferences,
     relayAuthor: authority,
     snapshotRead: read,
   });
@@ -14218,7 +14271,7 @@ it.each([
     channelKit: { refresh: vi.fn(async () => {}) },
     relayAuthor: authority,
     snapshotRead: vi.fn(async () => [metadata, roster]),
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {},
       writable: failure !== "read-only preferences",
       snapshot: () => ({
@@ -14278,7 +14331,7 @@ it("fences workspace discovery when its community binding changes during the rea
     channelKit: { refresh: vi.fn(async () => {}) },
     relayAuthor: "f".repeat(64),
     snapshotRead: vi.fn(),
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {
         started.resolve();
         await gate.promise;
@@ -14314,7 +14367,7 @@ it("keeps overlapping prepared creates independently fileable through the run", 
   Object.assign(f.session, {
     channelKit: { refresh: async () => {} },
     relayAuthor: authority,
-    soloPreferences: {
+    sidebarPreferences: {
       refresh: async () => {},
       writable: true,
       snapshot: () => ({
@@ -14407,7 +14460,7 @@ it.each(["authority", "assignment"])(
     Object.assign(f.session, {
       channelKit: { refresh: async () => {} },
       relayAuthor: authority,
-      soloPreferences: {
+      sidebarPreferences: {
         refresh: async () => {},
         writable: true,
         snapshot: () => ({
@@ -14478,61 +14531,46 @@ it.each(["authority", "assignment"])(
 );
 
 it.each(["filed", "deleted", "retired"])(
-  "uses the existing Solo preference writer across placement outcome: %s",
+  "uses the shared workspace writer across placement outcome: %s",
   async (outcome) => {
     const f = await setup();
-    const lifetime = new AbortController();
     const call = new AbortController();
-    const saved = runnerGate(),
-      release = runnerGate();
-    let entries: KitEntry[] = [
-      {
-        eventId: "head",
-        createdAt: 1,
-        record: {
-          version: 1,
-          community: "https://relay.example.test",
-          deleted: false,
-          value: {
-            type: "groups",
-            id: "me",
-            groups: [
-              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
-            ],
-            assignments: {},
-          },
-        },
+    const saved = runnerGate();
+    const release = runnerGate();
+    let head: SidebarPreferences = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      sectionOrder: [],
+      legacyTemplates: { work: "do-not-copy" },
+      starred: [],
+      muted: [],
+    };
+    const save = vi.fn(
+      async ({ channelId, sectionId }: SidebarAssignmentIntent) => {
+        if (!head.sections.some(({ id }) => id === sectionId))
+          throw new Error("Sidebar group no longer exists");
+        if (channelId && sectionId)
+          head = {
+            ...head,
+            assignments: { ...head.assignments, [channelId]: sectionId },
+          };
+        if (outcome === "retired") {
+          saved.resolve();
+          await release.promise;
+        }
+        return head;
       },
-    ];
-    const save = vi.fn(async (value: KitValue) => {
-      entries = [
-        {
-          eventId: "next",
-          createdAt: 2,
-          record: {
-            version: 1,
-            community: "https://relay.example.test",
-            deleted: false,
-            value,
-          },
-        },
-      ];
-      if (outcome === "retired") {
-        saved.resolve();
-        await release.promise;
-      }
-    });
-    const kit = {
+    );
+    const preferences = createSidebarPreferencesStore({
       available: true,
-      refresh: vi.fn(async () => {}),
-      snapshot: () => ({ status: "ready", entries }),
-      save,
-    } as unknown as ChannelKit;
-    const preferences = createSoloPreferences(kit, lifetime.signal);
+      read: async () => head,
+      write: save,
+      writeStar: async () => [],
+    });
     const authority = "f".repeat(64);
     Object.assign(f.session, {
-      channelKit: kit,
-      soloPreferences: preferences.queries,
+      channelKit: { refresh: async () => {} },
+      sidebarPreferences: preferences.queries,
       relayAuthor: authority,
       snapshotRead: async () => [
         event("meta", {
@@ -14574,13 +14612,13 @@ it.each(["filed", "deleted", "retired"])(
           ["p", viewer],
         ],
       });
-      if (outcome === "deleted") entries = [];
+      if (outcome === "deleted") head = { ...head, sections: [] };
       if (outcome === "deleted") {
         await expect(file?.("new-chat")).resolves.toMatchObject({
           status: "unconfirmed",
-          error: expect.stringContaining("Solo group is unavailable"),
+          error: expect.stringContaining("Sidebar group no longer exists"),
         });
-        expect(save).not.toHaveBeenCalled();
+        expect(head.assignments).toEqual({});
       } else {
         const pending = file?.("new-chat");
         if (outcome === "retired") {
@@ -14593,16 +14631,7 @@ it.each(["filed", "deleted", "retired"])(
           status: outcome === "retired" ? "unconfirmed" : "filed",
         });
         expect(save).toHaveBeenCalledExactlyOnceWith(
-          {
-            type: "groups",
-            id: "me",
-            groups: [
-              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
-            ],
-            assignments: { "new-chat": "work" },
-          },
-          "head",
-          false,
+          { channelId: "new-chat", sectionId: "work" },
           expect.any(AbortSignal),
         );
         await preferences.queries.refresh();
@@ -14613,7 +14642,6 @@ it.each(["filed", "deleted", "retired"])(
     } finally {
       release.resolve();
       preferences.dispose();
-      lifetime.abort();
       await f.ctx.fiber.dispose();
     }
   },
@@ -17020,6 +17048,20 @@ it("sends actual private-file bytes through the app-owned sourceCommand reader a
       ([, template]) => template.kind === 9,
     );
     expect(published?.[0]).toEqual(member(bot));
+    expect(native.publish).toHaveBeenCalledWith(
+      member(bot),
+      expect.objectContaining({ kind: 9 }),
+      {
+        managedAttachments: [
+          {
+            path,
+            sha256: hash,
+            size: bytes.length,
+            url: "https://files.example.test/bytes",
+          },
+        ],
+      },
+    );
     expect(published?.[1].tags).toContainEqual(["h", channel]);
     expect(published?.[1].tags).toContainEqual(
       expect.arrayContaining(["imeta", `x ${hash}`, "filename private-file"]),
@@ -20683,6 +20725,48 @@ it("tells a transcript only of an agent's new or changed steps", async () => {
   expect(listener).toHaveBeenCalledTimes(3);
 });
 
+it("threads local attachment context through the runner's existing custody owner", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const options = {
+    managedAttachments: [
+      {
+        path: "/saved/file",
+        sha256: "a".repeat(64),
+        size: 5,
+        url: "https://example.test/media",
+      },
+    ],
+  };
+  const check = vi.fn();
+  const template = { kind: 9, content: "attachment", tags: [["h", channel]] };
+  let finish!: () => void;
+  const completed = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ agent }) => {
+    try {
+      await agent.publish(template, check, options);
+    } finally {
+      finish();
+    }
+  });
+  emit({
+    events: [
+      event("managed-attachment", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await completed;
+  expect(check).toHaveBeenCalledOnce();
+  expect(native.publish).toHaveBeenCalledWith(member(bot), template, options);
+});
+
 describe("gateway routing", () => {
   const COMMUNITY = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
   const route = (key: string) => gatewayRoutes.routeFor(key as never);
@@ -21393,6 +21477,123 @@ describe("agent gateway gate", () => {
       message_id: event("b3").id,
       thread_id: null,
     });
+  });
+
+  /** A gateway-capable type that answers `run` and, given one, `runOnce`;
+   * the agent has attention on with `attention`. */
+  async function automated(
+    attention: Record<string, unknown>,
+    runOnce?: (
+      turn: StandaloneTurn<Record<string, never>>,
+    ) => Promise<TurnResult>,
+  ) {
+    ready.mockResolvedValue(eligible);
+    const f = await setup();
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      ...(runOnce ? { runOnce } : {}),
+      gateway: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    await f.service.save(bot, { attentionEnabled: true, attention } as never);
+    return { ...f, run };
+  }
+  const timer = (extra: Record<string, unknown> = {}) => ({
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    ...extra,
+  });
+
+  it("gives a timer that wakes a conversation its channel and no message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const f = await automated({ "watch/tick": timer({ channel }) });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const delivery = f.run.mock.calls[0]?.[0];
+      // Delivered as its conversation's wake; the context is the timer's.
+      expect(delivery?.trigger).toMatchObject({
+        type: "attention",
+        channel,
+        topLevel: true,
+      });
+      expect(delivery?.gateway?.route).toBe(eligible);
+      expect(delivery?.gateway?.turn).toEqual({
+        channel_id: channel,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone timer turn no channel, message or thread", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const turns: StandaloneTurn<Record<string, never>>[] = [];
+      const f = await automated({ "watch/tick": timer() }, async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(turns).toHaveLength(1));
+      expect(turns[0]?.key).toMatch(/^timer\//);
+      expect(turns[0]?.delivery.trigger.type).toBe("timer");
+      expect(turns[0]?.delivery.gateway?.route).toBe(eligible);
+      expect(turns[0]?.delivery.gateway?.turn).toEqual({
+        channel_id: null,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(f.run).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone watch turn the watched event as its message, in that event's channel", async () => {
+    const turns: StandaloneTurn<Record<string, never>>[] = [];
+    const f = await automated(
+      {
+        "watch/deploys": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [9],
+        },
+      },
+      async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      },
+    );
+    const watched = event("c1", { pubkey: viewer, tags: [["h", channel]] });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(turns).toHaveLength(1));
+    expect(turns[0]?.delivery.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(turns[0]?.delivery.gateway?.turn).toEqual({
+      channel_id: channel,
+      message_id: watched.id,
+      thread_id: null,
+    });
+    expect(f.run).not.toHaveBeenCalled();
   });
 
   it("adds no gateway field and asks for no route when the build has no configuration", async () => {

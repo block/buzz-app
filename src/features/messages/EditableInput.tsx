@@ -540,6 +540,25 @@ export function EditableInput({
     };
   }, []);
 
+  // A selection keeps painting after focus leaves the editor or its window,
+  // where :focus no longer matches. Selected tokens follow the selection.
+  useLayoutEffect(() => {
+    const root = mount.current;
+    const document = root?.ownerDocument;
+    if (!root || !document) return;
+    const track = () => {
+      const selection = document.getSelection();
+      root.toggleAttribute(
+        "data-selection-inside",
+        !!selection?.rangeCount &&
+          root.contains(selection.anchorNode) &&
+          root.contains(selection.focusNode),
+      );
+    };
+    document.addEventListener("selectionchange", track);
+    return () => document.removeEventListener("selectionchange", track);
+  }, []);
+
   useLayoutEffect(() => {
     if (!mount.current) return;
     const initial = readComposerDocument(

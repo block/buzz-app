@@ -16,7 +16,7 @@ import {
   conversationKey,
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
@@ -44,7 +44,7 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { CodexRuntime, codexStep, programs } from "./runtime";
+import { CodexRuntime, codexStep, HANDOVER_MS, programs } from "./runtime";
 import { codexRun } from "./run";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
@@ -3063,6 +3063,195 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
   expect(f.spawn).not.toHaveBeenCalled();
 });
+
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const readyReads = vi.fn(async () => ownerReads(replacement, pubkey));
+  Object.assign(f.runtime, { readyReads });
+  await f.runtime.run(f.delivery("owner"));
+  expect(readyReads).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event } });
+  expect(readyReads).toHaveBeenCalledExactlyOnceWith(
+    ask.agent,
+    ask.signal,
+    "channel",
+  );
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.complete();
+});
+
+it("waits after a reconnect until a workflow mention's DM is typed, then answers in the DM's session", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const origin = "https://relay.example";
+  // The community the turn later reads through is the one the wait ended on.
+  f.snapshot.scope = `${origin}:${owner}`;
+  // The replacement session lists the DM, restored or paged, before its kind.
+  let listed: { id: string; name: string; channelType?: string }[] = [];
+  const listeners = new Set<() => void>();
+  const live = {
+    ...f.snapshot.session,
+    workflowAuthority: relay.pubkey,
+    channels: {
+      list: () => ({ status: "ready", channels: listed }),
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+    },
+  };
+  const relisted = (next: typeof listed) => {
+    listed = next;
+    for (const listener of [...listeners]) listener();
+  };
+  let snapshot: object = { status: "connecting", generation: 1 };
+  const services = new Set<() => void>();
+  const community = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      services.add(listener);
+      return () => void services.delete(listener);
+    },
+  } as unknown as RelayData;
+  Object.assign(f.runtime, {
+    readyReads: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+      channelId: string | undefined,
+    ) =>
+      readyOwnerReads(
+        community,
+        { ...agent, relay: "wss://relay.example" },
+        signal,
+        channelId,
+      ),
+  });
+  const prepare: NonNullable<Delivery["prepareSession"]> = vi.fn(
+    async () => undefined,
+  );
+  const workflow = (threadRoot: string) => {
+    const ask = f.delivery("@Codex workflow", threadRoot);
+    return f.runtime.run({
+      ...ask,
+      config: { ...(ask.config as object), scope: "thread" },
+      prepareSession: prepare,
+      trigger: {
+        type: "mention",
+        event: eventDto(
+          signed(relay, {
+            kind: 9,
+            content: "@Codex workflow",
+            tags: [
+              ["h", "channel"],
+              ["e", threadRoot, "", "reply"],
+              ["p", pubkey],
+              ["buzz:workflow", "true"],
+              ["buzz:workflow-owner", owner],
+              ["buzz:workflow-mention", pubkey],
+            ],
+          }),
+        ),
+      },
+    });
+  };
+  const first = workflow(root);
+  snapshot = {
+    status: "ready",
+    generation: 2,
+    origin,
+    viewer: owner,
+    scope: `${origin}:${owner}`,
+    session: live,
+  };
+  for (const listener of [...services]) listener();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  relisted([{ id: "channel", name: "DM" }]);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Neither a missing nor an untyped DM admits or starts the turn.
+  expect(prepare).not.toHaveBeenCalled();
+  expect(f.spawn).not.toHaveBeenCalled();
+  relisted([{ id: "channel", name: "DM", channelType: "dm" }]);
+  await first;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(prepare).toHaveBeenCalledWith(
+    {
+      source: { channelId: "channel" },
+      conversation: { channelId: "channel" },
+    },
+    false,
+  );
+  expect(listeners.size).toBe(0);
+  expect(services.size).toBe(0);
+  // A mention in another thread of the DM continues the same session.
+  await workflow("e".repeat(64));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  await f.complete();
+});
+
+it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+      ],
+    }),
+  );
+  let live = true;
+  Object.assign(f.runtime, {
+    readyReads: async () => {
+      live = false;
+      return f.runtime["reads"](pubkey);
+    },
+  });
+  const ignored = vi.fn();
+  await f.runtime.run({
+    ...ask,
+    trigger: { type: "mention", event },
+    current: () => live,
+    ignored,
+  });
+  expect(ignored).toHaveBeenCalledExactlyOnceWith();
+  expect(f.spawn).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
   async (cancelled) => {
@@ -6393,6 +6582,87 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
   expect(handoff).not.toHaveBeenCalled();
 });
 
+it.each([true, false])(
+  "hands a channel-level Codex wake into a thread only where the host says threads are apart (%s)",
+  async (apart) => {
+    const f = fixture();
+    const handoff = vi.fn();
+    f.events.push({
+      id: "d".repeat(64),
+      pubkey: owner,
+      kind: 39000,
+      content: "",
+      created_at: 1,
+      tags: [["d", "channel"]],
+    } as EventData);
+    const other = f.delivery("other thread", "e".repeat(64));
+    if (other.trigger.type !== "mention") throw new Error("Expected mention");
+    const delivery = pluginWake(f);
+    if (delivery.trigger.type !== "plugin") throw new Error("fixture");
+    await f.runtime.run({
+      ...delivery,
+      trigger: { ...delivery.trigger, type: "attention", topLevel: true },
+      agent: {
+        ...delivery.agent,
+        handoff,
+        threadsApart: () => apart,
+      } as Delivery["agent"],
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const result = await f.tool("self_handoff", {
+      channel: "channel",
+      thread: other.trigger.event.id,
+      text: "carry on",
+    });
+    if (apart) {
+      expect(JSON.stringify(result?.result)).toContain("Queued self-handoff");
+      expect(handoff).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "channel", root: "e".repeat(64) }),
+      );
+    } else {
+      expect(JSON.stringify(result?.result)).toContain(
+        "That is this conversation.",
+      );
+      expect(handoff).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it("refuses a handoff from a thread-scoped Codex huddle turn into the same room", async () => {
+  const f = fixture();
+  f.huddleChannels.add("channel");
+  const handoff = vi.fn();
+  // Agents says a huddle room is one conversation.
+  const threadsApart = vi.fn(() => false);
+  f.events.push({
+    id: "d".repeat(64),
+    pubkey: owner,
+    kind: 39000,
+    content: "",
+    created_at: 1,
+    tags: [["d", "channel"]],
+  } as EventData);
+  const other = f.delivery("another message in the room", "e".repeat(64));
+  if (other.trigger.type !== "mention") throw new Error("Expected mention");
+  const first = f.delivery("@Codex hi", root);
+  await f.runtime.run({
+    ...first,
+    agent: { ...first.agent, handoff, threadsApart } as Delivery["agent"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const result = await f.tool("self_handoff", {
+    channel: "channel",
+    thread: other.trigger.event.id,
+    text: "carry on",
+  });
+  // The room's one session has no thread, so the host decides, and says no.
+  expect(threadsApart).toHaveBeenCalledWith("channel");
+  expect(JSON.stringify(result?.result)).toContain(
+    "That is this conversation.",
+  );
+  expect(handoff).not.toHaveBeenCalled();
+});
+
 it("keeps callbacks live beside terminals and lets a title finish after its admission closes", async () => {
   let handler!: McpHandler;
   let enabled = true;
@@ -7135,19 +7405,60 @@ it("runs bound Codex tools in the guest workspace, resumes, and stops on provide
       return target;
     });
     f = fixture([], undefined, false, {}, undefined, undefined, execution);
+    const bytes = Buffer.from("GUEST FILE");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    f.upload.mockImplementation(async (data, mime) => {
+      expect(data).toBe(bytes.toString("base64"));
+      return {
+        url: "https://files.test/file",
+        sha256,
+        size: bytes.length,
+        type: mime,
+      };
+    });
     await f.runtime.run(f.delivery("first"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     expect(
       f.sent.find((wire) => wire.method === "thread/start")?.params,
     ).toMatchObject({ cwd: "/guest/project" });
     expect(
-      (await f.tool("send", { audience: "everyone", path: "answer.txt" }))
-        ?.result,
+      (
+        await f.tool("send", {
+          audience: "everyone",
+          path: "answer.txt",
+          // A managed-looking absolute path whose bytes match a hypothetical
+          // local save must not trigger managedAttachments forwarding when the
+          // reader is a remote execution target.
+          files: ["/managed/looking/path.bin"],
+        })
+      )?.result,
     ).toMatchObject({ success: true });
     expect(target.readFile).toHaveBeenCalledWith("answer.txt", {
       cwd: "/guest/project",
     });
+    expect(target.readFile).toHaveBeenCalledWith("/managed/looking/path.bin", {
+      cwd: "/guest/project",
+    });
     expect(f.fileReads).toEqual([]);
+    expect(f.upload).toHaveBeenCalledOnce();
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: expect.stringContaining("https://files.test/file"),
+      tags: expect.arrayContaining([
+        expect.arrayContaining([
+          "imeta",
+          `x ${sha256}`,
+          `size ${bytes.length}`,
+        ]),
+      ]),
+    });
+    // Target-bound runs publish normally but never forward managedAttachments
+    // hints: localAttachments: !this.target drops them in app-client.
+    for (const call of f.publish.mock.calls as unknown as unknown[][]) {
+      expect(
+        (call[2] as Record<string, unknown> | undefined) ?? {},
+      ).not.toHaveProperty("managedAttachments");
+    }
     expect(
       (
         await f.tool("send", { audience: "everyone", text: "wrong turn" }, 0, {
@@ -7312,6 +7623,159 @@ it("waits for remote turn and target cleanup when an agent retires", async () =>
   }
   await retirement;
   expect(target.signal.aborted).toBe(true);
+});
+
+/** The hand-over budgets started, which the test expires; other timeouts run
+ * on the real clock. */
+function handoverBudgets() {
+  const budgets: AbortController[] = [];
+  const spy = vi.spyOn(AbortSignal, "timeout");
+  spy.mockImplementation((ms) => {
+    const budget = new AbortController();
+    if (ms === HANDOVER_MS) budgets.push(budget);
+    else
+      setTimeout(
+        () => budget.abort(new DOMException("timed out", "TimeoutError")),
+        ms,
+      );
+    return budget.signal;
+  });
+  return Object.assign(budgets, { restore: () => spy.mockRestore() });
+}
+
+/** A remote conversation whose New the test holds, and a workflow's mention
+ * in it with `readyReads` on both sides. */
+async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
+  const guests: ReturnType<typeof fixture>[] = [];
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => {
+      const guest = fixture();
+      guests.push(guest);
+      return guestTarget(guest);
+    },
+  );
+  const relay = keypair();
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const reads = ownerReads(replacement, pubkey);
+  Object.assign(f.runtime, { readyReads });
+  const first = f.delivery("first");
+  await f.runtime.run(first);
+  await vi.waitFor(() => expect(guests[0]?.starts()).toHaveLength(1));
+  await guests[0]?.complete();
+  const agent = { ...first.agent, config: first.config } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  /** Starts a New that waits for `released`. */
+  const holdNew = async () => {
+    const started = deferred<void>();
+    const released = deferred<void>();
+    const reset = f.runtime.session(agent, place, "new", async (change) => {
+      started.resolve();
+      await released.promise;
+      await change();
+    });
+    await started.promise;
+    return { released, reset };
+  };
+  const handoffs: Promise<unknown>[] = [];
+  const workflow = (signal: AbortSignal) =>
+    f.runtime.run({
+      ...f.delivery("@Codex workflow"),
+      trigger: {
+        type: "mention",
+        event: eventDto(
+          signed(relay, {
+            kind: 9,
+            content: "@Codex workflow",
+            tags: [
+              ["h", "channel"],
+              ["e", root, "", "reply"],
+              ["p", pubkey],
+              ["buzz:workflow", "true"],
+              ["buzz:workflow-owner", owner],
+              ["buzz:workflow-mention", pubkey],
+            ],
+          }),
+        ),
+      },
+      signal,
+      workingUntil: (work: Promise<unknown>) => void handoffs.push(work),
+    });
+  return {
+    f,
+    guests,
+    reads,
+    agent,
+    place,
+    holdNew,
+    handoffs,
+    workflow,
+  };
+}
+
+it("gives a workflow mention held behind a remote New a fresh hand-over deadline that does not bound its turn", async () => {
+  const readyReads = vi.fn();
+  const held = await heldRemoteNew(readyReads);
+  // Here the community is ready; on the target it first keeps retrying.
+  readyReads.mockImplementation(async () => held.reads);
+  readyReads.mockImplementationOnce(async () => held.reads);
+  readyReads.mockImplementationOnce(
+    (_agent: unknown, signal: AbortSignal) =>
+      new Promise((_resolve, reject) =>
+        signal.addEventListener(
+          "abort",
+          () => reject(new Error("did not reconnect")),
+          { once: true },
+        ),
+      ),
+  );
+  const budgets = handoverBudgets();
+  try {
+    let hold = await held.holdNew();
+    const expired = new AbortController();
+    await held.workflow(expired.signal);
+    const handoff = held.handoffs[0] as Promise<unknown>;
+    handoff.catch(() => {});
+    // The original deadline passes while the hand-over waits for New.
+    expired.abort(new Error("delivery deadline"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(budgets).toHaveLength(0);
+    hold.released.resolve();
+    await hold.reset;
+    await vi.waitFor(() => expect(readyReads).toHaveBeenCalledTimes(2));
+    expect(budgets).toHaveLength(1);
+    expect(readyReads.mock.calls[1]?.[1]?.aborted).toBe(false);
+    budgets[0]?.abort(new DOMException("timed out", "TimeoutError"));
+    await expect(handoff).rejects.toThrow("did not reconnect");
+    expect(held.guests.flatMap((guest) => guest.starts())).toHaveLength(1);
+    // New works again; a turn that outlives its hand-over budget finishes.
+    hold = await held.holdNew();
+    await held.workflow(new AbortController().signal);
+    hold.released.resolve();
+    await hold.reset;
+    const guest = () => held.guests.find((g, i) => i > 0 && g.starts().length);
+    await vi.waitFor(() => expect(guest()).toBeDefined());
+    for (const budget of budgets) budget.abort();
+    await guest()?.complete();
+    await held.handoffs[1];
+    await vi.waitFor(() => expect(held.f.publish).toHaveBeenCalledTimes(2));
+  } finally {
+    budgets.restore();
+    await held.f.runtime.retire(pubkey);
+  }
 });
 
 it("gives each conversation a durable target key and rotates only its New session", async () => {

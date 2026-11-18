@@ -3,7 +3,7 @@ import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
@@ -78,6 +78,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.host,
     (pubkey) => ctx.agents.handle(pubkey),
     ctx.host.resolveDirectory?.bind(ctx.host),
+    (agent, signal, channelId) =>
+      readyOwnerReads(ctx.agents.relay(agent.key), agent, signal, channelId),
   );
   // Failed turns' notices link to where Codex signs in.
   runtime.explain = (notice) =>

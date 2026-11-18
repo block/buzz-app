@@ -9,6 +9,7 @@ import { onAutomatic } from "./recommended";
 // host run each agent. It knows nothing of where it runs: everything it needs
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
+import type { PublishOptions } from "../../buzz-mcp/client";
 import { bytesToHex } from "nostr-tools/utils";
 import type { ProtectionAction } from "../agent-protection/service";
 import type {
@@ -567,6 +568,8 @@ export type RunnerHost = {
   plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
+  /** Whether the agent's threads in the channel have sessions of their own. */
+  threadsApart?(agent: Agent, channelId: string): boolean | undefined;
   /** The instructions plugins give the agent's turns now. */
   instructions?(
     agent: Agent,
@@ -3236,7 +3239,11 @@ export class AgentRunners {
         owner: agent.owner,
         // What acts as the agent stops with it: a turn still working once it
         // is deleted, removed from this community or retyped can't.
-        publish: async (event: AgentEventTemplate, check?: () => void) => {
+        publish: async (
+          event: AgentEventTemplate,
+          check?: () => void,
+          options?: PublishOptions,
+        ) => {
           lifetime.throwIfAborted();
           const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
           const ownReply =
@@ -3257,6 +3264,7 @@ export class AgentRunners {
               event,
               lifetime,
               check,
+              options,
             );
             confirmed = true;
             if (workspaces && event.kind === 9007) {
@@ -3349,6 +3357,10 @@ export class AgentRunners {
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
+          },
+          threadsApart: (channelId: string) => {
+            lifetime.throwIfAborted();
+            return this.host.threadsApart?.(agent, channelId);
           },
           // The control outlives this call, so each of its calls checks the
           // run's lifetime, and set again once it has read the agents.
@@ -3767,6 +3779,7 @@ export class AgentRunners {
     event: AgentEventTemplate,
     lifetime: AbortSignal,
     check?: () => void,
+    options?: PublishOptions,
   ) {
     const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
     const agent = this.host.agent(runner.key);
@@ -3777,7 +3790,9 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    return this.require().publish(runner.member, event);
+    return options
+      ? this.require().publish(runner.member, event, options)
+      : this.require().publish(runner.member, event);
   }
 }
 

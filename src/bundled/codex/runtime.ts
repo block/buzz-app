@@ -22,7 +22,7 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import type { AgentKey } from "../../features/agents/membership";
-import type { AgentReads } from "../../features/agents/reads";
+import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import {
   EACH_TURN,
   sessionPrompts,
@@ -317,6 +317,9 @@ function textOf(event: EventData, name: string) {
   return text;
 }
 
+/** A turn's run returns once Codex has it, so this bounds only the hand-over. */
+export const HANDOVER_MS = 2 * 60_000;
+
 /** Local agents share one app-server. Each remote session owns its server.
  * Each conversation carries its agent's workspace, instructions and tools.
  * Tool calls find their agent by thread and turn. */
@@ -398,6 +401,13 @@ export class CodexRuntime {
     private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
       undefined,
     private readonly resolveDirectory?: Host["resolveDirectory"],
+    /** The agent's reads once its community is ready, for a workflow's
+     * mention that arrived while it reconnects; rejects when `signal` aborts. */
+    private readonly readyReads?: (
+      agent: AgentHandle,
+      signal: AbortSignal,
+      channelId: string | undefined,
+    ) => Promise<AgentReads | undefined>,
   ) {}
   /** The folder a plugin gave the conversation, if any. Only the local
    * runtime keeps them; an execution target's conversations refuse one. */
@@ -528,6 +538,10 @@ export class CodexRuntime {
         execution,
         undefined,
         sessionKey,
+        undefined,
+        undefined,
+        undefined,
+        this.readyReads,
       );
       const update = () => {
         this.views.set(
@@ -1730,7 +1744,18 @@ export class CodexRuntime {
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const reads = this.reads(agent.key);
+    // A workflow's mention waits out a reconnect; the check below decides.
+    const ready =
+      trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
+        ? this.readyReads
+        : undefined;
+    const reads = ready
+      ? await ready(agent, delivery.signal, delivery.channelId)
+      : this.reads(agent.key);
+    if (ready) {
+      delivery.signal.throwIfAborted();
+      if (delivery.current && !delivery.current()) return delivery.ignored?.();
+    }
     if (trigger.type === "mention") {
       const authority = await mentionAuthority(
         trigger.event,
@@ -1793,6 +1818,7 @@ export class CodexRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${conversationKey}`,
         async (deferred) => {
+          const handover = deferred && AbortSignal.timeout(HANDOVER_MS);
           const admitted = await admission(deferred);
           const runtime = await this.connection(
             agent.key,
@@ -1800,9 +1826,14 @@ export class CodexRuntime {
             conversationKey,
             deferred ? undefined : delivery.signal,
           );
-          const accepted = deferred ? runtime.target?.signal : delivery.signal;
-          if (!accepted)
+          const lifetime = deferred ? runtime.target?.signal : delivery.signal;
+          if (!lifetime)
             throw new Error("The remote Codex lifetime is unavailable");
+          // Held work's deadline passed while it waited, so its hand-over
+          // gets its own from now; the turn itself outlives it.
+          const accepted = handover
+            ? AbortSignal.any([lifetime, handover])
+            : lifetime;
           await runtime.run({
             ...delivery,
             ...(admitted
@@ -2449,6 +2480,10 @@ export class CodexRuntime {
       // Its tool registry reviews every call, Buzz's dynamic tools included.
       ...(!this.target ? { nativeCall: check } : {}),
       nativeToolGate: true,
+      // Execution-target reads come from somewhere other than this desktop;
+      // suppress managed-attachment hints at publish so a remote source cannot
+      // trigger local managed cleanup. No remote deletion is added.
+      localAttachments: !this.target,
       protectionContext: async () => {
         const rpc =
           active?.rpc ??

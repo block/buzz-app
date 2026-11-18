@@ -137,16 +137,19 @@ object with these keys (`launcher_client` is optional):
 The descriptor is public routing data with no credential. Only
 `launcher_client` has a default. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
-from `.env` files. Only the frontend (Vite) build validates all of it, against
-the shared cases in `src/features/agents/gateway/descriptor-vectors.json`. The
-native build checks the version, the keys (with `launcher_client` optional)
-and the gateway origin, which is all its network grant needs, and nothing
-more. An invalid value, including
+from `.env` files. Both builds validate the whole descriptor against
+the shared cases in `src/features/agents/gateway/descriptor-vectors.json`.
+The native build compiles its canonical form, including the default
+`launcher_client`. An invalid value, including
 a version 1 descriptor, fails the build that rejects it with a fixed message
 that never echoes it. A descriptor that is still invalid at runtime fails
 open: no harness gets an upstream, so turns run unchanged, with no notice.
 Leave it unset or blank (the release default) to keep every membership on its
 existing behavior.
+
+Native goose forwarding removes `Authorization` before sending discovery or
+inference requests to the gateway. The gateway must authenticate callers
+separately; Buzz context headers supply attribution, not authentication.
 
 With it set, a local agent membership in a listed community routes through the
 gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is

@@ -6266,6 +6266,132 @@ it.each([
   },
 );
 
+it.each([
+  ["deploy in:#cr", "Channels", /crew/, "in:crew deploy "],
+  ["deploy from:@ali", "People", /Alice/, "from:<alice> deploy "],
+  ["deploy after:", "Dates", /Today/, "after:2026-10-07 deploy "],
+])(
+  "completes %s with the highlighted suggestion on Tab",
+  async (query, group, row, completed) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair();
+    const { owner } = operatorSession(viewer, relay, [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ]);
+    const change = vi.fn();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    try {
+      render(
+        <SearchResults
+          {...operatorProps}
+          session={{
+            ...owner.session,
+            searchProfiles: async () => [
+              eventDto(profile(alice, { display_name: "Alice" })),
+            ],
+          }}
+          query={query}
+          onQueryChange={change}
+        />,
+      );
+      const option = await within(
+        await screen.findByRole("group", { name: group }),
+      ).findByRole("option", { name: row });
+      await waitFor(() =>
+        expect(option).toHaveAttribute("aria-selected", "true"),
+      );
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      // Shift+Tab still leaves the field.
+      expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(
+        true,
+      );
+      expect(change).not.toHaveBeenCalled();
+      expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+      expect(change).toHaveBeenLastCalledWith(
+        completed.replace("<alice>", alice.pubkey),
+      );
+    } finally {
+      vi.useRealTimers();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("keeps Tab in the field while a filter's people are still loading", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const { owner } = operatorSession(viewer, relay, []);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={{
+          ...owner.session,
+          searchProfiles: async () => {
+            await held;
+            return [eventDto(profile(alice, { display_name: "Alice" }))];
+          },
+        }}
+        query="deploy from:@ali"
+        onQueryChange={change}
+      />,
+    );
+    expect(await screen.findByText("Searching people…")).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).not.toHaveBeenCalled();
+    release();
+    const option = await within(
+      await screen.findByRole("group", { name: "People" }),
+    ).findByRole("option", { name: /Alice/ });
+    await waitFor(() =>
+      expect(option).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).toHaveBeenLastCalledWith(`from:${alice.pubkey} deploy `);
+  } finally {
+    release();
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("moves focus on Tab when a filter has no suggestion to complete", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const { owner } = operatorSession(viewer, relay, []);
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={owner.session}
+        query="from:@a"
+        onQueryChange={change}
+      />,
+    );
+    expect(
+      await screen.findByText("Type at least 2 characters to search people."),
+    ).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
+    expect(change).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("turns date and channel picks into chips that Backspace edits", async () => {
   const relay = keypair(),
     viewer = keypair();

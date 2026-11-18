@@ -3,6 +3,7 @@ import { useIsPresent } from "motion/react";
 import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import type { ComposeWorkspaces } from "../../features/channel-navigation/WorkspaceComposition";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
+import type { WorkspaceSidebarComposition } from "./sidebar-environment";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useCallback,
@@ -94,6 +95,7 @@ export function SoloInventory({
   chatIcons,
   chatMenus,
   sidebarRows,
+  workspaceComposition,
   renderContents,
 }: {
   session: RelaySession;
@@ -104,23 +106,25 @@ export function SoloInventory({
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarRows?: SidebarRows | undefined;
-  /** Places the conversations in a host that titles them; creation then
-   * belongs to the host's own New menu, so only the standalone header has it. */
+  /** Places composed conversations inside their source's frame. */
   renderContents?: (
     content: ReactNode,
     header: ReactNode,
     pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
     compose: (composition: ComposeWorkspaces) => ReactNode,
   ) => ReactNode;
+  workspaceComposition?: WorkspaceSidebarComposition | undefined;
 }) {
   const list = useChannelList(session.channels);
   const regions = useSoloNavigation(session);
-  const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+  const standaloneClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  const pendingClick =
+    workspaceComposition?.pendingChatClick ?? standaloneClick;
   const preferences = useSyncExternalStore(
-    session.soloPreferences.subscribe,
-    session.soloPreferences.snapshot,
+    session.sidebarPreferences.subscribe,
+    session.sidebarPreferences.snapshot,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -255,6 +259,7 @@ export function SoloInventory({
       open,
       openMessage,
       openAgentActivity,
+      pendingClick,
     ],
   );
   const renderChatMenu = useCallback(
@@ -264,12 +269,23 @@ export function SoloInventory({
       )),
     [menus, session],
   );
+  const ownsPlacement = (id: string | undefined) =>
+    !workspaceComposition ||
+    workspaceComposition.sections.has(id ? `group:${id}` : "solo");
+  const starred = new Set(preferences.data?.starred);
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
     // Opening one from a link without membership adds nothing here.
     .filter(
       (item) =>
-        eligibleSolo(item, session.viewer) && !regions.excluded.has(item.id),
+        eligibleSolo(item, session.viewer) &&
+        !regions.excluded.has(item.id) &&
+        (!workspaceComposition || !starred.has(item.id)) &&
+        ownsPlacement(
+          regions.managed.has(item.id)
+            ? undefined
+            : preferences.data?.assignments[item.id],
+        ),
     )
     .sort(
       (a, b) =>
@@ -312,7 +328,7 @@ export function SoloInventory({
     <>
       {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
       <MenuItem
-        disabled={!session.soloPreferences.sectionCreationWritable}
+        disabled={!session.sidebarPreferences.sectionCreationWritable}
         onClick={() => {
           if (current()) setCreatingProject(true);
         }}
@@ -390,7 +406,9 @@ export function SoloInventory({
       {creatingProject && (
         <NewWorkspace
           session={session}
-          create={(section) => session.soloPreferences.createSection(section)}
+          create={(section) =>
+            session.sidebarPreferences.createSection(section)
+          }
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
           onCreated={async (id) => {
@@ -402,46 +420,53 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
+        workspaceComposition={workspaceComposition}
         sidebarRows={rowEntries}
         dormantAssignments={regions.managed}
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
-        drafts={listedDrafts.map((destination) => {
+        drafts={listedDrafts.flatMap((destination) => {
           const route =
             destination.kind === "page"
               ? soloDraft(destination.route?.params)
               : undefined;
+          if (!ownsPlacement(route?.project)) return [];
           const selected =
             !!draft &&
             !draft.region &&
             draft.linked === route?.linked &&
             draft.project === route?.project;
-          return {
-            id: route?.linked ?? route?.project ?? "solo",
-            projectId: route?.project,
-            selected,
-            content: (
-              <NavigationItem
-                label="New chat"
-                aria-description="Unsent draft"
-                selected={selected}
-                icon={
-                  <span className={styles.conversationIcon} aria-hidden="true">
-                    <PencilSimpleIcon size={16} />
-                  </span>
-                }
-                onClick={() => {
-                  const input = selected ? soloDraftInput() : null;
-                  if (input) {
-                    input.focus();
-                    return;
+          return [
+            {
+              id: route?.linked ?? route?.project ?? "solo",
+              projectId: route?.project,
+              selected,
+              content: (
+                <NavigationItem
+                  label="New chat"
+                  aria-description="Unsent draft"
+                  selected={selected}
+                  icon={
+                    <span
+                      className={styles.conversationIcon}
+                      aria-hidden="true"
+                    >
+                      <PencilSimpleIcon size={16} />
+                    </span>
                   }
-                  void navigator.open(destination);
-                }}
-              />
-            ),
-          };
+                  onClick={() => {
+                    const input = selected ? soloDraftInput() : null;
+                    if (input) {
+                      input.focus();
+                      return;
+                    }
+                    void navigator.open(destination);
+                  }}
+                />
+              ),
+            },
+          ];
         })}
         session={session}
         scope={scope}
@@ -611,6 +636,7 @@ function SoloConversationRow({
           type="button"
           selected={selected}
           data-solo-channel-id={id}
+          data-solo-destination-id={id}
           aria-current={selected ? "page" : undefined}
           aria-describedby={shared ? soloSharedMarkId(id) : undefined}
           {...activation}

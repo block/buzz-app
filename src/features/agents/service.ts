@@ -1,3 +1,4 @@
+import type { PublishOptions } from "../../buzz-mcp/client";
 import {
   verifyPublicInstructions,
   type PublicInstructions,
@@ -579,8 +580,17 @@ export type AgentHandle = Readonly<{
   /** On a run's handle only: wakes this agent in another of its
    * conversations, as `Agents.wake` would, telling it the wake is its own. */
   handoff?(handoff: AgentHandoff): void;
+  /** On a run's handle only: whether this agent's threads in `channel` have
+   * sessions of their own, apart from its channel-level conversation there,
+   * so a handoff from that conversation into a thread reaches another;
+   * undefined while the channel is not known here yet. */
+  threadsApart?(channel: string): boolean | undefined;
   /** Rechecks an operation lifetime after channel startup, before signing. */
-  publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
+  publish(
+    event: AgentEventTemplate,
+    check?: () => void,
+    options?: PublishOptions,
+  ): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   effectiveEdit(id: string, channel: string): Promise<RelayEvent>;
@@ -2761,6 +2771,7 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      threadsApart: (agent, channelId) => this.threadsApart(agent, channelId),
       instructions: (agent) => this.turnInstructions(agent),
       conversationInstructions: (agent, channelId, root) =>
         this.turnConversationInstructions(agent, channelId, root),
@@ -2797,9 +2808,7 @@ export class AgentsService extends Service implements Agents {
           check(signal);
           if (!binding.session.snapshotRead || !binding.session.relayAuthor)
             throw new Error("Solo workspace authority is unavailable");
-          const preferences = binding.session.soloPreferences;
-          await binding.session.channelKit.refresh({ after: true });
-          check(signal);
+          const preferences = binding.session.sidebarPreferences;
           await preferences.refresh();
           check(signal);
           const state = preferences.snapshot();
@@ -2894,7 +2903,7 @@ export class AgentsService extends Service implements Agents {
                 };
               }
               try {
-                await binding.session.soloPreferences.assign(
+                await binding.session.sidebarPreferences.assign(
                   id,
                   workspace,
                   active,
@@ -5054,6 +5063,24 @@ export class AgentsService extends Service implements Agents {
       runtime: agent.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
+  }
+  /** Whether the agent's threads in the channel have sessions of their own,
+   * apart from its channel-level conversation: only where its type says it
+   * runs one session per thread, outside a DM, Solo chat or huddle room (whose
+   * text turns harnesses run in the room's one session). Any type that
+   * offers session controls gets this; one that does not keeps the channel
+   * one conversation. A channel not known here yet is undefined, which the
+   * tools also treat as one conversation. */
+  private threadsApart(agent: Agent, channelId: string) {
+    const type = this.types().find((kind) => kind.key === agent.type);
+    if (type?.sessionControls?.scope(agent) !== "thread") return false;
+    const summary = this.channelOf(agent, { tags: [["h", channelId]] });
+    if (!summary) return undefined;
+    return (
+      summary.channelType !== "dm" &&
+      summary.channelType !== "solo" &&
+      !isHuddleRoom(summary.description)
+    );
   }
   private sessionPlace(
     agent: Agent,

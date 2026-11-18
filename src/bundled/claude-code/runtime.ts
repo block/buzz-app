@@ -193,7 +193,7 @@ type Entry = {
     string,
     {
       topLevel: boolean;
-      steerable?(): boolean;
+      steerable?(model?: string, effort?: string): boolean;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -1151,11 +1151,8 @@ export class ClaudeRuntime {
     const prior = entry.policies.get(key);
     const same =
       key === COMMUNITY_SESSION
-        ? !wake &&
-          !model &&
-          !effort &&
-          entry.config.scope === "community" &&
-          prior?.steerable?.() === true
+        ? entry.config.scope === "community" &&
+          prior?.steerable?.(model, effort) === true
         : prior?.topLevel === topLevel;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
@@ -1334,7 +1331,11 @@ export class ClaudeRuntime {
     });
     const policy = {
       topLevel,
-      steerable: () => !wake && !interrupted && !foregroundDone,
+      steerable: (nextModel?: string, nextEffort?: string) =>
+        !interrupted &&
+        !foregroundDone &&
+        (!nextModel || nextModel === model) &&
+        (!nextEffort || nextEffort === effort),
       cancel() {
         interrupted = true;
         prior?.cancel();

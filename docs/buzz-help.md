@@ -1244,8 +1244,10 @@ available rather than silently discarding it.
   same channel share context. **One session per community** shares one session
   across that agent's channels, threads, DMs, Solo chats and huddles in the same
   community. A new message can reach the agent while it's working. The agent
-  can reply in that conversation and continue the earlier work. Background wakes
-  and requests that need a new turn wait in order. New and Compact affect that shared session
+  can reply in that conversation and continue the earlier work. Attention and
+  plugin wakes with a destination can also join the running turn. Wakes without
+  a destination and requests that need a new turn, such as a model change, wait
+  in order. New and Compact affect that shared session
   from any conversation. Community scope does not grant additional channel
   access or share context with another community. Under the thread and channel
   choices, each DM, huddle room and Solo chat remains its own continuing

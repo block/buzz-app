@@ -134,7 +134,7 @@ export function turnPrompt(input: TurnInput) {
   const shared = channel.dm || input.scope !== "thread";
   const reply =
     input.scope === "community"
-      ? `IMPORTANT: For each reply, pass the event ID as \`request\` and its channel as \`channel\` to \`send\`. For this request use channel "${channel.id}". ${input.topLevel ? "Leave out the reply field to post at the top level." : `Use "${root}" as the reply field to post in its thread.`} You can answer one request and continue working on another.`
+      ? `IMPORTANT: Pass each reply's channel as \`channel\` to \`send\`. ${input.wake ? "Leave out the request field for this wake." : "Pass the triggering message ID as `request`."} For this request use channel "${channel.id}". ${input.topLevel ? "Leave out the reply field to post at the top level." : `Use "${root}" as the reply field to post in its thread.`} You can answer one request and continue working on another.`
       : input.topLevel
         ? `IMPORTANT: ${input.channelLevel ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}`
         : shared

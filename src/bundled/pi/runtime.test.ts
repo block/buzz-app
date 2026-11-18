@@ -2684,83 +2684,94 @@ it.each(["stop", "retire"])(
   },
 );
 
-it("offers another channel’s message as steering while the community session is busy", async () => {
-  const finished = deferred<unknown>();
-  const f = setup(
-    {
-      wait: () => finished.promise,
-    },
-    [],
-    { content: "SOURCE_CANVAS" },
-  );
-  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
-
-  f.solo.add(channel);
-  const conversationInstructions = vi.fn((source: string, root?: string) =>
-    source === channel && !root
-      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
-      : undefined,
-  );
-  Object.assign(f.agent, { conversationInstructions });
-  const listed = f.session.channels.list();
-  const firstChannel = listed.channels[0];
-  if (!firstChannel) throw new Error("Expected the source channel");
-  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
-    ...listed,
-    status: "ready",
-    channels: [
-      { ...firstChannel, channelType: "solo" },
-      { ...firstChannel, id: "other", channelType: "stream" },
-    ],
-  }));
-  try {
-    const first = f.deliver(
-      { type: "mention", event: reply("2", "first") },
-      { config },
-    );
-    await first.run;
-    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
-    const next = f.deliver(
+it.each(["mention", "attention", "plugin"] as const)(
+  "offers another channel’s %s as steering while the community session is busy",
+  async (type) => {
+    const finished = deferred<unknown>();
+    const f = setup(
       {
-        type: "mention",
-        event: message("3", "second", {
-          tags: [
-            ["h", "other"],
-            ["p", self],
-          ],
-        }),
+        wait: () => finished.promise,
       },
-      { config, channelId: "other" },
+      [],
+      { content: "SOURCE_CANVAS" },
     );
-    await next.run;
-    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
-    const requests = f.host.requests("deliver");
-    expect(requests).toHaveLength(2);
-    expect(requests.map((request) => request.params.key)).toEqual([
-      "@community",
-      "@community",
-    ]);
-    expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
-    expect(requests[1]?.params.steer).toContain(
-      "new-message-arrived-while-you-were-working",
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+
+    f.solo.add(channel);
+    const conversationInstructions = vi.fn((source: string, root?: string) =>
+      source === channel && !root
+        ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+        : undefined,
     );
-    expect(requests[1]?.params.steer).toContain("Session scope: community");
-    expect(requests[0]?.params.text).toContain("SOURCE_ONLY");
-    expect(requests[0]?.params.text).toContain("SOURCE_CANVAS");
-    expect(requests[1]?.params.text).toContain(
-      "Disregard any earlier workspace Canvas",
-    );
-    expect(requests[1]?.params.text).toContain(
-      "Disregard any earlier <owner-instructions>",
-    );
-    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
-    finished.resolve({ status: "done", answer: 1, text: "Done" });
-    await Promise.all([f.settled(first), f.settled(next)]);
-  } finally {
-    finished.resolve({ status: "done", answer: 1, text: "Done" });
-    f.runtime.dispose();
-  }
-});
+    Object.assign(f.agent, { conversationInstructions });
+    const listed = f.session.channels.list();
+    const firstChannel = listed.channels[0];
+    if (!firstChannel) throw new Error("Expected the source channel");
+    vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+      ...listed,
+      status: "ready",
+      channels: [
+        { ...firstChannel, channelType: "solo" },
+        { ...firstChannel, id: "other", channelType: "stream" },
+      ],
+    }));
+    try {
+      const first = f.deliver(
+        { type: "mention", event: reply("2", "first") },
+        { config },
+      );
+      await first.run;
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(1),
+      );
+      const second = message("3", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      });
+      const next = f.deliver(
+        type === "mention"
+          ? { type, event: second }
+          : {
+              ...pluginWake(second.id, "other"),
+              ...(type === "attention" ? { type } : { type, plugin: "github" }),
+              text: "second",
+            },
+        { config, channelId: "other" },
+      );
+      await next.run;
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(2),
+      );
+      const requests = f.host.requests("deliver");
+      expect(requests).toHaveLength(2);
+      expect(requests.map((request) => request.params.key)).toEqual([
+        "@community",
+        "@community",
+      ]);
+      expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
+      expect(requests[1]?.params.steer).toContain(
+        "new-message-arrived-while-you-were-working",
+      );
+      expect(requests[1]?.params.steer).toContain("Session scope: community");
+      expect(requests[0]?.params.text).toContain("SOURCE_ONLY");
+      expect(requests[0]?.params.text).toContain("SOURCE_CANVAS");
+      expect(requests[1]?.params.text).toContain(
+        "Disregard any earlier workspace Canvas",
+      );
+      expect(requests[1]?.params.text).toContain(
+        "Disregard any earlier <owner-instructions>",
+      );
+      expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
+      finished.resolve({ status: "done", answer: 1, text: "Done" });
+      await Promise.all([f.settled(first), f.settled(next)]);
+    } finally {
+      finished.resolve({ status: "done", answer: 1, text: "Done" });
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("uses the shared community lifetime for an unaddressed wake with no tool destination", async () => {
   const f = setup({

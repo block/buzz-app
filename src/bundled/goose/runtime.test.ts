@@ -2642,9 +2642,14 @@ it("runs an agent on Recommended on the current candidate", () => {
   expect(running(DEFAULT_CONFIG, candidate)).toEqual(DEFAULT_CONFIG);
 });
 
-it.each([false, true])(
-  "steers one community session across source channels (scope changed: %s)",
-  async (changed) => {
+it.each([
+  ["mention", false],
+  ["mention", true],
+  ["attention", false],
+  ["plugin", false],
+] as const)(
+  "steers one community session across source channels with %s (scope changed: %s)",
+  async (type, changed) => {
     const f = setup({
       hold: true,
       scope: "community",
@@ -2674,15 +2679,23 @@ it.each([false, true])(
       await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
       const process = f.goose();
       if (!process) throw new Error("No Goose process");
-      await f.deliver(
-        message("2", "second", {
-          tags: [
-            ["h", "other"],
-            ["p", self],
-          ],
-        }),
-        { channelId: "other" },
-      );
+      const second = message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      });
+      if (type === "mention") await f.deliver(second, { channelId: "other" });
+      else
+        await f.run(
+          {
+            ...pluginWake(second.id),
+            ...(type === "attention" ? { type } : { type, plugin: "github" }),
+            channel: "other",
+            text: "second",
+          },
+          { channelId: "other" },
+        );
       await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
       if (changed)
         f.runtime.sync([

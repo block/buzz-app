@@ -4008,9 +4008,14 @@ describe("a conversation given its own folder", () => {
   });
 });
 
-it.each([false, true])(
-  "steers a community session across channels (scope changed: %s)",
-  async (changed) => {
+it.each([
+  ["mention", false],
+  ["mention", true],
+  ["attention", false],
+  ["plugin", false],
+] as const)(
+  "steers a community session across channels with %s (scope changed: %s)",
+  async (type, changed) => {
     const f = setup([], {
       hold: true,
       solo: new Set([channel]),
@@ -4045,16 +4050,21 @@ it.each([false, true])(
       );
       const worker = f.claudes().find((p) => p.prompts.length);
       if (!worker) throw new Error("No Claude process");
+      const second = message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      });
       await f.deliver(
-        {
-          type: "mention",
-          event: message("2", "second", {
-            tags: [
-              ["h", "other"],
-              ["p", self],
-            ],
-          }),
-        },
+        type === "mention"
+          ? { type, event: second }
+          : {
+              ...pluginWake(second.id),
+              ...(type === "attention" ? { type } : { type, plugin: "github" }),
+              channel: "other",
+              text: "second",
+            },
         { config, channelId: "other" },
       );
       await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));

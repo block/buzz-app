@@ -518,7 +518,6 @@ and are asked to sign in again in Buzz.
   reports “created, not filed.” A write that cannot be
   confirmed reports that placement may have completed: inspect or refresh the
   reported chat before **Move to**, and never create it again.
-  This option is not available through external/standalone or Nexus requests.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator. In a Solo chat, including its first
   message, **@** can name anyone in the community. A tagged agent of yours joins

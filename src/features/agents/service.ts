@@ -4998,7 +4998,8 @@ export class AgentsService extends Service implements Agents {
   }
   /** Whether the agent's threads in the channel have sessions of their own,
    * apart from its channel-level conversation: only where its type says it
-   * runs one session per thread, outside a DM or Solo chat. Any type that
+   * runs one session per thread, outside a DM, Solo chat or huddle room (whose
+   * text turns harnesses run in the room's one session). Any type that
    * offers session controls gets this; one that does not keeps the channel
    * one conversation. A channel not known here yet is undefined, which the
    * tools also treat as one conversation. */
@@ -5007,7 +5008,11 @@ export class AgentsService extends Service implements Agents {
     if (type?.sessionControls?.scope(agent) !== "thread") return false;
     const summary = this.channelOf(agent, { tags: [["h", channelId]] });
     if (!summary) return undefined;
-    return summary.channelType !== "dm" && summary.channelType !== "solo";
+    return (
+      summary.channelType !== "dm" &&
+      summary.channelType !== "solo" &&
+      !isHuddleRoom(summary.description)
+    );
   }
   private sessionPlace(
     agent: Agent,

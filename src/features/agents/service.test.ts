@@ -2333,13 +2333,18 @@ describe("a plugin's wake", () => {
       expect(handle?.threadsApart?.("unknown-channel")).toBe(
         scope === "thread" ? undefined : false,
       );
-      // A DM or Solo chat is one conversation under either scope.
+      // A DM, Solo chat or huddle room is one conversation under either
+      // scope: harnesses run a huddle room's text turns in its one session.
       const list = f.session.channels.list();
-      for (const channelType of ["dm", "solo"] as const) {
+      for (const patch of [
+        { channelType: "dm" },
+        { channelType: "solo" },
+        { description: huddleDescription(crypto.randomUUID()) },
+      ] as const) {
         vi.spyOn(f.session.channels, "list").mockReturnValue({
           ...list,
           channels: list.channels.map((row) =>
-            row.id === channel ? { ...row, channelType } : row,
+            row.id === channel ? { ...row, ...patch } : row,
           ),
         });
         expect(handle?.threadsApart?.(channel)).toBe(false);

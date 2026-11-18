@@ -695,7 +695,7 @@ message of it names its root) unless the channel is a Solo chat. It refuses the
 current conversation, which is the whole channel in a DM, a Solo chat or a
 channel-scoped session. A channel-level watch or timer turn of an agent whose
 type runs one session per thread (its `sessionControls.scope`) is apart from
-that channel's threads outside a DM or Solo chat, so it can hand off into one of
+that channel's threads outside a DM, Solo chat or huddle room, so it can hand off into one of
 them. Agents decides this for every harness through the run's handle
 (`threadsApart`); a type with no session controls keeps the channel one
 conversation. It is the same `plugin` trigger with `from`, the

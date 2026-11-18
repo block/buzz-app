@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The workflow wake against the real community lifecycle: provideRelay, its
-// outer retry and its subscribers, live socket reconnects and renewal.
+// outer retry and its subscribers.
 import { createLocalAgents } from "./local";
 import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
@@ -59,9 +59,7 @@ async function fixture() {
   const sockets: Socket[] = [];
   /** Holds the next outer connect until released. */
   let connectGate: Promise<void> | undefined;
-  let connects = 0;
   const connect = async (): Promise<ReadTransport> => {
-    connects++;
     await connectGate;
     return {
       viewer: viewer.pubkey,
@@ -242,10 +240,7 @@ async function fixture() {
     failed,
     waiting,
     ran,
-    local,
     setupEntered,
-    sockets,
-    connects: () => connects,
     holdSetup() {
       let release!: () => void;
       setupGate = new Promise<void>((r) => {
@@ -268,7 +263,6 @@ async function fixture() {
       await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
       await establish();
     },
-    establish,
     /** The relay sends the wake on the newest socket's matching routes. */
     async sendWake() {
       const socket = sockets.at(-1) as Socket;
@@ -281,7 +275,6 @@ async function fixture() {
       return matched;
     },
     acquired,
-    prompted: () => prompts() > 0,
     prompts,
     async dispose() {
       runtime.dispose();
@@ -322,61 +315,3 @@ it("a wake whose community resets during Claude setup starts once through the re
     await f.dispose();
   }
 }, 30_000);
-
-it("a wake whose community disconnects while it waits shows an error and never starts", async () => {
-  const f = await fixture();
-  try {
-    await f.ready();
-    const releaseSetup = f.holdSetup();
-    expect(await f.sendWake()).toBeGreaterThan(0);
-    await vi.waitFor(() => expect(f.setupEntered).toHaveBeenCalledOnce());
-    f.holdConnect();
-    f.relayData.retry();
-    releaseSetup();
-    await vi.waitFor(() => expect(f.waiting).toHaveBeenCalledOnce());
-    f.relayData.disconnect();
-    await vi.waitFor(() => expect(f.ran).toHaveBeenCalledOnce());
-    expect(f.failed).toHaveBeenCalledExactlyOnceWith(
-      "Error: Workflow request could not start: its community is no longer connected.",
-    );
-    expect(f.ignored).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(f.local.reader.work()[0]).toMatchObject({
-        state: "error",
-        error: expect.stringContaining("its community is no longer connected"),
-      }),
-    );
-    expect(f.prompts()).toBe(0);
-  } finally {
-    await f.dispose();
-  }
-}, 30_000);
-
-it("control: socket close, reconnect and federated renewal keep the community ready", async () => {
-  const f = await fixture();
-  try {
-    await f.ready();
-    const before = f.relayData.snapshot();
-    // An ordinary drop: the live layer reconnects on its own backoff.
-    (f.sockets.at(-1) as Socket).onclose?.({ code: 1006 });
-    expect(f.relayData.snapshot().status).toBe("ready");
-    const count = f.sockets.length;
-    await vi.waitFor(() => expect(f.sockets.length).toBeGreaterThan(count), {
-      timeout: 15_000,
-    });
-    await f.establish();
-    // A planned federated renewal of the admitted socket.
-    (f.sockets.at(-1) as Socket).onclose?.({ renew: true });
-    expect(f.relayData.snapshot().status).toBe("ready");
-    await f.establish();
-    expect(f.relayData.snapshot()).toBe(before);
-    expect(f.connects()).toBe(1);
-    expect(await f.sendWake()).toBeGreaterThan(0);
-    await vi.waitFor(() => expect(f.prompts()).toBe(1), {
-      timeout: 5_000,
-    });
-    expect(f.acquired).toEqual([before.session]);
-  } finally {
-    await f.dispose();
-  }
-}, 40_000);

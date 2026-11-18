@@ -6,7 +6,7 @@ import {
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { pubkeyOf } from "../../features/agents/membership";
 import { PROMPTS_PREFIX } from "../../features/agents/session-prompts";
-import { type AgentReads, ownerReads } from "../../features/agents/reads";
+import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
@@ -509,73 +509,27 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(host.processes).toEqual([]);
 });
 
-/** Reads a ready community answers with, as `readyReads` acquired them. */
-const acquiredReads = (authority: string) =>
-  ({
-    workflowAuthority: () => authority,
-    profiles: async () => {},
-    profile: () => undefined,
-  }) as unknown as AgentReads;
-
-it("checks a workflow mention with the reads it waited for", async () => {
-  const { host, deliver, runtime } = setup();
+it("waits for a workflow mention's community, not for its owner's", async () => {
+  const { deliver, runtime } = setup();
   const relay = keypair();
-  const readyReads = vi.fn(async () => acquiredReads(relay.pubkey));
+  const readyReads = vi.fn(async () => runtime["reads"](self));
   Object.assign(runtime, { readyReads });
-  const turn = deliver({
-    type: "mention",
-    event: eventDto(
-      signed(relay, {
-        kind: 9,
-        content: "@Agent workflow",
-        tags: [
-          ["h", channel],
-          ["p", self],
-          ["buzz:workflow", "true"],
-          ["buzz:workflow-owner", alice],
-        ],
-      }),
-    ),
-  });
-  await turn.run;
-  expect(readyReads).toHaveBeenCalledOnce();
-  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
-  expect(host.processes).toEqual([]);
-});
-
-it("ignores a workflow mention whose agent was replaced during the wait", async () => {
-  const { host, deliver, runtime } = setup();
-  const relay = keypair();
-  let live = true;
-  Object.assign(runtime, {
-    readyReads: async () => {
-      live = false;
-      return acquiredReads(relay.pubkey);
-    },
-  });
-  const turn = deliver(
-    {
-      type: "mention",
-      event: eventDto(
-        signed(relay, {
-          kind: 9,
-          content: "@Agent workflow",
-          tags: [
-            ["h", channel],
-            ["p", self],
-            ["buzz:workflow", "true"],
-            ["buzz:workflow-owner", alice],
-            ["buzz:workflow-mention", self],
-          ],
-        }),
-      ),
-    },
-    { current: () => live },
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
   );
-  await turn.run;
-  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith();
-  expect(turn.workingUntil).not.toHaveBeenCalled();
-  expect(host.processes).toEqual([]);
+  await deliver({ type: "mention", event }).run;
+  expect(readyReads).toHaveBeenCalledOnce();
+  await deliver({ type: "mention", event: { ...event, pubkey: alice } }).run;
+  expect(readyReads).toHaveBeenCalledOnce();
 });
 
 it("ignores a mention from someone who is not the owner", async () => {

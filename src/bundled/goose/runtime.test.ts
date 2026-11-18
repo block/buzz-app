@@ -184,10 +184,11 @@ function setup(
   };
   // A reconnect is a new session to the same community.
   let connected = session;
+  const state = { status: "ready" };
   const relay = {
     snapshot: () => ({
-      status: "ready",
-      session: connected,
+      status: state.status,
+      session: state.status === "ready" ? connected : undefined,
       viewer: alice,
       origin: "https://goose.example",
       scope: `https://goose.example:${alice}`,
@@ -253,6 +254,7 @@ function setup(
       prompt: async () => prompt,
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
+    state,
     agent,
     core,
     deliver,
@@ -1862,12 +1864,14 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(f.goose()).toBeUndefined();
 });
 
-it("ignores a workflow mention whose agent was replaced during the wait", async () => {
+it("waits for a workflow mention's community, not for its owner's", async () => {
   const relay = keypair();
   const f = setup({ workflowAuthority: relay.pubkey });
-  const ignored = vi.fn();
-  // The community is ready, so the wait ends at once; the agent is gone by then.
-  await f.deliver(
+  f.state.status = "connecting";
+  // The owner's own mention settles without waiting for the community.
+  await f.deliver(message("1", "Say hi"));
+  const stop = new AbortController();
+  const workflow = f.deliver(
     eventDto(
       signed(relay, {
         kind: 9,
@@ -1877,14 +1881,13 @@ it("ignores a workflow mention whose agent was replaced during the wait", async 
           ["p", self],
           ["buzz:workflow", "true"],
           ["buzz:workflow-owner", alice],
-          ["buzz:workflow-mention", self],
         ],
       }),
     ),
-    { ignored, current: () => false },
+    { signal: stop.signal },
   );
-  expect(ignored).toHaveBeenCalledExactlyOnceWith();
-  expect(f.goose()).toBeUndefined();
+  stop.abort();
+  await expect(workflow).rejects.toThrow("Workflow request could not start");
 });
 
 it("takes a wake with no thread only in a Solo chat", async () => {

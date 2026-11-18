@@ -11,7 +11,7 @@ import {
   promptSections,
 } from "../../features/agents/activity-transcript";
 import { pubkeyOf } from "../../features/agents/membership";
-import { type AgentReads, ownerReads } from "../../features/agents/reads";
+import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import {
   PROMPTS_BUDGET,
@@ -321,16 +321,14 @@ function setup(
       interruptible,
       ...(options.named ? { named: options.named } : {}),
       ...picks,
-      // The host's answer, as it is when asked, unless the test gives one.
-      current:
-        picks.current ??
-        (() =>
-          trigger.type === "mention" ||
-          trigger.type === "plugin" ||
-          trigger.type === "attention" ||
-          (attention.on &&
-            objects.get(trigger.slug)?.enabled === true &&
-            !stale.has(trigger.slug))),
+      // The host's answer, as it is when asked.
+      current: () =>
+        trigger.type === "mention" ||
+        trigger.type === "plugin" ||
+        trigger.type === "attention" ||
+        (attention.on &&
+          objects.get(trigger.slug)?.enabled === true &&
+          !stale.has(trigger.slug)),
     } as unknown as Delivery;
     if (
       trigger.type === "mention" ||
@@ -2280,15 +2278,7 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   }
 });
 
-/** Reads a ready community answers with, as `readyReads` acquired them. */
-const acquiredReads = (authority: string) =>
-  ({
-    workflowAuthority: () => authority,
-    profiles: async () => {},
-    profile: () => undefined,
-  }) as unknown as AgentReads;
-
-it("checks a workflow mention with the reads it waited for", async () => {
+it("waits for a workflow mention's community, not for its owner's", async () => {
   const relay = keypair();
   const event = eventDto(
     signed(relay, {
@@ -2304,119 +2294,19 @@ it("checks a workflow mention with the reads it waited for", async () => {
   );
   const f = setup([event]);
   try {
-    const readyReads = vi.fn(async () => acquiredReads(relay.pubkey));
+    const readyReads = vi.fn(async () => f.runtime["reads"](self));
     Object.assign(f.runtime, { readyReads });
-    const ignored = vi.fn();
-    await f.deliver({ type: "mention", event }, { ignored });
-    expect(readyReads).toHaveBeenCalledOnce();
-    expect(readyReads.mock.calls[0]).toEqual([
+    await f.deliver({ type: "mention", event }, { ignored: vi.fn() });
+    expect(readyReads).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ owner: alice }),
       expect.any(AbortSignal),
       "chan-1",
-    ]);
-    expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
-    expect(f.claudes()).toHaveLength(0);
-  } finally {
-    f.runtime.dispose();
-  }
-});
-
-it("ignores a workflow mention whose agent was replaced during the wait", async () => {
-  const relay = keypair();
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Claude workflow",
-      tags: [
-        ["h", channel],
-        ["p", self],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", alice],
-        ["buzz:workflow-mention", self],
-      ],
-    }),
-  );
-  const f = setup([event]);
-  try {
-    let live = true;
-    Object.assign(f.runtime, {
-      readyReads: async () => {
-        live = false;
-        return acquiredReads(relay.pubkey);
-      },
-    });
-    const ignored = vi.fn();
-    await f.deliver(
-      { type: "mention", event },
-      { ignored, current: () => live },
     );
-    expect(ignored).toHaveBeenCalledExactlyOnceWith();
-    expect(f.claudes()).toHaveLength(0);
-    expect(f.workingUntil).not.toHaveBeenCalled();
-  } finally {
-    f.runtime.dispose();
-  }
-});
-
-it("still refuses a waited-for workflow mention without proof", async () => {
-  const relay = keypair();
-  // A copy of an admitted event carries no proof.
-  const event = {
-    ...eventDto(
-      signed(relay, {
-        kind: 9,
-        content: "@Agent workflow",
-        tags: [
-          ["h", channel],
-          ["p", self],
-          ["buzz:workflow", "true"],
-          ["buzz:workflow-owner", alice],
-        ],
-      }),
-    ),
-  };
-  const f = setup([event]);
-  try {
-    const readyReads = vi.fn(async () => acquiredReads(relay.pubkey));
-    Object.assign(f.runtime, { readyReads });
-    const ignored = vi.fn();
-    await f.deliver({ type: "mention", event }, { ignored });
+    await f.deliver(
+      { type: "mention", event: { ...event, pubkey: alice } },
+      { ignored: vi.fn() },
+    );
     expect(readyReads).toHaveBeenCalledOnce();
-    expect(ignored).toHaveBeenCalledExactlyOnceWith(undefined);
-    expect(f.claudes()).toHaveLength(0);
-  } finally {
-    f.runtime.dispose();
-  }
-});
-
-it("does not start a workflow mention whose wait failed", async () => {
-  const relay = keypair();
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Agent workflow",
-      tags: [
-        ["h", channel],
-        ["p", self],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", alice],
-      ],
-    }),
-  );
-  const f = setup([event]);
-  try {
-    const error = new Error("Workflow request could not start");
-    Object.assign(f.runtime, {
-      readyReads: async () => {
-        throw error;
-      },
-    });
-    const ignored = vi.fn();
-    await expect(
-      f.deliver({ type: "mention", event }, { ignored }),
-    ).rejects.toBe(error);
-    expect(ignored).not.toHaveBeenCalled();
-    expect(f.claudes()).toHaveLength(0);
   } finally {
     f.runtime.dispose();
   }

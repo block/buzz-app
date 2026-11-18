@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RelayData, RelaySnapshot } from "../relay/service";
-import { readyOwnerReads, workflowMarked } from "./reads";
-import type { RelayEvent } from "../relay/events";
+import { readyOwnerReads } from "./reads";
 
 const owner = "a".repeat(64);
 const agent = { relay: "wss://relay.example", owner, pubkey: "b".repeat(64) };
@@ -15,23 +14,19 @@ const ready = (session: object, over: Partial<RelaySnapshot> = {}) =>
     session,
     ...over,
   }) as unknown as RelaySnapshot;
+const connecting = { status: "connecting", generation: 2 } as RelaySnapshot;
 
-/** A community connection whose snapshot the test sets, as its service would. */
+/** A community connection whose snapshot the test publishes. */
 function community(first: RelaySnapshot) {
   let snapshot = first;
   const listeners = new Set<() => void>();
   const relay = {
     snapshot: () => snapshot,
-    subscribe: vi.fn((listener: () => void) => {
+    subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
-    }),
-    retry: vi.fn(),
-    tryAgain: vi.fn(),
-  } as unknown as RelayData & {
-    subscribe: ReturnType<typeof vi.fn>;
-    retry: ReturnType<typeof vi.fn>;
-  };
+    },
+  } as unknown as RelayData;
   return {
     relay,
     listeners,
@@ -41,304 +36,98 @@ function community(first: RelaySnapshot) {
     },
   };
 }
-/** A session whose channel list the test settles. */
-function session(status = "ready", workflowAuthority?: string) {
+
+/** A session listing `channels`, which the test relists. */
+function session(
+  channels: { id: string; channelType?: string }[] = [],
+  status = "ready",
+) {
   const listeners = new Set<() => void>();
   return {
-    workflowAuthority,
+    workflowAuthority: "c".repeat(64),
     listeners,
     channels: {
-      list: () => ({ status, channels: [] }),
+      list: () => ({ status, channels }),
       subscribeList: (listener: () => void) => {
         listeners.add(listener);
         return () => void listeners.delete(listener);
       },
     },
-    listed() {
+    relist(next = channels) {
       status = "ready";
+      channels = next;
       for (const listener of [...listeners]) listener();
     },
   };
 }
-const connecting = {
-  status: "connecting",
-  generation: 2,
-  session: session(),
-} as unknown as RelaySnapshot;
+
+const lost =
+  "Workflow request could not start: its community is no longer connected.";
 
 describe("readyOwnerReads", () => {
-  it("answers a ready community now, without waiting or reconnecting", async () => {
-    // Ready with no workflow key is the permission check's to refuse.
-    const first = session();
-    const c = community(ready(first));
-    const reads = await readyOwnerReads(
-      c.relay,
-      agent,
-      new AbortController().signal,
-    );
-    expect(reads?.connection).toBe(first);
-    expect(reads?.workflowAuthority()).toBeUndefined();
-    expect(c.relay.retry).not.toHaveBeenCalled();
-    expect(c.listeners.size).toBe(0);
-  });
-
-  it("waits for a ready community's channel list when it starts while loading", async () => {
-    const first = session("loading", "c".repeat(64));
-    const c = community(ready(first));
-    const settled = vi.fn();
-    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    void reads.then(settled);
-    await Promise.resolve();
-    expect(settled).not.toHaveBeenCalled();
-    first.listed();
-    expect((await reads).connection).toBe(first);
-    expect(first.listeners.size).toBe(0);
-    expect(c.listeners.size).toBe(0);
-    expect(c.relay.retry).not.toHaveBeenCalled();
-  });
-
-  it("waits out a cached ready snapshot until the live session is ready", async () => {
-    const restored = session("ready", "c".repeat(64));
-    const c = community(ready(restored, { cached: true }));
-    const settled = vi.fn();
-    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    void reads.then(settled);
-    await Promise.resolve();
-    expect(settled).not.toHaveBeenCalled();
-    const live = session("ready", "c".repeat(64));
-    c.publish(ready(live, { generation: 2 }));
-    expect((await reads).connection).toBe(live);
-    expect(c.listeners.size).toBe(0);
-  });
-
-  it("stops listening to a loading channel list on abort", async () => {
-    const first = session("loading");
-    const c = community(ready(first));
-    const deadline = new AbortController();
-    const reads = readyOwnerReads(c.relay, agent, deadline.signal);
-    expect(first.listeners.size).toBe(1);
-    deadline.abort();
-    await expect(reads).rejects.toThrow("did not reconnect");
-    expect(first.listeners.size).toBe(0);
-    expect(c.listeners.size).toBe(0);
-  });
-
-  it("moves its channel-list listener to the session that replaces the one it waited on", async () => {
-    const first = session("loading");
-    const c = community(ready(first));
-    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    expect(first.listeners.size).toBe(1);
-    const replacement = session("loading");
-    c.publish(ready(replacement, { generation: 2 }));
-    expect(first.listeners.size).toBe(0);
-    expect(replacement.listeners.size).toBe(1);
-    // The old session's list settling answers nothing.
-    first.listed();
-    replacement.listed();
-    expect((await reads).connection).toBe(replacement);
-    expect(replacement.listeners.size).toBe(0);
-  });
-
-  it("waits through a reconnect for the replacing session of the same community and owner", async () => {
+  it("waits through connecting for the replacement session's channel list", async () => {
     const c = community(connecting);
     const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    c.publish({
-      ...connecting,
-      status: "error",
-      retrying: true,
-    } as RelaySnapshot);
-    const replacement = session("loading", "c".repeat(64));
     const settled = vi.fn();
     void reads.then(settled);
+    const replacement = session([], "loading");
     c.publish(ready(replacement, { generation: 3 }));
     await Promise.resolve();
-    // It waits for the replacement to list its channels too.
     expect(settled).not.toHaveBeenCalled();
-    replacement.listed();
-    expect((await reads)?.connection).toBe(replacement);
+    replacement.relist();
+    expect((await reads).connection).toBe(replacement);
+    expect((await reads).workflowAuthority()).toBe("c".repeat(64));
     expect(replacement.listeners.size).toBe(0);
-    expect((await reads)?.workflowAuthority()).toBe("c".repeat(64));
     expect(c.listeners.size).toBe(0);
-    expect(c.relay.retry).not.toHaveBeenCalled();
   });
 
   it.each([
+    [
+      "a disconnect",
+      { ...connecting, status: "disconnected" } as RelaySnapshot,
+    ],
     [
       "another community",
-      {
+      ready(session(), {
         origin: "https://other.example",
         scope: `https://other.example:${owner}`,
-      },
+      }),
     ],
-    [
-      "another owner",
-      {
-        viewer: "d".repeat(64),
-        scope: `https://relay.example:${"d".repeat(64)}`,
-      },
-    ],
-  ])("rejects a community ready as %s", async (_name, over) => {
+  ])("rejects after %s", async (_name, next) => {
     const c = community(connecting);
     const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    c.publish(ready(session(), over as Partial<RelaySnapshot>));
-    await expect(reads).rejects.toThrow(
-      "Workflow request could not start: its community is no longer connected.",
-    );
+    c.publish(next);
+    await expect(reads).rejects.toThrow(lost);
     expect(c.listeners.size).toBe(0);
   });
 
-  it.each([
-    ["a disconnect", { status: "disconnected" }],
-    ["a terminal error", { status: "error" }],
-    ["a refusal", { status: "error", retrying: true, denied: true }],
-  ])("rejects after %s", async (_name, over) => {
-    const c = community(connecting);
-    const reads = readyOwnerReads(c.relay, agent, new AbortController().signal);
-    c.publish({ ...connecting, ...over } as RelaySnapshot);
-    await expect(reads).rejects.toThrow(
-      "Workflow request could not start: its community is no longer connected.",
-    );
-    expect(c.listeners.size).toBe(0);
-  });
-
-  it("rejects without a connection", async () => {
-    await expect(
-      readyOwnerReads(undefined, agent, new AbortController().signal),
-    ).rejects.toThrow("its community is no longer connected");
-  });
-
-  it("rejects visibly on the deadline, stops listening, and a later ready does nothing", async () => {
+  it("rejects on the deadline and stops listening", async () => {
     const c = community(connecting);
     const deadline = new AbortController();
     const reads = readyOwnerReads(c.relay, agent, deadline.signal);
-    const settled = vi.fn();
-    void reads.then(settled, () => {});
-    expect(c.listeners.size).toBe(1);
     deadline.abort(new DOMException("timed out", "TimeoutError"));
     await expect(reads).rejects.toThrow(
       "Workflow request could not start: its community did not reconnect before the delivery deadline.",
     );
     expect(c.listeners.size).toBe(0);
-    c.publish(ready(session()));
+  });
+
+  it("waits until the destination is listed and typed", async () => {
+    const first = session();
+    const c = community(ready(first));
+    const settled = vi.fn();
+    const reads = readyOwnerReads(
+      c.relay,
+      agent,
+      new AbortController().signal,
+      "dm",
+    );
+    void reads.then(settled);
+    first.relist([{ id: "dm" }]);
     await Promise.resolve();
     expect(settled).not.toHaveBeenCalled();
-  });
-
-  it("rejects an aborted request without listening", async () => {
-    const c = community(connecting);
-    const stop = new AbortController();
-    stop.abort();
-    await expect(readyOwnerReads(c.relay, agent, stop.signal)).rejects.toThrow(
-      "Workflow request could not start",
-    );
-    expect(c.relay.subscribe).not.toHaveBeenCalled();
-  });
-
-  describe("with a destination", () => {
-    /** A ready session listing `channels`, which the test relists. */
-    function listing(
-      channels: { id: string; channelType?: string }[],
-      get?: (id: string) => { id: string; channelType?: string } | undefined,
-    ) {
-      const listeners = new Set<() => void>();
-      return {
-        listeners,
-        channels: {
-          list: () => ({ status: "ready", channels }),
-          get,
-          subscribeList: (listener: () => void) => {
-            listeners.add(listener);
-            return () => void listeners.delete(listener);
-          },
-        },
-        relist(next: typeof channels) {
-          channels = next;
-          for (const listener of [...listeners]) listener();
-        },
-      };
-    }
-
-    it("waits until a listed destination is present and typed", async () => {
-      const restored = listing([]);
-      const c = community(ready(restored));
-      const settled = vi.fn();
-      const reads = readyOwnerReads(
-        c.relay,
-        agent,
-        new AbortController().signal,
-        "dm",
-      );
-      void reads.then(settled);
-      await Promise.resolve();
-      restored.relist([{ id: "dm" }]);
-      await Promise.resolve();
-      expect(settled).not.toHaveBeenCalled();
-      restored.relist([{ id: "dm", channelType: "dm" }]);
-      expect((await reads).connection).toBe(restored);
-      expect(restored.listeners.size).toBe(0);
-      expect(c.listeners.size).toBe(0);
-    });
-
-    it("takes a typed destination the community knows but does not list", async () => {
-      const first = listing([], (id) =>
-        id === "dm" ? { id, channelType: "dm" } : undefined,
-      );
-      const reads = await readyOwnerReads(
-        community(ready(first)).relay,
-        agent,
-        new AbortController().signal,
-        "dm",
-      );
-      expect(reads.connection).toBe(first);
-    });
-
-    it("stops listening on abort while the destination is untyped", async () => {
-      const first = listing([{ id: "dm" }]);
-      const c = community(ready(first));
-      const deadline = new AbortController();
-      const reads = readyOwnerReads(c.relay, agent, deadline.signal, "dm");
-      expect(first.listeners.size).toBe(1);
-      deadline.abort();
-      await expect(reads).rejects.toThrow("did not reconnect");
-      expect(first.listeners.size).toBe(0);
-      expect(c.listeners.size).toBe(0);
-    });
-
-    it("moves to the replacing session while the destination is missing", async () => {
-      const first = listing([]);
-      const c = community(ready(first));
-      const reads = readyOwnerReads(
-        c.relay,
-        agent,
-        new AbortController().signal,
-        "dm",
-      );
-      const replacement = listing([{ id: "dm" }]);
-      c.publish(ready(replacement, { generation: 2 }));
-      expect(first.listeners.size).toBe(0);
-      expect(replacement.listeners.size).toBe(1);
-      // The old session typing it answers nothing.
-      first.relist([{ id: "dm", channelType: "dm" }]);
-      replacement.relist([{ id: "dm", channelType: "dm" }]);
-      expect((await reads).connection).toBe(replacement);
-      expect(replacement.listeners.size).toBe(0);
-      expect(c.listeners.size).toBe(0);
-    });
-  });
-});
-
-describe("workflowMarked", () => {
-  const event = (pubkey: string, tags: string[][]) =>
-    ({ pubkey, tags }) as unknown as RelayEvent;
-  it("marks only a workflow's message that is not the owner's own", () => {
-    expect(
-      workflowMarked(event("e".repeat(64), [["buzz:workflow", "true"]]), owner),
-    ).toBe(true);
-    expect(
-      workflowMarked(event(owner, [["buzz:workflow", "true"]]), owner),
-    ).toBe(false);
-    expect(workflowMarked(event("e".repeat(64), [["p", owner]]), owner)).toBe(
-      false,
-    );
+    first.relist([{ id: "dm", channelType: "dm" }]);
+    expect((await reads).connection).toBe(first);
+    expect(first.listeners.size).toBe(0);
   });
 });

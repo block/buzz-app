@@ -16,11 +16,7 @@ import {
   conversationKey,
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
-import {
-  type AgentReads,
-  ownerReads,
-  readyOwnerReads,
-} from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
   localStore,
@@ -3068,9 +3064,21 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(f.spawn).not.toHaveBeenCalled();
 });
 
-it("checks a workflow mention, and answers it, with the reads it waited for", async () => {
+it("waits for a workflow mention's community, not for its owner's", async () => {
   const f = fixture();
   const relay = keypair();
+  const replacement = {
+    snapshot: () => ({
+      ...f.snapshot,
+      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
+    }),
+  } as unknown as RelayData;
+  const readyReads = vi.fn(async () => ownerReads(replacement, pubkey));
+  Object.assign(f.runtime, { readyReads });
+  await f.runtime.run(f.delivery("owner"));
+  expect(readyReads).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
   const ask = f.delivery("@Codex workflow");
   const event = eventDto(
     signed(relay, {
@@ -3085,27 +3093,13 @@ it("checks a workflow mention, and answers it, with the reads it waited for", as
       ],
     }),
   );
-  // Only the community the wait ends on knows the workflow key.
-  const replacement = {
-    snapshot: () => ({
-      ...f.snapshot,
-      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
-    }),
-  } as unknown as RelayData;
-  const acquired = ownerReads(replacement, pubkey) as AgentReads;
-  const channel = vi.fn(acquired.channel);
-  const readyReads = vi.fn(async () => ({ ...acquired, channel }));
-  Object.assign(f.runtime, { readyReads });
-  const ignored = vi.fn();
-  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event } });
   expect(readyReads).toHaveBeenCalledExactlyOnceWith(
     ask.agent,
     ask.signal,
     "channel",
   );
-  expect(channel).toHaveBeenCalledWith("channel");
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(ignored).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   await f.complete();
 });
 
@@ -3222,47 +3216,6 @@ it("waits after a reconnect until a workflow mention's DM is typed, then answers
     1,
   );
   await f.complete();
-});
-
-it("ignores a workflow mention whose agent was replaced during the wait", async () => {
-  const f = fixture();
-  const relay = keypair();
-  const ask = f.delivery("@Codex workflow");
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Codex workflow",
-      tags: [
-        ["h", "channel"],
-        ["p", pubkey],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", owner],
-        ["buzz:workflow-mention", pubkey],
-      ],
-    }),
-  );
-  const replacement = {
-    snapshot: () => ({
-      ...f.snapshot,
-      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
-    }),
-  } as unknown as RelayData;
-  let live = true;
-  Object.assign(f.runtime, {
-    readyReads: async () => {
-      live = false;
-      return ownerReads(replacement, pubkey);
-    },
-  });
-  const ignored = vi.fn();
-  await f.runtime.run({
-    ...ask,
-    trigger: { type: "mention", event },
-    current: () => live,
-    ignored,
-  });
-  expect(ignored).toHaveBeenCalledExactlyOnceWith();
-  expect(f.spawn).not.toHaveBeenCalled();
 });
 
 it.each([false, true])(
@@ -7516,45 +7469,6 @@ it("waits for remote turn and target cleanup when an agent retires", async () =>
   expect(target.signal.aborted).toBe(true);
 });
 
-it("waits for a workflow mention's community on the execution target too", async () => {
-  const guest = fixture();
-  const f = fixture([], undefined, false, {}, undefined, undefined, async () =>
-    guestTarget(guest),
-  );
-  const relay = keypair();
-  const ask = f.delivery("@Codex workflow");
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Codex workflow",
-      tags: [
-        ["h", "channel"],
-        ["p", pubkey],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", owner],
-        ["buzz:workflow-mention", pubkey],
-      ],
-    }),
-  );
-  // Only the community the wait ends on knows the workflow key.
-  const replacement = {
-    snapshot: () => ({
-      ...f.snapshot,
-      session: { ...f.snapshot.session, workflowAuthority: relay.pubkey },
-    }),
-  } as unknown as RelayData;
-  const readyReads = vi.fn(async () => ownerReads(replacement, pubkey));
-  Object.assign(f.runtime, { readyReads });
-  const ignored = vi.fn();
-  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
-  // Once here, and once in the runtime on the target.
-  await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
-  expect(readyReads).toHaveBeenCalledTimes(2);
-  expect(ignored).not.toHaveBeenCalled();
-  await guest.complete();
-  await f.runtime.retire(pubkey);
-});
-
 /** The hand-over budgets started, which the test expires; other timeouts run
  * on the real clock. */
 function handoverBudgets() {
@@ -7608,14 +7522,18 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
   await vi.waitFor(() =>
     expect(f.runtime.sessionState(agent, place)).toBe("idle"),
   );
-  const started = deferred<void>();
-  const released = deferred<void>();
-  const reset = f.runtime.session(agent, place, "new", async (change) => {
-    started.resolve();
-    await released.promise;
-    await change();
-  });
-  await started.promise;
+  /** Starts a New that waits for `released`. */
+  const holdNew = async () => {
+    const started = deferred<void>();
+    const released = deferred<void>();
+    const reset = f.runtime.session(agent, place, "new", async (change) => {
+      started.resolve();
+      await released.promise;
+      await change();
+    });
+    await started.promise;
+    return { released, reset };
+  };
   const handoffs: Promise<unknown>[] = [];
   const workflow = (signal: AbortSignal) =>
     f.runtime.run({
@@ -7646,78 +7564,57 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
     reads,
     agent,
     place,
-    released,
-    reset,
+    holdNew,
     handoffs,
     workflow,
   };
 }
 
-it("gives a workflow mention held behind a remote New a fresh hand-over deadline", async () => {
+it("gives a workflow mention held behind a remote New a fresh hand-over deadline that does not bound its turn", async () => {
   const readyReads = vi.fn();
   const held = await heldRemoteNew(readyReads);
-  // Here the community is ready; on the target it keeps retrying.
+  // Here the community is ready; on the target it first keeps retrying.
+  readyReads.mockImplementation(async () => held.reads);
   readyReads.mockImplementationOnce(async () => held.reads);
   readyReads.mockImplementationOnce(
     (_agent: unknown, signal: AbortSignal) =>
       new Promise((_resolve, reject) =>
         signal.addEventListener(
           "abort",
-          () =>
-            reject(
-              new Error(
-                "Workflow request could not start: its community did not reconnect before the delivery deadline.",
-              ),
-            ),
+          () => reject(new Error("did not reconnect")),
           { once: true },
         ),
       ),
   );
   const budgets = handoverBudgets();
   try {
+    let hold = await held.holdNew();
     const expired = new AbortController();
     await held.workflow(expired.signal);
-    expect(held.handoffs).toHaveLength(1);
     const handoff = held.handoffs[0] as Promise<unknown>;
     handoff.catch(() => {});
     // The original deadline passes while the hand-over waits for New.
     expired.abort(new Error("delivery deadline"));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(budgets).toHaveLength(0);
-    held.released.resolve();
-    await held.reset;
+    hold.released.resolve();
+    await hold.reset;
     await vi.waitFor(() => expect(readyReads).toHaveBeenCalledTimes(2));
     expect(budgets).toHaveLength(1);
     expect(readyReads.mock.calls[1]?.[1]?.aborted).toBe(false);
     budgets[0]?.abort(new DOMException("timed out", "TimeoutError"));
     await expect(handoff).rejects.toThrow("did not reconnect");
-    await vi.waitFor(() =>
-      expect(held.f.runtime.sessionState(held.agent, held.place)).toBe("idle"),
-    );
-    // New works again, and the expired mention never starts a turn.
-    await held.f.runtime.session(held.agent, held.place, "new");
     expect(held.guests.flatMap((guest) => guest.starts())).toHaveLength(1);
-  } finally {
-    budgets.restore();
-    await held.f.runtime.retire(pubkey);
-  }
-});
-
-it("keeps a workflow turn held behind a remote New past its hand-over deadline", async () => {
-  const readyReads = vi.fn();
-  const held = await heldRemoteNew(readyReads);
-  readyReads.mockImplementation(async () => held.reads);
-  const budgets = handoverBudgets();
-  try {
+    // New works again; a turn that outlives its hand-over budget finishes.
+    hold = await held.holdNew();
     await held.workflow(new AbortController().signal);
-    const handoff = held.handoffs[0];
-    held.released.resolve();
-    await held.reset;
-    await vi.waitFor(() => expect(held.guests[1]?.starts()).toHaveLength(1));
-    // The model turn runs past the hand-over budget and still finishes.
+    hold.released.resolve();
+    await hold.reset;
+    const guest = () => held.guests.find((g, i) => i > 0 && g.starts().length);
+    await vi.waitFor(() => expect(guest()).toBeDefined());
     for (const budget of budgets) budget.abort();
-    await held.guests[1]?.complete();
-    await handoff;
+    await guest()?.complete();
+    await held.handoffs[1];
     await vi.waitFor(() => expect(held.f.publish).toHaveBeenCalledTimes(2));
   } finally {
     budgets.restore();

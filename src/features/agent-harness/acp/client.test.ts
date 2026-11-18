@@ -1761,8 +1761,8 @@ describe("saved sessions under holds", () => {
       );
       const delivered = sessions.deliver("chat", "one", 1);
       while (!harness.turns.length) await flush();
-      const before = saved.get("chat");
-      expect(before?.sessions).toHaveLength(1);
+      // This harness confirms delivery when it finishes the prompt.
+      expect(saved.has("chat")).toBe(false);
       const resetting = sessions.reset("chat", action, forwarded);
       await flush();
       await sessions.interrupt("chat");
@@ -1772,8 +1772,10 @@ describe("saved sessions under holds", () => {
         ok: false,
         error: "Harness was stopped",
       });
-      // Only the turn's own save, which keeps the time it ended.
-      expect(saved.get("chat")).toEqual({ ...before, at: expect.any(Number) });
+      expect(saved.get("chat")).toEqual({
+        at: expect.any(Number),
+        sessions: [harness.turns[0]?.sessionId],
+      });
       expect(forwarded).not.toHaveBeenCalled();
       expect(harness.turns.map((turn) => turn.text)).toEqual(["one"]);
       // The session it waited on is still the conversation's.

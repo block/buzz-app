@@ -39,6 +39,7 @@ import type { GatewayRoute } from "../../features/agents/gateway/route";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import type { ForwardOpen } from "../../features/host/forward";
 import {
+  type Config,
   DEFAULT_CONFIG,
   GooseRuntime,
   running,
@@ -3448,6 +3449,84 @@ describe("goose turns through the agent gateway", () => {
       // goose's own compaction, which has no open session to compact.
       expect(g.opens).toHaveLength(1);
       expect(f.fake.geese).toHaveLength(1);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("resumes the session an ordinary turn saved once the conversation forwards, until New session", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    const reply = (id: string, text: string) =>
+      message(id, text, {
+        tags: [
+          ["h", channel],
+
+          ["e", root.id, "", "reply"],
+        ],
+      });
+    try {
+      const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+      const place = { channelId: channel, root: root.id };
+      // Before the membership routes through the gateway: the agent's own
+      // goose, with no binding saved.
+      await f.deliver(root);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const [shared] = f.fake.geese;
+      const ordinary = localSessions(f.storage, self).get(key);
+      const [first] = ordinary?.sessions ?? [];
+      expect(first).toBeDefined();
+      expect(ordinary).not.toHaveProperty("binding");
+      expect(g.native.open).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+
+      // Forwarded: its own goose resumes that session, saving a binding
+      // of its own with it.
+      await f.deliver(reply("2", "Again"), dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      const resumed = f.fake.geese[1];
+      expect(resumed).not.toBe(shared);
+      expect(resumed?.env.DATABRICKS_HOST).toBe("http://127.0.0.1:9/g1");
+      expect(resumed?.loaded).toEqual([first]);
+      expect(resumed?.opened).toEqual([]);
+      expect(resumed?.turns).toHaveLength(1);
+      const bound = localSessions(f.storage, self).get(key);
+      expect(bound?.sessions?.[0]).toBe(first);
+      expect(bound?.binding).toMatchObject({
+        session: first,
+        value: { v: 1, identity },
+      });
+      expect(g.calls).toEqual([`associate 1 ${first}`, "seal 1", "close 1"]);
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+
+      // New session: the next forwarded turn loads nothing, opening a
+      // session under a fresh Buzz session of its own.
+      await f.runtime.session(agent, place, "new");
+      await f.deliver(reply("3", "Fresh"), dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 2"));
+      const reset = f.fake.geese[2];
+      expect(reset?.loaded).toEqual([]);
+      expect(reset?.opened).toHaveLength(1);
+      const after = localSessions(f.storage, self).get(key);
+      const opened = after?.sessions?.[0];
+      // Each fake goose numbers its own sessions; what shows it is new is
+      // that it was opened, not loaded.
+      expect(opened).toBeDefined();
+      expect(after?.next).toBeUndefined();
+      expect(after?.binding).toMatchObject({ session: opened });
+      expect(g.calls.slice(3)).toEqual([
+        `associate 2 ${opened}`,
+        "seal 2",
+        "close 2",
+      ]);
+      expect(g.opens[1]?.inference[headers.launcher_session]).not.toBe(
+        g.opens[0]?.inference[headers.launcher_session],
+      );
+      expect(f.published).toEqual([]);
     } finally {
       f.runtime.dispose();
     }

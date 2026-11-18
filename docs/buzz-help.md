@@ -1724,6 +1724,8 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   "Ran without the agent gateway" beside its prompt only while the app keeps
   running; goose compacting the conversation can remove the prompt and its
   note. A wake run outside a conversation shows no note.
+  If Buzz routes a Goose turn through the gateway, choose Thread or Channel
+  session scope. A gateway-routed Goose turn in Community scope shows an error.
   While goose uses the gateway, compaction requires gateway access. If access
   is still being checked, try again once the check finishes.
   A turn's **Thread** or **Channel** label

@@ -117,7 +117,11 @@ const type: RegisteredAgentType = {
         groupByFamily
         appearance={modelAppearance}
         models={[{ id: inheritedModel, label: inheritedModel }]}
-        value=""
+        value={
+          new URLSearchParams(location.search).has("pinned")
+            ? inheritedModel
+            : ""
+        }
         defaultModel={inheritedModel}
         defaultLabel={inheritedModel}
         effortLabel="Automatic"
@@ -173,7 +177,8 @@ if (thinkingHarness === "claude") {
   });
   const defaults = staticStore({ model: "", effort: "" });
   const tabs = createClaudeTabs({
-    setup: setup as never,
+    // The listed models stay current, so a picker's refresh finds nothing new.
+    setup: { ...setup, loadModels: async () => {} } as never,
     defaults: defaults as never,
     runtime: { isRemote: async () => false } as never,
   });
@@ -220,6 +225,7 @@ if (thinkingHarness === "claude") {
   };
   const provider = {
     ...staticStore(providerState),
+    recommended: () => null,
     resolve: (value: unknown) => ({
       ...codexDefaults,
       ...(value as Partial<typeof codexDefaults>),

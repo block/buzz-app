@@ -1,7 +1,80 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { frames, open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 3, beta: 0 } });
+
+// Native selection, portal hit-testing and focus restoration need real engines.
+for (const [scheme, width, scale] of [
+  ["light", 1440, 1],
+  ["dark", 800, 1.25],
+]) {
+  test(`selected links yield Quote to their context menu (${scheme})`, async ({
+    page,
+    app,
+  }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.setViewportSize({ width, height: 950 });
+    await open(page, app);
+    await page.evaluate(
+      (scale) =>
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        ),
+      scale,
+    );
+    const message = app.append(
+      "primary",
+      "alpha",
+      "[Example link](https://example.org/pull/1)",
+    );
+    const link = page
+      .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
+      .getByRole("link", {
+        name: "Example link",
+        exact: true,
+        includeHidden: true,
+      });
+    await expect(link).toBeVisible();
+    const selectLink = () =>
+      link.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+    await selectLink();
+    const quote = page.getByRole("button", {
+      name: "Quote",
+      exact: true,
+      includeHidden: true,
+    });
+    await expect(quote).toBeVisible();
+    await link.click({ button: "right" });
+    const menu = page.getByRole("menu");
+    await expect(
+      menu.getByRole("menuitem", { name: "Copy link" }),
+    ).toBeVisible();
+    // Engines can update the link selection after the menu has taken focus.
+    // Keep that ordering explicit instead of relying on a platform's timing.
+    await selectLink();
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString()))
+      .toBe("Example link");
+    await frames(page);
+    await expect(quote).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(quote).toBeVisible();
+    await quote.click();
+    await expect(
+      page
+        .getByRole("textbox", { name: "Message #Alpha", exact: true })
+        .locator("blockquote"),
+    ).toContainText("Example link");
+  });
+}
 
 // Engines copy Selection.toString(): button labels, hover-only clocks and
 // visually hidden text all count unless user-select excludes them. jsdom has
@@ -100,4 +173,48 @@ test("a selection spanning rows copies only the visible conversation", async ({
   await expect(
     page.getByRole("button", { name: /^Close .* tab$/ }),
   ).toHaveCount(0);
+});
+
+// WebKit fills a selection across the padding and empty space of Markdown
+// boxes, which reads as slabs inside a selected message. Only its text should
+// highlight, so the panel beside a short code line keeps its own paint.
+test("a selected message paints no fill beside its code", async ({
+  page,
+  app,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page, app);
+  const message = app.append(
+    "primary",
+    "alpha",
+    "A sentence long enough to make the code block wider than its line.\n\n```\nlet a = 1;\n```\n\nAfter the code.",
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const code = row.locator("pre code");
+  await expect(code).toBeVisible();
+  const box = await code.boundingBox();
+  const clip = {
+    x: box.x + box.width * 0.5,
+    y: box.y + box.height / 2 - 2,
+    width: box.width * 0.25,
+    height: 4,
+  };
+  const unselected = await page.screenshot({ clip });
+  const paragraphs = row.locator("p");
+  const [first, last] = await Promise.all([
+    paragraphs.first().boundingBox(),
+    paragraphs.last().boundingBox(),
+  ]);
+  await page.mouse.move(first.x + 1, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width - 1, last.y + last.height / 2, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(() => page.evaluate(() => getSelection()?.toString()))
+    .toContain("let a = 1;");
+  expect(await page.screenshot({ clip })).toEqual(unselected);
 });

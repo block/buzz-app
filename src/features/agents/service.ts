@@ -1,4 +1,9 @@
 import { followUpQueue } from "../messages/follow-up-queue";
+import type {
+  AgentModelSettings,
+  AgentModelSettingsContext,
+  AgentModelSettingsReadout,
+} from "./model-settings";
 import {
   createSessionAdmissions,
   type AgentSessionRouter,
@@ -15,6 +20,7 @@ import {
 } from "./execution";
 import type { JsonValue } from "../navigation/targets";
 import { removeSessionPrompts } from "./session-prompts";
+import { removeStandaloneSessions } from "./standalone-sessions";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
@@ -66,6 +72,7 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
+import type { RecommendedCandidate } from "./recommended";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -83,6 +90,11 @@ import {
   conversationFolder as storedFolder,
   conversationKey,
 } from "./conversation-folders";
+import {
+  conversationInstructions as storedInstructions,
+  forgetConversationInstructions,
+  setConversationInstructions as storeInstructions,
+} from "./conversation-instructions";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -120,7 +132,10 @@ import {
   type AgentRecordBody,
   removeAgentFromChannels,
   removeRelayAgent,
+  archiveAgent,
+  type OwnerConsent,
 } from "./relay-removal";
+import { UnattestedProfile } from "../relay/identity-archives";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import {
@@ -129,12 +144,18 @@ import {
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   parseSlug,
   type AttentionObject,
@@ -213,6 +234,8 @@ import { nameSoloChat } from "./solo-chat-name";
 import { visibleTeams } from "./visible-teams";
 import {
   clearDeletedDefaultAgent,
+  defaultAgentControl,
+  type DefaultAgentControl,
   forgetDefaultAgent,
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
@@ -405,6 +428,9 @@ export type AgentInstructions = Readonly<{
  * It goes with every turn, so this matches a watch classifier's true/false
  * text, not the once-a-session blocks such as agent instructions. */
 const INSTRUCTIONS_TEXT_LIMIT = 4 * 1024;
+/** Most UTF-8 bytes one conversation's instructions may have, after
+ * trimming: room for a role's text, still small enough to send each turn. */
+const CONVERSATION_INSTRUCTIONS_LIMIT = 8 * 1024;
 /** Instructions for one turn, with the plugin that gave them. */
 export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
@@ -474,10 +500,13 @@ export type SessionUsage = Readonly<{
   observations: readonly UsageObservation[];
 }>;
 /** A conversation to wake an agent in, and what to tell it there. `root` is
- * the thread's root event id; leave it out for a Solo chat. */
+ * the thread's root event id; leave it out for a Solo chat. `topLevel` wakes
+ * it at the top level of a channel that is not a Solo chat, as a watch on the
+ * whole channel does; without it, such a wake has no conversation. */
 export type AgentWake = Readonly<{
   channel: string;
   root?: string;
+  topLevel?: true;
   text: string;
 }>;
 /** The conversation a self-handoff came from: no channel for a watch's or
@@ -590,11 +619,21 @@ export type AgentHandle = Readonly<{
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** On a run's handle only: the owner's Bestie in its community; undefined
+   * while it is not connected. */
+  bestie?(): DefaultAgentControl | undefined;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
   /** The instructions plugins give the agent's turns now, in a stable order. */
   instructions?(): readonly TurnInstructions[];
+  /** The instructions a plugin gave the agent's turns in one conversation,
+   * keyed as its session is: a thread session passes its root, a channel
+   * session omits it. Empty text means they were cleared. */
+  conversationInstructions?(
+    channelId: string,
+    root?: string,
+  ): TurnInstructions | undefined;
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -766,10 +805,15 @@ export type Delivery<Config = unknown> = Readonly<{
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
-  /** The plugin declined this request; no work or successful outcome is implied. */
-  ignored?(): void;
+  /** The plugin declined this request; no work or successful outcome is implied.
+   * A `refusal` shows its owner, on this device, why the agent didn't act. */
+  ignored?(refusal?: MentionRefusal): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
-  acknowledged?(): void;
+  acknowledged?(input?: Readonly<{ steering?: true }>): void;
+  /** Final guarded handoff to the prompt/steer transport. Call after the last
+   * current/signal check, with no asynchronous work before submission. This
+   * is separate from UI acknowledgement and does not imply model consumption. */
+  accepted?(): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
@@ -886,6 +930,9 @@ export type AgentVoiceConnection = Readonly<{
 }>;
 
 export type AgentType<Config = unknown> = {
+  /** Checks Delivery.current() and signal after waits, immediately before each
+   * prompt/steer handoff, then calls Delivery.accepted() at that handoff. */
+  readonly supportsGuardedWake?: true;
   /** Carries Delivery.session into tool context and sessionContext into the prompt. */
   sessionAdmission?: true;
   /** Huddles supplies a running agent owned by the current viewer.
@@ -923,6 +970,12 @@ export type AgentType<Config = unknown> = {
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
+  /** Safe model selections for agent_read. No discovery, I/O or
+   * active-session claims. Without it these settings are unavailable. */
+  readModelSettings?(
+    config: Config,
+    context?: AgentModelSettingsContext,
+  ): AgentModelSettings;
   /** Describes harness settings for a type-change preview. Rendered labels
    * never determine migration behavior. */
   describeMigration?(config: Config): readonly AgentMigrationSetting[];
@@ -1020,6 +1073,11 @@ export type AgentType<Config = unknown> = {
       settings: Readonly<Record<string, string>>,
     ): Config;
   }>;
+  /** Whether `candidate`, a recommended setting for this type, can run on
+   * this computer now: installed, signed in and set up. A type with it
+   * follows Recommended (`recommended.ts`): an agent whose config is on it
+   * runs on the current candidate for its type. */
+  recommends?(candidate: RecommendedCandidate): Promise<boolean>;
   /** Runtime routes its supported security boundaries through AgentHandle.protection. */
   protection?: true;
   /** Uses the agent's saved execution target for native process and file I/O. */
@@ -1210,7 +1268,12 @@ export type AgentUpdateRequest = AgentUpdate &
  * its synced instructions when the owner can read them here, and otherwise
  * has `unavailable` instead, saying why. */
 export type AgentReadout = Readonly<
-  { pubkey: string; name: string; type: string } & (
+  {
+    pubkey: string;
+    name: string;
+    type: string;
+    modelSettings: AgentModelSettingsReadout;
+  } & (
     | { instructions: string | null; synced: boolean; revision?: string }
     | { unavailable: string }
   )
@@ -1244,6 +1307,13 @@ export type TeamUpdateRequest = Readonly<{
   base: Pick<Team, "name" | "instructions" | "revision">;
   name?: string;
   instructions?: string;
+}>;
+/** A mention an interrupted agent was working on. */
+export type InterruptedTurn = Readonly<{
+  id: string;
+  /** Its channel, or "" without one. */
+  channelId: string;
+  channel?: ChannelSummary | undefined;
 }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
@@ -1416,6 +1486,31 @@ export type Agents = {
    * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
    * like a mention, a queued wake is dropped if the agent stops running here. */
   wake(agent: AgentKey, wake: AgentWake): void;
+  /** Check `=== true` before passing guard options to `wake`. Older hosts can
+   * ignore extra arguments; never send a wake to probe for support. */
+  readonly supportsGuardedWake?: true;
+  /** Checks the caller's guard at admission and before
+   * prompt/steer submission. Delivered means transport handoff, not completion;
+   * cancellation cannot retract accepted input. Host authority still applies.
+   * Invalid arguments throw synchronously; guard errors drop the wake. */
+  wake(
+    agent: AgentKey,
+    wake: AgentWake,
+    options: Readonly<{ signal?: AbortSignal; current: () => boolean }>,
+  ): Promise<
+    Readonly<
+      | { status: "delivered" }
+      | {
+          status: "dropped";
+          reason:
+            | "aborted"
+            | "stale"
+            | "guard-error"
+            | "unavailable"
+            | "refused";
+        }
+    >
+  >;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Calls `listener` when a turn this copy of the app runs for the agent
@@ -1426,8 +1521,18 @@ export type Agents = {
   resumeInterrupted(): void;
   /** Forgets the turns `interrupted` agents were working on. */
   dismissInterrupted(): void;
+  /** Each mention an `interrupted` agent was working on, with its channel
+   * when this device knows it. */
+  interruptedTurns(agent: Agent): readonly InterruptedTurn[];
+  /** Reads an `interrupted` agent's mentions from the relay, as Resume reads
+   * them. Resume reads them again, so what it finds can differ. */
+  readInterrupted(agent: Agent, signal: AbortSignal): Promise<RelayEvent[]>;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
+  /** Safe current model selections for a local membership, as agent_read
+   * reports them. Reads existing state; never starts discovery or a harness.
+   * Feature-detect on older hosts. Does not report active session overrides. */
+  readModelSettings?(agent: AgentKey): Promise<AgentModelSettingsReadout>;
   /** The agent as `run` holds it, outside any run: for one of the calling
    * plugin's types while this copy of the app runs it, its type is not
    * changing and its community is live, else undefined. A type whose agents
@@ -1586,6 +1691,25 @@ export type Agents = {
   ): Promise<string>;
   /** The folder `assignConversationFolder` gave the conversation, if any. */
   conversationFolder(agent: AgentKey, place: SessionPlace): string | undefined;
+  /** Gives the owner's local agent standing instructions in one
+   * conversation: each of its turns there shows them, after the instructions
+   * plugins give every turn. Text replaces any the conversation had, and
+   * empty text clears them. At most 8 KiB (UTF-8, after trimming). `place`
+   * names the conversation as session controls do; a DM, a Solo chat or a
+   * channel-scoped agent has no root, and rejects one, as a huddle room
+   * rejects any instructions. Kept on this device for now, also when the
+   * agent leaves the community, and dropped when it is deleted. Plugins
+   * only. */
+  setConversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ): Promise<void>;
+  /** The text `setConversationInstructions` gave the conversation, if any. */
+  conversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+  ): Promise<string | undefined>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -1814,7 +1938,8 @@ export function teamPrompt(
     })
     .join("\n\n");
 }
-export { fromOwner } from "./owner-attestation";
+export { fromOwner, mentionAuthority } from "./owner-attestation";
+import type { MentionRefusal } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
@@ -2479,7 +2604,6 @@ export class AgentsService extends Service implements Agents {
             identity.owner === agent.owner &&
             originOf(identity.relay) === origin,
         );
-        const found = held.map((identity) => this.agentReadout(identity));
         // Hosted ones and ones on the owner's other devices, as listed here,
         // with their synced instructions where the owner can read them.
         const config = origin ? this.communityConfigs.get(origin) : undefined;
@@ -2495,6 +2619,12 @@ export class AgentsService extends Service implements Agents {
             pubkey: item.pubkey,
             name: item.name,
             type: item.type,
+            modelSettings: {
+              unavailable:
+                item.place === "hosted"
+                  ? "Its provider keeps its model settings"
+                  : "Its model settings are on another device",
+            },
           };
           return read
             ? { ...base, ...read, synced: true }
@@ -2507,10 +2637,18 @@ export class AgentsService extends Service implements Agents {
               };
         };
         if (target === undefined)
-          return [...found, ...(await Promise.all(listed.map(remote)))];
+          return [
+            ...(await Promise.all(
+              held.map((identity) => this.agentReadout(identity)),
+            )),
+            ...(await Promise.all(listed.map(remote))),
+          ];
         // Only the one asked for is read from the relay.
         const readers = [
-          ...found.map((entry) => ({ entry, read: () => entry })),
+          ...held.map((entry) => ({
+            entry,
+            read: () => this.agentReadout(entry),
+          })),
           ...listed.map((entry) => ({ entry, read: () => remote(entry) })),
         ];
         return pick(
@@ -2575,6 +2713,8 @@ export class AgentsService extends Service implements Agents {
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
       instructions: (agent) => this.turnInstructions(agent),
+      conversationInstructions: (agent, channelId, root) =>
+        this.turnConversationInstructions(agent, channelId, root),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2728,6 +2868,10 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
+      bestie: (agent) => {
+        const binding = this.bindingOf(agent);
+        return binding && defaultAgentControl(binding.session, binding.scope);
+      },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -3416,31 +3560,106 @@ export class AgentsService extends Service implements Agents {
     added: () => this.tools(),
     repositories: repositoriesContext,
   });
-  wake(key: AgentKey, wake: AgentWake) {
-    const plugin = this.ctx.pluginOwner?.id;
-    if (!plugin) throw new Error("Only a plugin wakes an agent");
-    this.wakeIn(key, wake, { plugin });
+  readonly supportsGuardedWake = true as const;
+  wake(key: AgentKey, wake: AgentWake): void;
+  wake(
+    key: AgentKey,
+    wake: AgentWake,
+    options: Parameters<Agents["wake"]>[2],
+  ): ReturnType<Agents["wake"]>;
+  wake(
+    key: AgentKey,
+    wake: AgentWake,
+    options?: Parameters<Agents["wake"]>[2],
+  ) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) throw new Error("Only a plugin wakes an agent");
+    const trigger = this.pluginWake(wake, { plugin: owner.id });
+    if (options === undefined) return this.runners.wakeIn(key, trigger);
+    if (typeof options?.current !== "function")
+      throw new Error("A guarded wake needs a current predicate");
+    // Validate before returning a Promise, as with the wake arguments.
+    if (options.signal !== undefined) AbortSignal.any([options.signal]);
+    return this.guardedWake(key, trigger, options);
+  }
+  private async guardedWake(
+    key: AgentKey,
+    trigger: Extract<Trigger, { type: "plugin" }>,
+    options: Parameters<Agents["wake"]>[2],
+  ): ReturnType<Agents["wake"]> {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    if (!owner) throw new Error("Only a plugin wakes an agent");
+    const { signal, current: isCurrent } = options;
+    const agent = this.ready(key);
+    const binding = agent && this.bindingOf(agent);
+    if (!agent || !binding) return { status: "dropped", reason: "unavailable" };
+    const epoch = binding.connection.epoch;
+    const lifetime = new AbortController();
+    let pending = true;
+    const release = ctx.effect(() => () => {
+      if (pending) lifetime.abort();
+    });
+    const available = () => {
+      const current = this.ready(key);
+      const address = { tags: [["h", trigger.channel]] };
+      return (
+        !lifetime.signal.aborted &&
+        ctx.pluginStatus.isActive(owner.id, owner.revision) &&
+        !binding.controller.signal.aborted &&
+        this.bindingOf(agent) === binding &&
+        binding.connection.epoch === epoch &&
+        binding.connection.since !== undefined &&
+        this.communities.snapshot().viewer === binding.viewer &&
+        current?.pubkey === agent.pubkey &&
+        current.owner === agent.owner &&
+        current.type === agent.type &&
+        this.member(current, address) === true &&
+        this.reads({ ...current, pubkey: binding.viewer }, address) === true
+      );
+    };
+    try {
+      return await this.runners.wakeGuarded(
+        key,
+        trigger,
+        { ...(signal ? { signal } : {}), current: isCurrent },
+        available,
+        AbortSignal.any([lifetime.signal, binding.controller.signal]),
+      );
+    } finally {
+      pending = false;
+      release();
+    }
   }
   private wakeIn(
     key: AgentKey,
-    { channel, root, text }: AgentWake,
+    wake: AgentWake,
     source: Readonly<{ plugin: string } | { from: HandoffSource }>,
   ) {
+    this.runners.wakeIn(key, this.pluginWake(wake, source));
+  }
+  private pluginWake(
+    { channel, root, topLevel, text }: AgentWake,
+    source: Readonly<{ plugin: string } | { from: HandoffSource }>,
+  ): Extract<Trigger, { type: "plugin" }> {
     if (!channel || !text.trim())
       throw new Error("A wake needs a channel and text");
     // Harnesses find the thread from a well-formed id; any other would leave
     // them answering at the wake's own id.
     if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
       throw new Error("A wake's root must be the thread's 64-hex event id");
-    this.runners.wakeIn(key, {
+    if (topLevel !== undefined && (topLevel !== true || root !== undefined))
+      throw new Error("A wake is in a thread or at the top level, not both");
+    return {
       type: "plugin",
       ...source,
       channel,
       ...(root ? { root: root.toLowerCase() } : {}),
+      ...(topLevel ? { topLevel } : {}),
       text,
       id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
       at: Date.now(),
-    });
+    };
   }
   snapshot = () => this.state;
   subscribeSteps = (agent: AgentKey, listener: () => void) => {
@@ -3483,6 +3702,24 @@ export class AgentsService extends Service implements Agents {
   dismissInterrupted = () => {
     this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
+  };
+  interruptedTurns = (agent: Agent) =>
+    Object.entries(this.runners.interruptedTurns(agent.key)).map(
+      ([id, channelId]) => ({
+        id,
+        channelId,
+        channel: this.channelOf(agent, { tags: [["h", channelId]] }),
+      }),
+    );
+  readInterrupted = async (agent: Agent, signal: AbortSignal) => {
+    const session = this.bindingOf(agent)?.session;
+    if (!session) throw new Error(`${agent.name}'s community isn't connected`);
+    const ids = Object.keys(this.runners.interruptedTurns(agent.key));
+    const events = await session.readRemote([{ ids, limit: ids.length }], {
+      signal,
+      fresh: true,
+    });
+    return events.filter(hasEventProof) as RelayEvent[];
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
   private interruptedKeys() {
@@ -3676,18 +3913,39 @@ export class AgentsService extends Service implements Agents {
     | {
         identities: readonly AgentIdentity[];
         state: Pick<AgentsSnapshot, "status" | "error">;
+        bindings: number;
         remote: ReadonlySet<AgentKey>;
         hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
       }
     | undefined;
+  private hostedCache:
+    | { agents: readonly Agent[]; hosted: readonly Agent[] }
+    | undefined;
   /** Local identities in every community, plus completed hosted choices in the
    * selected community. Hosted choices grant no local custody. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
-    const hosted = state.agents.filter(
-      (agent) => agent.place === "hosted" && !agent.unfinished,
-    );
+    // Every name lookup asks for this snapshot: filter the agents again only
+    // when the list changes.
+    if (this.hostedCache?.agents !== state.agents)
+      this.hostedCache = {
+        agents: state.agents,
+        hosted: state.agents.filter(
+          (agent) => agent.place === "hosted" && !agent.unfinished,
+        ),
+      };
+    const { hosted } = this.hostedCache;
+    const cached = this.localCache;
+    const unchanged =
+      cached?.identities === identities &&
+      cached.hosted.length === hosted.length &&
+      hosted.every((agent, index) => agent === cached.hosted[index]) &&
+      cached.state.status === state.status &&
+      cached.state.error === state.error;
+    // Reread each agent's binding only after one may have changed.
+    const bindings = this.executions.bindingChanges();
+    if (unchanged && cached.bindings === bindings) return cached.value;
     const remote = new Set(
       identities
         .filter(
@@ -3695,29 +3953,27 @@ export class AgentsService extends Service implements Agents {
         )
         .map((identity) => identity.key),
     );
-    const cached = this.localCache;
     if (
-      cached?.identities === identities &&
+      unchanged &&
       cached.remote.size === remote.size &&
-      [...remote].every((key) => cached.remote.has(key)) &&
-      cached.hosted.length === hosted.length &&
-      hosted.every((agent, index) => agent === cached.hosted[index]) &&
-      cached.state.status === state.status &&
-      cached.state.error === state.error
-    )
+      [...remote].every((key) => cached.remote.has(key))
+    ) {
+      this.localCache = { ...cached, bindings };
       return cached.value;
+    }
     const value: LocalAgentsSnapshot = Object.freeze({
       status: state.status,
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ key, pubkey, name, relay, owner, picture, type }) =>
+          .map(({ key, pubkey, name, relay, owner, picture, type, deleting }) =>
             Object.freeze({
               pubkey,
               name,
               relayUrl: relay,
               owner,
               type,
+              ...(deleting ? { deleting: true as const } : {}),
               ...(remote.has(key) ? { execution: "remote" as const } : {}),
               ...(picture ? { picture } : {}),
             }),
@@ -3741,7 +3997,7 @@ export class AgentsService extends Service implements Agents {
         : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, remote, hosted, value };
+    this.localCache = { identities, state, bindings, remote, hosted, value };
     return value;
   };
 
@@ -3922,23 +4178,48 @@ export class AgentsService extends Service implements Agents {
   private callerTeams(agent: Agent) {
     return visibleTeams(this, this.callerOrigin(agent));
   }
-  private agentReadout(identity: AgentIdentity): AgentReadout {
+  async readModelSettings(key: AgentKey): Promise<AgentModelSettingsReadout> {
+    const identity = this.liveMember(key);
+    if (!identity || identity.deleting)
+      return { unavailable: "No such agent on this device" };
+    return (await this.agentReadout(identity)).modelSettings;
+  }
+  private async agentReadout(identity: Member): Promise<AgentReadout> {
     const kind = this.types().find((type) => type.key === identity.type);
     const saved = this.settingsOf(identity);
     const editor = this.editorConfig(identity, saved.config as object);
     const config = editor?.config ?? saved.config;
+    const confirmed = editor && "synced" in editor ? editor.synced : undefined;
     const side = this.configBinding(identity).instructions;
     const synced = !!side && isSynced(this.configStore, side);
+    const head = synced ? this.configStore.state(side.subject).head : undefined;
+    let execution: AgentModelSettingsContext["execution"] = "local";
+    if (kind?.execution) {
+      try {
+        execution = (await this.executions.inspect(identity.key))
+          ? "remote"
+          : "local";
+      } catch {
+        execution = "unavailable";
+      }
+    }
     const base = {
       pubkey: identity.pubkey,
       name: identity.name,
       type: identity.type,
+      modelSettings: editor?.problem
+        ? { unavailable: "Its synced config could not be read" }
+        : kind?.readModelSettings
+          ? kind.readModelSettings(config, {
+              execution,
+              ...(confirmed && { synced: confirmed }),
+            })
+          : { unavailable: "Its type does not expose model settings here" },
     };
     // Synced instructions that are deleted, invalid or unreadable are not
     // empty ones.
     if (synced && editor?.problem)
       return { ...base, unavailable: editor.problem };
-    const head = synced ? this.configStore.state(side.subject).head : undefined;
     return {
       ...base,
       instructions: kind?.adopt
@@ -4800,15 +5081,7 @@ export class AgentsService extends Service implements Agents {
     const channel = await reads?.channel(place.channelId);
     if (isHuddleRoom(channel?.about))
       throw new Error("Conversation folders are unavailable in a huddle");
-    if (
-      place.root &&
-      (channel?.dm ||
-        (await reads?.soloChat(
-          agent.owner,
-          place.channelId,
-          new AbortController().signal,
-        )))
-    )
+    if (await this.rootInWhole(key, agent.owner, place))
       throw new Error(
         "A DM or Solo chat is one conversation: give its folder without a root",
       );
@@ -4837,6 +5110,99 @@ export class AgentsService extends Service implements Agents {
     } catch {
       return undefined;
     }
+  }
+  async setConversationInstructions(
+    key: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin)
+      throw new Error("Only a plugin sets conversation instructions");
+    if (typeof text !== "string")
+      throw new Error("Conversation instructions need text");
+    const trimmed = text.trim();
+    if (
+      new TextEncoder().encode(trimmed).length > CONVERSATION_INSTRUCTIONS_LIMIT
+    )
+      throw new Error(
+        `Conversation instructions are over ${CONVERSATION_INSTRUCTIONS_LIMIT} bytes`,
+      );
+    const { scope, conversation } = await this.instructionsPlace(key, place);
+    await storeInstructions(
+      this.storage,
+      scope,
+      key,
+      conversation,
+      plugin,
+      trimmed,
+    );
+  }
+  async conversationInstructions(key: AgentKey, place: SessionPlace) {
+    try {
+      const { scope, conversation } = await this.instructionsPlace(key, place);
+      return (
+        storedInstructions(this.storage, scope, key, conversation)?.text ||
+        undefined
+      );
+    } catch {
+      return undefined;
+    }
+  }
+  /** Where the owner's local agent keeps a conversation's instructions, as
+   * its folder. A root for a conversation its harness runs whole rejects:
+   * no turn would show them. So does a huddle room, whose conversations
+   * harnesses key differently. */
+  private async instructionsPlace(key: AgentKey, place: SessionPlace) {
+    const found = this.folderPlace(key, place);
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
+      throw new Error("Conversation instructions are unavailable in a huddle");
+    if (
+      place.root &&
+      (found.conversation === place.channelId ||
+        (await this.rootInWhole(key, found.agent.owner, place)))
+    )
+      throw new Error(
+        "This agent runs the channel as one conversation: give its instructions without a root",
+      );
+    return found;
+  }
+  /** The instructions a plugin gave the agent in the conversation its
+   * harness keys as `channelId` and `root`. One removed from that channel
+   * keeps none there: its turns say any it was shown no longer apply. */
+  private turnConversationInstructions(
+    agent: Agent,
+    channelId: string,
+    root?: string,
+  ) {
+    const scope = ownerReads(this.relay(agent.key), pubkeyOf(agent.key))?.scope;
+    const saved =
+      scope &&
+      storedInstructions(
+        this.storage,
+        scope,
+        agent.key,
+        conversationKey(channelId, root),
+      );
+    if (!saved) return undefined;
+    return this.member(agent, { tags: [["h", channelId]] }) === false
+      ? { ...saved, text: "" }
+      : saved;
+  }
+  /** Whether `place` has a root in a DM or Solo chat. Harnesses run each as
+   * one conversation, so the root would name one that never runs. */
+  private async rootInWhole(key: AgentKey, owner: string, place: SessionPlace) {
+    if (!place.root) return false;
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    return !!(
+      (await reads?.channel(place.channelId))?.dm ||
+      (await reads?.soloChat(
+        owner,
+        place.channelId,
+        new AbortController().signal,
+      ))
+    );
   }
   /** Where the owner's local agent keeps a conversation's folder: keyed as
    * its harness keys the conversation's session. */
@@ -5260,7 +5626,19 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
-        await leaveCommunity(binding.session, pubkey, signal);
+        // Only an owner proves ownership with a proof issued now; its key,
+        // still here, force-republishes its own profile naming that owner.
+        await leaveCommunity(
+          binding.session,
+          pubkey,
+          signal,
+          member.owner === binding.viewer
+            ? {
+                issue: this.authorize,
+                attest: () => native.publishProfile(member, true),
+              }
+            : undefined,
+        );
         await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
           binding.session,
@@ -5287,6 +5665,9 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(member.key, false);
       this.unlist(binding.origin, pubkey);
       await native.forget(member);
+      // Left, its conversations stay here, and so do their instructions.
+      if (deleting)
+        await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
@@ -5315,11 +5696,16 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(key, false);
       this.unlist(originOf(member.relay) ?? "", member.pubkey);
       await native.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
     await this.refresh();
     if (!this.liveRows(member.pubkey).length) forgetDefaultAgent(member.pubkey);
+    // So the community's agent choices no longer offer it.
+    await this.bindingOf(member)?.session.agentChoices.refresh(true, {
+      fresh: true,
+    });
   }
 
   joinable() {
@@ -5476,11 +5862,43 @@ export class AgentsService extends Service implements Agents {
     return this.exclusive(pubkey, async () => {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
-      await remote.remove({ pubkey, community: agent.relay, signal });
+      // Only an owner proves ownership with a proof issued now. Its key is
+      // its provider's, so a profile that lacks one can't be republished.
+      const owner: OwnerConsent | undefined =
+        agent.owner === binding.viewer ? { issue: this.authorize } : undefined;
+      // Archived before its provider removes it, which can't be undone, so
+      // nothing offers it once it is gone. A retry finds it archived.
+      let archive: "archived" | "skipped";
+      try {
+        archive = await archiveAgent(binding.session, pubkey, signal, owner);
+      } catch (error) {
+        console.warn(`Agent ${agent.name} was not archived`, error);
+        throw new Error(
+          error instanceof UnattestedProfile
+            ? `${agent.name} wasn't deleted: this community archives it only when its profile names you as its owner, and only its provider can publish that profile.`
+            : `${agent.name} wasn't deleted: Buzz couldn't archive it in this community. Delete it again.`,
+        );
+      }
+      try {
+        await remote.remove({ pubkey, community: agent.relay, signal });
+      } catch (error) {
+        console.warn(`Agent ${agent.name} was not removed`, error);
+        throw new Error(
+          archive === "archived"
+            ? `${agent.name} is archived and hidden, but its provider couldn't remove it, so it may still be running. Delete it again.`
+            : `${agent.name} wasn't deleted: its provider couldn't remove it, so it may still be running. This community advertises no archive authority, so it wasn't archived. Delete it again.`,
+        );
+      }
       // Before its record goes, so a failure leaves it listed to Delete again.
       await unshare(binding.session, binding.viewer, pubkey, signal);
       // An unfinished one may have published its profile before setup failed.
-      await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
+      await removeRelayAgent(
+        binding.session,
+        binding.viewer,
+        pubkey,
+        signal,
+        owner,
+      );
       this.unlist(origin, pubkey);
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
@@ -5973,7 +6391,9 @@ export class AgentsService extends Service implements Agents {
 
   /** Reads the viewer's agent records in the community, then lists each of
    * its agents here that they lack. A sync asks again until one succeeds.
-   * Without the desktop app there are no agents to show. */
+   * Without the desktop app there are no agents to show. Agents shows its
+   * hosted agents from these records alone, so the read uses foreground
+   * capacity: a slow background read must not run out its deadline. */
   private async readListings(origin: string, binding: Binding) {
     if (!this.native || this.reading.get(origin) === binding) return;
     this.reading.set(origin, binding);
@@ -5981,7 +6401,7 @@ export class AgentsService extends Service implements Agents {
     try {
       const events = await session.read(
         [{ kinds: [30177], authors: [viewer], limit: 500 }],
-        { signal: controller.signal, priority: "background", fresh: true },
+        { signal: controller.signal, priority: "foreground", fresh: true },
       );
       if (this.bound.get(origin)?.binding !== binding) return;
       const edits = this.edits.get(origin);
@@ -6289,6 +6709,7 @@ export class AgentsService extends Service implements Agents {
       if (this.storage.get(recordKey(key)) !== null)
         await removeRecord(this.storage, key);
       await removeSessionPrompts(this.storage, key);
+      await removeStandaloneSessions(this.storage, key);
     }
     const { [key]: _, ...others } = this.records;
     this.records = next ? { ...others, [key]: next } : others;
@@ -6583,7 +7004,11 @@ export class AgentsService extends Service implements Agents {
     );
     const resolved = this.resolve(identity, local);
     if (resolved.ok)
-      return { config: resolved.config, base: Object.freeze(base) };
+      return {
+        config: resolved.config,
+        base: Object.freeze(base),
+        ...(resolved.synced && { synced: resolved.synced }),
+      };
     // Without a usable confirmed copy, a synced side's local field is stale:
     // the editor shows the problem instead of it.
     const schema = this.configAgent(identity, local).schema ?? {};
@@ -6797,7 +7222,10 @@ export class AgentsService extends Service implements Agents {
       );
       this.unlist(originOf(relay) ?? "", pubkey);
       await this.native?.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
       await this.refresh();
+      // So the community's agent choices no longer offer it.
+      await binding.session.agentChoices.refresh(true, { fresh: true });
     } catch (error) {
       if (!fence.aborted) console.warn("Deleted agent cleanup stopped", error);
     }
@@ -7320,21 +7748,10 @@ async function leaveCommunity(
   session: RelaySession,
   pubkey: string,
   signal: AbortSignal,
+  owner?: OwnerConsent,
 ) {
   await removeAgentFromChannels(session, pubkey, signal);
-  const { archives } = session;
-  if (!archives.writable) return;
-  // The archive cache is not live; this needs a read started now.
-  await archives.ensure();
-  await archives.refresh();
-  signal.throwIfAborted();
-  const state = archives.state(pubkey);
-  // An unfinished read says nothing, least of all "not archived".
-  if (state === "unknown") throw new Error("Archive state is unknown");
-  // Without an owner-attested profile the agent is not in the directory, so
-  // there is nothing to hide (and no consent path to archive it with).
-  if (state === "not-archived" && (await archives.consent(pubkey, signal)))
-    await archives.request("archive", pubkey, signal);
+  await archiveAgent(session, pubkey, signal, owner);
 }
 /** After a finished Delete, rereads the shared agent choices, superseding any
  * read begun before it, so their inventory no longer offers it; then forgets

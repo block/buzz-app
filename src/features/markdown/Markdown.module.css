@@ -60,6 +60,12 @@
   margin-top: var(--space-1);
   margin-bottom: var(--space-1);
 }
+/* WebKit fills a selection across the padding, borders and empty space of
+   these boxes, leaving slabs and slivers around the text. It paints no such
+   fill inside a transformed box, so only the selected text highlights. */
+.document :is(blockquote, pre, .codeFrame, pre code, th, td) {
+  translate: 0 0;
+}
 .document blockquote {
   position: relative;
   padding: var(--space-half) 0 var(--space-half) var(--space-3);

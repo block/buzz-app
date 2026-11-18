@@ -157,6 +157,31 @@ export class AgentSessions {
     ];
   }
 
+  /** The conversation process used longest ago that is doing nothing, with
+   * how to stop it: the runtime stops it to make room when the host is
+   * running all the processes it allows. One in a turn, running background
+   * work, still starting or about to take a message is never offered. Its saved session resumes it
+   * when the conversation is next addressed, as after the idle stop. */
+  idlest(): { used: number; stop(): Promise<unknown> } | undefined {
+    let idlest: [string, Live] | undefined;
+    for (const entry of this.live) {
+      const [key, live] = entry;
+      // A message on its way in is about to use it.
+      if (this.handing.has(key) || this.opening.has(key)) continue;
+      if (!live.process.active && (!idlest || live.used < idlest[1].used))
+        idlest = entry;
+    }
+    if (!idlest) return undefined;
+    const [key, live] = idlest;
+    return {
+      used: live.used,
+      stop: () => {
+        this.drop(key, live);
+        return live.process.exited;
+      },
+    };
+  }
+
   /** Read defaults without assigning the shared spare to this agent. */
   async metadata() {
     const fingerprint = this.options.fingerprint();

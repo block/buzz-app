@@ -103,6 +103,9 @@ function setup(
     /** Raw text after the history, as a line Claude is still writing. */
     nativeTail?: string;
     resolveDirectory?: Host["resolveDirectory"];
+    /** Claude processes the host runs at once before it refuses one, as it
+     * refuses past its limit on all plugins' processes. */
+    claudeLimit?: number;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -157,6 +160,14 @@ function setup(
         kill: async () => {},
       } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
     }
+    if (
+      options.claudeLimit !== undefined &&
+      CLAUDES.has(id) &&
+      fake.processes.filter(
+        (process) => CLAUDES.has(process.id) && !process.killed,
+      ).length >= options.claudeLimit
+    )
+      throw "Too many processes are running";
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
@@ -439,6 +450,57 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
   expect(published).toEqual([]);
+});
+
+const threadMention = (id: string, created_at: number) => {
+  const root = message(`root-${id}`, `Topic ${id}`);
+  return [
+    root,
+    message(`mention-${id}`, "@Claude can you look?", {
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  ] as const;
+};
+
+it("stops an idle conversation's process when the host runs no more", async () => {
+  const [rootA, a] = threadMention("a", 110);
+  const [rootB, b] = threadMention("b", 120);
+  const { deliver, claudes } = setup([rootA, a, rootB, b], {
+    claudeLimit: 1,
+  });
+  await deliver({ type: "mention", event: a });
+  await flush(10);
+  const [idle] = claudes();
+  await deliver({ type: "mention", event: b });
+  await flush(10);
+  expect(idle?.killed).toBe(true);
+  const next = claudes().at(-1);
+  expect(next).not.toBe(idle);
+  expect(next?.prompts[0]).toContain(b.id);
+});
+
+it("leaves a working conversation running and refuses the new one when none is idle", async () => {
+  const [rootA, a] = threadMention("a", 110);
+  const [rootB, b] = threadMention("b", 120);
+  const { deliver, claudes } = setup([rootA, a, rootB, b], {
+    claudeLimit: 1,
+    hold: true,
+  });
+  void deliver({ type: "mention", event: a });
+  await flush(10);
+  const [working] = claudes();
+  expect(working?.prompts).toHaveLength(1);
+  const refused = deliver({ type: "mention", event: b });
+  await flush(10);
+  expect(working?.killed).toBe(false);
+  expect(claudes()).toHaveLength(1);
+  working?.finish();
+  await refused;
 });
 
 it("shares projected native history with incoming and combined action reviews", async () => {

@@ -411,6 +411,60 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(started.mock.calls).toEqual([["new-1", "prompt", undefined]]);
 });
 
+it("offers the conversation used longest ago that is doing nothing, to stop", async () => {
+  let now = 1_000;
+  const at = (time: number) => {
+    now = time;
+  };
+  // Before the pool reads the clock it keeps.
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const { pool, claudes } = sessions();
+  try {
+    at(1_000);
+    await pool.deliver("c/a", "one", 1);
+    at(2_000);
+    await pool.deliver("c/b", "two", 2);
+    at(3_000);
+    await pool.deliver("c/a", "three", 3);
+    const [a, b] = claudes();
+    expect(a?.prompts).toEqual(["one", "three"]);
+    const idlest = pool.idlest();
+    expect(idlest?.used).toBe(2_000);
+    await idlest?.stop();
+    expect(b?.killed).toBe(true);
+    expect(a?.killed).toBe(false);
+    expect(pool.snapshot()).toEqual([{ key: "c/a", busy: false }]);
+  } finally {
+    vi.restoreAllMocks();
+    pool.dispose();
+  }
+});
+
+it("offers no conversation that is working or about to take a message", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  try {
+    const working = pool.deliver("c/a", "one", 1);
+    await flush(10);
+    expect(pool.idlest()).toBeUndefined();
+    claudes()[0]?.finish();
+    await working;
+    expect(pool.idlest()).toBeDefined();
+    let release!: () => void;
+    const held = new Promise<string>((resolve) => {
+      release = () => resolve("two");
+    });
+    const next = pool.deliver("c/a", "two", 2, { refresh: () => held });
+    await flush(10);
+    expect(pool.idlest()).toBeUndefined();
+    release();
+    await flush(10);
+    claudes()[0]?.finish();
+    await next;
+  } finally {
+    pool.dispose();
+  }
+});
+
 it("bounds a channel session's thread history while retaining recently used threads", async () => {
   const { pool, store, claudes } = sessions();
   try {

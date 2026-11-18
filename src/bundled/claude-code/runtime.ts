@@ -140,6 +140,8 @@ export type SavedConversation = Conversation &
     at: number;
   };
 
+/** The host's refusal of a process past its limit. */
+const PROCESS_LIMIT = "Too many processes are running";
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -233,6 +235,7 @@ export class ClaudeRuntime {
   private credentials = 0;
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
+    // Started ahead of need, it never stops a conversation to make room.
     (id, options) => this.spawn(id, options),
     (_conversation, message) =>
       respond(undefined, {}, message, this.added(), listing(this.added())),
@@ -454,6 +457,34 @@ export class ClaudeRuntime {
     const { spawn } = this.host;
     if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
+  }
+
+  /** Starts a conversation's process. When the host already runs all the
+   * processes it allows, which every plugin's processes share, it stops the
+   * conversation process of any agent that has been idle longest, waits for
+   * it to exit and tries again, until it starts or nothing idle is left.
+   * Idle processes would stop on their own after `IDLE_MS`; until then they
+   * hold places a new conversation needs. */
+  private async spawnSession(
+    id: string,
+    options?: Parameters<Spawn>[1],
+  ): ReturnType<Spawn> {
+    for (;;) {
+      try {
+        return await this.spawn(id, options);
+      } catch (error) {
+        // The host's refusal (`host_process.rs`), as the plugin bridge rejects.
+        if (error !== PROCESS_LIMIT) throw error;
+        let idlest: ReturnType<AgentSessions["idlest"]>;
+        for (const entry of this.agents.values()) {
+          const candidate = entry.sessions.idlest();
+          if (candidate && (!idlest || candidate.used < idlest.used))
+            idlest = candidate;
+        }
+        if (!idlest) throw error;
+        await idlest.stop();
+      }
+    }
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
@@ -1617,7 +1648,7 @@ export class ClaudeRuntime {
       };
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawn(id, options),
+      spawn: (id, options) => this.spawnSession(id, options),
       ...(!this.target ? { spare: this.spare } : {}),
       strictResume: !!this.target,
       store: {

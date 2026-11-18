@@ -42,7 +42,7 @@ afterEach(() => {
 });
 
 it.each([false, true])(
-  "only shares standalone workspace instructions when explicitly selected (%s)",
+  "shares standalone workspace instructions unless unticked (%s)",
   async (share) => {
     vi.stubGlobal("crypto", webcrypto);
     const user = userEvent.setup();
@@ -93,8 +93,8 @@ it.each([false, true])(
     const checkbox = await screen.findByRole("checkbox", {
       name: "Copy workspace instructions to the shared Canvas",
     });
-    expect(checkbox).not.toBeChecked();
-    if (share) await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+    if (!share) await user.click(checkbox);
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Notes");
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({

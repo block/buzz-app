@@ -116,8 +116,9 @@ function OpenCreateChannelDialog({
   const loadDefaults = !!initialGroup && session.channelKit.available;
   const channelTemplates = useChannelTemplates();
   const [workspaceTemplate, setWorkspaceTemplate] = useState<ChannelTemplate>();
+  // Workspace instructions start a channel's Canvas unless unticked.
   const [shareWorkspaceInstructions, setShareWorkspaceInstructions] =
-    useState(false);
+    useState(true);
   const [loadingDefaults, setLoadingDefaults] = useState(loadDefaults);
   const [defaultsError, setDefaultsError] = useState("");
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
@@ -287,7 +288,7 @@ function OpenCreateChannelDialog({
     setGroupId(initialGroup);
     setStarred(initialStarred);
     setTemplateId(undefined);
-    setShareWorkspaceInstructions(false);
+    setShareWorkspaceInstructions(true);
   }, [open, initialGroup, initialStarred]);
 
   const normalizedName = canonicalDetailsName(name);
@@ -307,7 +308,7 @@ function OpenCreateChannelDialog({
     privateChannel ||
     lifetime !== "ongoing" ||
     groupId !== initialGroup ||
-    shareWorkspaceInstructions ||
+    !shareWorkspaceInstructions ||
     (chosenTemplate !== undefined &&
       chosenTemplate !== (workspaceTemplate?.id ?? ""));
   const requestClose = () => {
@@ -625,7 +626,7 @@ function OpenCreateChannelDialog({
                 onValueChange={(value) => {
                   if (!editing.current) return;
                   setTemplateId(value);
-                  setShareWorkspaceInstructions(false);
+                  setShareWorkspaceInstructions(true);
                   setError("");
                 }}
               />

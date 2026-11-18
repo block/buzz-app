@@ -21,9 +21,9 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 ### Toolbar and Mark as read
 
-Confirmed conversation mutes hide rows on the Activity page, in the sidebar
-preview, and in its unread count. This applies to every Activity type. Unmuting
-restores retained rows with their existing read state.
+For a confirmed muted channel, Activity uses only direct mention evidence for
+the page, sidebar preview, and unread count. Muted DMs keep their usual rows.
+Unmuting restores retained rows with their existing read state.
 
 The Activity toolbar shows underline tabs sized to their labels, like Slack's Activity tabs, for the activity types (All, Threads, Mentions, DMs, Reactions). A **From** menu follows the tabs about a tab gap after Reactions, as part of the same group, and a labelled **Unread** switch follows From, so it stays in view on a wide page. The first tab's label starts on the same edge as the bell in the title bar above, and the tabs, From and Unread share one text baseline. From's button says only "From" with a chevron; its accessible name and tooltip say the choice in words ("From anyone", "From people", "From agents"), and it shows the shared subtle fill while People or Agents narrows the list (ghost, with no fill, for Anyone). Its menu is one plain-text choice of Anyone, People or Agents. Activity, sender and attention choices are saved on this device for the current account and community, with each missing or invalid choice using its own default; earlier saved sender values load unchanged, and a saved choice from the retired Archived view loads as the normal All list. The whole toolbar stays on one row at typical widths, including a 540px list. Narrower, Unread wraps first, to the start of the next line under All; narrower still, From wraps too and starts that line, with Unread after it. The refresh status fills the space after Unread, so it never adds a line.
 

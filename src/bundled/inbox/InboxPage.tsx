@@ -29,7 +29,7 @@ import {
   rowProfileIds,
 } from "./InboxRow";
 import { withMentionedIds } from "../../features/messages/PreviewText";
-import { useActivityMutes } from "./useActivityMutes";
+import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import {
   useChannelList,
   useProfileGeneration,
@@ -483,8 +483,11 @@ function InboxList({
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
   const activityItems = items
-    .filter((item) => !muted.has(item.channelId))
-    .map((item) => (activity === "mentions" ? item.mention : item))
+    .map((item) =>
+      activity === "mentions"
+        ? item.mention
+        : activityConversation(item, muted),
+    )
     .filter(
       (item): item is InboxItem =>
         !!item &&
@@ -569,7 +572,12 @@ function InboxList({
   // must be able to appear after their profiles arrive, even in an empty view.
   // Keep main's bounded optional profile demand, independent of presentation.
   const activityReactions = reactionFeed.items.filter(
-    (item) => !muted.has(item.channelId),
+    (item) =>
+      !muted.has(item.channelId) ||
+      list.channels.some(
+        (channel) =>
+          channel.id === item.channelId && channel.channelType === "dm",
+      ),
   );
   const candidateIds = [
     ...activityItems.slice(0, 50).map((item) => item.authorId),
@@ -1269,6 +1277,8 @@ function InboxList({
                                     channel,
                                     unread &&
                                       activity !== "mentions" &&
+                                      (item.target.kind === "channel" ||
+                                        !muted.has(item.channelId)) &&
                                       selectedId !== item.id,
                                   )
                             )

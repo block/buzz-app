@@ -44,7 +44,7 @@ import {
   rowProfileIds,
 } from "./InboxRow";
 import { withMentionedIds } from "../../features/messages/PreviewText";
-import { useActivityMutes } from "./useActivityMutes";
+import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import { inboxTarget } from "./route";
 import type { InboxItem } from "../../features/relay/inbox";
 import listRowStyles from "../../features/messages/MessageListRow.module.css";
@@ -183,7 +183,8 @@ function InboxPreviewCard({
   const channelOf = (channelId: string) =>
     list.channels.find((channel) => channel.id === channelId);
   const recent = inbox.items
-    .filter((item) => !muted.has(item.channelId))
+    .map((item) => activityConversation(item, muted))
+    .filter((item) => item !== undefined)
     .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   const unread = recent.filter(hasUnread);
   const rows = [
@@ -193,7 +194,11 @@ function InboxPreviewCard({
     })),
     ...(!unreadOnly
       ? reactionRows(
-          reactions.items.filter((item) => !muted.has(item.channelId)),
+          reactions.items.filter(
+            (item) =>
+              !muted.has(item.channelId) ||
+              channelOf(item.channelId)?.channelType === "dm",
+          ),
         )
       : []
     ).map((item) => ({
@@ -343,7 +348,7 @@ function InboxPreviewCard({
   let threads = 0;
   for (const item of unread) {
     if (channelOf(item.channelId)?.channelType === "dm") dms++;
-    else if (item.mention && hasUnread(item.mention)) mentions++;
+    else if (item.mentioned && hasUnread(item.mention ?? item)) mentions++;
     else if (item.thread) threads++;
   }
   const kinds = [

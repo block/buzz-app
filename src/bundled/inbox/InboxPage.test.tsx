@@ -5461,7 +5461,7 @@ it.each(["solo", "dm", "thread"] as const)(
 );
 
 it.each(["page", "preview"] as const)(
-  "hides muted channel activity in the %s and restores unread rows on unmute",
+  "keeps direct mentions and DMs in the %s when channels are muted",
   async (surface) => {
     const h = fixture({ withDm: true, withMutes: true });
     const root = h.root;
@@ -5496,14 +5496,25 @@ it.each(["page", "preview"] as const)(
     });
     expect(screen.getByText("A direct reply")).toBeVisible();
     expect(screen.queryByText("A thread update")).not.toBeInTheDocument();
-    expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+    expect(screen.getByText("Please review this")).toBeVisible();
     expect(screen.queryByRole("button", reaction)).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "1 unread" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "2 unread" })).toBeVisible();
 
+    const threadMention = message(
+      h.alice,
+      "room",
+      "Direct mention in thread",
+      30,
+      [
+        ["e", root.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ],
+    );
     const laterReply = message(h.alice, "room", "Another thread reply", 31, [
       ["e", root.id, "", "reply"],
     ]);
-    act(() => h.emit([laterReply]));
+    act(() => h.emit([threadMention, laterReply]));
+    await screen.findByText("Direct mention in thread");
     // Wait for the session to project the reply so its absence proves the mute.
     await waitFor(() =>
       expect(
@@ -5513,14 +5524,31 @@ it.each(["page", "preview"] as const)(
       ).toBe(true),
     );
     expect(screen.queryByText("Another thread reply")).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "1 unread" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "3 unread" })).toBeVisible();
+
+    await act(async () => {
+      await h.session.unread.markThrough(
+        { kind: "thread", channelId: "room", rootId: root.id },
+        threadMention.id,
+      );
+    });
+    expect(screen.getByText("Direct mention in thread")).toBeVisible();
+    expect(screen.getByRole("img", { name: "2 unread" })).toBeVisible();
 
     await act(async () => {
       await preferences.setMute("room", false);
     });
     expect(screen.getByText("Another thread reply")).toBeVisible();
+    expect(
+      screen.queryByText("Direct mention in thread"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Please review this")).toBeVisible();
     expect(screen.getByRole("button", reaction)).toBeVisible();
+    expect(screen.getByRole("img", { name: "3 unread" })).toBeVisible();
+    await act(async () => {
+      await preferences.setMute("dm-room", true);
+    });
+    expect(screen.getByText("A direct reply")).toBeVisible();
     expect(screen.getByRole("img", { name: "3 unread" })).toBeVisible();
   },
 );

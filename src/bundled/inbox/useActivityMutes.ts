@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
+import type { InboxItem } from "../../features/relay/inbox";
 import type { RelaySession } from "../../features/relay/session";
 
 /** Apply confirmed mutes to Activity without changing shared unread evidence. */
@@ -13,4 +14,14 @@ export function useActivityMutes({ sidebarPreferences }: RelaySession) {
     readMutes,
   );
   return useMemo(() => new Set(muted), [muted]);
+}
+
+/** DM rows target their channel. A muted non-DM row shows only direct mentions. */
+export function activityConversation(
+  item: InboxItem,
+  muted: ReadonlySet<string>,
+): InboxItem | undefined {
+  return item.target.kind === "channel" || !muted.has(item.channelId)
+    ? item
+    : item.mention;
 }

@@ -232,10 +232,7 @@ export function VoicePreview({
     />
   );
   const groups = new Map<string, string[]>();
-  for (const value of [
-    ...(voice && !voices?.includes(voice) ? [voice] : []),
-    ...(voices ?? []),
-  ]) {
+  for (const value of voices ?? []) {
     const accent = accents?.[value] ?? "Other voices";
     groups.set(accent, [...(groups.get(accent) ?? []), value]);
   }

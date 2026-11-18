@@ -1559,7 +1559,11 @@ export function createTabs(
               previews={data?.previews}
               accents={data?.accents}
               voice={draft.voice ?? ""}
-              voices={data?.voices}
+              voices={
+                provider.snapshot().previewChecking
+                  ? undefined
+                  : data?.voices?.filter((voice) => !!data.previews?.[voice])
+              }
               defaultVoice={data?.defaultVoice}
               disabled={
                 saving || checking || !!provider.snapshot().voiceChecking

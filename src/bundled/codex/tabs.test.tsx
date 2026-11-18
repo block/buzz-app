@@ -65,7 +65,18 @@ afterEach(() => {
   localStorage.clear();
 });
 function fixture({
-  previewHost,
+  previewHost = {
+    request: async () => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        voices: ["cove", "maple"].map((voice) => ({
+          voice,
+          preview_url: `https://persistent.oaistatic.com/voice/previews/${voice}.m4a`,
+        })),
+      }),
+    }),
+  },
   signedIn = true,
   requiresOpenaiAuth = true,
   installed = true,
@@ -2925,6 +2936,19 @@ it("saves an agent's Voice and restores it without changing another agent", asyn
   ).toHaveTextContent("Cove");
 });
 
+it("only offers voices with recordings even when Codex lists more voices", async () => {
+  const f = fixture({
+    voices: ["cove", "maple", "porto", "selva", "other-voice"],
+  });
+  const user = userEvent.setup();
+  render(<f.tabs.SettingsTab {...f.props()} />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await screen.findByRole("radio", { name: "Cove" });
+  expect(
+    screen.queryByRole("radio", { name: /Porto|Selva|Other-voice/ }),
+  ).toBeNull();
+});
+
 it("offers only v3 voices and lets an unavailable assignment return to default", async () => {
   const f = fixture();
   const save = vi.fn(async () => {});
@@ -3141,6 +3165,11 @@ it("rediscovers both catalogs when retained settings return and discards an unco
       body: JSON.stringify({
         voices: [
           {
+            voice: "maple",
+            preview_url:
+              "https://persistent.oaistatic.com/voice/previews/maple.m4a",
+          },
+          {
             voice: "cove",
             preview_url: `https://persistent.oaistatic.com/voice/previews/cove.${++revision}.m4a`,
           },
@@ -3165,7 +3194,7 @@ it("rediscovers both catalogs when retained settings return and discards an unco
     expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.1.m4a"),
   );
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
-  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
   view.getByTestId("retained").hidden = true;
   await act(async () => {});
   voices.push("gleam");

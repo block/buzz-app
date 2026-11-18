@@ -222,7 +222,13 @@ if (thinkingHarness === "claude") {
     data: {
       models: [model],
       defaultVoice: "cove",
-      voices: ["cove", "maple", "vale"],
+      voices: ["cove", "maple", "vale", "porto"],
+      previews: Object.fromEntries(
+        ["cove", "maple", "vale"].map((voice) => [
+          voice,
+          `https://persistent.oaistatic.com/voice/previews/${voice}.m4a`,
+        ]),
+      ),
       accents: {
         cove: "American English",
         maple: "American English",

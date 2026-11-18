@@ -1630,9 +1630,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   sections** shows the default text of each. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it
   from its next turn. After the first choice that is not Default, older Codex
-  conversations start over once. Agents that run outside the app, in the
-  standalone agent host, get a change when that host next starts. Mesh agents
-  do not get the base instructions. When a later
+  conversations on this device start over once; older Codex conversations on
+  another computer keep their instructions until you start a new session.
+  Agents that run outside the app, in the standalone agent host, get a change
+  when that host next starts. Mesh agents do not get the base instructions.
+  When a later
   Buzz version changes the default of a section you turned off or replaced,
   your choice stays, and the section says **Default changed** until you choose
   **Keep mine** or **Reset to default**.

@@ -83,7 +83,7 @@ it("offers Default, Off and Custom for each section the owner can configure", as
   ).not.toBeInTheDocument();
   expect(
     screen.getByText(
-      "Applies to each agent from its next turn. A session that is running a turn changes when the turn ends.",
+      "Applies to each agent from its next turn. A session that is running a turn changes when the turn ends. Agents in the standalone agent host get a change when it next starts. Mesh agents do not get the base instructions.",
     ),
   ).toBeInTheDocument();
 });
@@ -100,7 +100,9 @@ it("saves a section turned off and one with the owner's text, only on Save", asy
   await user.type(editor("Etiquette"), "Be brief.");
   expect(screen.getByText("9 of 4,096 bytes")).toBeInTheDocument();
   expect(
-    screen.getByText("Older Codex conversations start over once."),
+    screen.getByText(
+      /^Older Codex conversations on this device start over once\./,
+    ),
   ).toBeInTheDocument();
   expect(ownerChoices(store)).toEqual({});
 
@@ -117,7 +119,9 @@ it("saves a section turned off and one with the owner's text, only on Save", asy
   // Said once, with the first choice.
   await choose(user, "Autonomy", "Off");
   expect(
-    screen.queryByText("Older Codex conversations start over once."),
+    screen.queryByText(
+      /^Older Codex conversations on this device start over once\./,
+    ),
   ).not.toBeInTheDocument();
 });
 
@@ -220,6 +224,38 @@ it("keeps the owner's own text when they keep theirs", async () => {
     text: "Be brief.",
     basedOn: ownerSectionsHash("etiquette"),
   });
+});
+
+it("keeps the owner's text when a later default is the same text, until they reset it", async () => {
+  const user = userEvent.setup();
+  // A later Buzz version made the owner's text its default.
+  const etiquette = {
+    mode: "custom",
+    text: defaultOf("etiquette"),
+    basedOn: "an-older-one",
+  };
+  const store = memory({ etiquette });
+  render(<BaseInstructions store={store} />);
+  expect(screen.getByText("Default changed")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Keep mine" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(ownerSections(store).choices.etiquette).toEqual({
+    ...etiquette,
+    basedOn: ownerSectionsHash("etiquette"),
+  });
+  // Saving another section keeps it too.
+  await choose(user, "Progress", "Off");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(ownerSections(store).choices.etiquette).toMatchObject({
+    mode: "custom",
+  });
+  await user.click(
+    within(
+      choice("Etiquette").closest("[data-section]") as HTMLElement,
+    ).getByRole("button", { name: "Reset to default" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(ownerSections(store).choices.etiquette).toBeUndefined();
 });
 
 it("lists every section's default text to read, and says who can change it", async () => {

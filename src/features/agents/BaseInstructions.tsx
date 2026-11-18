@@ -60,20 +60,32 @@ const drafts = (saved: OwnerSections) =>
     }),
   );
 /** What Save would keep for a draft. Custom text that is the default text
- * is the default. */
-const kept = (section: Section, { mode, text, basedOn }: Draft) =>
-  mode === "default" ||
-  (mode === "custom" && text.trim() === defaultText(section))
+ * is the default, unless it is the saved text: a later default can become
+ * the owner's text, which stays theirs until they reset it. */
+const kept = (
+  section: Section,
+  { mode, text, basedOn }: Draft,
+  saved: OwnerSections["choices"],
+) => {
+  const own = saved[section.id];
+  return mode === "default" ||
+    (mode === "custom" &&
+      text.trim() === defaultText(section) &&
+      !(own?.mode === "custom" && own.text === text.trim()))
     ? undefined
     : {
         ...(mode === "custom" ? { mode, text: text.trim() } : { mode }),
         ...(basedOn ? { basedOn } : {}),
       };
+};
 /** What Save would keep for every section's draft. */
-const keptChoices = (all: Record<string, Draft>) =>
+const keptChoices = (
+  all: Record<string, Draft>,
+  saved: OwnerSections["choices"],
+) =>
   Object.fromEntries(
     CONFIGURABLE.flatMap((section) => {
-      const choice = kept(section, all[section.id] as Draft);
+      const choice = kept(section, all[section.id] as Draft, saved);
       return choice ? [[section.id, choice] as const] : [];
     }),
   );
@@ -114,9 +126,10 @@ export function BaseInstructions({ store }: { store: AgentStore }) {
       [id]: { ...(current[id] as Draft), ...next },
     }));
   };
-  const choices = keptChoices(draft);
+  const choices = keptChoices(draft, saved.choices);
   const dirty =
-    JSON.stringify(choices) !== JSON.stringify(keptChoices(drafts(saved)));
+    JSON.stringify(choices) !==
+    JSON.stringify(keptChoices(drafts(saved), saved.choices));
   const invalid = CONFIGURABLE.some(({ id }) => {
     const { mode, text } = draft[id] as Draft;
     return mode === "custom" && textProblem(text);
@@ -266,7 +279,9 @@ export function BaseInstructions({ store }: { store: AgentStore }) {
             })}
             <p className="m-0 text-caption text-secondary">
               Applies to each agent from its next turn. A session that is
-              running a turn changes when the turn ends.
+              running a turn changes when the turn ends. Agents in the
+              standalone agent host get a change when it next starts. Mesh
+              agents do not get the base instructions.
             </p>
             {error && (
               <p role="alert" className="m-0 text-body-sm text-danger">
@@ -277,7 +292,9 @@ export function BaseInstructions({ store }: { store: AgentStore }) {
               !Object.keys(saved.choices).length &&
               Object.keys(choices).length > 0 && (
                 <p className="m-0 text-body-sm text-secondary">
-                  Older Codex conversations start over once.
+                  Older Codex conversations on this device start over once.
+                  Older ones on another computer keep their instructions until
+                  you start a new session.
                 </p>
               )}
             {dirty && (

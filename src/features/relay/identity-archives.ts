@@ -341,7 +341,9 @@ export function createIdentityArchives(
   }
   /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
    * when that delta is a well-formed archive delta. Callers show it only while
-   * `state(pubkey)` is "archived". Presentation only, never access. */
+   * `state(pubkey)` is "archived". Presentation only, never access.
+   * Older relays stamp deltas to the second, so two deltas at the newest
+   * second leave the current one unknown and name no replacement. */
   async function replacement(
     pubkey: string,
     signal?: AbortSignal,
@@ -349,17 +351,23 @@ export function createIdentityArchives(
     if (closed || !available || !authority || !HEX.test(pubkey))
       return undefined;
     const events = await reader.read(
-      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit: 1 }],
+      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit: 2 }],
       { ...(signal && { signal }), priority: "background", fresh: true },
     );
-    const delta = events
-      .filter(
+    const deltas = events.filter(
+      (event) =>
+        (event.kind === 8002 || event.kind === 8003) &&
+        event.pubkey === authority,
+    );
+    const delta = deltas.reduce<RelayEvent | undefined>(newer, undefined);
+    if (
+      delta?.kind !== 8002 ||
+      deltas.some(
         (event) =>
-          (event.kind === 8002 || event.kind === 8003) &&
-          event.pubkey === authority,
+          event.id !== delta.id && event.created_at === delta.created_at,
       )
-      .reduce<RelayEvent | undefined>(newer, undefined);
-    if (delta?.kind !== 8002) return undefined;
+    )
+      return undefined;
     const tags = (name: string) => delta.tags.filter(([key]) => key === name);
     const [target, ...targets] = tags("p");
     const [consent, ...consents] = tags("consent");

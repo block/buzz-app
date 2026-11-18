@@ -358,6 +358,14 @@ function OwnedAgentProfile({
         openLink={context && openLink}
         canOpenLink={context && ((link) => context.canOpen(link))}
         conversation={openedFrom(session, context)}
+        notice={
+          <ProfileArchiveNotice
+            session={session}
+            pubkey={pubkey}
+            context={context}
+            open={openLink}
+          />
+        }
         messageAction={(variant) => (
           <AgentMessageButton
             variant={variant}

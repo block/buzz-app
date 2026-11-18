@@ -106,6 +106,7 @@ export function AgentDetails({
   memoryLinks,
   onRemoved,
   messageAction,
+  notice,
   conversation,
   initialActivity,
   initialTranscript,
@@ -127,6 +128,8 @@ export function AgentDetails({
   memoryLinks?: MemoryLinks | undefined;
   onRemoved(): void;
   messageAction: (variant: "glass" | "subtle") => ReactNode;
+  /** Status text under the name, such as an archive notice. */
+  notice?: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
   initialTranscript?: TranscriptRequest | undefined;
@@ -416,6 +419,7 @@ export function AgentDetails({
                 </div>
               )}
             </motion.div>
+            {!editingName && notice}
             <div className={hero.actions}>
               {!editingName && messageAction(backdrop ? "glass" : "subtle")}
               <ProfileActions

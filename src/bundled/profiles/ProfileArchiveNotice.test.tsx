@@ -2,11 +2,22 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
+import type { Agent, Agents } from "../../features/agents/service";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
+import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayData } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import {
@@ -54,7 +65,11 @@ function delta(
 /** `extra` events answer every filter of their kind, whatever its authors:
  * a relay that ignores the authors filter. While `failing.deltas` is set,
  * delta reads fail. */
-function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
+function mount(
+  events: RelayEvent[],
+  extra: RelayEvent[] = [],
+  { ownedBy }: { ownedBy?: (viewer: string) => Agents } = {},
+) {
   const failing = { deltas: false };
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     filters.flatMap((filter) => {
@@ -79,6 +94,7 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
     }),
   );
   const viewer = keypair().pubkey;
+  let live: LiveCallbacks | undefined;
   const owner = createRelaySession({
     viewer,
     relayAuthor: relayKey.pubkey,
@@ -86,7 +102,10 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
     scope: "wss://relay.example.test",
     query,
     media: () => undefined,
-    subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
   });
   owners.push(owner);
   const ready = {
@@ -107,12 +126,20 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
   render(
     <ProfilePanel
       relay={relay}
+      {...(ownedBy && { agents: ownedBy(viewer) })}
       target={profileTarget(old.pubkey) ?? ""}
       close={() => {}}
       context={{ channelId: "c", canOpen: () => true, open }}
     />,
   );
-  return { query, open, failing, archives: owner.session.archives };
+  act(() => live?.state({ status: "connected", routes: [] }));
+  /** The live connection drops and comes back. */
+  const reconnect = () =>
+    act(() => {
+      live?.state({ status: "retrying", routes: [] });
+      live?.state({ status: "connected", routes: [] });
+    });
+  return { query, open, failing, archives: owner.session.archives, reconnect };
 }
 const people = [
   profile(old, { name: "Old Key" }),
@@ -254,4 +281,122 @@ it("drops a replacement the next archive snapshot has not confirmed", async () =
     ),
   );
   expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
+});
+
+it("withholds the replacement when two deltas share the newest second", async () => {
+  // Relays before strictly later delta stamps break a same-second tie by id,
+  // so either delta may be the current one.
+  const replaced = delta(old.pubkey, [["replaced-by", successor.pubkey]], {
+    created_at: 1_700_000_030,
+  });
+  // The plain delta loses the NIP-01 id tie-break, so without the tie check
+  // the replacement would show.
+  let plain = delta(old.pubkey, [], { created_at: 1_700_000_030 });
+  for (let n = 0; plain.id < replaced.id; n++)
+    plain = delta(old.pubkey, [["n", String(n)]], {
+      created_at: 1_700_000_030,
+    });
+  mount([...people, snapshot([old.pubkey]), replaced, plain]);
+  await waitFor(() =>
+    expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+      "This key is archived in this community.",
+    ),
+  );
+  expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
+});
+
+it("retries a failed lookup after a reconnect, with an unchanged archive", async () => {
+  const events = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { failing, archives, query, reconnect } = mount(events);
+  failing.deltas = true;
+  await waitFor(() =>
+    expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kinds: [8002, 8003] }),
+      ]),
+    ),
+  );
+  expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+    "This key is archived in this community.",
+  );
+  const { eventId } = archives.snapshot();
+  failing.deltas = false;
+  reconnect();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  expect(archives.snapshot().eventId).toBe(eventId);
+});
+
+it("shows an owned agent's replacement and asks before leaving unsaved edits", async () => {
+  const type = {
+    key: "test/echo",
+    title: "Echo",
+    tabs: [
+      {
+        id: "notes",
+        title: "Notes",
+        component: function Notes() {
+          const [dirty, setDirty] = useState(false);
+          useAgentSaveState(dirty, false);
+          return (
+            <button type="button" onClick={() => setDirty(true)}>
+              Make a change
+            </button>
+          );
+        },
+      },
+    ],
+  };
+  const ownedBy = (viewer: string) => {
+    const agent = {
+      key: old.pubkey,
+      pubkey: old.pubkey,
+      owner: viewer,
+      name: "Old Agent",
+      type: type.key,
+      place: "here",
+      config: {},
+      attention: {},
+    } as unknown as Agent;
+    const snapshot = { agents: [agent], teams: [] };
+    const types = [type];
+    const none: never[] = [];
+    return {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+      find: (pubkey: string) => (pubkey === old.pubkey ? agent : undefined),
+      memberships: () => none,
+      configHistory: () => undefined,
+      addedTabs: () => none,
+      registerTab: () => {},
+      controlAttention: () => {},
+    } as unknown as Agents;
+  };
+  const { open } = mount(
+    [
+      ...people,
+      snapshot([old.pubkey]),
+      delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    ],
+    [],
+    { ownedBy },
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await user.click(screen.getByRole("tab", { name: "Notes" }));
+  await user.click(screen.getByRole("button", { name: "Make a change" }));
+  await user.click(
+    screen.getByRole("button", { name: "Open new key profile: New Key" }),
+  );
+  expect(open).not.toHaveBeenCalled();
+  await user.click(
+    within(
+      screen.getByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith(profileTarget(successor.pubkey));
 });

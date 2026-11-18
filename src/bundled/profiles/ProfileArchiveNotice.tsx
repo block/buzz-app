@@ -15,10 +15,13 @@ export function ProfileArchiveNotice({
   session,
   pubkey,
   context,
+  open,
 }: {
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
+  /** Opens the replacement's profile; defaults to the panel context. */
+  open?: ((target: string) => void) | undefined;
 }) {
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -26,9 +29,12 @@ export function ProfileArchiveNotice({
     archives.snapshot,
     archives.snapshot,
   );
+  // Read whenever the snapshot is not current (idle), as after a dropped
+  // connection marks it stale.
+  const idle = snapshot.status === "idle";
   useEffect(() => {
-    void archives.ensure();
-  }, [archives]);
+    if (idle) void archives.ensure();
+  }, [archives, idle]);
   const archived = snapshot.archived.includes(pubkey);
   // A result counts only for the snapshot it was read under, so a corrected
   // archive never keeps an earlier replacement, even when the reread fails.
@@ -38,7 +44,11 @@ export function ProfileArchiveNotice({
     key: string | undefined;
   }>();
   const eventId = snapshot.eventId;
+  // Each snapshot read, also one that keeps its event, retries a lookup that
+  // an interruption or a failure left unanswered.
+  const readAt = snapshot.readAt;
   useEffect(() => {
+    void readAt;
     if (!archived) return;
     const controller = new AbortController();
     void archives.replacement(pubkey, controller.signal).then(
@@ -49,7 +59,7 @@ export function ProfileArchiveNotice({
       () => {},
     );
     return () => controller.abort();
-  }, [archives, archived, pubkey, eventId]);
+  }, [archives, archived, pubkey, eventId, readAt]);
   if (!archived) return null;
   const successor =
     replacement?.of === pubkey && replacement.snapshot === eventId
@@ -64,6 +74,7 @@ export function ProfileArchiveNotice({
             session={session}
             successor={successor}
             context={context}
+            open={open}
           />
           .
         </>
@@ -78,10 +89,12 @@ function SuccessorLink({
   session,
   successor,
   context,
+  open,
 }: {
   session: RelaySession;
   successor: string;
   context: PanelProps["context"];
+  open: ((target: string) => void) | undefined;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [successor]),
@@ -108,7 +121,7 @@ function SuccessorLink({
       size="inline"
       variant="link"
       aria-label={`Open new key profile: ${name}`}
-      onClick={() => (context.push ?? context.open)(target)}
+      onClick={() => (open ?? context.push ?? context.open)(target)}
     >
       {name}
     </Button>

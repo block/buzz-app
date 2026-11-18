@@ -34,7 +34,10 @@ import {
   type SearchPlace,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  newMessageTarget,
+  soloDraftTarget,
+} from "../../features/channel-navigation/routes";
 import { readView, writeView } from "../../shared/view-state";
 import {
   hasDraftContent,
@@ -561,6 +564,11 @@ function CommunitySearch({
         views={views}
         offline={saved ? offline : undefined}
         openConversation={openConversation}
+        openNewMessage={(pubkey) => {
+          if (!current()) return;
+          close();
+          void services.navigation.open(newMessageTarget(scope, pubkey));
+        }}
         openAsk={(question, agent) => {
           const current = services.communities.snapshot();
           const relay = services.communities.relay.snapshot();

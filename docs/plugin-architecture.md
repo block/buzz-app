@@ -324,6 +324,22 @@ session-owned. The standard composer remains shared host UI, independent of any
 example plugin. Automated tests use source-only external consumer and tool fixtures
 to exercise component reuse and contribution lifecycle.
 
+### Agent model selections
+
+A plugin that injects `agents` can feature-detect
+`ctx.agents.readModelSettings?.(agentKey)`. This async read returns the same
+safe `modelSettings` projection as `agent_read`, without instructions or raw
+configuration. It accepts a local membership key from the agent service.
+Missing, unreadable or unsupported settings return `{ unavailable: "…" }`.
+Each supported field retains its saved policy and can include a resolved
+selection with provenance. A remote execution target never inherits this
+device's defaults. See [model read semantics](agents.md#creating-and-changing-agents-from-a-conversation)
+for field shapes and unresolved states. The read uses existing resolver state;
+it never starts model discovery, launches a harness or changes an agent.
+The result describes a current selection, not an existing session's override.
+Older hosts lack the method. A missing method or unresolved value does not
+establish a model; consumers must preserve that distinction.
+
 ## Plugin module contract
 
 `src/bundled/channels` is a bundled example. External projects have `manifest.json`
@@ -3347,6 +3363,31 @@ desktop app are not exercised there.
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
+## GitHub pull request states
+
+While the bundled GitHub plugin is on, it provides `ctx.githubPulls`: the pull
+request states the app already holds, read-only. Links in messages, the panel
+and agents' watches read pull requests; `ctx.githubPulls` never reads GitHub, so
+using it costs nothing against GitHub's limits.
+
+`prState(url, { details })` gives what the agent tool `github_pr_state` gives,
+built by the same code: `state` (`"open"`, `"draft"`, `"merged"` or
+`"closed"`), with a `gh` read also `checks`, `failed`, `settled`, `conflicts`
+and `head`, then `read_at`, `age_seconds`, `source` and, when reading it again
+failed, `last_read_failed`. With `details: true` it adds the panel's `details`
+once something read them. Where the tool would read GitHub, `prState` gives
+undefined instead: the app holds no state for it (not read, could not be read,
+or forgotten after nobody showed it for a while), or `url` is not a pull
+request's. `subscribe(listener)` calls back after a read records a changed
+state, or when `last_read_failed` changes: reading again starts failing, fails
+for another reason, or works again. A read that finds the same state only moves
+`read_at` and `age_seconds` and is not announced, so show freshness from your
+own clock; a state the app forgets is not announced either. The report is a
+copy: changing it changes nothing the app holds.
+The service goes away when the GitHub plugin is turned off, so take it with
+`ctx.inject(["githubPulls"], (child) => …)` rather than a top-level `inject`, which
+would keep the plugin from starting without it.
 
 ## Decisions
 

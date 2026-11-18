@@ -8382,6 +8382,11 @@ it.each(["attention", "plugin"] as const)(
           text: "Check the build",
         },
       });
+      await f.tool("send", {
+        request: first.trigger.event.id,
+        audience: "everyone",
+        text: "Original answer",
+      });
       await f.runtime.run({
         ...f.delivery("Follow-up in the original channel", "e".repeat(64)),
         channelId: "other",
@@ -8398,19 +8403,18 @@ it.each(["attention", "plugin"] as const)(
         channel: "channel",
         audience: "everyone",
         text: "Build update",
-      });
-      await f.tool("send", {
-        request: first.trigger.event.id,
-        audience: "everyone",
-        text: "Original answer",
         final: true,
       });
-      expect(f.publish.mock.calls.map(([post]) => post.tags)).toEqual([
-        expect.arrayContaining([["h", "channel"]]),
-        expect.arrayContaining([
-          ["h", "other"],
-          ["buzz:request", first.trigger.event.id],
-        ]),
+      expect(f.publish.mock.calls.map(([post]) => post)).toEqual([
+        expect.objectContaining({
+          tags: expect.arrayContaining([
+            ["h", "other"],
+            ["buzz:request", first.trigger.event.id],
+          ]),
+        }),
+        expect.objectContaining({
+          tags: expect.arrayContaining([["h", "channel"]]),
+        }),
       ]);
       await f.complete(0);
     } finally {

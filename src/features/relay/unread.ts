@@ -213,8 +213,10 @@ export interface UnreadCapability {
    * Only results with `undoScope: "captured-action"` and `undo` offer the full
    * receipt, saved-reminder and visit-overlay inverse. Older handles may restore
    * saved reminders only. Synced prefixes stay monotonic.
-   * Any later journal write or lost action validity expires the inverse; pending
-   * force-unread intent also withholds it. Older hosts may omit this capability. */
+   * A later overlapping read or local unread intent, retention change that
+   * touches its inverse, or lost action validity expires the inverse; unrelated
+   * writes do not. Pending or newly forced intent for a selected ID also
+   * withholds or expires it. Older hosts may omit this capability. */
   markCapturedMessagesRead?(
     messageIds: readonly string[],
   ): Promise<ReadMutationResult>;
@@ -3130,6 +3132,9 @@ export function createUnread({
             })),
           remaining ? undefined : messageForceKey(channelId),
           valid,
+          false,
+          undefined,
+          rows.map((row) => `msg:${row.id}`),
         );
         if (valid()) {
           for (const row of rows) forced?.delete(row.id);
@@ -3191,24 +3196,32 @@ export function createUnread({
         valid() &&
         [...capturedIdsByChannel].every(
           ([channelId, ids]) => !hasPendingForcedMessages(channelId, ids),
+        ) &&
+        [...capturedIdsByChannel].every(([channelId, ids]) =>
+          [...ids].every((id) => !forcedMessages.get(channelId)?.has(id)),
         );
       const fence = reads.captureLocalUnread([
         ...selected.map(({ id }) => `msg:${id}`),
         ...channelIds.map(messageForceKey),
       ]);
+      const messageRead = ({
+        id,
+        channelId,
+        event,
+      }: (typeof selected)[number]) => ({
+        key: `msg:${id}`,
+        timestamp: event.created_at,
+        channelId,
+        ...(threadReference(event) && root(event)
+          ? { rootId: root(event) }
+          : {}),
+      });
       return serializeChannels(channelIds, async () => {
         if (!valid()) throw new Error("Unread channel visit expired");
         const result = await reads.readMessages(
           selected
             .filter(({ event }) => event.pubkey !== viewer)
-            .map(({ id, channelId, event }) => ({
-              key: `msg:${id}`,
-              timestamp: event.created_at,
-              channelId,
-              ...(threadReference(event) && root(event)
-                ? { rootId: root(event) }
-                : {}),
-            })),
+            .map(messageRead),
           undefined,
           valid,
           false,
@@ -3217,7 +3230,23 @@ export function createUnread({
           messageKeys,
           {
             preserveCapturedSet: true,
-            undo: { keys: new Set(messageKeys), valid: undoValid },
+            selectedMessages: selected.map(messageRead),
+            undo: {
+              keys: new Set(messageKeys),
+              intentKeys: [
+                ...new Set([
+                  ...messageKeys,
+                  ...selected.flatMap(({ id, channelId, event }) => [
+                    channelId,
+                    ...(threadReference(event) && root(event)
+                      ? [`thread:${root(event)}`]
+                      : []),
+                    `msg:${id}`,
+                  ]),
+                ]),
+              ],
+              valid: undoValid,
+            },
           },
         );
         // The save succeeded; do not clear overlays from a visit that ended

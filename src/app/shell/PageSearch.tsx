@@ -227,14 +227,16 @@ export function PageSearch({
         [NEXT_RESULT_ID, "Next search result", DEFAULT_SEARCH_STEPS.next],
       ] as const
     ).map(([id, title, binding], index) =>
-      services.shortcuts.registerHost({
-        id,
-        title,
-        binding,
-        order: HOST_SHORTCUT_ORDER.search + 3 + index,
-        local: true,
-        run: () => {},
-      }),
+      services.shortcuts.registerHost(
+        {
+          id,
+          title,
+          binding,
+          order: HOST_SHORTCUT_ORDER.search + 3 + index,
+          run: () => {},
+        },
+        { local: true },
+      ),
     );
     return () => {
       for (const dispose of remove) dispose();

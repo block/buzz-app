@@ -712,13 +712,15 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
     // search field's numbered result chords, and never reserves its chord.
     let local = () => {};
     act(() => {
-      local = h.shortcuts.registerHost({
-        id: "search-next-result",
-        title: "Next search result",
-        binding: { key: "ArrowDown" },
-        local: true,
-        run: () => {},
-      });
+      local = h.shortcuts.registerHost(
+        {
+          id: "search-next-result",
+          title: "Next search result",
+          binding: { key: "ArrowDown" },
+          run: () => {},
+        },
+        { local: true },
+      );
     });
     const next = "Next search result";
     await user.click(change(next));
@@ -739,6 +741,21 @@ it("records Control beside Command on Apple platforms, saves it and dispatches i
       true,
     );
     expect(fireEvent.keyDown(document.body, { key: "ArrowDown" })).toBe(true);
+    expect(h.shortcuts.runHost("search-next-result")).toBe(false);
+    // It never competes with a global chord, so it may share ⌃⌘U with Open
+    // Settings, which still runs outside the field; no editor notice either.
+    await user.click(change(next));
+    fireEvent.keyDown(capture(next), chord);
+    expect(h.bindings.resolve("search-next-result")).toEqual([
+      { key: "u", mod: true, ctrl: true },
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    expect(fireEvent.keyDown(document.body, chord)).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledTimes(2);
+    await user.click(change(next));
+    fireEvent.keyDown(capture(next), { key: "b", metaKey: true });
+    expect(screen.queryByText(/message editor handles/)).toBeNull();
     act(local);
   } finally {
     await h.dispose();

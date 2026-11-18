@@ -219,6 +219,7 @@ function useShortcutGroups({
     shortcut: NormalizedShortcut,
     owner: string,
     readOnly = false,
+    local = false,
   ): Row => {
     const override = overrides[key];
     return {
@@ -227,7 +228,7 @@ function useShortcutGroups({
       owner,
       order: shortcut.order,
       readOnly,
-      local: !!shortcut.local,
+      local,
       defaults: shortcut.binding,
       override,
       effective: override ? [override] : shortcut.binding,
@@ -249,6 +250,7 @@ function useShortcutGroups({
             shortcut.binding.some((binding) =>
               includes(DESKTOP_CHORDS, binding),
             ),
+          shortcut.local,
         ),
       ),
     },
@@ -342,10 +344,14 @@ export function ShortcutSettings({
   // A chord can become shared after capture (a plugin enabled later, a new
   // default in a release). The dispatcher then picks one silently, so each
   // affected row names the others.
+  // A field-local row and a global one never compete: the field takes the
+  // chord while it has focus and the dispatcher everywhere else.
+  const competes = (target: Row, other: Row) =>
+    other.key !== target.key && other.local === target.local;
   const sharedWith = (target: Row) =>
     rows.filter(
       (other) =>
-        other.key !== target.key &&
+        competes(target, other) &&
         other.effective.some((binding) =>
           target.effective.some((current) => sameBinding(current, binding)),
         ),
@@ -412,7 +418,7 @@ export function ShortcutSettings({
       );
     const conflict = rows.find(
       (row) =>
-        row.key !== target.key &&
+        competes(target, row) &&
         row.effective.some((current) => sameBinding(current, binding)),
     );
     if (conflict)
@@ -426,9 +432,10 @@ export function ShortcutSettings({
     setEditing(null);
     // EditableInput handles Enter locally regardless of the held modifiers.
     setNotice(
-      binding.key === "Enter" ||
-        includes(EDITOR_CHORDS, binding) ||
-        includes(EDITOR_FORMAT_CHORDS, binding)
+      !target.local &&
+        (binding.key === "Enter" ||
+          includes(EDITOR_CHORDS, binding) ||
+          includes(EDITOR_FORMAT_CHORDS, binding))
         ? {
             key: target.key,
             tone: "warning",

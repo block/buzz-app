@@ -264,13 +264,21 @@ export type SessionList =
 const notFound = (error: unknown) =>
   error instanceof Error && "status" in error && error.status === 404;
 
+/** Conversations the Activity tab lists at most. */
+export const CONVERSATION_LIMIT = 30;
+/** Pages read at most for them, since Builderlab may send a short or empty
+ * page before the last. */
+const PAGE_LIMIT = 5;
+
 /** Whether the owner is signed in to Builderlab with remote agents, so its
  * stored sessions can be read. */
 export const canReadSessions = (login: LoginSnapshot) =>
   login.status === "signed-in" && !!login.account?.canUseRemoteAgents;
 
 /** The signed-in owner's stored sessions of an agent, most recently active
- * first. */
+ * first: pages until {@link CONVERSATION_LIMIT} are read, none remain, or
+ * {@link PAGE_LIMIT} were read. `more` when older ones remain. A session
+ * that became active between reads can arrive twice; its first stays. */
 export async function listSessions(
   client: AgentClient,
   session: BuilderlabSession,
@@ -282,17 +290,27 @@ export async function listSessions(
     (row) => row.pubkey === pubkey,
   );
   if (!agent) return { status: "loaded", sessions: [], more: false };
+  const listed = new Map<string, AgentSession>();
+  let cursor: string | undefined;
   try {
-    return {
-      status: "loaded",
-      agentId: agent.id,
-      ...(await client.sessions(agent.id, signal)),
-    };
+    for (let page = 0; page < PAGE_LIMIT; page++) {
+      const next = await client.sessions(agent.id, signal, undefined, cursor);
+      for (const row of next.sessions)
+        if (!listed.has(row.sessionId)) listed.set(row.sessionId, row);
+      cursor = next.cursor;
+      if (!cursor || listed.size >= CONVERSATION_LIMIT) break;
+    }
   } catch (error) {
     // A Builderlab without stored sessions has no such route.
     if (notFound(error)) return { status: "unsupported" };
     throw error;
   }
+  return {
+    status: "loaded",
+    agentId: agent.id,
+    sessions: [...listed.values()],
+    more: !!cursor,
+  };
 }
 
 /** Turns a stored transcript shows at most, as local transcripts do. */

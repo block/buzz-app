@@ -3274,6 +3274,31 @@ it.each([1006, undefined])(
   },
 );
 
+it.each([
+  ["an authenticated", true, 9000],
+  ["a never-authenticated", false, 475],
+])(
+  "times the reconnect from the error when %s socket errors before closing",
+  async (_, authenticated, delay) => {
+    vi.useFakeTimers();
+    const h = setup(["a"], undefined, undefined, () => 0.9);
+    try {
+      if (authenticated) await h.first.auth();
+      // An abrupt TCP drop fires error, then close 1006.
+      h.first.onerror?.(new Event("error"));
+      h.first.close(1006);
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(h.sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      // The late close must not schedule a second reconnect alongside it.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.sockets).toHaveLength(2);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
 it("spreads only the first reconnect after an authenticated drop, then backs off normally", async () => {
   vi.useFakeTimers();
   const draws = [0, 0.5];

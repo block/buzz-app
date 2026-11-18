@@ -49,6 +49,31 @@ it("keeps prefix matches ahead of frequent loose matches and preserves ties", as
   );
 });
 
+it("keeps a literal exact shortcode ahead of a frequent separator variant", async () => {
+  const custom = ["party_parrot", "party-parrot"].map((shortcode) => ({
+    shortcode,
+    url: `https://emoji.test/${shortcode}.png`,
+  }));
+  for (const query of ["party_parrot", "PARTY_PARROT", "party-parrot"]) {
+    const matches = await searchEmoji(query, custom);
+    for (const frequent of [
+      undefined,
+      "custom/party-parrot",
+      "custom/party_parrot",
+    ]) {
+      const usage = new Map(frequent ? [[frequent, 3]] : []);
+      expect(prioritizeEmoji(query, matches, usage)[0]?.id).toBe(
+        exactEmoji(query, matches),
+      );
+    }
+  }
+  rememberEmoji("scope", "custom/party-parrot");
+  const prefix = await searchEmoji("party", custom);
+  expect(prioritizeEmoji("party", prefix, emojiUsage("scope"))[0]?.id).toBe(
+    "custom/party-parrot",
+  );
+});
+
 it("bounds storage, validates persisted entries and tolerates unavailable storage", () => {
   writeView("scope", "emoji:usage:v1", [
     ["unicode/joy", 3],

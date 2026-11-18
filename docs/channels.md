@@ -1733,9 +1733,10 @@ with local ephemeral signing keys; it does not contact the deployed relay.
 ## Community emoji
 
 Composer autocomplete learns from accepted emoji suggestions and picker choices
-on this device, separately for each account and community. More frequently chosen
-emoji rise within exact-name, prefix and remaining matches, with exact names
-always first. The most recently chosen 256 emoji retain their counts across
+on this device, separately for each account and community. Literal exact shortcodes
+lead, followed by separator-insensitive exact matches, prefix matches and remaining
+results. Frequency orders each group; ties keep the existing search order.
+The most recently chosen 256 emoji retain their counts across
 restarts. Browsing suggestions or cancelling a picker does not train autocomplete;
 unavailable local storage leaves the normal search order usable.
 

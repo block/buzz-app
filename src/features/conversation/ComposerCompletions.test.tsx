@@ -119,12 +119,16 @@ function mountPeople(
     items = peopleItems,
     bundled = false,
     replace = () => true,
+    valid = () => true,
+    invalidate = () => {},
     tokens,
     identityMarks = [],
   }: {
     items?: readonly object[];
     bundled?: boolean;
     replace?: () => boolean;
+    valid?: () => boolean;
+    invalidate?: () => void;
     tokens?: readonly { start: number; end: number }[];
     identityMarks?: Contribution<IdentityMark>[];
   } = {},
@@ -169,9 +173,9 @@ function mountPeople(
   document.body.append(input);
   const editor = {
     observation: { revision: 1, text: "@h", start: 2, end: 2 },
-    valid: () => true,
+    valid,
     observe: () => {},
-    invalidate: () => {},
+    invalidate,
     keys: { current: undefined },
     composing: { current: false },
   } as CompletionEditor;
@@ -237,6 +241,25 @@ it("does not report disabled or rejected choices, or a dismissed popup", async (
     fireEvent.click(option);
   cleanup();
   expect(selected).not.toHaveBeenCalled();
+});
+
+it("invalidates before notifying and never reports the same stale choice twice", async () => {
+  let valid = true;
+  const selected = vi.fn(() => expect(valid).toBe(false));
+  const replace = vi.fn(() => true);
+  mountPeople("acme.people", {
+    items: [{ ...peopleItems[0], onSelect: selected }],
+    replace,
+    valid: () => valid,
+    invalidate: () => {
+      valid = false;
+    },
+  });
+  const option = await screen.findByRole("option");
+  fireEvent.click(option);
+  fireEvent.click(option);
+  expect(replace).toHaveBeenCalledOnce();
+  expect(selected).toHaveBeenCalledOnce();
 });
 
 it("contains provider errors after a successful edit", async () => {

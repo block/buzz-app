@@ -105,7 +105,9 @@ export function mountEmojiMart({
   active?.();
   let disposed = false;
   const choose = (value: string, id: string, customEmoji?: string) => {
-    if (select(value, customEmoji) !== false) rememberEmoji(scope, id);
+    if (select(value, customEmoji) === false) return false;
+    rememberEmoji(scope, id);
+    return true;
   };
   const values = new Map<string, { literal: string; shortcode: string }>();
   const emojis = entries.flatMap(({ shortcode, url }) => {
@@ -663,8 +665,7 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     const tone = chosenTone;
     const native = tone && Data?.emojis[id]?.skins[tone - 1]?.native;
     if (!native || disposed) return false;
-    choose(native, `unicode/${id}`);
-    return true;
+    return choose(native, `unicode/${id}`);
   };
   // Mart clears the preview whenever the pointer leaves an emoji, so crossing
   // the gaps between cells flashed the idle footer. Keep the last preview while

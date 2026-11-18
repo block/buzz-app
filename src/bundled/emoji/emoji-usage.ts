@@ -30,18 +30,19 @@ export function rememberEmoji(scope: string, id: string) {
   writeView(scope, key, [[id, count], ...usage].slice(0, capacity));
 }
 
-/** Learn within exact, prefix and remaining matches; preserve baseline ties. */
+/** Literal exact names lead normalized matches; learn within each remaining tier. */
 export function prioritizeEmoji(
   query: string,
   matches: readonly EmojiMatch[],
   usage: ReadonlyMap<string, number>,
 ): readonly EmojiMatch[] {
-  if (!usage.size) return matches;
   const normalize = (text: string) => text.toLowerCase().replace(/[-_\s]/g, "");
+  const literal = query.toLowerCase();
   const needle = normalize(query);
   const tier = (item: EmojiMatch) => {
+    if (item.shortcode.toLowerCase() === literal) return 0;
     const name = normalize(item.shortcode);
-    return name === needle ? 0 : name.startsWith(needle) ? 1 : 2;
+    return name === needle ? 1 : name.startsWith(needle) ? 2 : 3;
   };
   return [...matches].sort(
     (a, b) =>

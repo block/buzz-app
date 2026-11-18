@@ -103,6 +103,17 @@ const sessions = ["a", "b"].map((community) => {
                     ["emoji", "enjoy", `${origin}/media/enjoy.png`],
                     ["emoji", "job", `${origin}/media/job.png`],
                     ["emoji", "party-parrot", `${origin}/media/parrot.png`],
+                    ...(new URLSearchParams(location.search).has(
+                      "separator-collision",
+                    )
+                      ? [
+                          [
+                            "emoji",
+                            "party_parrot",
+                            `${origin}/media/parrot2.png`,
+                          ],
+                        ]
+                      : []),
                     ["emoji", "party-parrot-wave", `${origin}/media/wave.png`],
                     [
                       "emoji",

@@ -5,11 +5,87 @@ import "@testing-library/jest-dom/vitest";
 import { mountEmojiMart } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import { SKIN_TONE_SLOT } from "./skin-tone";
+import * as skinTone from "./skin-tone";
 import { emojiUsage } from "./emoji-usage";
 
 afterEach(() => {
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+it("restores footer focus without learning a rejected first skin-tone pick", async () => {
+  vi.spyOn(skinTone, "skinToneUnchosen").mockReturnValue(true);
+  vi.spyOn(skinTone, "rememberSkinTone").mockImplementation(() => {});
+  for (const name of ["ResizeObserver", "IntersectionObserver"])
+    vi.stubGlobal(
+      name,
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  const host = document.body.appendChild(document.createElement("div"));
+  const select = vi.fn(() => false);
+  const scope = "rejected-tone";
+  const dispose = mountEmojiMart({
+    host,
+    autoFocus: false,
+    preview: true,
+    scope,
+    perLine: 8,
+    emojiSize: 24,
+    emojiButtonSize: 36,
+    search: "",
+    searchSelection: { current: undefined },
+    searchChange() {},
+    entries: [],
+    media: (url) => url,
+    select,
+    close() {},
+  });
+  try {
+    const picker = host.querySelector("em-emoji-picker");
+    const footer = document.createElement("div");
+    footer.slot = SKIN_TONE_SLOT;
+    const trigger = footer.appendChild(document.createElement("button"));
+    trigger.textContent = "Choose default skin tone";
+    picker?.append(footer);
+    const input = await vi.waitFor(() => {
+      const input = picker?.shadowRoot?.querySelector("input");
+      if (!input) throw new Error("Picker loading");
+      return input;
+    });
+    input.value = "thumbs up";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const thumb = await vi.waitFor(() => {
+      const button = picker?.shadowRoot?.querySelector<HTMLButtonElement>(
+        '.category:not([data-id]) button[aria-posinset="1"]',
+      );
+      if (!button) throw new Error("Thumbs-up search result loading");
+      return button;
+    });
+    expect(thumb).toHaveAttribute("aria-label", "👍");
+    thumb.click();
+    const radio = await vi.waitFor(() => {
+      const radio = picker?.shadowRoot?.querySelector<HTMLInputElement>(
+        '.menu input[value="4"]',
+      );
+      if (!radio) throw new Error("Tone menu loading");
+      return radio;
+    });
+    radio.focus();
+    (radio.nextElementSibling as HTMLElement).click();
+    await vi.waitFor(() =>
+      expect(select).toHaveBeenCalledWith("👍🏽", undefined),
+    );
+    expect(emojiUsage(scope).size).toBe(0);
+    await vi.waitFor(() => expect(trigger).toHaveFocus());
+  } finally {
+    dispose();
+  }
 });
 
 it.each([true, false])(

@@ -300,7 +300,6 @@ export function VoicePreview({
           return false;
         }}
         title="Choose voice"
-        description="Close with X to save your choice, or press Escape to cancel."
         dismissOnOutsideClick={false}
         size="compact"
         headerGap="compact"

@@ -383,7 +383,7 @@ it("starts an unfiled chat from the Chats heading plus without collapsing it", a
   owner.dispose();
 });
 
-it("renders again for a Solo chat's activity but not another channel's", async () => {
+it("renders again for a chat's name but not for any channel's activity", async () => {
   const h = fixture();
   const commits = vi.fn();
   render(
@@ -395,8 +395,9 @@ it("renders again for a Solo chat's activity but not another channel's", async (
   await waitFor(() => expect(commits).toHaveBeenCalled());
   commits.mockClear();
   act(() => h.updateChannel("team", { lastActivityAt: 10, preview: "hi" }));
+  act(() => h.updateChannel("chat", { lastActivityAt: 10, preview: "hi" }));
   expect(commits).not.toHaveBeenCalled();
-  act(() => h.updateChannel("chat", { lastActivityAt: 10 }));
+  act(() => h.updateChannel("chat", { name: "Planning renamed" }));
   expect(commits).toHaveBeenCalled();
 });
 

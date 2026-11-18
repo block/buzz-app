@@ -34,11 +34,7 @@ import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import { UnreadBadge } from "./UnreadBadge";
 import { useUnreadChannelIds } from "./useSidebarFilters";
 import { compareRecent } from "./sidebar-sections";
-import {
-  SoloWorkspaces,
-  soloActivity,
-  type ChatListItem,
-} from "./SoloWorkspaces";
+import { SoloWorkspaces, type ChatListItem } from "./SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
@@ -46,7 +42,10 @@ import {
 } from "./ChatSharedMark";
 import { useChannelRoster } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import type {
+  ChannelList,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
 import { rosterRecovering } from "../../features/relay/live-recovery";
 import type { Navigation } from "../../features/navigation/controller";
@@ -91,6 +90,22 @@ const chatIcon = (
   </span>
 );
 
+const recencies = new WeakMap<ChannelList, string>();
+/** Solo chats newest first, as one string: a message that leaves the order
+ * alone leaves the Solo tree alone too. */
+function soloRecency(list: ChannelList) {
+  let order = recencies.get(list);
+  if (order === undefined) {
+    order = list.channels
+      .filter((channel) => channel.channelType === "solo")
+      .sort(compareRecent)
+      .map((channel) => channel.id)
+      .join("\n");
+    recencies.set(list, order);
+  }
+  return order;
+}
+
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
   session,
@@ -120,7 +135,14 @@ export function SoloInventory({
   ) => ReactNode;
   workspaceComposition?: WorkspaceSidebarComposition | undefined;
 }) {
-  const list = useChannelRoster(session.channels, { activity: soloActivity });
+  const list = useChannelRoster(session.channels);
+  const recency = useSyncExternalStore(session.channels.subscribeList, () =>
+    soloRecency(session.channels.list()),
+  );
+  const rank = useMemo(
+    () => new Map(recency.split("\n").map((id, index) => [id, index])),
+    [recency],
+  );
   const regions = useSoloNavigation(session);
   const standaloneClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -292,7 +314,11 @@ export function SoloInventory({
             : preferences.data?.assignments[item.id],
         ),
     )
-    .sort(compareRecent);
+    .sort(
+      (a, b) =>
+        (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER) || compareRecent(a, b),
+    );
   // Capped workspaces never hide the open chat or one that needs the viewer.
   const unreadChats = useUnreadChannelIds(
     session.unread,

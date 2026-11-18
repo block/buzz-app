@@ -146,7 +146,8 @@ writer selects the admission contract by the event's `d` coordinate. The
 sidebar coordinates must match what the sidebar signer produces, and recipe
 coordinates must satisfy the recipe contract.
 
-The sidebar defaults to **Starred**, personal workspaces, **Solo**, **Team**,
+The sidebar defaults to **Plugins** (sidebar pages such as Activity, when
+any are enabled), **Starred**, personal workspaces, **Solo**, **Team**,
 **Forums**, and **Direct messages**. All sections can be reordered by dragging
 the heading or through **Move up** and **Move down**. The saved order syncs with
 workspace placement.
@@ -159,8 +160,9 @@ menu uses the same settings form and leaves existing placements in place.
 
 Each workspace heading has a compact creation control. Its arrow opens
 **New chat**, **New channel**, and **New DM**. The last choice becomes that
-workspace’s primary action on this device. The standalone **New options** menu
-in **Solo** also offers **New workspace** and stays available during Focus.
+workspace’s primary action on this device. The floating **New options** button
+at the end of the sidebar list also offers **New workspace** and stays
+available during Focus.
 
 Sections collapse and expand through their headers; the ellipsis menu does not
 repeat that action. Collapsed section keys and sidebar scroll remain separate, scoped view intent.

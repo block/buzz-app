@@ -1020,9 +1020,10 @@ and are asked to sign in again in Buzz.
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your
   configured avatar.
-  The **New options** button in **Solo** opens **New chat**, **New channel**,
-  **New DM** and **New workspace**. **Cmd/Ctrl+N** opens this menu in Messages,
-  including during Focus when there are no unfiled chats.
+  The floating **New options** button at the end of the sidebar list opens
+  **New chat**, **New channel**, **New DM** and **New workspace**. **Cmd/Ctrl+N**
+  opens this menu in Messages, including during Focus. The **Solo** heading's
+  **+** starts a chat, and each workspace heading has its own **New** button.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.

@@ -43,16 +43,15 @@ export function WorkspaceNewMenu({
   const enabled = (choice: WorkspaceNewAction) =>
     choice === "chat" ||
     (choice === "channel" ? channelAvailable : dmAvailable);
-  const Icon = icons[action];
-  const label = `${labels[action]} in ${name}`;
+  // An unavailable remembered action falls back to New chat, always enabled.
+  const shown = enabled(action) ? action : "chat";
+  const Icon = icons[shown];
+  const label = `${labels[shown]} in ${name}`;
   const primaryProps = {
     ref: primary,
     "aria-label": label,
     title: label,
-    "aria-disabled": !enabled(action) || undefined,
-    onClick: (event) => {
-      if (enabled(action)) choose(action, event.currentTarget);
-    },
+    onClick: (event) => choose(shown, event.currentTarget),
     children: <Icon aria-hidden="true" />,
   } satisfies ButtonProps;
   return (

@@ -143,10 +143,10 @@ behavior on the label, so a rename touches copy only.
   Rename (where editable), Chat settings and Move to, then Share access, Copy link
   and Convert to channel (where eligible), then Archive chat and Delete chat. Opening a row
   menu does not select the row.
-  A chat can also be dragged with a pointer onto another workspace or **Chats**;
+  A chat can also be dragged with a pointer onto another workspace or **Solo**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
   rollback notice and Retry. Like Messages' empty Starred, a hidden empty
-  **Chats** section is not revealed during a drag.
+  **Solo** section is not revealed during a drag.
 - **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
   Settings → Shortcuts) opens the Chat actions Archive confirmation for the open
   chat, including from the composer, after a fresh permission read; it does
@@ -402,7 +402,7 @@ Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `S
 `bundled/channels/SoloInventory.tsx` own the Solo half of
 `app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing and conversion live
 in `src/features/solo`; Solo workspaces use
-`src/features/relay/solo-preferences.ts` and the existing recipe capability.
+`src/features/relay/sidebar-preferences*.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
 `soloLabels`, `ownSolo`). Existing channel,
 membership, signing and Outbox owners retain their authority.

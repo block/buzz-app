@@ -446,6 +446,32 @@ it("closes a fully accounted legacy import when protective history would block e
   const roundTrip = expandWorkspaceRecord(JSON.parse(JSON.stringify(signed)));
   expect(roundTrip).toMatchObject({ assignments, legacyTemplates });
   expect(importWorkspaceFallback(roundTrip, additional)).toBe(roundTrip);
+  // Closure holds after the layout shrinks below both caps.
+  const shrunk = {
+    ...roundTrip,
+    sections: sections.slice(0, 1),
+    assignments: {},
+  };
+  expect(importWorkspaceFallback(shrunk, additional)).toBe(shrunk);
+  // Closure needs every legacy workspace kept or removed; a removal covers its
+  // filings.
+  const late = { id: "late-workspace", name: "Late", order: 200 };
+  const withLate = {
+    sections: [...sections, late],
+    assignments: { ...legacy.assignments, "late-filing": late.id },
+  };
+  expect(() =>
+    workspacePayloadForSigning(payload, {
+      ...legacy,
+      sections: withLate.sections,
+    }),
+  ).toThrow("storage limit");
+  expect(
+    workspacePayloadForSigning(
+      { ...payload, removedSections: [late.id] },
+      withLate,
+    ),
+  ).toHaveProperty("legacyImportClosed", true);
   const [channelId] = Object.keys(assignments);
   if (!channelId) throw new Error("Incomplete fixture");
   const edited = workspacePayloadForSigning(

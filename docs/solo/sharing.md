@@ -189,9 +189,9 @@ synchronized into the chat.
 ## Explicit conversion, separate from Share
 
 The product owner approved this distinction on 2026-10-14: **Share** keeps the
-Solo label and project filing; **Convert to channel** removes the Solo label and
-the initiating viewer's project filing, so the same conversation becomes an
-ordinary Team channel, with Private, View only or Public access. It changes
+Solo label and project filing; **Convert to channel** removes the Solo label,
+so the same conversation becomes an ordinary Team channel (still in its
+workspace, if filed), with Private, View only or Public access. It changes
 organization and conversation behavior for every member, never creates a new
 conversation or copies history.
 
@@ -216,11 +216,8 @@ The sequence is explicit, not atomic:
    altered-signature rejection and exact readback remain unchanged. The edit
    removes `buzz.solo` from the channel's labels and applies the chosen
    visibility and admission policy; name, lifetime and other labels are preserved.
-2. Refresh Solo projects and, if this viewer filed the chat in one, clear only
-   that assignment through `soloPreferences.assign(id, undefined)`. Its encrypted
-   account/community record, serialization and Outbox own persistence. Other
-   projects, conversations, defaults, memberships and other people's filing are
-   untouched.
+2. Keep the chat's workspace assignment: workspaces hold channels as well as
+   chats, so no sidebar write occurs.
 3. Announce **Converted to channel.** and open the same channel ID in Team. No
    new grant, notification, agent wake or transcript write occurs.
 

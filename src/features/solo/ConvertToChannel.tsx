@@ -67,7 +67,7 @@ function matchesConversion(base: ChannelDetails, receipt: ChatConversion) {
   );
 }
 
-/** Clear the Solo label, drop the chat's project filing, then hand off navigation. */
+/** Clear the Solo label, keeping the chat's workspace, then hand off navigation. */
 export function ConvertToChannel({
   session,
   id,

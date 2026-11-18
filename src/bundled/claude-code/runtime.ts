@@ -461,28 +461,35 @@ export class ClaudeRuntime {
   }
 
   /** Makes a place when the host already runs all the processes it allows,
-   * which every plugin's processes share: stops the conversation process of
-   * any agent that has been idle longest, and waits for it to exit, or until
-   * the host has had time to kill it. False when none is idle. Idle processes
+   * which every plugin's processes share: stops the spare, else the
+   * conversation process of any agent that has been idle longest, and waits
+   * for it to exit, or until the host has had time to kill it. False when
+   * neither is there to stop. Idle processes
    * would stop on their own after `IDLE_MS`; until then they hold places a
    * new conversation needs. */
   async room() {
-    let idlest: ReturnType<AgentSessions["idlest"]>;
-    for (const entry of this.agents.values()) {
-      const candidate = entry.sessions.idlest();
-      if (candidate && (!idlest || candidate.used < idlest.used))
-        idlest = candidate;
-    }
-    if (!idlest) return false;
+    // The spare, started ahead of need, goes before any conversation's.
+    const stopping = this.spare.free().then((freed) => {
+      if (freed) return true;
+      let idlest: ReturnType<AgentSessions["idlest"]>;
+      for (const entry of this.agents.values()) {
+        const candidate = entry.sessions.idlest();
+        if (candidate && (!idlest || candidate.used < idlest.used))
+          idlest = candidate;
+      }
+      return idlest ? idlest.stop().then(() => true) : false;
+    });
     // A descendant holding its output can keep it from ever reporting exit;
     // its place may still be held, so the caller then asks again.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      idlest.stop(),
-      new Promise((done) => (timer = setTimeout(done, STOP_WAIT_MS))),
+    const freed = await Promise.race([
+      stopping,
+      new Promise<boolean>(
+        (done) => (timer = setTimeout(() => done(true), STOP_WAIT_MS)),
+      ),
     ]);
     clearTimeout(timer);
-    return true;
+    return freed;
   }
 
   /** Brings the runtime in line with this type's agents: changed settings

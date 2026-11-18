@@ -663,8 +663,9 @@ export class ClaudeSetup {
     signal.throwIfAborted();
     const spawn = this.spawn;
     if (!spawn) throw new Error("Protected Claude needs the desktop app");
-    const pinned = await protectedRuntime(spawn);
+    // Its helpers count toward the host's limit too.
     const check = withRoom(spawn, room, () => !signal.aborted);
+    const pinned = await protectedRuntime(check);
     // Contained, the host starts only its own copy, once that matches the
     // manifest's pin; it never runs the download folder's file. Its hook
     // guard stops a `--version` answer, so starting is the check.
@@ -687,7 +688,7 @@ export class ClaudeSetup {
     }
     this.protectedDownload ??= (async () => {
       const platform =
-        PLATFORMS[(await collect(spawn, "platform", [])).stdout.trim()];
+        PLATFORMS[(await collect(check, "platform", [])).stdout.trim()];
       if (!platform)
         throw new Error("Claude is not available for this computer");
       const manifest = JSON.parse(
@@ -696,7 +697,7 @@ export class ClaudeSetup {
       const checksum = manifest.platforms?.[platform]?.checksum;
       if (!checksum || !/^[a-f0-9]{64}$/.test(checksum))
         throw new Error("The protected Claude release has no valid checksum");
-      const process = await spawn("install", {
+      const process = await check("install", {
         args: [PROTECTED_CLAUDE_VERSION, platform, checksum],
       });
       if ((await process.exited) !== 0)

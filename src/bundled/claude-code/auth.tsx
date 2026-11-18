@@ -15,6 +15,7 @@ import { ClaudeSettings, type ClaudeConnection } from "./ClaudeSettings";
 import { ApiKeyForm } from "../../features/settings/ApiKeyForm";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { ENV, type Spawn } from "./claude";
+import { PROCESS_LIMIT } from "./sessions";
 import type { ClaudeSetup } from "./setup";
 
 const NO_KEY =
@@ -205,8 +206,11 @@ export class ClaudeAuth {
         }
         return own;
       },
-      () => {
+      (error: unknown) => {
         if (this.own === asking) this.own = undefined;
+        // A full host is not a missing setup: the turn makes room and asks
+        // again.
+        if (error === PROCESS_LIMIT) throw error;
         return undefined;
       },
     );

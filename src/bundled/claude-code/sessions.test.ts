@@ -6,7 +6,7 @@ import {
   flush,
   sessionState,
 } from "./claude-testing";
-import type { ToolServer } from "./claude";
+import type { Spawn, ToolServer } from "./claude";
 import {
   AgentSessions,
   IDLE_MS,
@@ -271,6 +271,123 @@ it("starts a conversation elsewhere afresh, and the spare follows it", async () 
   );
   expect(next?.options.cwd).toBe("/work");
   expect(next?.killed).toBe(false);
+});
+
+it("stops the spare to free its place, and starts no other until asked", async () => {
+  const { spare, claudes } = withSpare();
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [first] = claudes();
+  await expect(spare.free()).resolves.toBe(true);
+  expect(first?.killed).toBe(true);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  await expect(spare.free()).resolves.toBe(false);
+});
+
+it("makes no more room for a cancelled message, but does for the next one", async () => {
+  let full = true;
+  // Each place made, once the test lets it be.
+  const rooms: (() => void)[] = [];
+  const room = () =>
+    new Promise<boolean>((resolve) => rooms.push(() => resolve(true)));
+  const fake = fakeSpawn();
+  const pool = new AgentSessions({
+    spawn: (id, options) =>
+      full ? Promise.reject(PROCESS_LIMIT) : fake.spawn(id, options),
+    room,
+    store: memoryStore(),
+    launch: async () => ({ cwd: "/work", systemPrompt: "prompt" }),
+    fingerprint: () => "same",
+  });
+  let cancelled = false;
+  const first = pool.deliver("a", "first", 1, { current: () => !cancelled });
+  const second = pool.deliver("a", "second", 2);
+  await flush();
+  expect(rooms).toHaveLength(1);
+  // Stopped while its place is made, and the host still full: it asks for
+  // no other.
+  cancelled = true;
+  rooms[0]?.();
+  await expect(first).resolves.toEqual({ ok: true, undelivered: true });
+  // The next message opens its own process, making room again.
+  await flush();
+  expect(rooms).toHaveLength(2);
+  full = false;
+  rooms[1]?.();
+  await expect(second).resolves.toEqual({ ok: true });
+  expect(fake.processes.map((process) => process.prompts)).toEqual([
+    ["second"],
+  ]);
+  pool.dispose();
+});
+
+it("keeps a cold compaction's process while it waits to send /compact", async () => {
+  const fake = fakeSpawn(new Set(["saved-a"]));
+  const store = memoryStore();
+  store.all.set("a", { id: "saved-a", seen: 100, at: 1 });
+  let first = true;
+  let occupied = false;
+  let refuse: (() => void) | undefined;
+  let entered!: () => void;
+  const asking = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  // The host has one place. Another conversation's request reaches it
+  // first, and is refused only once the compaction has taken the place.
+  const spawn: Spawn = (id, options) => {
+    if (first && !options?.args?.includes("--resume")) {
+      first = false;
+      entered();
+      return new Promise((_resolve, reject) => {
+        refuse = () => reject(PROCESS_LIMIT);
+      });
+    }
+    if (occupied) return Promise.reject(PROCESS_LIMIT);
+    occupied = true;
+    const launched = fake.spawn(id, options);
+    void launched.then((process) =>
+      process.exited.then(() => {
+        occupied = false;
+      }),
+    );
+    return launched;
+  };
+  const stopped: number[] = [];
+  const pool: AgentSessions = new AgentSessions({
+    spawn,
+    store,
+    launch: async () => ({ cwd: "/work", systemPrompt: "prompt" }),
+    fingerprint: () => "same",
+    room: async () => {
+      const idlest = pool.idlest();
+      if (!idlest) return false;
+      stopped.push(idlest.used);
+      await idlest.stop();
+      return true;
+    },
+    onChange: () => {
+      if (!refuse || !pool.snapshot().some((row) => row.key === "a")) return;
+      const reject = refuse;
+      refuse = undefined;
+      // Refused after the compaction's process is adopted, before it sends.
+      queueMicrotask(reject);
+    },
+  });
+  try {
+    const competing = pool.deliver("b", "new request", 101);
+    await asking;
+    await expect(pool.compact("a")).resolves.toEqual({ ok: true });
+    await competing;
+    expect(store.all.get("a")?.id).toBe("saved-a");
+    expect(stopped).toEqual([]);
+    expect(
+      fake.processes.find((row) => row.options.args?.includes("saved-a"))
+        ?.prompts,
+    ).toEqual(["/compact"]);
+  } finally {
+    pool.dispose();
+  }
 });
 
 it("does not wait for a spare started elsewhere", async () => {

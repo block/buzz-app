@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeAuth } from "./auth";
 import { ENV, type Spawn } from "./claude";
+import { PROCESS_LIMIT } from "./sessions";
 
 const KEY = "sk-ant-api03-saved";
 
@@ -122,6 +123,23 @@ it("refuses a turn's claude without a key, but lets setup run its checks", async
       secrets: ["anthropic-api-key"],
     },
   });
+});
+
+it("passes a full host's refusal on, rather than taking it for no setup", async () => {
+  const { spawn, started } = host();
+  store(false);
+  let full = true;
+  const capped: Spawn = (id, options) =>
+    full ? Promise.reject(PROCESS_LIMIT) : spawn(id, options);
+  const auth = new ClaudeAuth(capped);
+  const authorized = auth.authorize(capped, true);
+  await expect(authorized("claude", { env: ENV })).rejects.toBe(PROCESS_LIMIT);
+  // Asked again once there is room, it finds no setup and no key.
+  full = false;
+  await expect(authorized("claude", { env: ENV })).rejects.toThrow(
+    "Claude needs an Anthropic API key.",
+  );
+  expect(started).toEqual([]);
 });
 
 it("asks again until a key is saved, then once until it is saved or checked", async () => {

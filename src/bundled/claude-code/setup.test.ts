@@ -859,6 +859,30 @@ it("makes room for the protected check when the host runs all it allows", async 
   ]);
 });
 
+it("reclaims capacity before the protected check's platform probe", async () => {
+  const fake = pinnedRelease({ installed: true });
+  let full = true;
+  const calls: string[] = [];
+  const spawn: typeof fake.spawn = async (id, options) => {
+    calls.push(id);
+    // The native cap applies to every declared process, including uname.
+    if (full) throw PROCESS_LIMIT;
+    return fake.spawn(id, options);
+  };
+  const room = vi.fn(async () => {
+    full = false;
+    return true;
+  });
+  await expect(
+    new ClaudeSetup(spawn, fake.request).protectedInstalled(
+      new AbortController().signal,
+      room,
+    ),
+  ).resolves.toBeUndefined();
+  expect(room).toHaveBeenCalledTimes(1);
+  expect(calls).toEqual(["platform", "platform", "claude-protected-arm64"]);
+});
+
 it("fails a protected check the full host refuses, without installing", async () => {
   const { spawn, request, calls } = pinnedRelease({ installed: true, full: 2 });
   const room = vi.fn(async () => false);

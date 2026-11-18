@@ -37,7 +37,13 @@ export const withRoom =
       try {
         return await spawn(id, options);
       } catch (error) {
-        if (error !== PROCESS_LIMIT || !wanted() || !(await room?.()))
+        // Asked again after the wait: it may no longer be wanted.
+        if (
+          error !== PROCESS_LIMIT ||
+          !wanted() ||
+          !(await room?.()) ||
+          !wanted()
+        )
           throw error;
       }
   };
@@ -355,7 +361,15 @@ export class AgentSessions {
       }
       const saved = live ? undefined : this.options.store.get(key);
       if (!live) {
-        const opened = await this.open(key, saved?.id, 0);
+        // An interrupted turn makes no more room.
+        const opened = await this.open(
+          key,
+          saved?.id,
+          0,
+          undefined,
+          () => !current || current(),
+        );
+        if (current && !current()) return { ok: true, undelivered: true };
         if (!("process" in opened)) return opened;
         live = opened;
       }
@@ -461,6 +475,15 @@ export class AgentSessions {
   /** Compacts the conversation's session, resuming it when its process has
    * stopped. Without a session there is nothing to compact. */
   async compact(key: string): Promise<Settled> {
+    // Its process is not stopped to make room before `/compact` is sent.
+    const arrived = this.incoming(key);
+    try {
+      return await this.compacted(key);
+    } finally {
+      arrived();
+    }
+  }
+  private async compacted(key: string): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     let live = this.live.get(key);
     const saved = this.options.store.get(key);
@@ -595,8 +618,9 @@ export class AgentSessions {
     resume: string | undefined,
     seen: number,
     contextRoot?: string,
+    wanted?: () => boolean,
   ): Promise<Live | Settled> {
-    const opened = this.start(resume, key).then(
+    const opened = this.start(resume, key, undefined, undefined, wanted).then(
       async (live): Promise<Live | Settled> => {
         if (this.disposed) {
           if (this.opening.get(key) === opened) this.opening.delete(key);
@@ -864,6 +888,20 @@ export class Spare {
 
   dispose() {
     this.warm();
+  }
+
+  /** Stops the spare so a conversation can have its place at the host's
+   * process limit; it is not started again until a conversation asks for
+   * one. Resolves once it has exited; false when there is none. */
+  async free() {
+    const next = this.next;
+    const process = await next?.process;
+    if (!next || this.next !== next || !process?.running) return false;
+    this.next = undefined;
+    this.stopped = true;
+    void process.kill();
+    await process.exited;
+    return true;
   }
 
   private place(where: Where) {

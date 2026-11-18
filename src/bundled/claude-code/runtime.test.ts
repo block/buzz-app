@@ -516,6 +516,42 @@ it("stops the next idle conversation's process when a stopped one never exits", 
   }
 });
 
+it("stops reclaiming idle conversations when the pending turn is interrupted", async () => {
+  vi.useFakeTimers();
+  const [rootA, a] = threadMention("cancel-a", 110);
+  const [rootB, b] = threadMention("cancel-b", 120);
+  const [rootC, c] = threadMention("cancel-c", 130);
+  const f = setup([rootA, a, rootB, b, rootC, c], { claudeLimit: 2 });
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver({ type: "mention", event: a });
+    await f.deliver({ type: "mention", event: b });
+    await vi.advanceTimersByTimeAsync(0);
+    const [stuck, idle] = f.claudes();
+    if (!stuck || !idle) throw new Error("Expected two idle conversations");
+    stuck.exitOnKill = false;
+    await f.deliver({ type: "mention", event: c });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stuck.killed).toBe(true);
+    expect(idle.killed).toBe(false);
+    const stopped = f.runtime.session(
+      agent,
+      { channelId: channel, root: c.id },
+      "interrupt",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await stopped;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(idle.killed).toBe(false);
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(2);
+  } finally {
+    for (const process of f.claudes()) process.exit(null);
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("leaves a working conversation running and refuses the new one when none is idle", async () => {
   const [rootA, a] = threadMention("a", 110);
   const [rootB, b] = threadMention("b", 120);

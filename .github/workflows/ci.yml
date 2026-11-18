@@ -19,6 +19,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  javascript_checks:
+    if: github.event_name != 'workflow_dispatch'
+    name: JavaScript checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Lint and types
+        run: ./bin/pnpm check
+      # check already ran TypeScript; do not repeat pnpm build's typecheck.
+      - name: Frontend build
+        run: ./bin/pnpm exec vite build
+
   javascript:
     if: github.event_name != 'workflow_dispatch'
     name: JavaScript (${{ matrix.shard }}/8)
@@ -37,11 +53,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Lint and types
-        run: ./bin/pnpm check
-      # check already ran TypeScript; do not repeat pnpm build's typecheck.
-      - name: Frontend build
-        run: ./bin/pnpm exec vite build
       - name: Vitest shard
         env:
           # Bound contention between suites that sign and verify large fixtures.
@@ -515,12 +526,13 @@ jobs:
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
     if: always() && github.event_name != 'workflow_dispatch'
-    needs: [javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection]
+    needs: [javascript_checks, javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every lane and every shard
         env:
+          JAVASCRIPT_CHECKS: ${{ needs.javascript_checks.result }}
           JAVASCRIPT: ${{ needs.javascript.result }}
           NATIVE: ${{ needs.native.result }}
           MEASUREMENTS: ${{ needs.measurements.result }}
@@ -529,6 +541,6 @@ jobs:
           MEDIA_RECORDER: ${{ needs.media_recorder.result }}
           AGENT_PROTECTION: ${{ needs.agent_protection.result }}
         run: |
-          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
+          for result in "$JAVASCRIPT_CHECKS" "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
             test "$result" = success || exit 1
           done

@@ -22,6 +22,7 @@ use browser::{
 };
 mod agent_state;
 mod app_agents;
+mod build_identity;
 mod decisions;
 mod deep_links;
 mod dock;
@@ -776,6 +777,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_close,
         draft_diagnostics::draft_diagnostics_save,
         web_inspector::web_inspector,
+        build_identity::get_build_identity,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,

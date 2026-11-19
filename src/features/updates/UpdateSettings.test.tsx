@@ -16,14 +16,29 @@ import { createUpdates, type UpdatePlatform, type Updates } from "./updates";
 const native = vi.hoisted(() => ({
   getVersion: vi.fn(async () => "1.2.3"),
   isTauri: vi.fn(() => false),
+  invoke: vi.fn(
+    async (): Promise<{ revision: string | null; state: string }> => ({
+      revision: null,
+      state: "unknown",
+    }),
+  ),
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: native.getVersion }));
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: native.isTauri }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: native.invoke,
+  isTauri: native.isTauri,
+}));
 
 let updates: Updates | undefined;
 afterEach(() => {
   cleanup();
   updates?.dispose();
+  vi.unstubAllEnvs();
+  native.isTauri.mockReturnValue(false);
+  native.invoke.mockReset().mockResolvedValue({
+    revision: null,
+    state: "unknown",
+  });
 });
 
 /** Reactions run in registration order, so the owner finishes its check first. */
@@ -129,6 +144,46 @@ it("uses the installed version as the card title without a separate description"
       ),
     ).toBeNull();
     expect(native.getVersion).toHaveBeenCalledOnce();
+  } finally {
+    native.isTauri.mockReturnValue(false);
+  }
+});
+
+it("shows native and loaded frontend revisions separately when they differ", async () => {
+  native.isTauri.mockReturnValue(true);
+  native.invoke.mockResolvedValue({
+    revision: "b".repeat(40),
+    state: "clean",
+  });
+  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_REVISION", "a".repeat(40));
+  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_STATE", "dirty");
+  try {
+    renderSettings({});
+    expect(
+      await screen.findByText(`Native image source: ${"b".repeat(40)} · clean`),
+    ).toBeVisible();
+    expect(
+      screen.getByText(`Loaded frontend source: ${"a".repeat(40)} · dirty`),
+    ).toBeVisible();
+  } finally {
+    native.isTauri.mockReturnValue(false);
+  }
+});
+
+it("shows dirty and unknown honestly when build identities are incomplete", async () => {
+  native.isTauri.mockReturnValue(true);
+  native.invoke.mockResolvedValue({ revision: null, state: "clean" });
+  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_REVISION", "c".repeat(40));
+  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_STATE", "dirty");
+  try {
+    renderSettings({});
+    expect(
+      await screen.findByText("Native image source: unknown"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(`Loaded frontend source: ${"c".repeat(40)} · dirty`),
+    ).toBeVisible();
+    expect(screen.queryByText(/Native image source: .* · clean/)).toBeNull();
   } finally {
     native.isTauri.mockReturnValue(false);
   }

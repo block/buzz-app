@@ -1,5 +1,8 @@
 #[path = "../crates/build_env.rs"]
 mod build_env;
+#[allow(dead_code)] // This shared module also contains library-only functions.
+#[path = "../crates/build_identity.rs"]
+mod build_identity;
 #[path = "src/build_resources.rs"]
 mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]
@@ -16,6 +19,22 @@ mod nsec_backup_config;
 
 #[cfg_attr(test, allow(dead_code))]
 fn main() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"),
+    );
+    // Keep the embedded identity fresh when native source inputs change.
+    for path in ["src", "../crates", "../src/bundled/mesh-compute/compute"] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    let identity = build_identity::capture(&root);
+    println!(
+        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_REVISION={}",
+        identity.revision.as_deref().unwrap_or_default()
+    );
+    println!(
+        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_STATE={}",
+        identity.state.as_str()
+    );
     configure_nsec_backup();
     configure_federated_identity();
     configure_enterprise_auth();
@@ -161,6 +180,7 @@ fn main() {
             "clipboard_write_text",
             "draft_diagnostics_save",
             "web_inspector",
+            "get_build_identity",
             "media_stream_base",
             "get_os_idle_seconds",
             "system_hour_cycle",

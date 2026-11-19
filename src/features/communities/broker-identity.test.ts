@@ -123,6 +123,9 @@ it.each(["", "  "])(
     const app = await startup();
     expect(app.plugin).toBeUndefined();
     expect(app.resolved.define?.["import.meta.env.VITE_BUZZ_LIVE"]).toBe('"0"');
+    expect(
+      app.resolved.define?.["import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_STATE"],
+    ).toBe('"unknown"');
     expect(readCredential).not.toHaveBeenCalled();
   },
 );
@@ -132,6 +135,12 @@ it("never registers the broker for production builds, even with a configured pin
   const app = await startup("build");
   expect(app.plugin).toBeUndefined();
   expect(app.resolved.define?.["import.meta.env.VITE_BUZZ_LIVE"]).toBe('"0"');
+  expect(
+    app.resolved.define?.["import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_REVISION"],
+  ).toMatch(/^"(?:[a-f\d]{40}|[a-f\d]{64})?"$/i);
+  expect(
+    app.resolved.define?.["import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_STATE"],
+  ).toMatch(/^"(?:clean|dirty|unknown)"$/);
   expect(readCredential).not.toHaveBeenCalled();
 });
 

@@ -33,6 +33,7 @@ import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import { UnreadBadge } from "./UnreadBadge";
 import { useUnreadChannelIds } from "./useSidebarFilters";
+import { compareRecent } from "./sidebar-sections";
 import { SoloWorkspaces, type ChatListItem } from "./SoloWorkspaces";
 import {
   soloSharedMarkId,
@@ -287,11 +288,7 @@ export function SoloInventory({
             : preferences.data?.assignments[item.id],
         ),
     )
-    .sort(
-      (a, b) =>
-        (b.lastActivityAt ?? b.updatedAt ?? 0) -
-          (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
-    );
+    .sort(compareRecent);
   // Capped workspaces never hide the open chat or one that needs the viewer.
   const unreadChats = useUnreadChannelIds(
     session.unread,

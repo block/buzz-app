@@ -169,6 +169,20 @@ it("starts a new conversation on the shared spare and warms another", async () =
   expect(pool.snapshot()).toEqual([{ key: "c/root", busy: false }]);
 });
 
+it("hands over no spare started with another compaction threshold", async () => {
+  const { spare, claudes } = withSpare();
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  await expect(
+    spare.take({ cwd: "/work", model: "opus", compactAt: 200000 }),
+  ).resolves.toBeUndefined();
+  spare.warm({ cwd: "/work", model: "opus", compactAt: 200000 });
+  await flush();
+  expect(claudes().at(-1)?.options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+    "200000",
+  );
+});
+
 it("hands the spare's tools to the agent that takes it", async () => {
   const agentTools = vi.fn(async () => ({ from: "agent" }));
   const { pool, spare, claudes } = withSpare({ tools: agentTools });

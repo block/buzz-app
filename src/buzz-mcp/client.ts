@@ -28,6 +28,17 @@ export type Template = Readonly<{
   content: string;
   tags: readonly (readonly string[])[];
 }>;
+/** Trusted app read/upload hints, never independent deletion authority.
+ * Native requires creation-time consent and exact confirmed event/file matches. */
+export type ManagedAttachment = Readonly<{
+  path: string;
+  sha256: string;
+  size: number;
+  url: string;
+}>;
+export type PublishOptions = Readonly<{
+  managedAttachments?: readonly ManagedAttachment[];
+}>;
 export type Filter = Readonly<Record<string, unknown>>;
 /** The community's description of an uploaded blob. */
 export type Upload = Readonly<{
@@ -87,9 +98,8 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
-  /** The host's cancellation signal for this call. Keep this signal across
-   * waits; a later turn cannot restore a canceled call. Hosts without request
-   * cancellation omit it. */
+  /** Cancellation for this call, or its owning turn or connection when the
+   * host only supplies a lifetime signal. Keep it across waits. */
   readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */
@@ -158,7 +168,7 @@ export interface BuzzClient {
     limit: number,
   ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
-  publish(event: Template): Promise<BuzzEvent>;
+  publish(event: Template, options?: PublishOptions): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
   /** Uploads an image for an avatar, without its metadata, as the owner's

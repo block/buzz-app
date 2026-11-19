@@ -75,7 +75,7 @@
   max-height: 100%;
 }
 .unifiedChatName {
-  --session-row-inset: var(--space-2);
+  --session-row-inset: calc(var(--space-2) + var(--space-half));
   --session-action-size: calc(var(--space-6) + var(--space-1));
 }
 .sidebarIcon {
@@ -190,14 +190,18 @@
 .channelSection {
   position: relative;
   flex-shrink: 0;
+  --sidebar-section-gap: var(--space-2);
+}
+.channelSection[data-sidebar-section="starred"] {
+  --sidebar-section-gap: var(--space-4);
 }
 .channelSection + .channelSection {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 [data-sidebar-slot]:has(> .channelSection)
   ~ [data-sidebar-slot]
   > .channelSection:first-child {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 .channelSection[data-drop-target] {
   border-radius: var(--radius-row);
@@ -208,7 +212,7 @@
 }
 .createSectionHitArea {
   position: absolute;
-  inset: calc(-1 * var(--space-4)) 0 0;
+  inset: calc(-1 * var(--sidebar-section-gap)) 0 0;
   pointer-events: none;
 }
 .createSectionReveal {

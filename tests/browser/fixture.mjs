@@ -118,6 +118,8 @@ export const test = base.extend({
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
   historyRowsPerSecond: [1, { option: true }],
+  // Fixed signing keys repeat event IDs, and so where pages split a second.
+  fixedKeys: [false, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
@@ -200,6 +202,7 @@ export const test = base.extend({
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
+      fixedKeys,
       channelIds,
       pluginFixtures,
       developmentReact,
@@ -210,7 +213,7 @@ export const test = base.extend({
   ) => {
     const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
-      actionProfile
+      actionProfile || fixedKeys
         ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
         : generateSecretKey();
     const relayKey = key(1);

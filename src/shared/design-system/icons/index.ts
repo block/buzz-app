@@ -5,6 +5,7 @@ export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { BlockLogoArtwork } from "./BlockLogo";
 import { GitHubIssueArtwork } from "./GitHubIssue";
+import { GitPullRequestApprovedArtwork } from "./GitPullRequestApproved";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import {
   BuilderlabLogoArtwork,
@@ -242,6 +243,17 @@ import TablerGitPullRequestIcon from "@tabler/icons-react/dist/esm/icons/IconGit
 export const GitPullRequestIcon = defineIcon(
   "tabler",
   TablerGitPullRequestIcon,
+);
+export const GitPullRequestApprovedIcon = defineIcon(
+  "custom",
+  GitPullRequestApprovedArtwork,
+  {
+    meaning: "Approved pull request",
+    category: "Product mark",
+    provenance:
+      "Buzz-owned mark: Tabler Git Pull Request geometry with its head dot replaced by a solid check badge.",
+    intendedSizes: [{ width: 16, height: 16 }],
+  },
 );
 import TablerGithubLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandGithub.mjs";
 export const GithubLogoIcon = defineIcon("tabler", TablerGithubLogoIcon);

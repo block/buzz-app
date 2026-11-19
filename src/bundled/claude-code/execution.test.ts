@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -90,7 +91,7 @@ const log = (value) => appendFileSync('wire.jsonl',JSON.stringify(value)+'\\n');
 if (process.argv.includes('--version')) { console.log('2.1.308 (Claude Code)'); process.exit(0); }
 if (process.env.ANTHROPIC_API_KEY !== 'guest-test-sign-in' || process.env.CLAUDECODE) process.exit(2);
 const send = (wire) => console.log(JSON.stringify({...wire,session_id:session}));
-log({launch:process.argv});
+log({launch:process.argv,window:process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW});
 const result = () => send({type:'result', subtype:'success', session_id:'session-1'});
 createInterface({input:process.stdin}).on('line', (line) => {
   const wire = JSON.parse(line);
@@ -106,7 +107,8 @@ createInterface({input:process.stdin}).on('line', (line) => {
     writeFileSync(session+'.saved','saved');
     send({type:'system',subtype:'init',session_id:'session-1',model:'haiku'});
     if (wire.message.content === 'hold' || wire.message.content.includes('hold-request') || (wire.message.content === '/compact' && existsSync('hold-compact'))) return;
-    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin',audience:'everyone'}}}}});
+    const attachment = wire.message.content.includes('send-attachment-request');
+    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:attachment || wire.message.content.includes('read-path-request')?'send':'read',arguments:attachment?{text:'Remote attachment',files:['/managed/looking/path.bin'],audience:'everyone'}:{path:'proof.bin',audience:'everyone'}}}}});
   } else if (wire.type === 'control_response') {
     if (wire.response.request_id === 'tool') {
       process.stderr.write(JSON.stringify(wire.response.response));
@@ -191,6 +193,23 @@ it("carries Claude tools, hooks and Stop over guest stdio with guest authenticat
   }
 });
 
+it("compacts a guest's Claude at the agent's threshold", async () => {
+  const { guest, directory, wires, cleanup } = await guestFixture();
+  const claude = await ClaudeProcess.start(executionSpawn(guest), {
+    cwd: directory,
+    systemPrompt: "test",
+    compactAt: 150000,
+  });
+  try {
+    await claude.models();
+    expect((await wires()).find((wire) => wire.launch)?.window).toBe("150000");
+  } finally {
+    await claude.kill();
+    await claude.exited;
+    await cleanup();
+  }
+});
+
 async function remoteFixture(readyReads?: ClaudeReady) {
   const guest = await guestFixture();
   const readRemote = vi
@@ -213,9 +232,19 @@ async function remoteFixture(readyReads?: ClaudeReady) {
     name: "Claude",
     config: DEFAULT_CONFIG,
   } as Agent;
+  const upload = vi.fn(async (data: string, mime: string) => {
+    const bytes = Buffer.from(data, "base64");
+    return {
+      url: "https://files.test/remote-file",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      size: bytes.length,
+      type: mime,
+    };
+  });
   const handle = {
     ...agent,
-    publish: vi.fn(async () => ({})),
+    publish: vi.fn(async (event: object) => ({ ...event, id: "d".repeat(64) })),
+    upload,
   } as unknown as AgentHandle;
   const reads = {
     connection: {},
@@ -318,6 +347,7 @@ async function remoteFixture(readyReads?: ClaudeReady) {
     ...guest,
     agent,
     handle,
+    upload,
     reads,
     waits,
     sessions,
@@ -391,6 +421,39 @@ it("resumes a saved target before its first post-restart compaction and gives Ne
     await f.deliver();
     expect(f.sessions[2]?.key).not.toBe(f.sessions[0]?.key);
     expect(f.sessions[2]?.intent).toBe("new");
+    expect(f.local).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("publishes target-reader files without desktop managed-attachment hints", async () => {
+  const f = await remoteFixture();
+  try {
+    await f.deliver("send-attachment-request");
+    const bytes = Buffer.from("remote-file");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(f.readRemote).toHaveBeenCalledExactlyOnceWith(
+      "/managed/looking/path.bin",
+      { cwd: f.directory },
+    );
+    expect(f.upload).toHaveBeenCalledExactlyOnceWith(
+      bytes.toString("base64"),
+      "application/octet-stream",
+    );
+    expect(f.handle.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        content: expect.stringContaining("https://files.test/remote-file"),
+        tags: expect.arrayContaining([
+          expect.arrayContaining([
+            "imeta",
+            `x ${sha256}`,
+            `size ${bytes.length}`,
+          ]),
+        ]),
+      }),
+      expect.any(Function),
+    );
     expect(f.local).not.toHaveBeenCalled();
   } finally {
     await f.cleanup();

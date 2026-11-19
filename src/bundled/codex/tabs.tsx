@@ -1,3 +1,4 @@
+import { sessionScope } from "../../features/agent-harness/session-scope";
 import type { AgentExecutionBinding } from "../../features/agents/execution";
 import {
   readModelSettings,
@@ -30,12 +31,16 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import {
   candidatesFor,
   followRecommended,
   offRecommended,
   onRecommended,
   type RecommendedCandidate,
+  recommendationFinal,
+  recommendationReady,
   withRecommended,
 } from "../../features/agents/recommended";
 import {
@@ -85,8 +90,10 @@ import {
   type PreviewHost,
 } from "./voice-preview";
 
-const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+const label = ({ channelId, name, root, community }: SavedConversation) =>
+  community
+    ? "Community session"
+    : `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 
 type Catalog = {
   previews?: Record<string, string> | undefined;
@@ -325,10 +332,21 @@ export class CodexProvider {
     const found =
       candidatesFor("codex").find((candidate) => offers(data, candidate)) ??
       null;
-    if (found) this.found = found;
+    // Kept only once the setup is final: before that, a bundled plugin may
+    // still replace the build's, so readers are told to look again then.
+    if (recommendationFinal()) {
+      if (found) this.found = found;
+    } else if (!this.waiting) {
+      this.waiting = true;
+      void recommendationReady().then(() => {
+        this.waiting = false;
+        this.set({});
+      });
+    }
     return found;
   }
   private found: RecommendedCandidate | undefined;
+  private waiting = false;
   resolve(raw: unknown, remote = false): Config {
     // A remote target's catalog isn't this computer's: an agent on
     // Recommended there runs on its Codex default. Apps follow this
@@ -386,7 +404,9 @@ export class CodexProvider {
         ? "execution-unavailable"
         : execution === "remote"
           ? "remote"
-          : recommended && candidate === undefined
+          : // Before the setup is final, a bundled plugin may still
+            // replace the build's pick, so it isn't reported yet.
+            recommended && (candidate === undefined || !recommendationFinal())
             ? "not-loaded"
             : undefined;
     const data = this.state.data;
@@ -468,6 +488,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One session per thread" },
       { value: "channel", label: "One session per channel" },
+      { value: "community", label: "One session per community" },
     ],
   },
 ];
@@ -1269,8 +1290,14 @@ export function createTabs(
       conversations,
       conversation,
       (place, signal) =>
-        runtime.find({ key: agent.key, name: agent.name }, place, signal),
+        runtime.find(
+          { key: agent.key, name: agent.name },
+          place,
+          signal,
+          readConfig(agent.config).scope === "community",
+        ),
       (channelId) => runtime.channelLabel(agent.key, channelId),
+      readConfig(agent.config).scope,
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)
@@ -1582,6 +1609,11 @@ export function createTabs(
                   {customization}
                 </>
               )}
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
@@ -1619,7 +1651,7 @@ export function createTabs(
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />

@@ -111,6 +111,11 @@ export type ThreadActivityItem = Readonly<{
   createdAt: number;
   preview: string;
   unreadCount: number;
+  /** An unread reply is in a conversation of the viewer's own, rather than
+   * counting only as a mention or broadcast. */
+  participating?: true;
+  /** The newest unread reply that mentions the viewer. */
+  mention?: MentionActivityItem;
 }>;
 export type MentionActivityItem = Readonly<{
   channelId: string;
@@ -239,8 +244,10 @@ export interface UnreadCapability {
    * Only results with `undoScope: "captured-action"` and `undo` offer the full
    * receipt, saved-reminder and visit-overlay inverse. Older handles may restore
    * saved reminders only. Synced prefixes stay monotonic.
-   * Any later journal write or lost action validity expires the inverse; pending
-   * force-unread intent also withholds it. Older hosts may omit this capability. */
+   * A later overlapping read or local unread intent, retention change that
+   * touches its inverse, or lost action validity expires the inverse; unrelated
+   * writes do not. Pending or newly forced intent for a selected ID also
+   * withholds or expires it. Older hosts may omit this capability. */
   markCapturedMessagesRead?(
     messageIds: readonly string[],
   ): Promise<ReadMutationResult>;
@@ -1423,6 +1430,28 @@ export function createUnread({
         continue;
       const current = grouped.get(rootId);
       const preview = previewOf(event);
+      const participating = conversation(evidence)
+        ? true
+        : current?.participating;
+      const mention =
+        category(evidence, dm) === "mention" &&
+        (!current?.mention ||
+          event.created_at > current.mention.createdAt ||
+          (event.created_at === current.mention.createdAt &&
+            event.id < current.mention.messageId))
+          ? Object.freeze({
+              channelId,
+              messageId: event.id,
+              authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, workflowAuthority),
+              createdAt: event.created_at,
+              preview,
+            })
+          : current?.mention;
+      const marks = {
+        ...(participating ? { participating } : {}),
+        ...(mention ? { mention } : {}),
+      };
       if (!current) {
         grouped.set(
           rootId,
@@ -1435,6 +1464,7 @@ export function createUnread({
             createdAt: event.created_at,
             preview,
             unreadCount: 1,
+            ...marks,
           }),
         );
         continue;
@@ -1456,6 +1486,7 @@ export function createUnread({
           createdAt: latest ? event.created_at : current.createdAt,
           preview: latest ? preview : current.preview,
           unreadCount: current.unreadCount + 1,
+          ...marks,
         }),
       );
     }
@@ -1499,7 +1530,11 @@ export function createUnread({
             item.workflowOwnerId === other.workflowOwnerId &&
             item.createdAt === other.createdAt &&
             item.preview === other.preview &&
-            item.unreadCount === other.unreadCount
+            item.unreadCount === other.unreadCount &&
+            item.participating === other.participating &&
+            item.mention?.messageId === other.mention?.messageId &&
+            item.mention?.authorId === other.mention?.authorId &&
+            item.mention?.preview === other.mention?.preview
           );
         }))) &&
     (a.mentions?.length ?? 0) === (b.mentions?.length ?? 0) &&
@@ -3407,7 +3442,7 @@ export function createUnread({
           valid,
           false,
           undefined,
-          [],
+          rows.map((row) => `msg:${row.id}`),
           { explicit: true },
         );
         if (valid()) {
@@ -3470,11 +3505,26 @@ export function createUnread({
         valid() &&
         [...capturedIdsByChannel].every(
           ([channelId, ids]) => !hasPendingForcedMessages(channelId, ids),
+        ) &&
+        [...capturedIdsByChannel].every(([channelId, ids]) =>
+          [...ids].every((id) => !forcedMessages.get(channelId)?.has(id)),
         );
       const fence = reads.captureLocalUnread([
         ...selected.map(({ id }) => `msg:${id}`),
         ...channelIds.map(messageForceKey),
       ]);
+      const messageRead = ({
+        id,
+        channelId,
+        event,
+      }: (typeof selected)[number]) => ({
+        key: `msg:${id}`,
+        timestamp: event.created_at,
+        channelId,
+        ...(threadReference(event) && root(event)
+          ? { rootId: root(event) }
+          : {}),
+      });
       return serializeChannels(channelIds, async () => {
         if (!valid()) throw new Error("Unread channel visit expired");
         // The save's frontier advance can end overlays before it returns.
@@ -3488,14 +3538,7 @@ export function createUnread({
         const result = await reads.readMessages(
           selected
             .filter(({ event }) => event.pubkey !== viewer)
-            .map(({ id, channelId, event }) => ({
-              key: `msg:${id}`,
-              timestamp: event.created_at,
-              channelId,
-              ...(threadReference(event) && root(event)
-                ? { rootId: root(event) }
-                : {}),
-            })),
+            .map(messageRead),
           undefined,
           valid,
           false,
@@ -3504,7 +3547,23 @@ export function createUnread({
           messageKeys,
           {
             preserveCapturedSet: true,
-            undo: { keys: new Set(messageKeys), valid: undoValid },
+            selectedMessages: selected.map(messageRead),
+            undo: {
+              keys: new Set(messageKeys),
+              intentKeys: [
+                ...new Set([
+                  ...messageKeys,
+                  ...selected.flatMap(({ id, channelId, event }) => [
+                    channelId,
+                    ...(threadReference(event) && root(event)
+                      ? [`thread:${root(event)}`]
+                      : []),
+                    `msg:${id}`,
+                  ]),
+                ]),
+              ],
+              valid: undoValid,
+            },
           },
         );
         // The save succeeded; do not clear overlays from a visit that ended

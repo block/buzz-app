@@ -28,6 +28,10 @@ import {
   localStore,
   type AgentStore,
 } from "../../features/agents/state";
+import {
+  awaitRecommendation,
+  setRuntimeRecommendation,
+} from "../../features/agents/recommended";
 import type { AgentViewProps } from "../../features/agents/service";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 import type { HostProcessOptions } from "../../features/host/service";
@@ -2662,7 +2666,7 @@ it.each([true, false])(
     const agent = "a".repeat(64);
     const root = "e".repeat(64);
     const place = JSON.stringify(["channel", root]);
-    const prefix = `buzz.codex.sessions.v17:test:${agent}`;
+    const prefix = `buzz.codex.sessions.v18:test:${agent}`;
     const items = new Map([
       [
         prefix,
@@ -2750,7 +2754,7 @@ it.each([false, true])(
       JSON.stringify({ key: "old-session", intent: "existing" }),
     );
     await storage.set(
-      `buzz.codex.sessions.v17:test:${agent}:session:old-session`,
+      `buzz.codex.sessions.v18:test:${agent}:session:old-session`,
       JSON.stringify({
         [place]: { threadId: "old-thread", workspace: "/guest" },
       }),
@@ -2905,6 +2909,52 @@ describe("Recommended", () => {
     await expect(
       fixture({ installed: false }).provider.recommends(candidate),
     ).resolves.toBe(false);
+  });
+
+  it("keeps and reports no pick before a bundled plugin's setup is final, and tells readers when it is", async () => {
+    const pluginPick = {
+      harness: "codex",
+      model: "model-a",
+      effort: "low",
+      label: "Model A",
+    };
+    let answer = (_setup: unknown) => {};
+    const final = awaitRecommendation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    try {
+      const f = fixture();
+      const heard = vi.fn();
+      f.provider.subscribe(heard);
+      // The catalog loads first: the build's candidate, not kept.
+      await f.provider.check();
+      expect(f.provider.recommended()).toEqual(candidate);
+      // Nor reported: a read says it isn't loaded yet.
+      const saved = { ...defaults, preset: "recommended" as const };
+      expect(f.provider.readModelSettings(saved).model).toEqual({
+        source: "recommended",
+        resolved: { unavailable: "not-loaded" },
+      });
+      heard.mockClear();
+      answer({ recommendedBy: "Example Org", candidates: [pluginPick] });
+      await final;
+      await Promise.resolve();
+      // Readers hear, and then see the plugin's.
+      expect(heard).toHaveBeenCalled();
+      expect(f.provider.recommended()).toEqual(pluginPick);
+      expect(f.provider.readModelSettings(saved).model).toEqual({
+        source: "recommended",
+        resolved: { value: "model-a", source: "recommended" },
+      });
+    } finally {
+      // Never leave the wait open for later tests.
+      answer(undefined);
+      await final;
+      setRuntimeRecommendation(undefined);
+    }
   });
 
   it("runs an agent on Recommended on the first candidate its catalog offers", async () => {

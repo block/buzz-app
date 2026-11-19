@@ -869,16 +869,14 @@ it("is an agent type on the desktop app", () => {
       workspace: "~/code",
       scope: "channel",
     }),
-  ).toEqual({ instructions: "Triage.", workspace: "~/code" });
+  ).toEqual({
+    instructions: "Triage.",
+    workspace: "~/code",
+    sessionScope: "channel",
+  });
   expect(type.describeMigration?.(DEFAULT_CONFIG)).toEqual([
     { id: "model", label: "Model", isOverride: false },
     { id: "thinking", label: "Thinking", isOverride: false },
-    {
-      id: "sessions",
-      label: "Sessions",
-      isOverride: false,
-      unchangedKey: "thread",
-    },
   ]);
   expect(
     type.describeMigration?.({
@@ -890,12 +888,6 @@ it("is an agent type on the desktop app", () => {
   ).toEqual([
     { id: "model", label: "Model", isOverride: true },
     { id: "thinking", label: "Thinking", isOverride: true },
-    {
-      id: "sessions",
-      label: "Sessions",
-      isOverride: true,
-      unchangedKey: "channel",
-    },
   ]);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
@@ -1933,6 +1925,27 @@ it("holds a new Claude agent without a key, Model and Thinking disabled", async 
   expect(await screen.findByRole("combobox", { name: "Model" })).toBeDisabled();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
   expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onReadyChange).toHaveBeenLastCalledWith(false);
+});
+
+it("gives a host's group its rows alone, still holding the agent without a key", async () => {
+  const { type } = installed({ keySaved: false });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  const onReadyChange = vi.fn();
+  const { container } = render(
+    <Configuration
+      rowsOnly
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onReadyChange={onReadyChange}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Harness row")).toBeVisible();
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(container.querySelector(".buzz-settings-group")).toBeNull();
   expect(onReadyChange).toHaveBeenLastCalledWith(false);
 });
 

@@ -169,6 +169,11 @@ export class AgentSessions {
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
   }
+  /** Foreground work and native background continuations have drained. */
+  async idle(key: string) {
+    await this.opening.get(key);
+    await this.live.get(key)?.process.idle();
+  }
   async forget(key: string) {
     // Commit the reset before dropping the live process; failed writes must
     // not report success and resume the old session after restarting Buzz.
@@ -336,6 +341,7 @@ export class AgentSessions {
       contextRoot,
       admit,
       step,
+      delivered: onDelivered,
       acknowledged,
       accepted,
       superseded,
@@ -415,6 +421,7 @@ export class AgentSessions {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
+        ...(onDelivered ? { delivered: onDelivered } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(accepted ? { accepted } : {}),
         ...(superseded ? { superseded } : {}),
@@ -468,9 +475,28 @@ export class AgentSessions {
 
   /** Stops the turn running in conversation `key`, if any, once a process
    * starting for it has taken its message. */
-  async interrupt(key: string) {
+  async interrupt(key: string, killOnFailure = false) {
     await this.opening.get(key);
-    await this.live.get(key)?.process.interrupt();
+    const process = this.live.get(key)?.process;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!killOnFailure) return await process?.interrupt();
+      await Promise.race([
+        Promise.all([process?.interrupt(), process?.idle()]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Claude did not stop")),
+            15_000,
+          );
+        }),
+      ]);
+    } catch (error) {
+      if (!killOnFailure) throw error;
+      await process?.kill();
+      await process?.exited;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /** Compacts the conversation's session, resuming it when its process has
    * stopped. Without a session there is nothing to compact. */
@@ -826,11 +852,14 @@ function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Where a process runs and may work, its model and effort: all a spare is
+/** Where a process runs and may work, its model, effort and compaction: all a spare is
  * started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
-const place = ({ cwd, directories = [], model, effort }: Where) =>
-  JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
+type Where = Pick<
+  ClaudeLaunch,
+  "cwd" | "directories" | "model" | "effort" | "compactAt"
+>;
+const place = ({ cwd, directories = [], model, effort, compactAt }: Where) =>
+  JSON.stringify([cwd, directories, model ?? "", effort ?? "", compactAt ?? 0]);
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most

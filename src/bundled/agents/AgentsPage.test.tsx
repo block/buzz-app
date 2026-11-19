@@ -487,6 +487,7 @@ function setup(
         : [],
     registerTab: () => {},
     controlAttention: () => {},
+    recommend: () => {},
     registerSessionRouter: () => {},
     registerExecution: () => {},
     bindExecution: async () => {},
@@ -495,6 +496,14 @@ function setup(
     execution: async () => undefined,
     harness: {} as Agents["harness"],
     subscribeSteps: () => () => {},
+    isReady: () => true,
+    whenReady: async () => {},
+    switchable: () => false,
+    switchableAgents: () => [],
+    switchToAutomatic: async () => ({ previous: {} }),
+    restoreSettings: async () => {},
+    readNote: () => undefined,
+    setNote: async () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {

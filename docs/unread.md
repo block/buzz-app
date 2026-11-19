@@ -563,16 +563,27 @@ overlay. It never rewinds a synced channel/thread prefix, creates a new manual
 reminder for ordinary unread, or changes the shared `message-force:` hint.
 Ordinary unread restored by Undo remains eligible for normal automatic reading.
 These exact receipts are local-only and do not schedule publication or an empty
-flush. Earlier pending publication still proceeds and can expire the handle.
+flush. Earlier pending publication still proceeds without expiring the handle.
 
-This inverse is deliberately conservative: **any later durable journal write**,
-including an unrelated read, equal-valued peer ingest, publication bookkeeping,
-or another window's startup, expires it. An opaque journal token fences writes
-that do not advance the revision. The bounded before-action receipt snapshot
-lives only in the returned handle; there is no persistent undo history or relay
-protocol change. A failed transaction leaves both receipts and visit overlays
-unchanged and can be retried; duplicate or stale attempts reject. Invalidation
-of the selected messages, access, session, or visit evidence also expires Undo.
+This inverse is conditional and scoped. It restores only the receipt and
+retention entries changed by that action, and only while those entries and the
+selected messages' read scopes still match the action's saved after-state. A
+later read of any selected message or saved local-unread intent expires the
+handle, even if that later read is subsequently undone or selected only authored
+messages. Unrelated channel reads, forced-unread overlays on other messages,
+publication bookkeeping, and unchanged peer receipts carried in an admitted
+coordinate's newer envelope do not expire it on their own. Retention pressure
+can still expire it by moving or removing an inverse entry, exhausting the space
+needed to restore it, or advancing the effective read floor (including the
+30-day window) over a timestamp not already covered when the action was saved.
+A changed owner epoch, journal slot, access, session, or visit also expires it
+rather than overwriting newer state. A new read-state owner rotates the opaque
+journal token; ordinary saves in that owner's session preserve it. The
+bounded before-action receipt delta lives only in the returned handle; there is
+no persistent undo history or relay protocol change. A successful handle is
+one-shot. A failed storage transaction leaves receipts and visit overlays
+unchanged and can be retried with that handle. Invalidation of the selected
+messages or their action validity also expires Undo.
 A queued force-unread intent for any captured ID suppresses the handle if it is
 pending when the result is returned, and rejects an existing handle if it starts
 before the inverse transaction. Overlays are restored only after that transaction

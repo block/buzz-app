@@ -283,7 +283,7 @@ for (const action of ["archive", "delete"]) {
         });
         await expect(
           search
-            .getByRole("group", { name: "Recent activity" })
+            .getByRole("group", { name: "Recents" })
             .getByRole("option", { name: /Lifecycle channel/ }),
         ).toHaveCount(0);
         await search.getByRole("combobox").fill("Lifecycle channel");

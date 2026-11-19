@@ -99,12 +99,11 @@ behavior on the label, so a rename touches copy only.
   caller, including the standalone stdio server: signed by the caller, with the
   label and any `members` it names. The caller is the creator, so an agent's
   key makes a chat its human members see as shared, not their own. It sends no
-  message, so no agent turn starts. Locally hosted agent runs may use
+  message, so no agent turn starts. Only locally hosted agent runs may use
   `solo_workspace_list` for their host-bound owner's personal workspace IDs and
   pass an exact `workspace` to `channel_create` with `solo: true`. Include the
   owner explicitly in `members`; filing never adds members, copies workspace
-  defaults or Canvas, or changes the creator. This capability is unavailable to
-  standalone/external connections, Nexus workers, and plugin agent handles.
+  defaults or Canvas, or changes the creator.
   Creation and filing are not atomic. A known refusal before assignment reports
   the created ID and “created, not filed.” After assignment starts, failure reports
   placement unconfirmed: it may already be durable or pending delivery. Inspect
@@ -360,9 +359,8 @@ it. Chosen names are recorded using the existing NIP-CL channel label
 `buzz.session.named`, added on explicitly named creation or an actual saved name
 change. Existing labels are preserved. This requires relay channel-label support;
 unsupported chosen-name writes fail before signing. Automatic-name reset remains
-deferred. Older chats without this label use a short ID in shared cards until
-a name change records the chosen name; the app does not infer provenance from a
-prompt or historical title.
+deferred. The app does not infer chosen-name provenance from a prompt or
+historical title.
 Clearing a saved name silently preserves the last confirmed title without a name
 write or validation error. Other settings can still save.
 The form uses the shared content-sized dialog and its normal footer spacing, with
@@ -378,22 +376,16 @@ is checked without republishing or implicitly saving newer Canvas drafts.
 Synthetic signed create/rename/readback coverage is not live cross-version-client
 acceptance.
 
-Generated sharing messages use `[Chat: <chosen name or short ID>](buzz://channel/<id>)`.
-The chat's current name, including its starting title from the first prompt,
-replaces the ID. Existing signed messages
-and recovery receipts keep their original bytes, including legacy `Session ·` labels;
-retry matching uses the original chat destination rather than regenerating the
-current name. Authorized viewers can see the current chosen name in the card.
+Generated sharing messages use `[<chat title>](buzz://channel/<id>)`. The link
+uses the chat's current name, including an automatic first-prompt title, with a
+short ID as fallback. Existing signed messages and recovery receipts retain their
+original labels and destinations, including legacy `Chat:` and `Session ·` labels.
 
-Links to Solo chats render as document cards outside the message bubble, before
-any caption, with the fixed `Chat:` label, a chat bubble and a trailing chevron when readable.
-Unavailable cards retain a lock. Legacy Session-labelled cards remain supported.
-In the composer, references are staged
-above the caption editor with a remove control and saved in the same draft. Sending
-serializes the references before the caption as ordinary Markdown links. Selected
-mention identities remain bound to caption text; quoted, list, code and hidden
-references stay in their original context. Replies, reactions, copy and actions
-remain owned by the original message. Navigation and access rules are unchanged.
+Links to Solo chats stay inline in the composer and in sent messages. A readable
+chat uses the round chat bubble, and an unavailable destination shows a lock.
+Saved drafts with chat attachments reopen with those links in the editor. Links
+in lists are eligible for the same sharing confirmation as links in paragraphs.
+Sharing changes access only after the owner confirms it.
 
 ## Owners and validation limits
 

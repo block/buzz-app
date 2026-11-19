@@ -1,3 +1,4 @@
+import type { PublishOptions } from "../../buzz-mcp/client";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {
   AgentModelSettings,
@@ -72,7 +73,25 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
-import type { RecommendedCandidate } from "./recommended";
+import { isBundledOwner } from "../../plugins/provenance";
+import {
+  awaitRecommendation,
+  candidatesFor,
+  offRecommended,
+  onRecommended,
+  recommendationFinal,
+  recommendationReady,
+  type RecommendedCandidate,
+  withRecommended,
+} from "./recommended";
+import {
+  checkNote,
+  noteId,
+  noteOf,
+  notesOf,
+  type PluginNote,
+  withNote,
+} from "./plugin-notes";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -448,6 +467,7 @@ export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 export type AgentSession = Readonly<{
   channelId: string;
   root?: string;
+  community?: true;
   at?: number;
   status?: string;
 }>;
@@ -579,7 +599,11 @@ export type AgentHandle = Readonly<{
    * undefined while the channel is not known here yet. */
   threadsApart?(channel: string): boolean | undefined;
   /** Rechecks an operation lifetime after channel startup, before signing. */
-  publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
+  publish(
+    event: AgentEventTemplate,
+    check?: () => void,
+    options?: PublishOptions,
+  ): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   effectiveEdit(id: string, channel: string): Promise<RelayEvent>;
@@ -754,8 +778,8 @@ export type Trigger =
       /** This is its last allowed occurrence. */
       spent: boolean;
     }>;
-/** A turn with no conversation and nothing saved, such as for a watch or a
- * timer. */
+/** An unaddressed wake with no default posting destination. A harness can
+ * retain it in the agent's community session. */
 export type StandaloneTurn<Config = unknown> = Readonly<{
   /** The watch's or timer's delivery. */
   delivery: Delivery<Config>;
@@ -873,6 +897,7 @@ export type SessionControlAction = SessionAction | "interrupt";
 export type SessionPlace = Readonly<{
   channelId: string;
   root?: string;
+  community?: true;
 }>;
 export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
@@ -1023,10 +1048,13 @@ export type AgentType<Config = unknown> = {
    * row alongside its own controls and keeps discovery/recovery with them.
    * Takes precedence over CreateModel in the creation dialog. Report readiness
    * of the displayed choices through onReadyChange, independently of edits;
-   * the dialog waits for true before allowing creation. */
+   * the dialog waits for true before allowing creation. With `rowsOnly`, the
+   * host already supplies the group (under AI setup's Custom): return the
+   * same rows without one. */
   CreateConfiguration?: ComponentType<
     AgentCreateProps<Config> & {
       harnessControl: ReactNode;
+      rowsOnly?: boolean;
       onReadyChange?: (ready: boolean) => void;
     }
   >;
@@ -1076,7 +1104,7 @@ export type AgentType<Config = unknown> = {
    * `thread` it starts a thread of its own, with no session to act on. A DM or
    * Solo chat is one session either way. */
   sessionControls?: {
-    scope(agent: Agent<Config>): "thread" | "channel";
+    scope(agent: Agent<Config>): "thread" | "channel" | "community";
     state(agent: Agent<Config>, place: SessionPlace): SessionState;
     run(
       agent: Agent<Config>,
@@ -1352,6 +1380,20 @@ export type InterruptedTurn = Readonly<{
   channelId: string;
   channel?: ChannelSummary | undefined;
 }>;
+/** A failing event-watch history stream on this device. */
+export type WatchReadFailure = Readonly<{
+  agentKey: AgentKey;
+  watchSlug: string;
+  /** The channel the watch reads, or null for its all-channels stream. */
+  channelId: string | null;
+  /** Host-authored text. Raw relay errors are private to host diagnostics. */
+  summary: string;
+  consecutiveFailures: number;
+  /** Unix milliseconds of the most recent failure. */
+  failedAt: number;
+  /** Earliest retry in Unix milliseconds. A tick, connection or pass can delay it. */
+  retryAt: number;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1365,6 +1407,9 @@ export type AgentsSnapshot = Readonly<{
   /** Running agents that were working when the app last closed or reloaded,
    * until the owner resumes or forgets those turns. */
   interrupted: readonly Agent[];
+  /** Local event-watch history failures for the viewer's running agents.
+   * Absent on older hosts. Runtime only, cleared on app restart. */
+  watchReadFailures?: readonly WatchReadFailure[];
   /** The owner's teams on this device, which every community shares, and
    * each synced team with a confirmed copy. */
   teams: readonly Team[];
@@ -1446,6 +1491,20 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
+/** A plugin's recommended agent setup for this launch,
+ * `{recommendedBy?, description?, candidates}`; see `Agents.recommend`. */
+export type RecommendedSource = (signal: AbortSignal) => unknown;
+export type { PluginNote } from "./plugin-notes";
+/** An agent's own model settings, as `switchToAutomatic` found them. */
+export type ModelSettings = Readonly<{
+  model?: string;
+  provider?: string;
+  effort?: string;
+}>;
+/** The calling plugin's note to save in the same revision: `null` removes
+ * it, and leaving it out keeps it. */
+export type NoteChange = Readonly<{ note?: PluginNote | null }>;
+const MODEL_FIELDS = ["model", "provider", "effort"] as const;
 export type Agents = {
   registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
@@ -1514,6 +1573,56 @@ export type Agents = {
    * app runs, or of those `when` accepts, while the plugin is on. Each turn
    * shows them in a `<plugin-instructions>` section that names the plugin. */
   addInstructions(instructions: AgentInstructions): void;
+  /** Bundled plugins only: gives this launch's recommended agent setup in
+   * place of the build's `BUZZ_RECOMMENDED_AGENT` (docs/configuration.md).
+   * Call it while the plugin starts: `source` is asked once, at once, and its
+   * answer, `{recommendedBy?, description?, candidates}` checked like the
+   * setting, is used if it comes within `SOURCE_MS` of the app's start. No
+   * answer, a failure, an invalid or late setup keeps the build's. `signal` aborts when the wait ends. Only the first
+   * plugin to call it in a launch is asked; later calls are ignored. */
+  recommend(source: RecommendedSource): void;
+  // Bundled plugins only, like `recommend`: the building blocks for a plugin
+  // that moves agents onto Automatic (plugin-architecture.md).
+  /** Whether plugin start-up is over (each plugin started, or failed), the
+   * agent list is loaded and the recommended setup is final for the launch.
+   * `subscribe` hears when it changes. */
+  isReady(): boolean;
+  /** Resolves the first time `isReady()` is true; rejects if `signal` aborts
+   * first. Don't await it in `apply`: start-up isn't over until it returns. */
+  whenReady(signal?: AbortSignal): Promise<void>;
+  /** Whether the agent could run on Automatic on this device: not hosted nor
+   * on another execution target, of
+   * a type registered here and not remote, whose harness the recommended
+   * setup has a candidate for. An agent of a type this device doesn't know
+   * isn't. Ignores its preset, notes, computer and sync state. */
+  switchable(agent: Agent): boolean;
+  /** The person's switchable agents: in the selected community and running
+   * here, one per pubkey. */
+  switchableAgents(): readonly Agent[];
+  /** Puts the agent on Automatic, through `save` from its `configBase`, so a
+   * save from a stale copy is refused, and gives the model settings it had.
+   * `note` is saved in the same revision. Rejects unless it is switchable,
+   * set up on this computer, its synced settings have arrived and it isn't
+   * on Automatic already. */
+  switchToAutomatic(
+    agent: Agent,
+    options?: NoteChange,
+  ): Promise<Readonly<{ previous: ModelSettings }>>;
+  /** Undoes a switch: off Automatic, with `previous` back, saved the same
+   * way. */
+  restoreSettings(
+    agent: Agent,
+    previous: ModelSettings,
+    options?: NoteChange,
+  ): Promise<void>;
+  /** The calling plugin's note on the agent, from its synced settings: only
+   * known once they have arrived (`configBase.settings` is a string). Other
+   * saves keep notes as they are. */
+  readNote(agent: Agent): PluginNote | undefined;
+  /** Saves the calling plugin's note, or removes it with `null`, the same
+   * way: JSON `data` of at most 1 KB and an optional `tag`, which each
+   * settings revision carries as ["note", pluginId, tag]. */
+  setNote(agent: Agent, note: PluginNote | null): Promise<void>;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -2322,6 +2431,20 @@ export class AgentsService extends Service implements Agents {
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
+    void awaitRecommendation((signal) => this.recommendedAnswer(signal));
+    // So `ready` readers hear when start-up ends and the setup is final.
+    const status = ctx.pluginStatus as Context["pluginStatus"] | undefined;
+    if (status) {
+      let started = this.pluginsStarted();
+      ctx.effect(() =>
+        status.subscribe(() => {
+          if (this.pluginsStarted() === started) return;
+          started = !started;
+          this.notify();
+        }),
+      );
+    }
+    void recommendationReady().then(() => this.notify());
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -2340,6 +2463,7 @@ export class AgentsService extends Service implements Agents {
       agents: [],
       running: [],
       interrupted: [],
+      watchReadFailures: Object.freeze([]),
       teams: this.teamList,
     });
     this.protection = new AgentProtectionService(
@@ -2431,10 +2555,20 @@ export class AgentsService extends Service implements Agents {
         this.attend(this.state.running);
         this.notify();
       },
+      watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
+      savedAttention: (key) => this.records[key]?.attention ?? EMPTY,
       member: (agent, event) => this.member(agent, event),
       reads: (agent, event) => this.reads(agent, event),
+      resolveChannels: async (agent, ids, signal) => {
+        const channels = this.bindingOf(agent)?.session.channels;
+        const unknown = ids.filter(
+          (id) => !this.channelOf(agent, { tags: [["h", id]] }),
+        );
+        if (unknown.length)
+          await channels?.resolve?.(unknown, { signal, viewerLookup: false });
+      },
       dm: (agent, event) => this.dm(agent, event),
       unattended: (agent, event, live) => {
         const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
@@ -3158,6 +3292,221 @@ export class AgentsService extends Service implements Agents {
   addedTabs = () => this.tabContributions.snapshot();
   controlAttention() {
     this.attentionControls.register(this.ctx, { id: "attention" });
+  }
+  /** The plugin `recommend` asks this launch, once it has called. */
+  private recommendSource?: Readonly<{
+    plugin: string;
+    source: RecommendedSource;
+  }>;
+  /** Whether this launch's setup is final, so `recommend` is too late. */
+  private recommendClosed = false;
+  /** Tells the wait in `recommendedAnswer` a plugin called `recommend`. */
+  private recommendCalled = () => {};
+  recommend(source: RecommendedSource) {
+    const owner = this.ctx.pluginOwner;
+    // Only the build's own plugins: an installed one must not take it over,
+    // even by claiming a "bundled" revision (provenance.ts).
+    if (!owner || !isBundledOwner(owner))
+      throw new Error(
+        "A recommended agent setup must come from a bundled plugin",
+      );
+    const plugin = owner.id;
+    if (typeof source !== "function")
+      throw new Error("recommend needs a function");
+    if (this.recommendSource || this.recommendClosed) {
+      console.warn(
+        `Plugin ${plugin}'s recommended agent setup is ignored: ${this.recommendSource ? "another plugin gives this launch's" : "it came after the setup was final"}`,
+      );
+      return;
+    }
+    this.recommendSource = { plugin, source };
+    this.recommendCalled();
+  }
+  /** The calling plugin's id; throws unless it is bundled. */
+  private bundledCaller(what: string) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isBundledOwner(owner))
+      throw new Error(`${what} is available only to bundled plugins`);
+    return owner.id;
+  }
+  private pluginsStarted = () =>
+    (
+      this.ctx.pluginStatus as Context["pluginStatus"] | undefined
+    )?.settled?.() ?? true;
+  private readyNow = () =>
+    this.pluginsStarted() &&
+    this.snapshot().status === "ready" &&
+    recommendationFinal();
+  isReady() {
+    this.bundledCaller("isReady");
+    return this.readyNow();
+  }
+  async whenReady(signal?: AbortSignal) {
+    this.bundledCaller("whenReady");
+    return new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      let off = () => {};
+      const abort = () => {
+        off();
+        reject(signal?.reason);
+      };
+      const check = () => {
+        if (!this.readyNow()) return;
+        off();
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      off = this.subscribe(check);
+      check();
+    });
+  }
+  private canSwitch = (agent: Agent) => {
+    // Hosted, or run on another execution target, it runs on that one's
+    // own settings, not Automatic.
+    if (agent.place === "hosted" || agent.executionBinding) return false;
+    const type = this.types().find((item) => item.key === agent.type);
+    return (
+      !!type &&
+      !type.remote &&
+      typeof type.recommends === "function" &&
+      candidatesFor(type.id).length > 0
+    );
+  };
+  switchable(agent: Agent) {
+    this.bundledCaller("switchable");
+    return this.canSwitch(agent);
+  }
+  switchableAgents() {
+    this.bundledCaller("switchableAgents");
+    const mine = new Map<string, Agent>();
+    const { agents, running } = this.snapshot();
+    for (const agent of [...agents, ...running])
+      if (!mine.has(agent.pubkey) && this.canSwitch(agent))
+        mine.set(agent.pubkey, agent);
+    return [...mine.values()];
+  }
+  /** Saves a plugin's change to the agent's config from the copy it read, so
+   * a stale one is refused, with its note when it gives one. */
+  private savePlugin(
+    agent: Agent,
+    config: object,
+    plugin: string,
+    { note }: NoteChange,
+  ) {
+    if (note !== undefined) checkNote(note);
+    if (note !== undefined && !noteId(plugin))
+      throw new Error(`Plugin ${plugin}'s id can't hold a note`);
+    if (
+      agent.place !== "here" ||
+      agent.unfinished ||
+      agent.deleting ||
+      agent.configProblem ||
+      typeof agent.configBase?.settings !== "string"
+    )
+      throw new Error("This agent's settings can't be changed here now");
+    // From the copy as it is now: one changed since it was read, here or by
+    // sync, is refused before anything is saved.
+    const now = this.liveAgent(agent.key);
+    if (
+      !now ||
+      JSON.stringify(now.configBase) !== JSON.stringify(agent.configBase) ||
+      JSON.stringify(now.config) !== JSON.stringify(agent.config)
+    )
+      throw new Error("This agent changed since it was read; read it again");
+    return this.saveAs(agent.key, {
+      config: note === undefined ? config : withNote(config, plugin, note),
+      // Only the settings change, so only they are saved and checked.
+      base: { settings: agent.configBase.settings },
+    });
+  }
+  async switchToAutomatic(agent: Agent, options: NoteChange = {}) {
+    const plugin = this.bundledCaller("switchToAutomatic");
+    const config = (agent.config ?? {}) as Record<string, unknown>;
+    if (!this.canSwitch(agent) || onRecommended(config))
+      throw new Error("This agent can't be switched to Automatic");
+    const previous: ModelSettings = Object.fromEntries(
+      MODEL_FIELDS.flatMap((name) =>
+        typeof config[name] === "string" && config[name]
+          ? [[name, config[name]]]
+          : [],
+      ),
+    );
+    await this.savePlugin(agent, withRecommended(config), plugin, options);
+    return { previous };
+  }
+  async restoreSettings(
+    agent: Agent,
+    previous: ModelSettings,
+    options: NoteChange = {},
+  ) {
+    const plugin = this.bundledCaller("restoreSettings");
+    // Not over a model the person picked since.
+    if (!onRecommended(agent.config))
+      throw new Error("This agent isn't on Automatic");
+    const kept = Object.fromEntries(
+      MODEL_FIELDS.flatMap((name) =>
+        typeof previous?.[name] === "string" ? [[name, previous[name]]] : [],
+      ),
+    );
+    const config = (agent.config ?? {}) as object;
+    await this.savePlugin(
+      agent,
+      { ...offRecommended(config), ...kept },
+      plugin,
+      options,
+    );
+  }
+  readNote(agent: Agent) {
+    const plugin = this.bundledCaller("readNote");
+    return noteOf(agent.config, plugin);
+  }
+  async setNote(agent: Agent, note: PluginNote | null) {
+    const plugin = this.bundledCaller("setNote");
+    // Clearing a note that isn't there changes nothing.
+    if (note === null && !noteOf(agent.config, plugin)) return;
+    await this.savePlugin(agent, (agent.config ?? {}) as object, plugin, {
+      note,
+    });
+  }
+  /** This launch's answer from the plugin that calls `recommend`, asked as
+   * soon as it calls; nothing once plugins have started with none calling. */
+  private async recommendedAnswer(signal: AbortSignal) {
+    signal.addEventListener("abort", () => {
+      this.recommendClosed = true;
+    });
+    const status = this.ctx.pluginStatus as Context["pluginStatus"] | undefined;
+    const given = await new Promise<typeof this.recommendSource>((resolve) => {
+      let stop = () => {};
+      const check = () => {
+        if (
+          !this.recommendSource &&
+          !signal.aborted &&
+          !(status?.settled?.() ?? true)
+        )
+          return;
+        stop();
+        this.recommendCalled = () => {};
+        resolve(this.recommendSource);
+      };
+      this.recommendCalled = check;
+      signal.addEventListener("abort", check, { once: true });
+      stop = status?.subscribe(check) ?? stop;
+      check();
+    });
+    if (!given || signal.aborted) return undefined;
+    let answered = false;
+    signal.addEventListener("abort", () => {
+      if (!answered)
+        console.warn(
+          `Plugin ${given.plugin} gave no recommended agent setup in time; using this build's`,
+        );
+    });
+    try {
+      return await given.source(signal);
+    } finally {
+      answered = true;
+    }
   }
   /** Whether a plugin that shows Attention is on, so Attention may run. */
   private attentionShown = () => this.attentionControls.snapshot().length > 0;
@@ -4883,7 +5232,25 @@ export class AgentsService extends Service implements Agents {
       },
     };
   };
-  async save(key: AgentKey, change: AgentChange) {
+  /** A plugin's notes change only through `setNote` and its kin: any other
+   * save keeps the agent's current ones. */
+  save(key: AgentKey, change: AgentChange) {
+    if (!change.config || typeof change.config !== "object")
+      return this.saveAs(key, change);
+    const { pluginNotes: _, ...config } = change.config as {
+      pluginNotes?: unknown;
+    };
+    const notes = notesOf(this.liveAgent(key)?.config);
+    return this.saveAs(key, {
+      ...change,
+      config: notes ? { ...config, pluginNotes: notes } : config,
+    });
+  }
+  private liveAgent(key: AgentKey) {
+    const { agents, running } = this.snapshot();
+    return [...agents, ...running].find((item) => item.key === key);
+  }
+  private async saveAs(key: AgentKey, change: AgentChange) {
     const identity = this.liveMember(key);
     // A hosted agent's key is its pubkey.
     if (!identity)
@@ -5059,12 +5426,15 @@ export class AgentsService extends Service implements Agents {
     source: SessionPlace,
   ): SessionPlace {
     const summary = this.channelOf(agent, { tags: [["h", source.channelId]] });
+    const scope = type.sessionControls?.scope(agent);
     const whole =
       summary?.channelType === "solo" ||
       summary?.channelType === "dm" ||
-      type.sessionControls?.scope(agent) === "channel";
+      scope === "channel" ||
+      scope === "community";
     return {
       channelId: source.channelId,
+      ...(scope === "community" ? { community: true } : {}),
       ...(!whole && source.root ? { root: source.root } : {}),
     };
   }
@@ -5158,6 +5528,7 @@ export class AgentsService extends Service implements Agents {
         ?.list(key)
         .some(
           (session) =>
+            !session.community &&
             conversationKey(session.channelId, session.root) === conversation,
         )
     )
@@ -5217,7 +5588,7 @@ export class AgentsService extends Service implements Agents {
    * no turn would show them. So does a huddle room, whose conversations
    * harnesses key differently. */
   private async instructionsPlace(key: AgentKey, place: SessionPlace) {
-    const found = this.folderPlace(key, place);
+    const found = this.folderPlace(key, place, "instructions");
     const reads = ownerReads(this.relay(key), pubkeyOf(key));
     if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
       throw new Error("Conversation instructions are unavailable in a huddle");
@@ -5269,14 +5640,23 @@ export class AgentsService extends Service implements Agents {
   }
   /** Where the owner's local agent keeps a conversation's folder: keyed as
    * its harness keys the conversation's session. */
-  private folderPlace(key: AgentKey, place: SessionPlace) {
+  private folderPlace(
+    key: AgentKey,
+    place: SessionPlace,
+    purpose: "folder" | "instructions" = "folder",
+  ) {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
     if (!agent || !this.liveMember(key) || type?.remote)
       throw new Error("No such local agent on this device");
     const scope = ownerReads(this.relay(key), pubkeyOf(key))?.scope;
     if (!scope) throw new Error("The agent's community is not connected");
-    const channel = type?.sessionControls?.scope(agent) === "channel";
+    const session = type?.sessionControls?.scope(agent);
+    if (purpose === "folder" && session === "community")
+      throw new Error(
+        "A community session uses the agent workspace, not a conversation folder",
+      );
+    const channel = session === "channel";
     return {
       scope,
       agent,
@@ -7765,6 +8145,18 @@ export class AgentsService extends Service implements Agents {
     }
   }
   private notify() {
+    const failures = this.state.running.flatMap((agent) =>
+      this.runners.watchReadFailures(agent),
+    );
+    const prior = this.state.watchReadFailures;
+    if (
+      failures.length !== prior?.length ||
+      failures.some((failure, index) => failure !== prior[index])
+    )
+      this.state = Object.freeze({
+        ...this.state,
+        watchReadFailures: Object.freeze(failures),
+      });
     for (const listener of this.listeners) listener();
   }
   /** The event's channel as the agent's community knows it, if at all. */

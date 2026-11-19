@@ -274,6 +274,19 @@ if (thinkingHarness === "claude") {
     ],
     CreateModel: tabs.CreateModel,
     CreateThinking: tabs.CreateThinking,
+    ...(settingsSync
+      ? {
+          tabs: [
+            {
+              id: "settings",
+              title: "Settings",
+              role: "settings" as const,
+              splitSettings: true,
+              component: tabs.SettingsTab,
+            },
+          ],
+        }
+      : {}),
   };
 }
 let snapshot = {

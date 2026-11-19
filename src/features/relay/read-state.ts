@@ -41,11 +41,14 @@ import {
 import {
   HELD_GROUPS_PER_KEY,
   newReadJournal,
+  readJournal,
+  newReadUndoEpochId,
   newSlotId,
   newUnreadJournal,
   UNRESOLVED_ROOT,
   type HeldGroup,
   type LocalCover,
+  READ_LOCAL_UNREAD_KEYS,
   type ReadJournal,
   type ReadStateStorage,
   type UnreadJournal,
@@ -75,8 +78,8 @@ export type ReadMutationResult = Readonly<{
   durability: "saved";
   sync: "pending" | "local-only";
   /** Conditional device-local inverse; coverage depends on `undoScope`.
-   * Untagged handles may restore saved reminders only. Later intent or lost
-   * operation validity can expire the handle. */
+   * Untagged handles may restore saved reminders only. Later overlapping
+   * intent or lost operation validity can expire the handle. */
   undo?: () => Promise<ReadMutationResult>;
   /** With `undo`, identifies exact captured-action receipt, reminder and
    * visit-overlay restoration. Absent on legacy saved-marker-only handles. */
@@ -181,6 +184,99 @@ const coverOf = (journal: ReadJournal, key: string) => {
   const cover = journal.localCovers?.[key];
   return cover && journal.localUnread[key] === cover[0] ? cover : undefined;
 };
+type CapturedValue<T> =
+  | Readonly<{ present: false }>
+  | Readonly<{ present: true; value: T }>;
+type CapturedMapChanges<T> = Readonly<
+  Record<
+    string,
+    Readonly<{ before: CapturedValue<T>; after: CapturedValue<T> }>
+  >
+>;
+const capturedValue = <T>(map: Readonly<Record<string, T>>, key: string) =>
+  Object.hasOwn(map, key)
+    ? ({ present: true, value: map[key] as T } as const)
+    : ({ present: false } as const);
+function capturedMapChanges<T>(
+  before: Readonly<Record<string, T>>,
+  after: Readonly<Record<string, T>>,
+): CapturedMapChanges<T> {
+  const changes: Record<
+    string,
+    { before: CapturedValue<T>; after: CapturedValue<T> }
+  > = {};
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const old = capturedValue(before, key);
+    const next = capturedValue(after, key);
+    if (!same(old, next)) changes[key] = { before: old, after: next };
+  }
+  return changes;
+}
+function matchesCapturedMap<T>(
+  current: Readonly<Record<string, T>>,
+  changes: CapturedMapChanges<T>,
+) {
+  return Object.entries(changes).every(([key, change]) =>
+    same(capturedValue(current, key), change.after),
+  );
+}
+function restoreCapturedMap<T>(
+  current: Readonly<Record<string, T>>,
+  changes: CapturedMapChanges<T>,
+) {
+  const restored = { ...current };
+  for (const [key, change] of Object.entries(changes)) {
+    if (change.before.present) restored[key] = change.before.value;
+    else delete restored[key];
+  }
+  return restored;
+}
+const EMPTY_CAPTURED_UNDO_VERSIONS: Readonly<Record<string, string>> =
+  Object.freeze({});
+function invalidateCapturedUndoVersions(
+  versions: Readonly<Record<string, string>> | undefined,
+  keys: Iterable<string>,
+): Readonly<Record<string, string>> {
+  if (!versions) return EMPTY_CAPTURED_UNDO_VERSIONS;
+  const actions = new Set(
+    [...keys].flatMap((key) =>
+      versions[key] ? [versions[key] as string] : [],
+    ),
+  );
+  if (!actions.size) return versions;
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(versions).filter(([, action]) => !actions.has(action)),
+    ),
+  );
+}
+function captureUndoVersions(
+  versions: Readonly<Record<string, string>> | undefined,
+  keys: Iterable<string>,
+  actionId: string,
+) {
+  const selected = [...new Set(keys)];
+  const remaining = invalidateCapturedUndoVersions(versions, selected);
+  if (
+    Object.keys(remaining ?? {}).length + selected.length >
+    READ_LOCAL_UNREAD_KEYS
+  )
+    return { versions: remaining, tracked: false } as const;
+  const next = { ...remaining };
+  for (const key of selected) next[key] = actionId;
+  return { versions: Object.freeze(next), tracked: true } as const;
+}
+function removeCapturedUndoAction(
+  versions: Readonly<Record<string, string>> | undefined,
+  actionId: string,
+): Readonly<Record<string, string>> {
+  if (!versions) return EMPTY_CAPTURED_UNDO_VERSIONS;
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(versions).filter(([, action]) => action !== actionId),
+    ),
+  );
+}
 const localState = (journal: ReadJournal, now: number): ReadState => {
   const frontiers: Record<string, number> = {
     ...journal.reserve,
@@ -386,14 +482,33 @@ export function createReadState({
   type Validity = (current: ReadJournal) => boolean;
   type LocalUnreadUndo = {
     keys: ReadonlySet<string>;
+    /** Keys whose newer explicit intent also invalidates a captured inverse. */
+    intentKeys?: readonly string[];
     valid: () => boolean;
   };
+  type CapturedMessageRead = Readonly<{
+    key: string;
+    timestamp: number;
+    channelId: string;
+    rootId?: string | undefined;
+  }>;
+  type CapturedScopeState = Readonly<{
+    key: string;
+    frontier?: number | undefined;
+    recent?: number | undefined;
+  }>;
   type CapturedReadUndo = {
     token: string;
-    before: Pick<
-      ReadJournal,
-      "state" | "recent" | "reserve" | "homes" | "floor"
-    >;
+    actionId: string;
+    keys: readonly string[];
+    floor: number;
+    stateFrontiers: CapturedMapChanges<number>;
+    recent: CapturedMapChanges<number>;
+    reserve: CapturedMapChanges<number>;
+    homes: CapturedMapChanges<string>;
+    intentVersions: Readonly<Record<string, CapturedValue<number>>>;
+    messages: readonly CapturedMessageRead[];
+    scopes: readonly (readonly CapturedScopeState[])[];
   };
   type LocalUnreadAttempt = {
     key: string;
@@ -529,6 +644,7 @@ export function createReadState({
   ) {
     if (closed) throw new Error("Read-state session closed");
     let released = false;
+    const changedLocalUnread = new Set<string>();
     const saved = await storage.update((current) => {
       if (closed) throw new Error("Read-state session closed");
       const before = current ?? newReadJournal();
@@ -538,16 +654,59 @@ export function createReadState({
       // settles it: bump once here and wake one publish pass after commit.
       released = heldCount(next) < heldCount(changed);
       if (released) next = { ...next, revision: next.revision + 1 };
-      // Ingest and publication bookkeeping need not advance revision. Even an
-      // equal-valued later save must prevent rolling back a newer receipt.
-      if (
-        before.capturedReadUndo &&
-        next.capturedReadUndo === before.capturedReadUndo
-      ) {
-        const { capturedReadUndo, ...retired } = next;
-        return retired;
+      for (const key of new Set([
+        ...Object.keys(before.localUnread),
+        ...Object.keys(next.localUnread),
+      ]))
+        if (
+          !same(
+            capturedValue(before.localUnread, key),
+            capturedValue(next.localUnread, key),
+          )
+        )
+          changedLocalUnread.add(key);
+      const intentBase =
+        next.localUnreadIntent ?? before.localUnreadIntent ?? {};
+      let localUnreadIntent: Readonly<Record<string, number>> = intentBase;
+      if (changedLocalUnread.size) {
+        const updatedIntent = { ...intentBase };
+        for (const key of changedLocalUnread)
+          updatedIntent[key] = next.revision;
+        localUnreadIntent = updatedIntent;
       }
-      return next;
+      let intentHistoryPruned = false;
+      if (Object.keys(localUnreadIntent).length > READ_LOCAL_UNREAD_KEYS) {
+        const changedKeys = [...changedLocalUnread].filter((key) =>
+          Object.hasOwn(localUnreadIntent, key),
+        );
+        const kept = new Set(changedKeys.slice(-READ_LOCAL_UNREAD_KEYS));
+        for (const [key] of Object.entries(localUnreadIntent)
+          .filter(([key]) => !changedLocalUnread.has(key))
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, READ_LOCAL_UNREAD_KEYS - kept.size))
+          kept.add(key);
+        localUnreadIntent = Object.fromEntries(
+          [...kept].map((key) => [key, localUnreadIntent[key] as number]),
+        );
+        intentHistoryPruned = true;
+      }
+      const intentHistoryMissing = before.localUnreadIntent === undefined;
+      const epochChanged = next.capturedReadUndo !== before.capturedReadUndo;
+      if (intentHistoryPruned || (intentHistoryMissing && !epochChanged)) {
+        const activeVersions = Object.fromEntries(
+          Object.entries(next.capturedUndoVersions ?? {}).filter(
+            ([key, action]) => before.capturedUndoVersions?.[key] !== action,
+          ),
+        );
+        next = {
+          ...next,
+          capturedReadUndo: newReadUndoEpochId(),
+          capturedUndoVersions: activeVersions,
+        };
+      }
+      return next.localUnreadIntent === localUnreadIntent
+        ? next
+        : { ...next, localUnreadIntent };
     });
     if (closed) return saved;
     if (!same(journal?.state.overrides, saved.state.overrides)) unreadEpoch++;
@@ -578,7 +737,15 @@ export function createReadState({
   }
   const ready = queue(async () => {
     try {
-      await save((current) => current, false);
+      await save(
+        (current) => ({
+          ...current,
+          capturedReadUndo: newReadUndoEpochId(),
+          capturedUndoVersions: {},
+          localUnreadIntent: {},
+        }),
+        false,
+      );
       if (!closed)
         health({
           status:
@@ -609,7 +776,9 @@ export function createReadState({
       !cleared.every((key) => options.keys.has(key))
     )
       return;
+    let consumed = false;
     return () => {
+      if (consumed) return Promise.reject(new ObservationExpired());
       const attempts: LocalUnreadAttempt[] = cleared.map((key) => ({ key }));
       for (const attempt of attempts) pendingLocalUnread.add(attempt);
       return queue(async () => {
@@ -618,24 +787,76 @@ export function createReadState({
           throw new Error("Saved read state unavailable; retry storage first");
         try {
           const saved = await save((current) => {
-            // Revision catches newer mark-then-clear intent; slot also catches a
-            // replacement journal whose counter has reached the same revision.
+            const currentReadState = localState(current, now());
+            const capturedStillCurrent =
+              !captured ||
+              (current.capturedReadUndo === captured.token &&
+                captured.keys.every(
+                  (key) =>
+                    current.capturedUndoVersions?.[key] === captured.actionId,
+                ) &&
+                current.localUnreadIntent !== undefined &&
+                Object.entries(captured.intentVersions).every(([key, value]) =>
+                  same(
+                    capturedValue(current.localUnreadIntent ?? {}, key),
+                    value,
+                  ),
+                ) &&
+                matchesCapturedMap(
+                  current.state.frontiers,
+                  captured.stateFrontiers,
+                ) &&
+                matchesCapturedMap(current.recent ?? {}, captured.recent) &&
+                matchesCapturedMap(current.reserve ?? {}, captured.reserve) &&
+                matchesCapturedMap(current.homes ?? {}, captured.homes) &&
+                captured.messages.every(
+                  ({ timestamp }) =>
+                    captured.floor >= timestamp ||
+                    Math.max(floor(), current.floor ?? 0) < timestamp,
+                ) &&
+                captured.scopes.every((scope) =>
+                  scope.every(
+                    ({ key, frontier, recent }) =>
+                      currentReadState.frontiers[key] === frontier &&
+                      current.recent?.[key] === recent,
+                  ),
+                ));
             if (
+              consumed ||
               !valid(current) ||
               !options.valid() ||
               current.slot !== actionSlot ||
-              current.revision !== actionRevision ||
-              (captured !== undefined &&
-                current.capturedReadUndo !== captured.token) ||
+              (!captured && current.revision !== actionRevision) ||
+              !capturedStillCurrent ||
               cleared.some((key) => current.localUnread[key] !== undefined)
             )
               throw new ObservationExpired();
             const revision = current.revision + 1;
             const localUnread = { ...current.localUnread };
             for (const key of cleared) localUnread[key] = revision;
-            // Only device-local receipt/retention effects are reverted. The
-            // action never advances synced prefixes; own/publication state stays.
-            const restored = { ...current, ...(captured?.before ?? {}) };
+            const reverted: ReadJournal = {
+              ...current,
+              // Only device-local receipt/retention effects are reverted. The
+              // action never advances synced prefixes; own/publication state stays.
+              ...(captured && {
+                state: {
+                  ...current.state,
+                  frontiers: restoreCapturedMap(
+                    current.state.frontiers,
+                    captured.stateFrontiers,
+                  ),
+                },
+                recent: restoreCapturedMap(
+                  current.recent ?? {},
+                  captured.recent,
+                ),
+                reserve: restoreCapturedMap(
+                  current.reserve ?? {},
+                  captured.reserve,
+                ),
+                homes: restoreCapturedMap(current.homes ?? {}, captured.homes),
+              }),
+            };
             // A restored mark keeps its context, covered from now: the read
             // it undoes may have advanced past its old cover.
             const localCovers = { ...current.localCovers };
@@ -646,7 +867,7 @@ export function createReadState({
               localCovers[key] = [
                 revision,
                 effectiveFrontier(
-                  localState(restored, now()),
+                  localState(reverted, now()),
                   key,
                   channel,
                   root && root !== UNRESOLVED_ROOT ? root : undefined,
@@ -655,17 +876,33 @@ export function createReadState({
                 root,
               ];
             }
-            return {
-              ...restored,
+            const restored: ReadJournal = {
+              ...reverted,
               revision,
               localUnread,
               localCovers: keptCovers(localCovers, localUnread),
+              ...(captured && {
+                capturedUndoVersions: removeCapturedUndoAction(
+                  current.capturedUndoVersions,
+                  captured.actionId,
+                ),
+              }),
               acceptedRevision:
                 current.acceptedRevision === current.revision
                   ? revision
                   : current.acceptedRevision,
             };
+            if (captured) {
+              // Unrelated retained receipts may have filled the space this inverse needs.
+              try {
+                readJournal(restored, viewer);
+              } catch {
+                throw new ObservationExpired();
+              }
+            }
+            return restored;
           });
+          consumed = true;
           for (const attempt of attempts)
             attempt.saved = { revision: saved.revision, previous: 0 };
           health({
@@ -834,6 +1071,28 @@ export function createReadState({
         current,
         committed.map(({ parsed }) => parsed.state),
       );
+      const capturedUndoVersions = invalidateCapturedUndoVersions(
+        current.capturedUndoVersions,
+        committed
+          .filter(({ event, parsed }) => {
+            if (parsed.clientId === current.clientId) return false;
+            const previous = slots.get(readCoordinate(event) ?? "");
+            // Re-reading an admitted envelope is bookkeeping, not a later read intent.
+            return (
+              !previous || newer(previous.event, event).id !== previous.event.id
+            );
+          })
+          .flatMap(({ event, parsed }) => {
+            const previous = slots.get(readCoordinate(event) ?? "");
+            return Object.entries(parsed.state.frontiers)
+              .filter(
+                ([key, value]) =>
+                  key.startsWith("msg:") &&
+                  previous?.parsed.state.frontiers[key] !== value,
+              )
+              .map(([key]) => key);
+          }),
+      );
       return {
         ...current,
         ...retainMarks(
@@ -841,6 +1100,7 @@ export function createReadState({
           [current.state, ...states],
           current.recent ?? {},
         ),
+        capturedUndoVersions,
         ...(own && { own }),
         unread: { ...(current.unread ?? newUnreadJournal()), held },
       };
@@ -1186,6 +1446,12 @@ export function createReadState({
               capacityKeys,
             );
           synced = timestamp !== undefined || !!groups;
+          const capturedUndoVersions =
+            timestamp === undefined
+              ? (current.capturedUndoVersions ?? EMPTY_CAPTURED_UNDO_VERSIONS)
+              : invalidateCapturedUndoVersions(current.capturedUndoVersions, [
+                  key,
+                ]);
           return {
             ...current,
             revision,
@@ -1198,6 +1464,7 @@ export function createReadState({
             localUnread,
             localCovers: keptCovers(localCovers, localUnread),
             ...(unreadJournal ? { unread: unreadJournal } : {}),
+            capturedUndoVersions,
             acceptedRevision:
               !synced && current.acceptedRevision === current.revision
                 ? revision
@@ -1808,12 +2075,7 @@ export function createReadState({
      * fabricating frontiers. A `quiet` save (a row's `seen:` marks) reads
      * nothing, so it is counted apart from unread intent (`intentRevision`). */
     readMessages: (
-      messages: readonly Readonly<{
-        key: string;
-        timestamp: number;
-        channelId: string;
-        rootId?: string | undefined;
-      }>[],
+      messages: readonly CapturedMessageRead[],
       clearForce: string | undefined,
       valid: Validity,
       quiet = false,
@@ -1821,6 +2083,8 @@ export function createReadState({
       clearLocalKeys: readonly string[] = [],
       options: {
         preserveCapturedSet?: boolean;
+        /** Full selection, including authored messages without receipt writes. */
+        selectedMessages?: readonly CapturedMessageRead[];
         undo?: LocalUnreadUndo;
         /** An explicit Mark read of these messages: their marks sync. */
         explicit?: boolean;
@@ -1836,10 +2100,23 @@ export function createReadState({
             : valid;
           const clearedLocalUnread = new Set<string>();
           const clearedCovers: Record<string, LocalCover> = {};
-          const token =
-            options.preserveCapturedSet && options.undo
-              ? newSlotId()
-              : undefined;
+          const captureUndo = Boolean(
+            options.preserveCapturedSet && options.undo,
+          );
+          const messageKeys = [
+            ...new Set([...messages.map(({ key }) => key), ...clearLocalKeys]),
+          ];
+          const intentKeys = captureUndo
+            ? [
+                ...new Set([
+                  ...messages.map(({ key }) => key),
+                  ...clearLocalKeys,
+                  ...(options.undo?.intentKeys ?? []),
+                ]),
+              ]
+            : [];
+          const capturedActionId = captureUndo ? newSlotId() : undefined;
+          let capturedUndoTracked = false;
           let captured: CapturedReadUndo | undefined;
           const saved = await save((current) => {
             if (!currentValid(current)) throw new ObservationExpired();
@@ -1849,25 +2126,37 @@ export function createReadState({
               )
             )
               throw new Error("Invalid read frontier");
+            // Capture the current owner epoch transactionally. A different
+            // owner's startup invalidates earlier handles but need not prevent
+            // this still-live owner from creating a new one.
+            const token = captureUndo
+              ? (current.capturedReadUndo ?? capturedActionId)
+              : undefined;
+            if (captureUndo && !token) throw new ObservationExpired();
             if (token) {
               if (
-                messages.some(({ key }) => !key.startsWith("msg:")) ||
+                messageKeys.some((key) => !key.startsWith("msg:")) ||
                 clearForce
               )
                 throw new Error(
                   "Captured Undo requires exact message receipts",
                 );
-              captured = {
-                token,
-                before: {
-                  state: current.state,
-                  recent: current.recent ?? {},
-                  reserve: current.reserve ?? {},
-                  homes: current.homes ?? {},
-                  floor: current.floor ?? 0,
-                },
-              };
             }
+            const undoVersionUpdate =
+              capturedActionId === undefined
+                ? {
+                    versions: invalidateCapturedUndoVersions(
+                      current.capturedUndoVersions,
+                      messageKeys,
+                    ),
+                    tracked: false as const,
+                  }
+                : captureUndoVersions(
+                    current.capturedUndoVersions,
+                    messageKeys,
+                    capturedActionId,
+                  );
+            capturedUndoTracked = undoVersionUpdate.tracked;
             const currentState = localState(current, now());
             if (
               capability !== "frontier-sync" &&
@@ -1950,6 +2239,63 @@ export function createReadState({
               )
                 throw new CapturedReadNotRetainedError();
             }
+            if (token && capturedUndoTracked && capturedActionId) {
+              const afterReadState = localState(
+                {
+                  ...current,
+                  state: kept.state,
+                  recent: kept.recent,
+                  reserve: kept.reserve,
+                  homes: kept.homes,
+                  floor: kept.floor,
+                },
+                now(),
+              );
+              const capturedMessages = (
+                options.selectedMessages ?? messages
+              ).map((message) => ({
+                key: message.key,
+                timestamp: message.timestamp,
+                channelId: message.channelId,
+                ...(message.rootId !== undefined && {
+                  rootId: message.rootId,
+                }),
+              }));
+              captured = {
+                token,
+                actionId: capturedActionId,
+                keys: messageKeys,
+                floor: Math.max(floor(), current.floor ?? 0),
+                stateFrontiers: capturedMapChanges(
+                  current.state.frontiers,
+                  kept.state.frontiers,
+                ),
+                recent: capturedMapChanges(current.recent ?? {}, kept.recent),
+                reserve: capturedMapChanges(
+                  current.reserve ?? {},
+                  kept.reserve,
+                ),
+                homes: capturedMapChanges(current.homes ?? {}, kept.homes),
+                intentVersions: {},
+                messages: capturedMessages,
+                scopes: capturedMessages.map(({ key, channelId, rootId }) =>
+                  [
+                    ...new Set([
+                      key,
+                      channelId,
+                      `activity:${channelId}`,
+                      ...(rootId
+                        ? [`thread:${rootId}`, `thread-activity:${rootId}`]
+                        : []),
+                    ]),
+                  ].map((scopeKey) => ({
+                    key: scopeKey,
+                    frontier: afterReadState.frontiers[scopeKey],
+                    recent: kept.recent[scopeKey],
+                  })),
+                ),
+              };
+            }
             return {
               ...current,
               revision,
@@ -1960,6 +2306,7 @@ export function createReadState({
               floor: kept.floor,
               own: advanceOwn(current.own, frontiers, options.explicit),
               localUnread,
+              capturedUndoVersions: undoVersionUpdate.versions,
               ...(token && { capturedReadUndo: token }),
               ...(quiet && { quiet: (current.quiet ?? 0) + 1 }),
               acceptedRevision:
@@ -1970,8 +2317,21 @@ export function createReadState({
                     : current.acceptedRevision,
             };
           });
+          if (captured) {
+            captured.token = saved.capturedReadUndo ?? captured.token;
+            captured.intentVersions = Object.freeze(
+              Object.fromEntries(
+                intentKeys.map((key) => [
+                  key,
+                  capturedValue(saved.localUnreadIntent ?? {}, key),
+                ]),
+              ),
+            );
+          }
           const publishable =
-            capability === "frontier-sync" && messages.length > 0 && !token;
+            capability === "frontier-sync" &&
+            messages.length > 0 &&
+            !captureUndo;
           health({
             status:
               saved.pending || saved.revision > saved.acceptedRevision
@@ -1981,12 +2341,14 @@ export function createReadState({
           });
           if (publishable) schedule();
           const clearedKeys = [...clearedLocalUnread];
+          // Captured inverses recheck selected intent versions, not the save's
+          // shared channel hint that unrelated messages can advance.
           const undo = undoLocalRead(
             saved.slot,
             saved.revision,
             clearedKeys,
-            currentValid,
-            options.undo,
+            captured ? valid : currentValid,
+            captureUndo && !captured ? undefined : options.undo,
             captured,
             clearedCovers,
           );

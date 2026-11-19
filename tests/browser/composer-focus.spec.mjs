@@ -389,6 +389,7 @@ test.describe("text field focus appearance", () => {
 
       // The same shared recipe must reach ordinary fields, not just composers.
       await page
+        .locator('[data-sidebar-section="channels"]')
         .getByRole("button", { name: "Create channel", exact: true })
         .click();
       const dialog = page.getByRole("dialog");

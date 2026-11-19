@@ -104,6 +104,7 @@ import {
 } from "../../features/search/people-rank";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { knownAgentPubkeys } from "../../features/agents/known";
+import { useBestieConversation } from "./bestie-context";
 import { usePersonDirectory } from "./usePersonDirectory";
 import {
   isChannelUuid,
@@ -1241,6 +1242,7 @@ export function SearchResults({
   // DMs, are where the viewer works with their agents. Removing DM-listed
   // people below only lifts the rest, so a row shown here still shows in the
   // Agents group.
+  const bestieDmId = useBestieConversation(session);
   const newChats = new Map(
     rankPeople(
       people.filter(({ agent }) => agent),
@@ -1538,10 +1540,45 @@ export function SearchResults({
     .filter(({ person }) => !person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
-  const agentResults = rankedPeople
+  // The viewer's Bestie is reached through its DM, so that DM follows its
+  // "New chat" row directly rather than its chats; other agents keep #1471's
+  // order. The row finds Bestie by any of its names (with or without "@"), so
+  // its DM comes from the eligible channels, after the hidden-DM rule but
+  // before the label match and the Direct messages cap, and shows only beside
+  // Bestie's shown "New chat" row. Top results keeps the two together where
+  // it cuts the Agents group short.
+  const bestieDm = channels.find(
+    (channel) =>
+      channel.id === bestieDmId &&
+      channel.channelType === "dm" &&
+      !channel.archived &&
+      !sidebarHidden(channel) &&
+      dmAgent(channel),
+  );
+  const bestieKey = personKey(bestieDm?.participants?.[0] ?? "");
+  const agentRows = rankedPeople
     .filter(({ person }) => person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
+  const bestieShown =
+    !!openAgentSession &&
+    !!bestieDm &&
+    agentRows.some(({ key }) => key === bestieKey);
+  const agentResults = agentRows.flatMap((row) =>
+    bestieShown && bestieDm && row.key === bestieKey
+      ? [
+          row,
+          {
+            ...conversationDestination(bestieDm),
+            score: row.score,
+            attached: true,
+          },
+        ]
+      : [row],
+  );
+  const dmResults = directMessageResults.filter(
+    (channel) => !bestieShown || channel.id !== bestieDm?.id,
+  );
   const suggestions = channels
     .filter(
       (channel) =>
@@ -1863,8 +1900,8 @@ export function SearchResults({
       label: "Direct messages",
       tone: "person" as const,
       icon: UsersIcon,
-      destinations: directMessageResults.map(conversationDestination),
-      best: Math.min(...directMessageResults.map(dmRank)),
+      destinations: dmResults.map(conversationDestination),
+      best: Math.min(...dmResults.map(dmRank)),
     },
     {
       label: "Pages",
@@ -2275,6 +2312,15 @@ export function SearchResults({
           )
         }
         isAction={isSearchAction}
+        completing={
+          pickerPrompt ||
+          showAmbiguousPicker ||
+          showDateChoices ||
+          showChannelPicker
+        }
+        completionPending={
+          showAuthorPicker && !authorAnswer && !authorChoices.length
+        }
         footer={offline}
         peek={{
           // A filter or a conversation's own search asks for messages

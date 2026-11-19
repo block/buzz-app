@@ -19,6 +19,7 @@ import {
   type IdentityNames,
 } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
+import { BestieConversationContext } from "./bestie-context";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
@@ -6266,6 +6267,132 @@ it.each([
   },
 );
 
+it.each([
+  ["deploy in:#cr", "Channels", /crew/, "in:crew deploy "],
+  ["deploy from:@ali", "People", /Alice/, "from:<alice> deploy "],
+  ["deploy after:", "Dates", /Today/, "after:2026-10-07 deploy "],
+])(
+  "completes %s with the highlighted suggestion on Tab",
+  async (query, group, row, completed) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair();
+    const { owner } = operatorSession(viewer, relay, [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ]);
+    const change = vi.fn();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    try {
+      render(
+        <SearchResults
+          {...operatorProps}
+          session={{
+            ...owner.session,
+            searchProfiles: async () => [
+              eventDto(profile(alice, { display_name: "Alice" })),
+            ],
+          }}
+          query={query}
+          onQueryChange={change}
+        />,
+      );
+      const option = await within(
+        await screen.findByRole("group", { name: group }),
+      ).findByRole("option", { name: row });
+      await waitFor(() =>
+        expect(option).toHaveAttribute("aria-selected", "true"),
+      );
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      // Shift+Tab still leaves the field.
+      expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(
+        true,
+      );
+      expect(change).not.toHaveBeenCalled();
+      expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+      expect(change).toHaveBeenLastCalledWith(
+        completed.replace("<alice>", alice.pubkey),
+      );
+    } finally {
+      vi.useRealTimers();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("keeps Tab in the field while a filter's people are still loading", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const { owner } = operatorSession(viewer, relay, []);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={{
+          ...owner.session,
+          searchProfiles: async () => {
+            await held;
+            return [eventDto(profile(alice, { display_name: "Alice" }))];
+          },
+        }}
+        query="deploy from:@ali"
+        onQueryChange={change}
+      />,
+    );
+    expect(await screen.findByText("Searching people…")).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).not.toHaveBeenCalled();
+    release();
+    const option = await within(
+      await screen.findByRole("group", { name: "People" }),
+    ).findByRole("option", { name: /Alice/ });
+    await waitFor(() =>
+      expect(option).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).toHaveBeenLastCalledWith(`from:${alice.pubkey} deploy `);
+  } finally {
+    release();
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("moves focus on Tab when a filter has no suggestion to complete", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const { owner } = operatorSession(viewer, relay, []);
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={owner.session}
+        query="from:@a"
+        onQueryChange={change}
+      />,
+    );
+    expect(
+      await screen.findByText("Type at least 2 characters to search people."),
+    ).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
+    expect(change).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("turns date and channel picks into chips that Backspace edits", async () => {
   const relay = keypair(),
     viewer = keypair();
@@ -8205,6 +8332,387 @@ it.each([true, false])(
     }
   },
 );
+
+/**
+ * Command-K for a viewer whose Bestie is Scout (DM "bestie-dm", chat "Plan the
+ * week") and who also owns Scotia (DM "other-dm", chat "Fix the build").
+ * `humans` adds that many DMs with people whose names match "sco" too, and
+ * `hideBestieDm` hides Bestie's DM from the sidebar by the relay's list.
+ */
+function renderBestieSearch({
+  query,
+  bestieProfile = "Scout",
+  humans = 0,
+  hideBestieDm = false,
+  extraOwnedAgents = 0,
+}: {
+  query: string;
+  bestieProfile?: string;
+  humans?: number;
+  hideBestieDm?: boolean;
+  extraOwnedAgents?: number;
+}) {
+  const relay = keypair(),
+    viewer = keypair(),
+    bestie = keypair(),
+    other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const dm = (id: string, member: string, at = 1700000000) => [
+    metadata(relay, id, "opaque", at, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const chat = (id: string, name: string, at: number, member: string) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const people = Array.from({ length: humans }, (_, index) => ({
+    key: keypair(),
+    name: `Scoby ${String.fromCharCode(97 + index)}`,
+  }));
+  const extraAgents = Array.from({ length: extraOwnedAgents }, (_, index) => ({
+    key: keypair(),
+    name: `Scout ${String.fromCharCode(65 + index)}`,
+  }));
+  const discovery = [
+    ...dm("bestie-dm", bestie.pubkey),
+    ...dm("other-dm", other.pubkey),
+    ...chat("bestie-chat", "Plan the week", 1700000002, bestie.pubkey),
+    ...chat("other-chat", "Fix the build", 1700000003, other.pubkey),
+    profile(bestie, { name: bestieProfile, is_agent: true }),
+    profile(other, { name: "Scotia", is_agent: true }),
+    ...extraAgents.flatMap(({ key, name }, index) => [
+      ...dm(`extra-agent-dm-${index}`, key.pubkey),
+      profile(key, { name, is_agent: true }),
+    ]),
+    ...people.flatMap(({ key, name }, index) => [
+      ...dm(`human-dm-${index}`, key.pubkey, 1700000010 + index),
+      profile(key, { name }),
+    ]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const mine = [
+    { pubkey: bestie.pubkey, name: "Scout", managed: true },
+    { pubkey: other.pubkey, name: "Scotia", managed: true },
+    ...extraAgents.map(({ key, name }) => ({
+      pubkey: key.pubkey,
+      name,
+      managed: true,
+    })),
+  ];
+  const choices = { ...source.snapshot(), identities: mine, selectable: mine };
+  const lifecycle = owner.session.channelLifecycle;
+  const visibility = {
+    ...lifecycle.snapshot(),
+    status: "ready" as const,
+    hidden: Object.freeze(["bestie-dm"]),
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+    ...(hideBestieDm
+      ? {
+          channelLifecycle: {
+            ...lifecycle,
+            snapshot: () => visibility,
+            subscribe: () => () => {},
+          },
+        }
+      : {}),
+  } as typeof owner.session;
+  const openAgentSession = vi.fn();
+  const openConversation = vi.fn();
+  render(
+    <BestieConversationContext value={{ session, channelId: "bestie-dm" }}>
+      <SearchResults
+        session={session}
+        query={query}
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={openConversation}
+        openAgentSession={openAgentSession}
+      />
+    </BestieConversationContext>,
+  );
+  return {
+    openAgentSession,
+    openConversation,
+    dispose: () => {
+      cleanup();
+      owner.dispose();
+    },
+  };
+}
+
+it("keeps the Bestie DM in Top results when the cut hides its New chat too", async () => {
+  // Five better-matching agents put Bestie's New chat sixth, past the five
+  // rows Top results shows of its lead group. Its DM is not listed under
+  // Direct messages, so Top results must still show it.
+  localStorage.clear();
+  const { openConversation, dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 5,
+  });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() => {
+      const rows = agents.getAllByRole("option").map((row) => row.textContent);
+      expect(rows).toEqual([
+        ...Array.from({ length: 5 }, () =>
+          expect.stringMatching(/Scout [A-E].*New chat/),
+        ),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]);
+    });
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("option", { name: /Z Scout.*Direct message/ }),
+    );
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
+
+it("puts the Bestie DM back under its New chat when Agents is shown whole", async () => {
+  localStorage.clear();
+  const { dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 5,
+  });
+  try {
+    await screen.findByRole("group", { name: "Agents" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show all Agents" }),
+    );
+    const expanded = within(screen.getByRole("group", { name: "Agents" }));
+    await waitFor(() =>
+      expect(
+        expanded
+          .getAllByRole("option")
+          .slice(5, 7)
+          .map((row) => row.textContent),
+      ).toEqual([
+        expect.stringMatching(/Z Scout.*New chat/),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]),
+    );
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
+
+it("keeps the Bestie DM under its New chat when Top results cuts Agents after it", async () => {
+  // Four better-matching agents put Bestie's New chat fifth, the last row
+  // Top results shows of its lead group; its DM is not listed under Direct
+  // messages, so it must stay with that row.
+  localStorage.clear();
+  const { dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 4,
+  });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() => {
+      const rows = agents.getAllByRole("option").map((row) => row.textContent);
+      expect(rows.slice(0, 4)).toEqual(
+        Array.from({ length: 4 }, () =>
+          expect.stringMatching(/Scout [A-D].*New chat/),
+        ),
+      );
+      expect(rows.slice(4)).toEqual([
+        expect.stringMatching(/Z Scout.*New chat/),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]);
+    });
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+    // Those six rows are the whole group, so nothing is left to show.
+    expect(
+      screen.queryByRole("button", { name: "Show all Agents" }),
+    ).toBeNull();
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
+
+it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", async () => {
+  const { openAgentSession, openConversation, dispose } = renderBestieSearch({
+    query: "sco",
+  });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() =>
+      expect(
+        agents.getAllByRole("option").map((row) => row.textContent),
+      ).toEqual([
+        expect.stringMatching(/Scout.*New chat/),
+        expect.stringMatching(/Scout.*Direct message/),
+        expect.stringMatching(/Scotia.*New chat/),
+      ]),
+    );
+    await screen.findByRole("group", { name: "Chats" });
+    const options = screen.getAllByRole("option");
+    const bestieDm = agents.getAllByRole("option")[1];
+    assert(bestieDm);
+    // The DM follows its new chat at once, before any chat.
+    expect(options.indexOf(bestieDm)).toBe(1);
+    // Other agents keep their chats-then-DM order, and the Bestie DM shows once.
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible();
+    expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+    fireEvent.click(bestieDm);
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+    expect(openAgentSession).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
+});
+
+it.each([
+  {
+    // "@" finds people, not channel labels, so the DM itself does not match.
+    name: "the @ query @scou",
+    query: "@scou",
+    bestieProfile: "Scout",
+    humans: 0,
+    label: "Scout",
+  },
+  {
+    // Here Scotia's New chat row shows as well.
+    name: "the @ query @sco",
+    query: "@sco",
+    bestieProfile: "Scout",
+    humans: 0,
+    label: "Scout",
+  },
+  {
+    // Bestie's profile name differs from its agent name; "sco" finds the
+    // agent by that name only, and the DM's label does not match.
+    name: "a query that finds Bestie by its agent name only",
+    query: "sco",
+    bestieProfile: "Trail Guide",
+    humans: 0,
+    label: "Trail Guide",
+  },
+  {
+    // Eight matching DMs with people rank ahead of the agents' DMs, so with
+    // Scotia's DM the Bestie DM falls past the eight Direct messages rows.
+    name: "more matching DMs than Direct messages shows",
+    query: "sco",
+    bestieProfile: "Scout",
+    humans: 8,
+    label: "Scout",
+  },
+])(
+  "puts the viewer's Bestie DM under its new chat for $name",
+  async ({ query, bestieProfile, humans, label }) => {
+    const { openAgentSession, openConversation, dispose } = renderBestieSearch({
+      query,
+      bestieProfile,
+      humans,
+    });
+    try {
+      const agents = within(
+        await screen.findByRole("group", { name: "Agents" }),
+      );
+      const newChat = new RegExp(`${label}.*New chat`);
+      const direct = new RegExp(`${label}.*Direct message`);
+      await waitFor(() => {
+        const rows = agents
+          .getAllByRole("option")
+          .map((row) => row.textContent);
+        const at = rows.findIndex((row) => newChat.test(row ?? ""));
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(rows[at + 1]).toMatch(direct);
+      });
+      const rows = agents.getAllByRole("option");
+      const at = rows.findIndex((row) => newChat.test(row.textContent ?? ""));
+      const [bestieNewChat, bestieDm] = rows.slice(at, at + 2);
+      assert(bestieNewChat && bestieDm);
+      const options = screen.getAllByRole("option");
+      expect(options.indexOf(bestieDm)).toBe(
+        options.indexOf(bestieNewChat) + 1,
+      );
+      // The Bestie DM shows once.
+      expect(
+        screen
+          .getAllByRole("option")
+          .filter((row) => direct.test(row.textContent ?? "")),
+      ).toEqual([bestieDm]);
+      fireEvent.click(bestieDm);
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+      expect(openAgentSession).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  },
+);
+
+it("promotes no Bestie DM that the sidebar hides", async () => {
+  const { dispose } = renderBestieSearch({ query: "sco", hideBestieDm: true });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    await waitFor(() =>
+      expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible(),
+    );
+    expect(agents.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      [
+        expect.stringMatching(/Scout.*New chat/),
+        expect.stringMatching(/Scotia.*New chat/),
+      ],
+    );
+    expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+    expect(
+      screen
+        .getAllByRole("option")
+        .filter((row) => /Scout.*Direct message/.test(row.textContent ?? "")),
+    ).toEqual([]);
+  } finally {
+    dispose();
+  }
+});
 
 it.each([
   {

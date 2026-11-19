@@ -875,6 +875,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_set_protection,
+        app_agents::app_agent_remove_protection,
+        app_agents::app_agent_remove_protection_defaults,
         app_agents::app_agent_protection_defaults,
         app_agents::app_agent_set_protection_defaults,
         app_agents::app_agent_portable,

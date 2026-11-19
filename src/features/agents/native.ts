@@ -156,6 +156,10 @@ export type AgentsNative = {
     provider: string,
     policy: unknown | null,
   ): Promise<void>;
+  /** Removes its protection if the owner confirms in a native dialog. */
+  removeProtection?(pubkey: string, revision: number): Promise<boolean>;
+  /** Clears protection defaults if the owner confirms in a native dialog. */
+  removeProtectionDefaults?(owner: string, revision: number): Promise<boolean>;
   /** Sets its profile picture in one community, an HTTPS image URL, or with
    * `null` clears it. */
   setPicture(member: Membership, picture: string | null): Promise<void>;
@@ -284,6 +288,10 @@ export const nativeAgents = (): AgentsNative | undefined =>
             provider,
             policy,
           }),
+        removeProtection: (pubkey, revision) =>
+          invoke("app_agent_remove_protection", { pubkey, revision }),
+        removeProtectionDefaults: (owner, revision) =>
+          invoke("app_agent_remove_protection_defaults", { owner, revision }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         setPicture: ({ pubkey, relay }, picture) =>
           invoke("app_agent_set_picture", { pubkey, relay, picture }),

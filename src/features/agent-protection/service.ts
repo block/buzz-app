@@ -131,6 +131,7 @@ export class AgentProtectionService extends Service {
     }
   >();
   private epoch = 0;
+  private changes = new Set<() => void>();
   private modelProviders = new Map<string, ReviewModelProvider>();
   constructor(
     ctx: Context,
@@ -162,7 +163,20 @@ export class AgentProtectionService extends Service {
     ctx.effect(() => () => {
       for (const provider of this.providers.values()) provider.abort.abort();
       this.providers.clear();
+      this.changed();
     });
+  }
+  private changed() {
+    for (const listener of this.changes) listener();
+  }
+  /** Calls `listener` when a protection plugin starts or stops. */
+  subscribe(listener: () => void) {
+    this.changes.add(listener);
+    return () => void this.changes.delete(listener);
+  }
+  /** Whether the plugin `provider` is running as a protection provider. */
+  running(provider: string) {
+    return this.providers.has(provider);
   }
   private owner() {
     const owner = this.current().owner;
@@ -343,9 +357,12 @@ export class AgentProtectionService extends Service {
     };
     this.providers.get(id)?.abort.abort();
     this.providers.set(id, next);
+    this.changed();
     const dispose = () => {
       next.abort.abort();
-      if (this.providers.get(id) === next) this.providers.delete(id);
+      if (this.providers.get(id) !== next) return;
+      this.providers.delete(id);
+      this.changed();
     };
     this.ctx.effect(() => dispose);
     return { dispose };

@@ -495,6 +495,10 @@ function setup(
     execution: async () => undefined,
     harness: {} as Agents["harness"],
     subscribeSteps: () => () => {},
+    protectionStranded: () => false,
+    removeStrandedProtection: async () => false,
+    strandedDefaults: async () => undefined,
+    removeStrandedDefaults: async () => false,
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {

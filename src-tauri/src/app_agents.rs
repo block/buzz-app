@@ -703,6 +703,80 @@ pub(crate) async fn app_agent_set_protection(
     .await
 }
 
+/// The owner's native consent to drop protection its plugin can no longer
+/// change. The dialog names what storage holds, not what the caller sent.
+fn remove_protection_dialog(subject: &str, provider: &str) -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Remove protection?")
+        .set_description(format!("{subject} protected by {provider}, which isn't running, so it can't run. Removing protection lets it run without security checks.\n\nTo keep it protected, install or turn on that plugin instead."))
+        .set_buttons(rfd::MessageButtons::OkCancelCustom("Remove protection".into(), "Cancel".into()))
+        .show();
+    result == rfd::MessageDialogResult::Ok
+        || result == rfd::MessageDialogResult::Custom("Remove protection".into())
+}
+
+/// Removes an agent's protection once the owner confirms natively, so no
+/// plugin can unprotect an agent. Resolves to whether it was removed.
+#[tauri::command]
+pub(crate) async fn app_agent_remove_protection(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    revision: u64,
+) -> Result<bool, String> {
+    let agents = state.agents.clone()?;
+    let hosting = state.hosting.clone();
+    let prompt = state.protection_upgrade.clone();
+    blocking(move || {
+        let _prompt = prompt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(row) = agents
+            .list()?
+            .into_iter()
+            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+        else {
+            return Err("No such agent on this device".into());
+        };
+        let Some(binding) = row.protection else {
+            return Ok(false);
+        };
+        if !remove_protection_dialog(&format!("{} is", row.name), &binding.provider) {
+            return Ok(false);
+        }
+        hosting.protecting(&pubkey, || {
+            agents.set_protection(&pubkey, revision, &binding.provider, None)
+        })?;
+        Ok(true)
+    })
+    .await
+}
+
+/// Clears the owner's protection defaults once the owner confirms natively.
+#[tauri::command]
+pub(crate) async fn app_agent_remove_protection_defaults(
+    host: tauri::State<'_, AppAgentHost>,
+    owner: String,
+    revision: u64,
+) -> Result<bool, String> {
+    let agents = host.agents()?;
+    let prompt = host.protection_upgrade.clone();
+    blocking(move || {
+        let _prompt = prompt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(binding) = agents.protection_defaults(&owner)?.defaults else {
+            return Ok(false);
+        };
+        if !remove_protection_dialog("New agents are", &binding.provider) {
+            return Ok(false);
+        }
+        agents.set_protection_defaults(&owner, revision, &binding.provider, None)?;
+        Ok(true)
+    })
+    .await
+}
+
 /// Identities earlier agent systems saved on this machine, as Agents could take
 /// them over; the caller leaves out its own.
 #[tauri::command]

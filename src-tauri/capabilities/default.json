@@ -155,6 +155,8 @@
     "allow-app-agent-set-protection",
     "allow-app-agent-protection-defaults",
     "allow-app-agent-set-protection-defaults",
+    "allow-app-agent-remove-protection",
+    "allow-app-agent-remove-protection-defaults",
     "allow-app-agent-create",
     "allow-app-agent-portable",
     "allow-app-agent-port",

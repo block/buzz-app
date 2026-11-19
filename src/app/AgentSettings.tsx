@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
@@ -35,6 +35,72 @@ const delayLabel = (minutes: number) =>
     ? `${minutes} minutes`
     : `${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
 
+/** Protection defaults whose plugin isn't running, which new agents would
+ * inherit. Removing them asks the owner in a native dialog. */
+function ProtectionDefaultsRecovery({
+  agents,
+}: {
+  agents: Pick<
+    Agents,
+    "subscribe" | "strandedDefaults" | "removeStrandedDefaults"
+  >;
+}) {
+  const [stranded, setStranded] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let current = true;
+    const check = () =>
+      void agents.strandedDefaults().then(
+        (found) => current && setStranded(!!found),
+        () => current && setStranded(false),
+      );
+    check();
+    const stop = agents.subscribe(check);
+    return () => {
+      current = false;
+      stop();
+    };
+  }, [agents]);
+  if (!stranded) return null;
+  const remove = async () => {
+    setRemoving(true);
+    setError("");
+    try {
+      if (await agents.removeStrandedDefaults()) setStranded(false);
+    } catch (reason) {
+      setError(
+        `Couldn't remove protection: ${reason instanceof Error ? reason.message : String(reason)}`,
+      );
+    } finally {
+      setRemoving(false);
+    }
+  };
+  return (
+    <div className="mt-section-gap">
+      <SettingsGroup>
+        <PreferenceRow
+          title="Protection for new agents"
+          subtitle={
+            error ||
+            "New agents get protection from a plugin that isn't installed or is turned off, so they can't run. Install or turn on the plugin, or remove this protection."
+          }
+          trailing={
+            <Button
+              size="compact"
+              variant="outline"
+              loading={removing}
+              onClick={() => void remove()}
+            >
+              Remove protection
+            </Button>
+          }
+        />
+      </SettingsGroup>
+    </div>
+  );
+}
+
 export function AgentSettings({
   agents,
   active = true,
@@ -68,6 +134,7 @@ export function AgentSettings({
           onProvider={onProvider}
         />
       )}
+      {agents && active && <ProtectionDefaultsRecovery agents={agents} />}
       <div className="mt-section-gap">
         <InlineHeader title="Agent behavior" />
         <SettingsGroup>

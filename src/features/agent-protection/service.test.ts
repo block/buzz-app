@@ -790,3 +790,15 @@ it("streams object actions beyond the former request cap", async () => {
     );
   expect(check).toHaveBeenCalledOnce();
 });
+
+it("reports when a protection plugin starts and stops", async () => {
+  const f = await fixture();
+  const changed = vi.fn();
+  f.security.subscribe(changed);
+  expect(f.security.running("security.test")).toBe(false);
+  const registration = registerChecker(f, { processProtection });
+  expect(f.security.running("security.test")).toBe(true);
+  registration.dispose();
+  expect(f.security.running("security.test")).toBe(false);
+  expect(changed).toHaveBeenCalledTimes(2);
+});

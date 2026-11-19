@@ -1,6 +1,6 @@
 // Owner actions on an agent that every surface showing it offers: the
 // Agents Build view and the profile panel.
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -275,6 +275,56 @@ export function AgentRemoveHere({
         ) : null}
       </Dialog>
     </>
+  );
+}
+
+/** Protection whose plugin isn't running, which only that plugin could
+ * otherwise change. Removing it asks the owner in a native dialog. */
+export function AgentProtectionRecovery({
+  agents,
+  agent,
+}: {
+  agents: Pick<
+    Agents,
+    "subscribe" | "protectionStranded" | "removeStrandedProtection"
+  >;
+  agent: Agent;
+}) {
+  const stranded = useSyncExternalStore(agents.subscribe, () =>
+    agents.protectionStranded(agent.key),
+  );
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState("");
+  if (!stranded) return null;
+  const remove = async () => {
+    setRemoving(true);
+    setError("");
+    try {
+      await agents.removeStrandedProtection(agent.key);
+    } catch (reason) {
+      setError(`Couldn't remove protection: ${message(reason)}`);
+    } finally {
+      setRemoving(false);
+    }
+  };
+  return (
+    <PreferenceRow
+      title="Protection"
+      subtitle={
+        error ||
+        "Its protection plugin isn't installed or is turned off, so it can't run. Install or turn on the plugin, or remove protection."
+      }
+      trailing={
+        <Button
+          size="compact"
+          variant="outline"
+          loading={removing}
+          onClick={() => void remove()}
+        >
+          Remove protection
+        </Button>
+      }
+    />
   );
 }
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
-import type { EventData } from "../relay/events";
 import {
   LOADING_PINS,
   pinLists,
@@ -32,17 +31,21 @@ export type PinnedMessages = Readonly<{
   rows: readonly ChannelMessage[];
 }>;
 
-/** An open panel also reloads on this period, so a message erased without a
- * list change leaves it. Jittered so open panels do not read together. */
+/** An open panel also reloads every row on this period, so a message erased
+ * without a list change leaves it. Jittered so open panels do not read
+ * together. */
 const REFRESH_MS = 10 * 60_000;
-/** Deletions in the channel reload the rows, since one may withdraw an edit
- * a row shows; edits reload the rows they name. */
-const DELETION_KINDS = [5, 9005];
+/** Live edits and deletions wait this long, so a burst becomes one read. */
+const SETTLE_MS = 250;
 const EDIT_KIND = 40003;
+const DELETION_KINDS = [5, 9005];
 
-/** Loads the rows behind `ids` when the list changes, when one of them is
- * edited or deleted, on `attempt`, and periodically. Earlier rows the list
- * still names stay shown while a reload runs or after it fails. */
+/** Loads the rows behind `ids`. A list change reads only ids not loaded yet;
+ * a live edit reloads the pin it names, and a deletion the pins whose edit it
+ * withdraws (a deleted pin leaves the list itself). `attempt` and the period
+ * reload every row. One read runs at a time; triggers meanwhile wait for it.
+ * Earlier rows the list still names stay shown while a read runs or after it
+ * fails. */
 export function usePinnedRows(
   source: PinSource,
   channelId: string,
@@ -54,64 +57,120 @@ export function usePinnedRows(
     status: "loading",
     rows: [],
   });
-  const [tick, setTick] = useState(0);
+  const [loader, setLoader] = useState<ReturnType<typeof rowLoader>>();
   useEffect(() => {
-    const timer = setInterval(
-      () => setTick((value) => value + 1),
-      REFRESH_MS + Math.random() * 60_000,
-    );
-    return () => clearInterval(timer);
-  }, []);
+    const current = rowLoader(source, channelId, setState);
+    setLoader(current);
+    return () => current.stop();
+  }, [source, channelId]);
   useEffect(() => {
-    const wanted = new Set(key ? key.split(",") : []);
-    const tagged = (event: EventData, name: string, values: Set<string>) =>
-      event.tags.some(
-        ([tag, value]) => tag === name && !!value && values.has(value),
-      );
-    const channel = new Set([channelId]);
-    // Removing a reaction never changes a row's text.
-    const reaction = new Set(["7"]);
-    return source.subscribeLive(
-      ({ events }) => {
-        if (
-          wanted.size &&
-          events.some((event) =>
-            DELETION_KINDS.includes(event.kind)
-              ? tagged(event, "h", channel) && !tagged(event, "k", reaction)
-              : event.kind === EDIT_KIND && tagged(event, "e", wanted),
-          )
-        )
-          setTick((value) => value + 1);
-      },
-      { replay: true },
-    );
-  }, [source, channelId, key]);
+    loader?.want(key ? key.split(",") : []);
+  }, [loader, key]);
   useEffect(() => {
-    void tick;
     void attempt;
-    const controller = new AbortController();
-    const wanted = key ? key.split(",") : [];
-    const named = new Set(wanted);
-    const kept = (prior: PinnedMessages) =>
-      prior.rows.filter((row) => named.has(row.id));
-    setState((prior) => ({ status: "loading", rows: kept(prior) }));
-    readPinnedMessages(source, channelId, wanted, controller.signal).then(
-      (found) => {
-        if (controller.signal.aborted) return;
-        setState({
-          status: "ready",
-          rows: wanted.flatMap((id) => {
-            const row = found.get(id);
-            return row ? [row] : [];
-          }),
-        });
-      },
-      () => {
-        if (!controller.signal.aborted)
-          setState((prior) => ({ status: "error", rows: kept(prior) }));
-      },
-    );
-    return () => controller.abort();
-  }, [source, channelId, key, attempt, tick]);
+    loader?.reload();
+  }, [loader, attempt]);
   return state;
+}
+
+function rowLoader(
+  source: PinSource,
+  channelId: string,
+  publish: (state: PinnedMessages) => void,
+) {
+  const controller = new AbortController();
+  /** Read rows by id; null when the relay no longer returns it. */
+  const rows = new Map<string, ChannelMessage | null>();
+  /** Edits read, by id, to the pins they name. */
+  const edits = new Map<string, readonly string[]>();
+  const dirty = new Set<string>();
+  let ids: readonly string[] = [];
+  let reading = false;
+  let failed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const show = () =>
+    publish({
+      status:
+        reading || dirty.size
+          ? "loading"
+          : failed || ids.some((id) => !rows.has(id))
+            ? "error"
+            : "ready",
+      rows: ids.flatMap((id) => {
+        const row = rows.get(id);
+        return row ? [row] : [];
+      }),
+    });
+  const schedule = (delay: number) => {
+    if (!reading && !timer && dirty.size)
+      timer = setTimeout(() => void run(), delay);
+    show();
+  };
+  async function run() {
+    timer = undefined;
+    const batch = [...dirty];
+    dirty.clear();
+    reading = true;
+    show();
+    try {
+      const found = await readPinnedMessages(
+        source,
+        channelId,
+        batch,
+        controller.signal,
+      );
+      for (const [edit, pins] of edits)
+        if (pins.some((id) => batch.includes(id))) edits.delete(edit);
+      for (const [edit, pins] of found.edits) edits.set(edit, pins);
+      for (const id of batch)
+        if (named.has(id)) rows.set(id, found.rows.get(id) ?? null);
+      failed = false;
+    } catch {
+      failed = true;
+    }
+    reading = false;
+    if (!controller.signal.aborted) schedule(0);
+  }
+  const named = new Set<string>();
+  const stopLive = source.subscribeLive(
+    ({ events }) => {
+      const before = dirty.size;
+      for (const event of events)
+        for (const [name, id] of event.tags) {
+          if (name !== "e" || !id) continue;
+          if (event.kind === EDIT_KIND && named.has(id)) dirty.add(id);
+          if (DELETION_KINDS.includes(event.kind))
+            for (const pin of edits.get(id) ?? [])
+              if (named.has(pin)) dirty.add(pin);
+        }
+      if (dirty.size > before) schedule(SETTLE_MS);
+    },
+    { replay: true },
+  );
+  const interval = setInterval(
+    () => reload(),
+    REFRESH_MS + Math.random() * 60_000,
+  );
+  function reload() {
+    for (const id of ids) dirty.add(id);
+    schedule(0);
+  }
+  return {
+    want(next: readonly string[]) {
+      ids = next;
+      named.clear();
+      for (const id of next) named.add(id);
+      for (const id of rows.keys()) if (!named.has(id)) rows.delete(id);
+      for (const id of dirty) if (!named.has(id)) dirty.delete(id);
+      for (const id of next) if (!rows.has(id)) dirty.add(id);
+      schedule(0);
+    },
+    reload,
+    stop() {
+      controller.abort();
+      clearTimeout(timer);
+      clearInterval(interval);
+      stopLive();
+    },
+  };
 }

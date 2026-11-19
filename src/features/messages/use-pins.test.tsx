@@ -61,7 +61,12 @@ it("reads a failed list once however often its readers render", async () => {
   expect(s.value.read).toHaveBeenCalledTimes(1);
 });
 
-it("keeps only rows the list still names when a reload fails", async () => {
+const idsRead = (s: ReturnType<typeof source>) =>
+  vi
+    .mocked(s.value.read)
+    .mock.calls.flatMap(([[filter]]) => (filter?.ids ? [filter.ids] : []));
+
+it("reads only pins it has not loaded when the list changes", async () => {
   let fail = false;
   const s = source(async ([filter]) => {
     if (fail) throw new Error("offline");
@@ -69,72 +74,117 @@ it("keeps only rows the list still names when a reload fails", async () => {
   });
   const { result, rerender } = renderHook(
     ({ ids }) => usePinnedRows(s.value, "c", ids),
-    { initialProps: { ids: [one, two] } },
+    { initialProps: { ids: [one] } },
   );
-  await waitFor(() => expect(result.current.rows).toHaveLength(2));
-  fail = true;
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  rerender({ ids: [two, one] });
+  await waitFor(() =>
+    expect(result.current.rows.map((row) => row.id)).toEqual([two, one]),
+  );
+  // An unpin reads nothing.
   rerender({ ids: [one] });
+  expect(result.current.rows.map((row) => row.id)).toEqual([one]);
+  expect(idsRead(s)).toEqual([[one], [two]]);
+  // A pin that fails to load keeps the rows already shown.
+  fail = true;
+  rerender({ ids: [two, one] });
   await waitFor(() => expect(result.current.status).toBe("error"));
   expect(result.current.rows.map((row) => row.id)).toEqual([one]);
 });
 
-it("reloads a pinned row when it is edited live", async () => {
-  let content = "before";
+it("reloads only the pin an edit or a withdrawn edit names", async () => {
+  vi.useFakeTimers();
+  try {
+    const editId = "e".repeat(64);
+    let content = "before";
+    const s = source(async ([filter]) => {
+      if (filter?.ids) return filter.ids.map((id) => message(id));
+      return content === "before" || !filter?.["#e"]?.includes(one)
+        ? []
+        : [
+            {
+              ...message(editId, content),
+              kind: 40003,
+              created_at: 101,
+              tags: [
+                ["h", "c"],
+                ["e", one],
+              ],
+            },
+          ];
+    });
+    const { result } = renderHook(() =>
+      usePinnedRows(s.value, "c", [one, two]),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.status).toBe("ready");
+    content = "after";
+    const edit = {
+      ...message("f".repeat(64)),
+      kind: 40003,
+      tags: [["e", one]],
+    };
+    // A burst of edits is one read of the pin they name.
+    act(() => s.deliver([edit]));
+    act(() => s.deliver([edit]));
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.rows[0]?.content).toBe("after");
+    expect(idsRead(s)).toEqual([[one, two], [one]]);
+    // An edit of another message, or a deletion of anything but a loaded
+    // edit, reads nothing.
+    const deletion = (target: string) => ({
+      ...message("9".repeat(64)),
+      kind: 5,
+      tags: [
+        ["h", "c"],
+        ["e", target],
+      ],
+    });
+    act(() =>
+      s.deliver([
+        { ...edit, tags: [["e", "3".repeat(64)]] },
+        deletion("4".repeat(64)),
+      ]),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(idsRead(s)).toHaveLength(2);
+    content = "before";
+    act(() => s.deliver([deletion(editId)]));
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.rows[0]?.content).toBe("1");
+    expect(idsRead(s)).toEqual([[one, two], [one], [one]]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("holds triggers that arrive during a read for one read after it", async () => {
+  const gates: (() => void)[] = [];
   const s = source(async ([filter]) => {
-    if (filter?.ids) return [message(one)];
-    return content === "before"
-      ? []
-      : [
-          {
-            ...message("e".repeat(64), content),
-            kind: 40003,
-            created_at: 101,
-            tags: [
-              ["h", "c"],
-              ["e", one],
-            ],
-          },
-        ];
+    if (filter?.ids) await new Promise<void>((resolve) => gates.push(resolve));
+    return filter?.ids ? filter.ids.map((id) => message(id)) : [];
   });
-  const { result } = renderHook(() => usePinnedRows(s.value, "c", [one]));
-  await waitFor(() => expect(result.current.status).toBe("ready"));
-  content = "after";
+  const { result, rerender } = renderHook(
+    ({ attempt }) => usePinnedRows(s.value, "c", [one, two], attempt),
+    { initialProps: { attempt: 0 } },
+  );
+  await waitFor(() => expect(gates).toHaveLength(1));
+  rerender({ attempt: 1 });
   act(() =>
     s.deliver([
       { ...message("f".repeat(64)), kind: 40003, tags: [["e", one]] },
     ]),
   );
-  await waitFor(() => expect(result.current.rows[0]?.content).toBe("after"));
-  // An edit of another message does not reload.
-  const reads = vi.mocked(s.value.read).mock.calls.length;
-  act(() =>
-    s.deliver([
-      { ...message("f".repeat(64)), kind: 40003, tags: [["e", two]] },
-    ]),
-  );
-  expect(vi.mocked(s.value.read).mock.calls.length).toBe(reads);
-  // Withdrawing the edit names only the edit, so any deletion in the channel
-  // reloads; one in another channel does not.
-  content = "before";
-  const deletion = (channel: string) => ({
-    ...message("9".repeat(64)),
-    kind: 5,
-    tags: [
-      ["h", channel],
-      ["e", "e".repeat(64)],
-    ],
-  });
-  act(() => s.deliver([deletion("other")]));
-  // Nor does removing a reaction in this channel.
-  act(() =>
-    s.deliver([
-      {
-        ...deletion("c"),
-        tags: [...deletion("c").tags, ["k", "7"]],
-      },
-    ]),
-  );
-  expect(vi.mocked(s.value.read).mock.calls.length).toBe(reads);
-  act(() => s.deliver([deletion("c")]));
-  await waitFor(() => expect(result.current.rows[0]?.content).toBe("1"));
+  try {
+    expect(gates).toHaveLength(1);
+  } finally {
+    act(() => gates.shift()?.());
+  }
+  await waitFor(() => expect(gates).toHaveLength(1));
+  act(() => gates.shift()?.());
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  expect(idsRead(s)).toEqual([
+    [one, two],
+    [one, two],
+  ]);
 });

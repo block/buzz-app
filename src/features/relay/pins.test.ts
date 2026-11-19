@@ -253,7 +253,7 @@ it("loads pinned messages with edits applied and drops ids the relay no longer r
     filters.push([...read]);
     return [message, edit];
   });
-  const rows = await readPinnedMessages(
+  const { rows } = await readPinnedMessages(
     s.value,
     "c",
     [one, two],
@@ -306,7 +306,7 @@ it("pages edits newest first over every pin, whoever references them", async () 
       ? newer
       : [edit(author, [two], 900, "two edited")];
   });
-  const rows = await readPinnedMessages(
+  const { rows } = await readPinnedMessages(
     s.value,
     "c",
     [one, two],
@@ -431,7 +431,7 @@ it("pages through one second holding more than a full page", async () => {
       return { events: page, relayCount: page.length };
     },
   };
-  const rows = await readPinnedMessages(
+  const { rows } = await readPinnedMessages(
     value,
     "c",
     [one, two],
@@ -491,7 +491,7 @@ it("pages past filtered full pages and a second shared by two pages", async () =
       };
     },
   };
-  const rows = await readPinnedMessages(
+  const { rows } = await readPinnedMessages(
     value,
     "c",
     [one, two],
@@ -541,7 +541,7 @@ it("folds pins with the session's signing authority and agent owners", async () 
       profiles: { owner: (pubkey) => (pubkey === agent ? owner : undefined) },
     },
   );
-  const rows = await readPinnedMessages(
+  const { rows } = await readPinnedMessages(
     s.value,
     "c",
     [one, two],

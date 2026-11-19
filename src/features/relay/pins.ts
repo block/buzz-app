@@ -263,15 +263,19 @@ export function pinLists(source: PinSource) {
 
 /** Pinned messages by id, with their edits and deletions applied as the
  * timeline applies them. Reads are strong, since a reload may follow an
- * observed list change, edit or deletion and must not be served older state. An id the relay no longer returns is absent from the
- * map: deleted or erased. A failed read rejects; callers must not treat it as
- * a deletion. */
+ * observed list change, edit or deletion and must not be served older state. An id the relay no longer returns is absent from
+ * `rows`: deleted or erased. `edits` maps each edit read to the pins it names,
+ * so a later deletion of one reloads only those. A failed read rejects;
+ * callers must not treat it as a deletion. */
 export async function readPinnedMessages(
   source: PinSource,
   channelId: string,
   ids: readonly string[],
   signal: AbortSignal,
-): Promise<ReadonlyMap<string, ChannelMessage>> {
+): Promise<{
+  rows: ReadonlyMap<string, ChannelMessage>;
+  edits: ReadonlyMap<string, readonly string[]>;
+}> {
   const settings = { signal, priority: "background" } as const;
   const chunks: string[][] = [];
   for (let index = 0; index < ids.length; index += READ_CHUNK)
@@ -325,7 +329,16 @@ export async function readPinnedMessages(
     )
   ).flat();
   const wanted = new Set(ids);
-  return new Map(
+  const edits = new Map<string, string[]>();
+  for (const event of events)
+    if (event.kind === 40003)
+      edits.set(
+        event.id,
+        event.tags.flatMap(([name, id]) =>
+          name === "e" && id && wanted.has(id) ? [id] : [],
+        ),
+      );
+  const rows = new Map(
     foldMessages(channelId, source.relayAuthor ?? "", events, {
       includeReplies: true,
       signingAuthority: source.workflowAuthority,
@@ -334,4 +347,5 @@ export async function readPinnedMessages(
       .filter((row) => wanted.has(row.id))
       .map((row) => [row.id, row]),
   );
+  return { rows, edits };
 }

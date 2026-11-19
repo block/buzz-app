@@ -1064,6 +1064,23 @@ declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
 which uploads of local files use. The kit grants nothing `ctx.agents` and
 `ctx.host` do not already give the plugin.
 
+An agent type can list `skillFolders`: up to eight folders, each absolute,
+`~/…`, or starting with `$CODEX_HOME`; `register()` refuses more than eight.
+When a message addresses one local agent of that type, the composer's `/` offers
+each folder's `<name>/SKILL.md` skills, reading `name` and an optional
+`description` from each file's front matter. A chosen skill travels as a token
+in the message's `buzz-tokens-v1` tag, whose value is a JSON array of 1 to 32
+unique tokens at most 16 KiB in size: a folder token is
+`{ kind: "folder", id, label }`, where `id` is the folder's absolute path, and a
+skill token is `{ kind: "skill", id, label, target }`, where `id` is the
+`SKILL.md` path and `target` is the hex pubkey of the agent the skill was chosen
+for. Tokens can carry other fields, such as `description` and `location`; ignore
+them. Because anyone in a chat can sign a `buzz-tokens-v1` tag, a harness reads
+chips only when the message's author is the agent's owner, takes a skill token
+only when its `target` is the agent's pubkey (telling the agent to read each
+`SKILL.md`), and takes a folder token only while `ctx.host.repositoryFolders`
+lists its `id`.
+
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives

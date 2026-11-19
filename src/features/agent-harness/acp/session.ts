@@ -343,7 +343,8 @@ export class AcpSession {
               this.runWaiters.push(resolve),
             )
           : undefined);
-      if (activity.refresh) text = steerPrompt(await activity.refresh());
+      if (activity.refresh)
+        text = steerPrompt(await activity.refresh(false, true));
       if (!live()) return;
       if (activity.current && !activity.current()) {
         this.discard(waiter);

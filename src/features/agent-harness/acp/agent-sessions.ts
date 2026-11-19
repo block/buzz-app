@@ -11,7 +11,7 @@ import { absoluteWorkspace } from "../../../bundled/codex/config";
 import type { SessionAction } from "../../agents/service";
 import type { AcpProcess } from "./process";
 import type { AcpSession } from "./session";
-import { codeOf } from "./steps";
+import { codeOf, errorMessage } from "./steps";
 import type {
   ActivityReceipt,
   Choice,
@@ -496,7 +496,8 @@ export class AgentSessions {
             ...(current ? { current } : {}),
             ...(refresh
               ? {
-                  refresh: () => refresh(!first),
+                  refresh: (_fresh?: boolean, steers?: boolean) =>
+                    refresh(!first, steers),
                 }
               : {}),
           },
@@ -1052,18 +1053,21 @@ export class AgentSessions {
       at: Date.now(),
     };
     // Each turn runs on the current prompt. The session runs these one at a
-    // time, so an older prompt never lands after a newer one; a failure keeps
-    // the session and is tried again at the next turn.
+    // time, so an older prompt never lands after a newer one. A failure fails
+    // that turn undelivered, as a rule it no longer has would not hold for it,
+    // and keeps the session to try again at the next turn.
     if (process.repromptable)
       session.beforeTurn = async () => {
         const { systemPrompt } = await this.options.launch(conversation);
         if (systemPrompt === live.systemPrompt) return;
         try {
           await process.reprompt(session, systemPrompt);
-          live.systemPrompt = systemPrompt;
         } catch (error) {
-          console.warn(`${this.options.label} kept its old prompt`, error);
+          throw new Error(
+            `${this.options.label} could not update its instructions: ${errorMessage(error)}`,
+          );
         }
+        live.systemPrompt = systemPrompt;
       };
     if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.

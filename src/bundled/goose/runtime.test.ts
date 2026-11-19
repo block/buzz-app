@@ -1394,6 +1394,49 @@ describe("GooseRuntime", () => {
     expect(turn).not.toContain("create a new worktree");
   });
 
+  it("reads a steer's Canvas as its running turn's prompt has the working location, and a new turn's as its own", async () => {
+    const { agent, deliver, goose } = setup({
+      solo: new Set([channel]),
+      hold: true,
+      canvas: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+    });
+    let managed = false;
+    Object.assign(agent, {
+      promptSections: (): SectionChoices =>
+        managed
+          ? {
+              plugin: {
+                id: "example.plugin",
+                sections: { "working-location": "Work in the task's folder." },
+              },
+            }
+          : {},
+    });
+    await deliver(message("1", "@Gander go"));
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    expect(goose()?.turns[0]?.text).toContain("create a new worktree");
+    // The plugin takes the working location while that turn runs.
+    managed = true;
+    await deliver(message("2", "@Gander also this"));
+    await vi.waitFor(() => expect(goose()?.turns[0]?.steered).toHaveLength(1));
+    const steered = goose()?.turns[0]?.steered[0];
+    expect(steered).toContain("create a new worktree");
+    expect(steered).not.toContain("They are for reading.");
+    goose()?.turns[0]?.finish();
+    await deliver(message("3", "@Gander next"));
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(2));
+    const next = goose()?.turns[1];
+    expect(goose()?.prompts.get(next?.sessionId ?? "")).toContain(
+      '<plugin-section id="working-location" plugin="example.plugin">',
+    );
+    expect(next?.text).toContain("They are for reading.");
+    expect(next?.text).not.toContain("create a new worktree");
+  });
+
   describe("a conversation given its own folder", () => {
     const scope = `https://goose.example:${alice}`;
     const root = message("1", "@Gander hi");

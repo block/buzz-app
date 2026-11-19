@@ -2267,6 +2267,23 @@ describe("a conversation's sections", () => {
       .keys()
       .filter((key) => key.startsWith("buzz.agents.conversation-sections"));
 
+  it("are built into a turn's prompt while its community reconnects", async () => {
+    const f = await ready();
+    await f.plugin.agents.setConversationSections(f.agent.key, thread, {
+      "working-location": "Work in the task's folder.",
+    });
+    const agent = await handle(f);
+    // A reconnect keeps the community's storage scope, as the conversation's
+    // folder lookup does.
+    vi.spyOn(f.relay, "snapshot").mockReturnValue({
+      ...f.relay.snapshot(),
+      status: "connecting",
+    });
+    expect(agent.promptSections?.(channel, root)?.plugin?.sections).toEqual({
+      "working-location": "Work in the task's folder.",
+    });
+  });
+
   it("are set, replaced and cleared by a plugin, and built into the agent's prompt there", async () => {
     const f = await ready();
     const { agents } = f.plugin;

@@ -1470,6 +1470,72 @@ describe("GooseRuntime", () => {
     queued?.finish();
   });
 
+  it("reads a queued turn's Canvas with the choices its turn took, when they change as it picks its model", async () => {
+    // Held only for the queued turn's own model pick, after its prompt update.
+    let picking: Promise<void> | undefined;
+    let pick = () => {};
+    let picked = false;
+    const { agent, deliver, goose } = setup({
+      solo: new Set([channel]),
+      hold: true,
+      canvas: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+      wrap: (spawn) => async (id, options) => {
+        const process = await spawn(id, options);
+        return {
+          ...process,
+          write: async (data: string) => {
+            if (
+              picking &&
+              data.includes('"method":"session/set_config_option"') &&
+              data.includes('"o3"')
+            ) {
+              picked = true;
+              await picking;
+            }
+            return process.write(data);
+          },
+        };
+      },
+    });
+    let managed = true;
+    Object.assign(agent, {
+      promptSections: (): SectionChoices =>
+        managed
+          ? {
+              plugin: {
+                id: "example.plugin",
+                sections: { "working-location": "Work in the task's folder." },
+              },
+            }
+          : {},
+    });
+    const config = { ...DEFAULT_CONFIG, provider: "openai" };
+    await deliver(message("1", "@Gander go"), { config });
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    picking = new Promise<void>((resolve) => {
+      pick = resolve;
+    });
+    await deliver(message("2", "@Gander also this"), { config, model: "o3" });
+    goose()?.turns[0]?.finish();
+    await vi.waitFor(() => expect(picked).toBe(true));
+    // The plugin gives the working location back once the turn's prompt
+    // took its folder rule.
+    managed = false;
+    pick();
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(2));
+    const queued = goose()?.turns[1];
+    expect(goose()?.prompts.get(queued?.sessionId ?? "")).toContain(
+      '<plugin-section id="working-location" plugin="example.plugin">',
+    );
+    expect(queued?.text).toContain("They are for reading.");
+    expect(queued?.text).not.toContain("create a new worktree");
+    queued?.finish();
+  });
+
   it("reads a steer's Canvas as its running turn's prompt has the working location, and a new turn's as its own", async () => {
     const { agent, deliver, goose } = setup({
       solo: new Set([channel]),

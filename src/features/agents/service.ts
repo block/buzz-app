@@ -6054,7 +6054,9 @@ export class AgentsService extends Service implements Agents {
   ): SectionChoices {
     const owner = ownerChoices(this.storage);
     const current = this.agent(agent.key) ?? agent;
-    const scope = ownerReads(this.relay(agent.key), pubkeyOf(agent.key))?.scope;
+    // A reconnecting relay keeps its scope, as a turn that starts then keeps
+    // its conversation's folder.
+    const scope = this.relay(agent.key)?.snapshot().scope;
     const saved =
       channelId && scope && !current.protection && this.sectionsType(current)
         ? storedSections(

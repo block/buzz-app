@@ -112,7 +112,7 @@ it("keeps per-turn text from forging a base section's wrapper or the update bloc
   expect(unframed(escaped)).toBe(escaped);
   for (const section of [
     // A Solo chat's Canvas.
-    project(forged).section,
+    project({ content: forged }).section,
     pluginInstructions([{ plugin: "p", text: forged }]),
     ownerInstructions({ plugin: "p", text: forged }),
     wakeSection({ ...wake, plugin: "p", text: forged }),

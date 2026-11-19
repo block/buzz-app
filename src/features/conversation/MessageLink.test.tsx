@@ -593,6 +593,94 @@ it("shows a completed channel link's current name through a rename, keeping cust
   }
 });
 
+it("keeps a completed channel link's written name while the channel is unnamed or a restored Solo chat", async () => {
+  const id = "22222222-2222-4222-8222-222222222222",
+    chat = "33333333-3333-4333-8333-333333333333",
+    viewer = keypair(),
+    relay = keypair();
+  // The relay's roster arrives; its metadata, and so the name, never does.
+  const events = [
+    [39001, ["p", viewer.pubkey, "owner"]],
+    [39002, ["p", viewer.pubkey, "", "owner"]],
+  ].map(([kind, ...tags]) =>
+    signed(relay, {
+      kind: kind as number,
+      created_at: 100,
+      content: "",
+      tags: [["d", id], ...(tags as string[][])],
+    }),
+  );
+  const owner = createRelaySession({
+    channelIdentity: true,
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      events.filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
+  });
+  // A Solo chat downloaded before the relay confirmed its roster.
+  const list = {
+    status: "ready",
+    channels: [
+      { id: chat, name: "Release notes", channelType: "solo", cached: true },
+    ],
+  };
+  const restored = {
+    channels: { list: () => list, subscribeList: () => () => {} },
+  } as unknown as typeof owner.session;
+  function Message({
+    session,
+    to,
+  }: {
+    session: typeof owner.session;
+    to: string;
+  }) {
+    return (
+      <MessageMarkdown
+        row={{
+          id: "message",
+          channelId: to,
+          authorId: "author",
+          content: `[\\#launch](buzz://channel/${to}) buzz://channel/${to}`,
+          createdAt: 1,
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          participants: [],
+        }}
+        directory={useReferenceDirectory(session)}
+        session={session}
+        media={() => undefined}
+        onOpenLink={() => true}
+      />
+    );
+  }
+  const shown = () =>
+    screen.getAllByRole("link").map((link) => link.textContent);
+  try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.list().channels).toHaveLength(1),
+    );
+    const view = render(<Message session={owner.session} to={id} />);
+    await act(async () => {});
+    // A raw link has only the placeholder to show.
+    expect(shown()).toEqual(["#launch", "#22222222"]);
+    expect(screen.getAllByRole("link")[0]).toHaveAttribute(
+      "data-link-label",
+      "#launch",
+    );
+    view.rerender(<Message session={restored} to={chat} />);
+    expect(shown()).toEqual(["#launch", "#Release notes"]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it.each(["Session · 12345678", "Session: PR 45 fixes", "Chat: PR 45 fixes"])(
   "preserves legacy chat labels as ordinary inline links: %s",
   (label) => {

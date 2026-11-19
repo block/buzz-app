@@ -96,6 +96,7 @@ export function MessageLink({
   scope,
   interactive = true,
   channelPrivate = false,
+  channelSolo = false,
 }: {
   url: string;
   children?: ReactNode;
@@ -110,6 +111,8 @@ export function MessageLink({
   scope?: string | undefined;
   interactive?: boolean;
   channelPrivate?: boolean;
+  /** The joined list holds the destination as a Solo chat, confirmed or not. */
+  channelSolo?: boolean;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -180,11 +183,15 @@ export function MessageLink({
   // link's text. Text that is only `#` and a channel name, which may hold
   // spaces, therefore follows the channel's current name once known, as a
   // profile link follows its person's. `#name` prose has no children: its
-  // author wrote that name. The length is checked first: it keeps the
-  // canonical-name scan, quadratic in whitespace, off an arbitrary label.
+  // author wrote that name. A listed channel whose metadata has not arrived
+  // is called by the start of its ID, which is no name to show instead, and
+  // a Solo chat's title is not a channel name. The length is checked first:
+  // it keeps the canonical-name scan, quadratic in whitespace, off an
+  // arbitrary label.
   const written =
-    !chatName &&
+    !channelSolo &&
     channelName?.startsWith("#") &&
+    channelName !== `#${destination?.channelId.slice(0, 8)}` &&
     typeof children === "string" &&
     children.startsWith("#")
       ? children.slice(1)

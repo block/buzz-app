@@ -103,6 +103,7 @@ import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   attachmentDraft,
+  unsupportedTypes,
   useAttachmentDraft,
   type AttachmentDraft,
 } from "./attachment-draft";
@@ -1635,6 +1636,14 @@ function Composer({
     channelId,
     !!submission?.attachments,
     host ? [scope, `${draftKey}:files`] : undefined,
+  );
+  // The relay refuses a type only at upload, after the file's chip is shown.
+  // Its notice names those chips until dismissed; a draft that returns with
+  // one already showed it.
+  const refusedTypes = attachments.items.filter((item) => item.unsupported);
+  const [reportedTypes, setReportedTypes] = useState(refusedTypes);
+  const unsupported = refusedTypes.filter(
+    (item) => !reportedTypes.some((reported) => reported.id === item.id),
   );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<
@@ -4133,6 +4142,19 @@ function Composer({
             title={attachmentError.title}
             description={attachmentError.description}
             onDismiss={() => setAttachmentError(undefined)}
+          />
+        )}
+        {unsupported.length > 0 && (
+          <ToastNotice
+            title={
+              unsupported.length === 1
+                ? "Could not attach file"
+                : `Could not attach ${unsupported.length} files`
+            }
+            description={unsupportedTypes(
+              unsupported.map((item) => item.file.name),
+            )}
+            onDismiss={() => setReportedTypes(refusedTypes)}
           />
         )}
         <ComposerContext key={editing.target ? "edit" : "reply"}>

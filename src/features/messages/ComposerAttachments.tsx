@@ -308,13 +308,15 @@ function AttachmentItem({
         {item.error && (
           <>
             <span role="alert">{item.error}</span>
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => retry(item.id)}
-            >
-              Retry voice note upload
-            </button>
+            {!item.unsupported && (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => retry(item.id)}
+              >
+                Retry voice note upload
+              </button>
+            )}
           </>
         )}
       </motion.li>
@@ -426,19 +428,22 @@ function AttachmentItem({
       >
         {uploadFailed ? (
           <>
-            <Button
-              size="sm"
-              disabled={disabled}
-              aria-label={`Retry ${item.file.name}`}
-              onClick={(event) => {
-                // Retry replaces this control. Hand off only focus that it owns.
-                if (document.activeElement === event.currentTarget)
-                  previewButton.current?.focus();
-                retry(item.id);
-              }}
-            >
-              Retry
-            </Button>
+            {/* The relay would refuse the same bytes again. */}
+            {!item.unsupported && (
+              <Button
+                size="sm"
+                disabled={disabled}
+                aria-label={`Retry ${item.file.name}`}
+                onClick={(event) => {
+                  // Retry replaces this control. Hand off only focus that it owns.
+                  if (document.activeElement === event.currentTarget)
+                    previewButton.current?.focus();
+                  retry(item.id);
+                }}
+              >
+                Retry
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"

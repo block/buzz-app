@@ -12,12 +12,13 @@ import {
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
+import { UploadError, type UploadedAttachment } from "../relay/attachments";
 import {
   useAttachmentDraft,
   attachmentDraft,
   transferAttachmentDraft,
   subscribeAttachmentDraftCounts,
+  unsupportedTypes,
 } from "./attachment-draft";
 
 function deferred<T>() {
@@ -425,6 +426,41 @@ it("refuses a folder as a folder, alone or in a batch, and a zero-byte file stil
     "notes.txt",
     "more.txt",
   ]);
+});
+
+it("marks only the file whose type the relay refused, until it is retried", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() => draft.result.current.store.add([file("setup.exe"), file()]));
+  const marks = () =>
+    draft.result.current.items.map((item) => [item.status, item.unsupported]);
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  await act(async () => h.calls[0]?.result.reject(new UploadError("type")));
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  // Any other refusal, even of the file's content, leaves the type unjudged.
+  await act(async () => h.calls[1]?.result.reject(new UploadError("rejected")));
+  expect(marks()).toEqual([
+    ["error", true],
+    ["error", undefined],
+  ]);
+  expect(draft.result.current.blocked).toBe(true);
+  const refused = draft.result.current.items[0];
+  assert(refused);
+  act(() => draft.result.current.store.retry(refused.id));
+  await waitFor(() => expect(h.calls).toHaveLength(3));
+  expect(marks()).toEqual([
+    ["uploading", undefined],
+    ["error", undefined],
+  ]);
+});
+
+it("names three files the relay refused for their type and counts the rest", () => {
+  expect(unsupportedTypes(["setup.exe"])).toBe(
+    "setup.exe isn’t a supported file type.",
+  );
+  expect(unsupportedTypes(["a.exe", "b.exe", "c.exe", "d.exe", "e.exe"])).toBe(
+    "a.exe, b.exe, c.exe and 2 more aren’t supported file types.",
+  );
 });
 
 it("charges a batch's admitted files, not its refused ones, to the shared retention budget", () => {

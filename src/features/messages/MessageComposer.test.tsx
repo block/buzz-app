@@ -2352,24 +2352,117 @@ it("attaches the files dropped beside a folder and names the folder in one notic
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
 });
 
-it("admits a dropped file of any type and shows the relay's refusal on its chip", async () => {
-  // No file type is refused on the way in; the relay decides, as for a picked file.
-  const h = await mountUploadComposer();
-  dropFiles(h.form(), [
-    new File(["MZ"], "setup.exe", { type: "application/x-msdownload" }),
-  ]);
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  await act(async () => {
-    h.uploadCalls[0]?.result.reject(new UploadError("rejected"));
-  });
-  await waitFor(() =>
+const executable = (name: string) =>
+  new File(["MZ"], name, { type: "application/x-msdownload" });
+const chipErrors = () =>
+  screen.getAllByRole("alert").map((node) => node.textContent);
+
+it.each(["drop", "picker", "paste"])(
+  "admits a file of any type by %s and, when the relay refuses its type, says so in a notice and on its chip",
+  async (intake) => {
+    // No file type is refused on the way in; only the relay knows what it takes.
+    const h = await mountUploadComposer();
+    const file = executable("setup.exe");
+    if (intake === "drop") dropFiles(h.form(), [file]);
+    else if (intake === "picker") pickAttachments(h.container, [file]);
+    else attachByPaste(h.input(), file);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("type"));
+    });
     expect(
-      screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([`setup.exe: ${UPLOAD_FAILURES.rejected}`]),
+      await screen.findByRole("dialog", { name: "Could not attach file" }),
+    ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
+    expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]);
+    // The same bytes would be refused again, so the chip offers only Remove.
+    expect(
+      screen.queryByRole("button", { name: "Retry setup.exe" }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove setup.exe" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  },
+);
+
+it("names every file of a drop the relay refuses for its type in one notice, apart from the drop's folder notice", async () => {
+  const h = await mountUploadComposer();
+  const folder = attachmentFile("top-recipes", "");
+  dropFiles(
+    h.form(),
+    [folder, executable("a.exe"), executable("b.exe"), attachmentFile()],
+    [folder],
   );
-  expect(screen.getByRole("button", { name: "Retry setup.exe" })).toBeVisible();
+  const folderNotice = await screen.findByRole("dialog", {
+    name: "Could not attach 1 of 4 items",
+  });
+  // Files upload one at a time, so the refusals arrive one at a time.
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("type"));
+  });
+  expect(
+    await screen.findByRole("dialog", { name: "Could not attach file" }),
+  ).toHaveAccessibleDescription("a.exe isn’t a supported file type.");
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new UploadError("type"));
+  });
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach 2 files",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "a.exe, b.exe aren’t supported file types.",
+  );
+  expect(screen.getAllByRole("dialog")).toHaveLength(2);
+  expect(folderNotice).toHaveAccessibleDescription(
+    "top-recipes is a folder. Folders can’t be attached.",
+  );
+  // The file the relay takes still attaches.
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  await act(async () => h.uploadCalls[2]?.result.resolve(uploadDescriptor()));
+  expect(chipErrors()).toEqual([
+    `a.exe: ${UPLOAD_FAILURES.type}`,
+    `b.exe: ${UPLOAD_FAILURES.type}`,
+  ]);
+  // Dismissing the notice leaves the chips, and does not bring it back.
+  // A click event: jsdom has no pointer capture for the stack's swipe handler.
+  fireEvent.click(
+    within(notice).getByRole("button", { name: "Dismiss notification" }),
+  );
+  await waitFor(() =>
+    expect(screen.getAllByRole("dialog")).toEqual([folderNotice]),
+  );
+  expect(chipErrors()).toHaveLength(2);
 });
+
+it.each([
+  new UploadError("rejected"),
+  new UploadError("codec"),
+  new UploadError("size"),
+  new UploadError("denied"),
+  new UploadError("failed"),
+  new TypeError("Failed to fetch"),
+])(
+  "keeps an upload that fails for another reason on its chip with Retry, without the type notice: $message",
+  async (failure) => {
+    const h = await mountUploadComposer();
+    dropFiles(h.form(), [executable("setup.exe")]);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(failure);
+    });
+    // The chip's error and the notice come from the same draft update.
+    await waitFor(() =>
+      expect(chipErrors()).toEqual([`setup.exe: ${failure.message}`]),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Retry setup.exe" }),
+    ).toBeVisible();
+  },
+);
 
 it("does not focus after a picker upload fails or is later retried", async () => {
   const h = await mountUploadComposer();

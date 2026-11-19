@@ -201,8 +201,9 @@ test.each([
     "resolution",
   ],
   [422, "video too long: duration exceeds 600 seconds", "duration"],
-  [415, "unsupported container: only MP4 is accepted", "rejected"],
-])("names the relay's %i video rule: %s", async (status, error, code) => {
+  [415, "unsupported container: only MP4 is accepted", "type"],
+  [415, "disallowed content type: application/x-msdownload", "type"],
+])("names the relay's %i content rule: %s", async (status, error, code) => {
   const h = await harness(() => Response.json({ error }, { status }));
   try {
     const response = await h.post();

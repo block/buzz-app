@@ -92,6 +92,8 @@ function hasInvocationIntent({
 }
 /** Physical thread and the invocation that owns a routed conversation. */
 export type InvocationSubthread = Readonly<{ root: string; parent: string }>;
+export type RoutedInvocation = InvocationSubthread &
+  Readonly<{ turnContext?: string }>;
 export type AgentSessionRouter = Readonly<{
   id: string;
   /** Opens local keyed storage. This must not wait for a sidebar or relay. */
@@ -105,10 +107,11 @@ export type AgentSessionRouter = Readonly<{
   /** Opt in to signed invocation intent for an eligible addressed agent. */
   invocationIntent?(input: AgentInvocationIntent): boolean;
   /** Runs after authority checks, before the harness chooses its session.
-   * Resolve task ancestry here; undefined preserves the native placement. */
+   * Resolve task ancestry here; undefined preserves the native placement.
+   * Optional turn context applies to this invocation and is never saved. */
   route?(
     input: AdmissionRequest & Readonly<{ savedRoute?: InvocationSubthread }>,
-  ): Promise<InvocationSubthread | undefined>;
+  ): Promise<RoutedInvocation | undefined>;
   /** Saves the local association before returning. Undefined leaves the run unchanged. */
   prepare(input: AgentSessionAdmission): Promise<
     | Readonly<{
@@ -300,7 +303,10 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
       check(input.signal);
       if (!routers.snapshot().includes(router))
         throw new Error("The conversation router changed");
-      if (route !== undefined) checkedRoute(route);
+      const placement = route === undefined ? undefined : checkedRoute(route);
+      const turnContext = route?.turnContext;
+      if (turnContext !== undefined && typeof turnContext !== "string")
+        throw new Error("Invocation turn context must be text");
       if (route && input.event && route.root !== input.source.root)
         throw new Error(
           "The invocation subthread has a different source thread",
@@ -310,21 +316,27 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
         (savedRoute.root !== route?.root || savedRoute.parent !== route.parent)
       )
         throw new Error("The invocation subthread cannot change");
-      if (!route) {
+      if (!placement) {
         await pinNativePlacement?.();
         check(input.signal);
         return;
       }
-      const accepted =
-        parse<InvocationSubthread | null>(
-          await storage.add(key, JSON.stringify(route)),
-        ) ?? undefined;
+      const receipt = parse<InvocationSubthread | null>(
+        await storage.add(key, JSON.stringify(placement)),
+      );
+      const accepted = receipt === null ? undefined : checkedRoute(receipt);
+      if (
+        turnContext &&
+        (placement?.root !== accepted?.root ||
+          placement?.parent !== accepted?.parent)
+      )
+        throw new Error("The invocation subthread cannot change");
       if (accepted)
         await storage.add(
           conversationKey(accepted.parent),
           JSON.stringify(accepted),
         );
-      return accepted;
+      return accepted && turnContext ? { ...accepted, turnContext } : accepted;
     },
     async prepare(input: AdmissionRequest) {
       check(input.signal);

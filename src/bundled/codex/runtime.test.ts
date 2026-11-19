@@ -854,6 +854,111 @@ it("keeps resumed Codex idle until a marked reply can route in the runner's comm
   }
 });
 
+it("keeps invocation context with its provider turn across a failed start and retry", async () => {
+  const f = fixture();
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const storage = memoryStorage();
+  const admissions = createSessionAdmissions(ctx, storage);
+  const anchor = "d".repeat(64);
+  const calls = new Map<string, number>();
+  const delivery = (text: string) => {
+    const base = f.delivery(text);
+    const { trigger } = base;
+    if (trigger.type !== "mention") throw new Error("Expected mention");
+    return {
+      ...base,
+      config: { ...(base.config as object), scope: "channel" },
+      routeConversation: (
+        placement: Parameters<NonNullable<Delivery["routeConversation"]>>[0],
+      ) =>
+        admissions.route({
+          ...placement,
+          agent: pubkey,
+          owner: base.agent.owner,
+          harness: "example/codex",
+          communityOrigin: "https://relay.example.org",
+          invocationId: trigger.event.id,
+          event: trigger.event,
+          resumed: false,
+          signal: base.signal,
+        }),
+    };
+  };
+  try {
+    await ctx
+      .extend({ pluginOwner: { id: "example", revision: "one" } })
+      .plugin((plugin) => {
+        admissions.register(plugin, {
+          id: "tasks",
+          ready: async () => {},
+          matches: () => true,
+          route: async ({ event, invocationId, savedRoute }) => {
+            if (event?.content !== "TASK_REQUEST") return;
+            const count = (calls.get(invocationId) ?? 0) + 1;
+            calls.set(invocationId, count);
+            if (count > 1) expect(savedRoute).toEqual({ root, parent: anchor });
+            return {
+              root,
+              parent: anchor,
+              turnContext: `TASK_ONLY_CONTEXT_${count}`,
+            };
+          },
+          prepare: async () => undefined,
+        });
+      })
+      .await();
+
+    const task = delivery("TASK_REQUEST");
+    f.failing.add("thread/start");
+    await f.runtime.run(task);
+    await vi.waitFor(() =>
+      expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+        content: expect.stringContaining("thread/start failed"),
+      }),
+    );
+    expect(f.starts()).toHaveLength(0);
+    const savedPlacement = Array.from(
+      { length: storage.length },
+      (_, index) => {
+        const key = storage.key(index);
+        return key && storage.getItem(key);
+      },
+    ).filter(Boolean);
+    expect(savedPlacement).toContain(JSON.stringify({ root, parent: anchor }));
+    expect(savedPlacement.join("")).not.toContain("TASK_ONLY_CONTEXT");
+    f.failing.delete("thread/start");
+
+    const ordinary = delivery("ORDINARY_REQUEST");
+    await f.runtime.run({
+      ...ordinary,
+      sessionContext: "ORDINARY_ONLY_CONTEXT",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run(task);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+
+    const ordinaryPrompt = JSON.stringify(f.starts()[0]?.params);
+    const taskPrompt = JSON.stringify(f.starts()[1]?.params);
+    expect(ordinaryPrompt).toContain("ORDINARY_ONLY_CONTEXT");
+    expect(ordinaryPrompt).not.toContain("TASK_ONLY_CONTEXT");
+    expect(taskPrompt).toContain("TASK_ONLY_CONTEXT_2");
+    expect(taskPrompt).not.toContain("TASK_ONLY_CONTEXT_1");
+    expect(taskPrompt).not.toContain("ORDINARY_ONLY_CONTEXT");
+    const [ordinaryStart, taskStart] = f.starts();
+    expect((taskStart?.params as { threadId: string })?.threadId).not.toBe(
+      (ordinaryStart?.params as { threadId: string })?.threadId,
+    );
+    await f.complete(0);
+    await f.complete(1);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
   await f.runtime.run({

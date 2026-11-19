@@ -2725,7 +2725,11 @@ it("restores direct and nested task corrections for a rooted wake", async () => 
     ),
   );
   await deliver(pluginWake(anchor.id), {
-    routeConversation: async () => ({ root: root.id, parent: anchor.id }),
+    routeConversation: async () => ({
+      root: root.id,
+      parent: anchor.id,
+      turnContext: "CURRENT_TASK_INSTRUCTIONS",
+    }),
   });
   await vi.waitFor(() =>
     expect(claudes().some((process) => process.prompts.length)).toBe(true),
@@ -2734,6 +2738,7 @@ it("restores direct and nested task corrections for a rooted wake", async () => 
     ?.prompts[0];
   expect(prompt).toContain("DIRECT_CORRECTION");
   expect(prompt).toContain("NESTED_CORRECTION");
+  expect(prompt).toContain("CURRENT_TASK_INSTRUCTIONS");
   expect(prompt).not.toContain("UNRELATED_DISCUSSION");
 });
 

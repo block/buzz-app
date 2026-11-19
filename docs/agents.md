@@ -101,6 +101,13 @@ retain the physical root and use the invocation as their reply parent. Explicit
 other destinations retain their existing behavior. Prompts retain source context
 for the initial request and identify the source thread for later reads.
 
+When `ctx.agents.invocationTurnContext === true`, a successful route can
+include optional text `turnContext`. Codex, Claude and the shared harness
+kit include it in the prompt for that request. The host saves only the
+route's root and parent. The router can supply fresh text for each
+invocation, follow-up or retry. A failed start leaves no text for another
+request. Use this field for invocation-specific instructions.
+
 Return `undefined` only for a positively unrouted turn. Throw on incomplete
 ancestry or unconfirmed task publication; rejection stops admission without a
 fallback to the source session. The plugin owns task ancestry and shared binding

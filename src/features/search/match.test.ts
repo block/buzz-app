@@ -49,6 +49,9 @@ describe("matchName", () => {
     ["general", "-"],
     ["quality", "q&a"],
     ["काम", "की"],
+    ["बाकी-काम", "की काम"],
+    ["abc-cafe\u0301s", "e\u0301 abc"],
+    ["काम-कल", "मक"],
   ])("%s does not match %s", (label, needle) => {
     expect(matchName(label, needle)).toBeUndefined();
   });

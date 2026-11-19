@@ -95,9 +95,9 @@ export function matchName(
   if (!words.length) return undefined;
   const positions = new Set<number>();
   for (const word of words) {
-    // A one-letter word ("q" in "q&a") matches only a one-letter word, so it
-    // cannot land inside a longer one.
-    const single = [...word].length === 1;
+    // A one-letter word ("q" in "q&a", or "की" with its vowel sign) matches
+    // only a one-letter word, so it cannot land inside a longer one.
+    const single = [...word.replace(/\p{M}/gu, "")].length === 1;
     const whole = (at: number) =>
       !isWordChar(text[at - 1]) &&
       (!single || !isWordChar(text[at + word.length]));

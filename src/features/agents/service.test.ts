@@ -10766,7 +10766,7 @@ it("an event heard before the saved key's status is read waits for it, then is c
 
 it("does not classify in a community where the user turned decisions off", async () => {
   const jev = fakeJev();
-  const { run, emit, decisions } = await classifiedAgent(jev);
+  const { service, run, emit, decisions } = await classifiedAgent(jev);
   if (!decisions) throw new Error("no decisions");
   const provider = decisions.backend("wss://relay.example.test");
   if (!provider) throw new Error("no provider");
@@ -10778,9 +10778,11 @@ it("does not classify in a community where the user turned decisions off", async
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "not-run" },
   });
-  // The key is ready, but the agent's attention reports what its own
-  // community's classifiers do.
+  // The key is ready, but the agent's attention, and the Attention page,
+  // report what its own community's classifiers do.
   expect(decisions.status()).toBe("ready");
+  expect(service.classifier()).toBe("available");
+  expect(service.classifier("wss://relay.example.test")).toBe("unavailable");
   expect(run.mock.calls[0]?.[0].agent.attention.classifier()).toBe(
     "unavailable",
   );
@@ -10816,7 +10818,8 @@ it("a failed read of the key's status does not stop a saved key from classifying
   const jev = fakeJev();
   jev.status.mockRejectedValueOnce(new Error("The Keychain is locked"));
   const { service, run, emit } = await classifiedAgent(jev);
-  expect(service.classifier()).toBe("unavailable");
+  // Unconfirmed: the classifier still asks it, so it is reported available.
+  expect(service.classifier()).toBe("available");
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(jev.decide).toHaveBeenCalledOnce();

@@ -265,7 +265,7 @@ import {
   type ClassifierContext,
   type ClassifierOutcome,
 } from "./classifier";
-import type { Decisions } from "../decisions/service";
+import type { Decisions, DecisionProviderStatus } from "../decisions/service";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -2274,8 +2274,9 @@ export type Agents = {
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(agent: AgentKey): Promise<string | undefined>;
-  /** Whether a watch's classifier can run on this device now. */
-  classifier(): ClassifierAvailability;
+  /** Whether a watch's classifier can run now: in `community`, an agent's
+   * relay, or without one, wherever no community is named. */
+  classifier(community?: string): ClassifierAvailability;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
    * be agents on this device or, for a synced team, its home community's
    * hosted agents whose setup finished. Each community has the members that
@@ -2425,6 +2426,13 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
+/** A classifier runs where its provider is ready, or cannot confirm its
+ * setup but may still answer; see the runner's `classify`. */
+const classifierRuns = (
+  status: DecisionProviderStatus | "unavailable" | undefined,
+): ClassifierAvailability =>
+  status === "ready" || status === "unconfirmed" ? "available" : "unavailable";
+
 /** How long the classifier waits for a reply's parent before it goes on. */
 const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
@@ -3726,10 +3734,7 @@ export class AgentsService extends Service implements Agents {
         const binding = this.bindingOf(agent);
         return binding && defaultAgentControl(binding.session, binding.scope);
       },
-      classifier: (community) =>
-        this.decisions?.status(community) === "ready"
-          ? "available"
-          : "unavailable",
+      classifier: (community) => this.classifier(community),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
@@ -5964,18 +5969,22 @@ export class AgentsService extends Service implements Agents {
     }
     return kind;
   }
-  /** Whether watch classifiers can run on this device: the selected
-   * decision provider is ready. */
-  classifier(): ClassifierAvailability {
-    return this.state.classifier;
+  /** Whether watch classifiers can run in `community`, or without one,
+   * where no community is named: its decision provider can be asked. */
+  classifier(community?: string): ClassifierAvailability {
+    if (community === undefined) return this.state.classifier;
+    return classifierRuns(this.decisions?.status(community));
   }
   private availability(): ClassifierAvailability {
-    return this.decisions?.status() === "ready" ? "available" : "unavailable";
+    return classifierRuns(this.decisions?.status());
   }
+  /** A new snapshot on every decisions change: each community's
+   * availability is read from it, not only the one without a community. */
   private updateClassifier() {
-    const classifier = this.availability();
-    if (this.state.classifier === classifier) return;
-    this.state = Object.freeze({ ...this.state, classifier });
+    this.state = Object.freeze({
+      ...this.state,
+      classifier: this.availability(),
+    });
     this.notify();
   }
   /** The event's surroundings for the classifier, from what the app knows. */

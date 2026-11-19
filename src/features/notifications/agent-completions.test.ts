@@ -54,9 +54,20 @@ function setup(
   return { work, stop, desktop, foreground };
 }
 
+/** Publishes one message from `work`, as the agent's `send` does. */
+function say(
+  work: ReturnType<ReturnType<typeof createLocalAgentActivity>["begin"]>,
+  id = "reply",
+) {
+  const sent = work.sending("On it");
+  work.reply(id);
+  sent(true);
+}
+
 describe("agent completion notifications", () => {
   it("shows in-app feedback when another Buzz conversation is focused", () => {
     const h = setup(true);
+    say(h.work);
     h.work.finish({ ok: true });
     expect(h.foreground).toHaveBeenCalledOnce();
     expect(h.desktop).not.toHaveBeenCalled();
@@ -65,6 +76,7 @@ describe("agent completion notifications", () => {
 
   it("shows a desktop alert when another app is focused, even for the visible chat", () => {
     const h = setup(false, active("chat", "thread"));
+    say(h.work);
     h.work.finish({ ok: true });
     expect(h.desktop).toHaveBeenCalledOnce();
     expect(h.foreground).not.toHaveBeenCalled();
@@ -95,6 +107,7 @@ describe("agent completion notifications", () => {
       soloChat: true,
     });
     work.started();
+    say(work);
     work.finish({ ok: true });
     expect(desktop).not.toHaveBeenCalled();
     expect(foreground).not.toHaveBeenCalled();
@@ -174,6 +187,7 @@ describe("agent completion notifications", () => {
 
   it("does not add completion feedback to ordinary DMs", () => {
     const h = setup(false, active("other"), "dm");
+    say(h.work);
     h.work.finish({ ok: true });
     expect(h.desktop).not.toHaveBeenCalled();
     expect(h.foreground).not.toHaveBeenCalled();
@@ -182,10 +196,118 @@ describe("agent completion notifications", () => {
 
   it("stays quiet only for the exact visible conversation while Buzz is focused", () => {
     const h = setup(true, active("chat", "thread"));
+    say(h.work);
     h.work.finish({ ok: true });
     expect(h.desktop).not.toHaveBeenCalled();
     expect(h.foreground).not.toHaveBeenCalled();
     h.stop();
+  });
+
+  it.each([
+    ["Buzz is focused elsewhere", true],
+    ["another app is focused", false],
+  ])(
+    "stays quiet when a run ends done without posting, while %s",
+    (_, focused) => {
+      const h = setup(focused);
+      h.work.finish({ ok: true });
+      expect(h.desktop).not.toHaveBeenCalled();
+      expect(h.foreground).not.toHaveBeenCalled();
+      h.stop();
+    },
+  );
+
+  it.each([
+    ["Buzz is focused elsewhere", true],
+    ["another app is focused", false],
+  ])("alerts for an error that posted nothing, while %s", (_, focused) => {
+    const h = setup(focused);
+    h.work.finish({ ok: false, error: "Provider unavailable" });
+    expect(focused ? h.foreground : h.desktop).toHaveBeenCalledOnce();
+    expect(focused ? h.desktop : h.foreground).not.toHaveBeenCalled();
+    h.stop();
+  });
+
+  it("alerts once when a reply still being published lands after the run is done", () => {
+    const h = setup(false);
+    const sent = h.work.sending("Here it is");
+    h.work.finish({ ok: true });
+    expect(h.desktop).not.toHaveBeenCalled();
+    h.work.reply("late");
+    expect(h.desktop).toHaveBeenCalledOnce();
+    sent(true);
+    say(h.work, "later");
+    expect(h.desktop).toHaveBeenCalledOnce();
+    h.stop();
+  });
+
+  it("stays quiet when the only message in flight at done fails to publish", () => {
+    const h = setup(false);
+    const sent = h.work.sending("Here it is");
+    h.work.finish({ ok: true });
+    sent(false);
+    say(h.work, "after");
+    expect(h.desktop).not.toHaveBeenCalled();
+    h.stop();
+  });
+
+  it("alerts when a done first turn's own reply confirms its Solo chat", () => {
+    const activity = createLocalAgentActivity();
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => false,
+      active: () => active("other"),
+      target: (work) => completionTarget(work, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    const work = activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+    });
+    work.started();
+    const sent = work.sending("Hello");
+    work.finish({ ok: true });
+    // Its publish confirms the Solo chat before it records the reply.
+    work.confirmSolo("First chat");
+    expect(desktop).not.toHaveBeenCalled();
+    work.reply("first");
+    sent(true);
+    expect(desktop).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it("does not count a failed attempt's replies toward its retry", () => {
+    const activity = createLocalAgentActivity();
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => false,
+      active: () => active("other"),
+      target: (work) => completionTarget(work, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    const input = {
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+      soloChat: true as const,
+    };
+    const first = activity.begin(input);
+    first.started();
+    say(first, "partial");
+    first.finish({ ok: false, error: "Provider unavailable" });
+    expect(desktop).toHaveBeenCalledOnce();
+    const retry = activity.begin(input);
+    retry.started();
+    retry.finish({ ok: true });
+    expect(desktop).toHaveBeenCalledOnce();
+    stop();
   });
 
   it("does not notify for stops, superseded work, or activity already settled on bind", () => {

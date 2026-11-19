@@ -38,6 +38,40 @@ it("silently checks on startup and projects unread after allow, independently of
   await h.dock.dispose();
   expect(h.set).toHaveBeenLastCalledWith(false);
 });
+
+it("orders numeric changes, clears on read, and can return to a dot", async () => {
+  const h = setup();
+  await h.dock.refresh();
+  const pending = deferred<void>();
+  h.set.mockImplementationOnce(() => pending.promise);
+  try {
+    h.dock.setUnread(true, 3);
+    h.dock.setUnread(true, 1);
+    h.dock.setUnread(true, 2);
+    expect(h.set).toHaveBeenLastCalledWith(true, 3);
+  } finally {
+    pending.resolve();
+  }
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(true, 2));
+  h.dock.setUnread(false);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(false));
+  h.dock.setUnread(true);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(true));
+});
+
+it("restores the current number after permission is re-enabled and clears it on teardown", async () => {
+  const h = setup();
+  await h.dock.refresh();
+  h.dock.setUnread(true, 4);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(true, 4));
+  h.permission.mockResolvedValueOnce("disabled");
+  await h.dock.refresh();
+  expect(h.set).toHaveBeenLastCalledWith(false);
+  await h.dock.refresh();
+  expect(h.set).toHaveBeenLastCalledWith(true, 4);
+  await h.dock.dispose();
+  expect(h.set).toHaveBeenLastCalledWith(false);
+});
 it.each(["default", "setup", "disabled", "denied", "unavailable"] as const)(
   "withholds the dot for %s and clears on changed system permission",
   async (permission) => {

@@ -427,11 +427,18 @@ export function createServices() {
   };
   if (notifications.indicator.available)
     ctx.effect(() =>
-      bindUnreadIndicator(
-        communities,
-        notifications.indicator.setUnread,
-        unreadGates,
-      ),
+      bindUnreadIndicator(communities, notifications.indicator.setUnread, {
+        ...unreadGates,
+        badgeActivity: () => notifications.snapshot().preferences.badgeActivity,
+        subscribe(listener) {
+          const stopGates = unreadGates.subscribe(listener);
+          const stopPreferences = notifications.subscribe(listener);
+          return () => {
+            stopGates();
+            stopPreferences();
+          };
+        },
+      }),
     );
   const communityUnreads = createCommunityUnreads(communities, unreadGates);
   ctx.effect(() => communityUnreads.dispose);

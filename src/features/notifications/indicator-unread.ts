@@ -3,14 +3,16 @@ import type { RelaySession } from "../relay/session";
 import { communityDestination } from "../communities/destination";
 import { observeCommunityUnread, type UnreadGates } from "./community-unread";
 
-/** Notification gates: only conversations they allow light the indicator. */
-export type IndicatorGates = UnreadGates;
+import type { BadgeActivity } from "./preferences";
 
-/** A host projection of the selected community's existing evidence, never a
- * count or a new read owner. */
+/** Notification gates: only conversations they allow light the indicator. */
+export type IndicatorGates = UnreadGates & { badgeActivity?(): BadgeActivity };
+
+/** A host projection of the selected community's existing evidence, without
+ * adding relay reads. */
 export function bindUnreadIndicator(
   communities: Communities,
-  project: (unread: boolean) => void,
+  project: (unread: boolean, count?: number) => void,
   gates?: IndicatorGates,
 ) {
   let closed = false;
@@ -18,10 +20,13 @@ export function bindUnreadIndicator(
   let identity = "";
   let previous: boolean | undefined;
   let stopObserving = () => {};
-  const publish = (unread: boolean) => {
-    if (unread === previous) return;
+  let previousCount = 0;
+  const publish = (unread: boolean, count = 0) => {
+    if (unread === previous && count === previousCount) return;
     previous = unread;
-    project(unread);
+    previousCount = count;
+    if (count) project(unread, count);
+    else project(unread);
   };
   const update = () => {
     if (closed) return;
@@ -46,8 +51,10 @@ export function bindUnreadIndicator(
       owned,
       client.viewer as string,
       communityDestination(client.selected as string).url,
-      (state) => publish(!!state?.unread),
+      (state) => publish(!!state?.unread, state?.attention),
       gates,
+      false,
+      () => gates?.badgeActivity?.() ?? "all",
     );
   };
   const stop = communities.subscribe(update);

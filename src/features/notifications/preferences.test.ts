@@ -19,6 +19,22 @@ it("values saved before per-category sounds restore with the defaults", () => {
   );
 });
 
+it("keeps existing badge behavior and restores a separately chosen badge filter", () => {
+  expect(parsePreferences(stored).badgeActivity).toBe("all");
+  const preferences = parsePreferences({
+    ...stored,
+    enabled: false,
+    badgeActivity: "mentions-and-dms",
+  });
+  expect(parsePreferences(JSON.parse(JSON.stringify(preferences)))).toEqual(
+    preferences,
+  );
+  expect(preferences.enabled).toBe(false);
+  expect(() =>
+    parsePreferences({ ...stored, badgeActivity: "unknown" }),
+  ).toThrow("Invalid badge activity");
+});
+
 it.each([
   { mention: "ping", direct: "unison", thread: "doop", agent: "doodone" },
   {
@@ -82,7 +98,11 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   const service = createNotificationPreferences(host);
   service.selectViewer(viewer);
   expect(service.snapshot()).toEqual({
-    preferences: { ...stored, sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds },
+    preferences: {
+      ...stored,
+      badgeActivity: "all",
+      sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+    },
     error: null,
   });
   expect(setItem).not.toHaveBeenCalled();
@@ -90,6 +110,7 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   expect(service.update({})).toBe(true);
   expect(JSON.parse(store.get(key) ?? "")).toEqual({
     ...stored,
+    badgeActivity: "all",
     sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
   });
   service.dispose();

@@ -111,6 +111,27 @@ it("macOS banner permission reads the native authorization independently of Dock
   expect(sdk.show).toHaveBeenCalledWith("notification_show", expect.anything());
 });
 
+it("forwards numeric, dot and read badges through the production native adapter", async () => {
+  const { service } = setup();
+  await service.indicator.refresh();
+  service.indicator.setUnread(true, 3);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 3 }),
+  );
+  service.indicator.setUnread(true, 1);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 1 }),
+  );
+  service.indicator.setUnread(true);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true }),
+  );
+  service.indicator.setUnread(false);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false }),
+  );
+});
+
 it("macOS first-run Delivery exposes an explicit authorization action", async () => {
   sdk.bannerPermission.mockResolvedValueOnce("default");
   const { service } = setup();
@@ -160,7 +181,8 @@ it("desktop settings expose app-owned sounds and collapse them when alerts are d
   expect(html).toContain("@Mentions");
   expect(html).toContain("Thread replies");
   expect(html).toContain("Solo chat completions");
-  expect(html.match(/role="combobox"/g)).toHaveLength(4);
+  expect(html.match(/role="combobox"/g)).toHaveLength(5);
+  expect(html).toContain('aria-label="Badge activity"');
   expect(html).not.toContain("Preview flutter");
   expect(html).not.toContain("Permission granted");
   expect(html).toContain("Check permission");
@@ -177,7 +199,8 @@ it("desktop settings expose app-owned sounds and collapse them when alerts are d
   );
   expect(disabled).toContain('aria-label="Desktop alerts"');
   expect(disabled).not.toContain('aria-label="Sound"');
-  expect(disabled).not.toContain('role="combobox"');
+  expect(disabled.match(/role="combobox"/g)).toHaveLength(1);
+  expect(disabled).toContain('aria-label="Badge activity"');
   expect(disabled).not.toContain("Notify while viewing");
 });
 

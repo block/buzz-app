@@ -103,6 +103,29 @@ function setup() {
     },
   };
 }
+
+it("persists badge activity per account without changing desktop alert choices", () => {
+  const t = setup();
+  const original = t.service.snapshot().preferences;
+  t.service.updatePreferences({ badgeActivity: "mentions-and-dms" });
+  expect(t.service.snapshot().preferences).toEqual({
+    ...original,
+    badgeActivity: "mentions-and-dms",
+  });
+  t.service.selectViewer("b".repeat(64));
+  expect(t.service.snapshot().preferences.badgeActivity).toBe("all");
+  t.service.selectViewer(viewer);
+  expect(t.service.snapshot().preferences.badgeActivity).toBe(
+    "mentions-and-dms",
+  );
+  t.service.updatePreferences({ enabled: false });
+  t.service.reloadPreferences();
+  expect(t.service.snapshot().preferences).toEqual({
+    ...original,
+    enabled: false,
+    badgeActivity: "mentions-and-dms",
+  });
+});
 async function flush() {
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }

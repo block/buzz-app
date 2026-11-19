@@ -1,3 +1,4 @@
+import type { BadgeActivity } from "./preferences";
 import type { Communities } from "../communities/service";
 import { communityDestination } from "../communities/destination";
 import type { RelayData } from "../relay/service";
@@ -29,6 +30,7 @@ export function observeCommunityUnread(
   publish: (state: CommunityUnread | undefined) => void,
   gates?: UnreadGates,
   known = false,
+  badgeActivity?: () => BadgeActivity,
 ) {
   let closed = false;
   const channels = new Map<string, () => void>();
@@ -42,6 +44,7 @@ export function observeCommunityUnread(
     if (known && session.live.snapshot().status !== "connected")
       return publish(undefined);
     const muted = new Set(preferences.data?.muted ?? []);
+    const badge = badgeActivity?.();
     let unread = false;
     let attention = 0;
     let observed = 0;
@@ -53,9 +56,19 @@ export function observeCommunityUnread(
         observed++;
       }
       // Count what the channel's sidebar row shows.
-      if (rowUnread(snapshot, dms.has(channelId), muted.has(channelId)))
-        unread = true;
-      attention += (snapshot.row ?? snapshot).attentionCount ?? 0;
+      const dm = dms.has(channelId);
+      const row = snapshot.row ?? snapshot;
+      if (badge === "mentions-and-dms" && !dm) {
+        unread ||= (row.mentionCount ?? 0) > 0;
+      } else {
+        unread ||= rowUnread(snapshot, dm, muted.has(channelId));
+      }
+      const count = badge
+        ? dm
+          ? row.observedCount
+          : row.mentionCount
+        : row.attentionCount;
+      attention += count ?? 0;
     }
     if (known && !observed) return publish(undefined);
     publish({ unread, attention });

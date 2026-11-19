@@ -66,7 +66,7 @@ function harness(summaries = false) {
   const listeners = new Set<() => void>();
   const load = vi.fn(async () => base);
   const save = vi.fn(async () => {});
-  const check = vi.fn(async () => {});
+  const check = vi.fn(async () => undefined);
   const capability: ChannelDetailsCapability = {
     available: true,
     load,

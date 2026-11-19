@@ -1081,6 +1081,126 @@ it.each([undefined, 600])(
   },
 );
 
+function soloNaming() {
+  const h = harness("owner", true);
+  const named = (title: string, extra: string[][] = []) => {
+    const automatic = title === "First prompt" ? [] : [SOLO_NAMED_LABEL];
+    const metadata = h.metadata(title, "", "private", "stream", [
+      SOLO_LABEL,
+      ...automatic,
+    ]);
+    h.set([
+      h.record(39000, [
+        ...metadata.tags.slice(1),
+        ["ttl", "600"],
+        ["ttl_deadline", title === "First prompt" ? "1000" : "1010"],
+        ...extra,
+      ]),
+      ...h.events().slice(1),
+    ]);
+  };
+  named("First prompt");
+  const details = h.owner.capability;
+  const channels = { subscribeList: () => () => {} };
+  return { ...h, named, details, channels };
+}
+
+it.each(["confirmed", "in flight"] as const)(
+  "saves a typed Solo title over this session's %s automatic title",
+  async (timing) => {
+    const h = soloNaming();
+    const base = await h.details.load(id);
+    const started = deferred<void>();
+    const release = deferred<void>();
+    h.publish
+      .mockImplementationOnce(async () => {
+        started.resolve();
+        if (timing === "in flight") await release.promise;
+        h.named("Automatic title");
+      })
+      .mockImplementationOnce(async () => h.named("My title"));
+    const automatic = h.details.save(
+      base,
+      { ...base, name: "Automatic title" },
+      undefined,
+      undefined,
+      "automatic",
+    );
+    await started.promise;
+    if (timing === "confirmed") await automatic;
+    const manual = h.details.save(
+      base,
+      { ...base, name: "My title" },
+      undefined,
+      undefined,
+      h.channels,
+    );
+    try {
+      if (timing === "in flight") expect(h.sign).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+    }
+    await Promise.all([automatic, manual]);
+    expect(
+      h.sign.mock.calls.map(
+        ([event]) => event.tags.find(([key]) => key === "name")?.[1],
+      ),
+    ).toEqual(["Automatic title", "My title"]);
+    expect(h.sign.mock.calls[1]?.[0].tags).not.toContainEqual([
+      "t",
+      SOLO_NAMED_LABEL,
+    ]);
+    expect(h.sign.mock.calls[1]?.[0].tags.some(([tag]) => tag === "ttl")).toBe(
+      false,
+    );
+    expect(await h.details.load(id)).toMatchObject({
+      name: "My title",
+      ttlSeconds: 600,
+    });
+  },
+);
+
+it.each(["other write", "other metadata", "unconfirmed"] as const)(
+  "blocks a stale manual rename when automatic naming leaves %s",
+  async (outcome) => {
+    const h = soloNaming();
+    const base = await h.details.load(id);
+    h.publish.mockImplementationOnce(async () => {
+      if (outcome === "unconfirmed") throw new Error("Lost relay response");
+      h.named(
+        "Automatic title",
+        outcome === "other metadata" ? [["unlisted"]] : [],
+      );
+    });
+    const automatic = h.details.save(
+      base,
+      { ...base, name: "Automatic title" },
+      undefined,
+      undefined,
+      "automatic",
+    );
+    if (outcome === "unconfirmed")
+      await expect(automatic).rejects.toThrow("may have been saved");
+    else await automatic;
+    if (outcome === "other write") h.named("Automatic title");
+    await expect(
+      h.details.save(
+        base,
+        { ...base, name: "My title" },
+        undefined,
+        undefined,
+        h.channels,
+      ),
+    ).rejects.toThrow(
+      outcome === "unconfirmed"
+        ? "Check the previous change"
+        : "Channel details changed",
+    );
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).toHaveBeenCalledOnce();
+  },
+);
+
 it.each(["away and back", "rejection", "disposal"] as const)(
   "retires the local Solo rename marker after %s",
   async (ending) => {

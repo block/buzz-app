@@ -157,7 +157,7 @@ function detailsCapability(): ChannelDetailsCapability {
     available: true,
     load: vi.fn(() => new Promise<never>(() => {})),
     save: vi.fn(async () => {}),
-    check: vi.fn(async () => {}),
+    check: vi.fn(async () => undefined),
     snapshot: () => undefined,
     subscribe: () => () => {},
   };

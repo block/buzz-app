@@ -24,14 +24,13 @@ import {
 import { useToastDismiss } from "../../shared/design-system/ui/Toast";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
-  isAppArtworkSource,
   isNativeMediaSource,
   isProxySource,
   safeOpenUrl,
 } from "./attachment-source";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
-import { downloadAppArtwork, downloadNativeMedia } from "./native-download";
+import { downloadNativeMedia } from "./native-download";
 import { useMediaActionNotification } from "./MediaActionAnnouncements";
 
 type Target = {
@@ -42,12 +41,9 @@ type Target = {
   image: HTMLImageElement | null;
 };
 
-/** Received relay media has app-only display URLs, and the app's own artwork
- * is served from an origin only the app can fetch. Their menu uses the
- * original URL for copying and the existing authenticated boundaries for
- * bytes, in place of the native image menu whose fetches those URLs defeat.
- * The Base UI menu mounts on demand, rather than once per attachment in a
- * list. */
+/** Received relay media has app-only display URLs. Its menu uses the original
+ * URL for copying and the existing authenticated boundaries for bytes. The
+ * Base UI menu mounts on demand, rather than once per attachment in a list. */
 export function MediaContextMenu({
   url,
   source,
@@ -83,12 +79,8 @@ export function MediaContextMenu({
     handingOffFocus.current = false;
   }, [source, url, active]);
   const native = !!source && isNativeMediaSource(source);
-  const artwork = !!source && isAppArtworkSource(source);
   const supported =
-    source &&
-    url &&
-    safeOpenUrl(url) &&
-    (native || artwork || isProxySource(source));
+    source && url && safeOpenUrl(url) && (native || isProxySource(source));
   const current = active && target?.source === source && target?.url === url;
   const run = async (
     action: () => Promise<void>,
@@ -254,14 +246,11 @@ export function MediaContextMenu({
               Copy {kind} URL
             </MenuItem>
             <MenuSeparator />
-            {native || artwork ? (
+            {native ? (
               <MenuItem
                 onClick={() =>
                   void run(
-                    () =>
-                      native
-                        ? downloadNativeMedia(target.source, name)
-                        : downloadAppArtwork(target.source, name),
+                    () => downloadNativeMedia(target.source, name),
                     "Saved to Downloads",
                     "Couldn’t download. Try again.",
                     target.source,

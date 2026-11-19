@@ -390,6 +390,9 @@ and are asked to sign in again in Buzz.
   Desktop menu downloads show **Starting download…**, then confirm when saved to
   Downloads or report a failure. Browser downloads use the browser's
   settings, and image copying requires browser clipboard support.
+- Agent avatars in messages and the Bestie dock do not offer image-save menus.
+  Clicking them still opens the profile or Bestie conversation. Uploaded images
+  and videos keep their media actions.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it

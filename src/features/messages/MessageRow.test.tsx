@@ -1087,78 +1087,84 @@ it("requests a small profile image without downsizing message attachments", () =
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
 });
 
-it("serves the avatar's bundled pack artwork from the app menu", async () => {
-  vi.stubGlobal("isTauri", true);
-  const pack = agentAvatars[0];
-  if (!pack) throw new Error("Missing avatar fixtures");
-  const view = renderMessage({
-    profile: { name: "Bo", picture: pack.url },
-    media: (url) => url,
-  });
-  try {
-    const image = view.container.querySelector("img");
-    expect(image).toHaveAttribute("src", pack.url);
-    fireEvent.contextMenu(image as HTMLImageElement, {
-      clientX: 10,
-      clientY: 10,
+it.each([false, true])(
+  "suppresses agent portrait menus without blocking profile activation (clickable=%s)",
+  async (clickable) => {
+    const pack = agentAvatars[0];
+    if (!pack) throw new Error("Missing avatar fixtures");
+    const onOpenLink = vi.fn(() => true);
+    const view = renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Bo", picture: pack.url, isAgent: true },
+      media: (url) => url,
+      canOpenLink: () => clickable,
+      onOpenLink,
     });
-    const menu = await screen.findByRole("menu");
-    for (const item of ["Copy image", "Copy image URL", "Download image"]) {
-      expect(
-        within(menu).getByRole("menuitem", { name: item }),
-      ).toBeInTheDocument();
+    const escaped = vi.fn();
+    document.addEventListener("contextmenu", escaped);
+    document.addEventListener("keydown", escaped);
+    try {
+      const image = view.container.querySelector("img");
+      expect(image).toHaveAttribute("src", pack.url);
+      const trigger = clickable
+        ? screen.getByRole("button", { name: "View Bo profile" })
+        : image?.closest("[data-avatar-shape]")?.parentElement;
+      if (!trigger) throw new Error("Missing avatar trigger");
+      expect(fireEvent.contextMenu(trigger)).toBe(false);
+      expect(fireEvent.keyDown(trigger, { key: "ContextMenu" })).toBe(false);
+      expect(fireEvent.keyDown(trigger, { key: "F10", shiftKey: true })).toBe(
+        false,
+      );
+      expect(escaped).not.toHaveBeenCalled();
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(onOpenLink).not.toHaveBeenCalled();
+      expect(fireEvent.keyDown(trigger, { key: "F10" })).toBe(true);
+      if (clickable) {
+        await userEvent.click(trigger);
+        expect(onOpenLink).toHaveBeenCalledOnce();
+      }
+    } finally {
+      document.removeEventListener("contextmenu", escaped);
+      document.removeEventListener("keydown", escaped);
+      view.unmount();
     }
-  } finally {
-    view.unmount();
-    vi.unstubAllGlobals();
-  }
-});
+  },
+);
 
-it("serves the avatar's relay artwork from the app menu", async () => {
-  const picture = `https://relay.test/media/${"a".repeat(64)}.png`;
-  const view = renderMessage({
-    profile: { name: "Bo", picture },
-    media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
-  });
-  try {
-    const image = view.container.querySelector("img");
-    expect(image).toHaveAttribute(
-      "src",
-      `buzz-media://localhost/${encodeURIComponent(picture)}`,
-    );
-    fireEvent.contextMenu(image as HTMLImageElement, {
-      clientX: 10,
-      clientY: 10,
+it.each([false, true])(
+  "leaves human avatar menus unchanged (clickable=%s)",
+  async (clickable) => {
+    const view = renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Bo", picture: "https://image.test/person.png" },
+      media: (url) => url,
+      canOpenLink: () => clickable,
     });
-    const menu = await screen.findByRole("menu");
-    for (const item of ["Copy image", "Copy image URL", "Download image"]) {
-      expect(
-        within(menu).getByRole("menuitem", { name: item }),
-      ).toBeInTheDocument();
+    try {
+      const trigger = clickable
+        ? screen.getByRole("button", { name: "View Bo profile" })
+        : view.container.querySelector("img");
+      if (!trigger) throw new Error("Missing human avatar");
+      expect(fireEvent.contextMenu(trigger)).toBe(!clickable);
+      if (clickable) {
+        // Before this fix, the real human profile button opens message actions;
+        // the image-only path keeps the browser's native image menu.
+        const menu = await screen.findByRole("menu");
+        expect(
+          within(menu).getByRole("menuitem", { name: "Copy message" }),
+        ).toBeVisible();
+      } else {
+        expect(fireEvent.keyDown(trigger, { key: "ContextMenu" })).toBe(true);
+        expect(fireEvent.keyDown(trigger, { key: "F10", shiftKey: true })).toBe(
+          true,
+        );
+        expect(screen.queryByRole("menu")).toBeNull();
+      }
+    } finally {
+      view.unmount();
     }
-  } finally {
-    view.unmount();
-  }
-});
-
-it("keeps the native menu for the avatar's public HTTPS artwork", () => {
-  const view = renderMessage({
-    profile: { name: "Bo", picture: "https://image.test/person.png" },
-    media: (url) => url,
-  });
-  try {
-    // An uncancelled event is what lets WebKit show its own image menu.
-    expect(
-      fireEvent.contextMenu(view.container.querySelector("img") as Element, {
-        clientX: 10,
-        clientY: 10,
-      }),
-    ).toBe(true);
-    expect(screen.queryByRole("menu")).toBeNull();
-  } finally {
-    view.unmount();
-  }
-});
+  },
+);
 
 it("renders proxy audio attachments with an inline player", () => {
   const html = renderToStaticMarkup(

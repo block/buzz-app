@@ -198,11 +198,6 @@
   flex: 0 0 var(--size-control-sm);
   height: var(--size-control-sm);
 }
-/* An avatar's media menu needs an element that takes its event handlers;
-   the Avatar keeps its own props. `display: contents` leaves the layout. */
-.avatarMenuTarget {
-  display: contents;
-}
 .messageGutter {
   flex: 0 0 var(--size-control-sm);
 }

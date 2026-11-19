@@ -18,10 +18,7 @@ import { AttachmentView } from "../conversation/AttachmentView";
 import { ComposerAttachmentViewer } from "./ComposerAttachmentViewer";
 import { UPLOAD_FAILURES } from "../relay/attachments";
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async () => null),
-  isTauri: () => false,
-}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
 
 it.each([false, true])(
   "never enables saving for an uploaded voice draft, including disabled=%s",

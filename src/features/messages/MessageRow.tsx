@@ -57,7 +57,6 @@ import {
   useEffect,
   useCallback,
   useSyncExternalStore,
-  type HTMLAttributes,
   type ReactNode,
   type ReactElement,
   type RefObject,
@@ -127,16 +126,8 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
-import { bundledPoster } from "../agents/avatar-packs";
-import { MediaContextMenu } from "./MediaContextMenu";
+import { agentAvatarMenuProps } from "../agents/avatar-menu";
 import { useThreadDraft } from "./draft-places";
-
-/** A plain file name an avatar's original URL ends in, or none when the URL
- * doesn't, so the host's media save falls back to the blob's own name. */
-const fileName = (url: string): string => {
-  const last = url.split("/").pop() ?? "";
-  return /^[^/?#]+\.[a-z0-9]{1,8}$/i.test(last) ? last : "";
-};
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
@@ -1105,28 +1096,6 @@ function MessageRowContent({
       {name}
     </>
   );
-  // The avatar's artwork the app itself serves — a bundled pack poster, or
-  // a relay picture behind its private display URL — defeats the native
-  // image menu's fetches, so those right-clicks get the app's media menu
-  // instead. Public HTTPS artwork keeps the native menu, whose items work.
-  // The menu hands its event handlers to its child element, but the Avatar
-  // keeps its own props, so a layout-neutral `display: contents` wrapper
-  // carries them.
-  const artwork = profile?.picture ? bundledPoster(profile.picture) : undefined;
-  const avatarMenuSource = artwork ?? picture;
-  const avatarMenu = (element: ReactElement<HTMLAttributes<HTMLElement>>) =>
-    avatarMenuSource && profile?.picture ? (
-      <MediaContextMenu
-        kind="image"
-        url={profile.picture}
-        source={avatarMenuSource}
-        name={fileName(profile.picture)}
-      >
-        <span className={styles.avatarMenuTarget}>{element}</span>
-      </MediaContextMenu>
-    ) : (
-      element
-    );
   const avatar = row.workflowOwnerId ? (
     <span className={styles.nestedAvatar}>
       <Avatar
@@ -1152,22 +1121,21 @@ function MessageRowContent({
       onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
+          {...(agentAuthor ? agentAvatarMenuProps : {})}
           size="sm"
           shape="round"
           aria-label={`View ${name} profile`}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
           icon={
             <>
-              {avatarMenu(
-                <Avatar
-                  src={picture}
-                  alt=""
-                  fallback={name}
-                  size={avatarSize}
-                  shape={avatarShape}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />,
-              )}
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size={avatarSize}
+                shape={avatarShape}
+                statusBadge={presence === "unknown" ? undefined : presence}
+              />
               {presence !== "unknown" && (
                 <span className="sr-only select-none" id={presenceId}>
                   Presence: {presence}
@@ -1179,23 +1147,24 @@ function MessageRowContent({
       }
     />
   ) : (
-    <span className={styles.nestedAvatar}>
-      {avatarMenu(
-        <Avatar
-          src={picture}
-          alt={
-            presence === "unknown"
-              ? ""
-              : avatarShape === "squircle"
-                ? "Agent"
-                : `${name} avatar`
-          }
-          fallback={name}
-          size={avatarSize}
-          shape={avatarShape}
-          statusBadge={presence === "unknown" ? undefined : presence}
-        />,
-      )}
+    <span
+      className={styles.nestedAvatar}
+      {...(agentAuthor ? agentAvatarMenuProps : {})}
+    >
+      <Avatar
+        src={picture}
+        alt={
+          presence === "unknown"
+            ? ""
+            : avatarShape === "squircle"
+              ? "Agent"
+              : `${name} avatar`
+        }
+        fallback={name}
+        size={avatarSize}
+        shape={avatarShape}
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
     </span>
   );
   const messageActions = (target?: ReactElement, withToolbar?: boolean) => (

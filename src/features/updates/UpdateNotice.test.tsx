@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { UpdateAction } from "./UpdateAction";
 import { UpdateNotice } from "./UpdateNotice";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { createUpdates, type Updates } from "./updates";
@@ -30,6 +31,17 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+const READY = "Update ready. Restart Buzz to install";
+
+function UpdateSurfaces({ updates }: { updates: Updates }) {
+  return (
+    <ToastProvider>
+      <UpdateAction updates={updates} />
+      <UpdateNotice updates={updates} />
+    </ToastProvider>
+  );
+}
+
 async function readyUpdate() {
   const download = deferred();
   const install = deferred();
@@ -46,28 +58,26 @@ async function readyUpdate() {
     check: async () => checks.shift() ?? null,
     relaunch,
   });
-  const view = render(
-    <ToastProvider>
-      <UpdateNotice updates={updates} />
-    </ToastProvider>,
-  );
+  const view = render(<UpdateSurfaces updates={updates} />);
   await waitFor(() => expect(updates?.snapshot().state).toBe("downloading"));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
   download.resolve();
-  await screen.findByRole("dialog", { name: "Ready to update!" });
+  await screen.findByRole("button", { name: READY });
   return { updates, update, install, relaunch, view };
 }
 
-it("offers update and restart once the download is ready", async () => {
+it("offers restart from the top bar without a toast once the download is ready", async () => {
   const { update, install, relaunch } = await readyUpdate();
-  expect(screen.getByText("Click to update")).toBeVisible();
-
-  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
-  expect(await screen.findByText("Updating")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: READY })).toHaveTextContent(
+    "Update",
   );
+
+  fireEvent.click(screen.getByRole("button", { name: READY }));
+  expect(
+    await screen.findByRole("button", { name: "Updating Buzz" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(update.install).toHaveBeenCalledOnce();
   install.resolve();
   await waitFor(() => expect(relaunch).toHaveBeenCalledOnce());
@@ -79,7 +89,7 @@ it.each(["install", "restart"])(
     const { install, relaunch, view, updates } = await readyUpdate();
     if (failure === "restart")
       relaunch.mockRejectedValueOnce(new Error("shutdown refused"));
-    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    fireEvent.click(screen.getByRole("button", { name: READY }));
     if (failure === "install") install.reject(new Error("read-only location"));
     else install.resolve();
     expect(
@@ -90,13 +100,12 @@ it.each(["install", "restart"])(
         failure === "install" ? "read-only location" : "shutdown refused",
       ),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: READY }),
+    ).not.toBeInTheDocument();
     // App restoration may remount the notice; recovery belongs to the update owner.
     view.unmount();
-    render(
-      <ToastProvider>
-        <UpdateNotice updates={updates} />
-      </ToastProvider>,
-    );
+    render(<UpdateSurfaces updates={updates} />);
     fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
     expect(
       await screen.findByText("You're on the latest version."),
@@ -106,7 +115,7 @@ it.each(["install", "restart"])(
 
 it("reports a menu check after a failed install in a toast, not the recovery notice", async () => {
   const { install } = await readyUpdate();
-  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  fireEvent.click(screen.getByRole("button", { name: READY }));
   install.reject(new Error("read-only location"));
   await screen.findByRole("dialog", { name: "Update failed" });
 
@@ -128,35 +137,16 @@ it("does not surface background check failures", async () => {
   });
   updates = createUpdates({ desktop: true, check, relaunch: async () => {} });
   await act(async () => {});
-  render(
-    <ToastProvider>
-      <UpdateNotice updates={updates} />
-    </ToastProvider>,
-  );
+  render(<UpdateSurfaces updates={updates} />);
   expect(check).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-it("reopens a dismissed ready update on a menu request", async () => {
-  const { updates } = await readyUpdate();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Dismiss update notification" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
-  expect(updates.snapshot().state).toBe("ready");
-
-  await act(async () => {
-    window.dispatchEvent(new Event("buzz:check-for-updates"));
-  });
-  expect(
-    await screen.findByRole("dialog", { name: "Ready to update!" }),
-  ).toBeVisible();
-});
-
-it("stays dismissed when the notice remounts, e.g. during community restoration", async () => {
-  const { updates, view } = await readyUpdate();
+it("a dismissed failure stays hidden across remounts and later checks", async () => {
+  const { install, view, updates } = await readyUpdate();
+  fireEvent.click(screen.getByRole("button", { name: READY }));
+  install.reject(new Error("read-only location"));
+  await screen.findByRole("dialog", { name: "Update failed" });
   fireEvent.click(
     screen.getByRole("button", { name: "Dismiss update notification" }),
   );
@@ -165,20 +155,15 @@ it("stays dismissed when the notice remounts, e.g. during community restoration"
   );
 
   view.unmount();
-  render(
-    <ToastProvider>
-      <UpdateNotice updates={updates} />
-    </ToastProvider>,
-  );
-  expect(updates.snapshot().state).toBe("ready");
+  render(<UpdateSurfaces updates={updates} />);
+  expect(updates.snapshot().state).toBe("error");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-  await act(async () => {
-    window.dispatchEvent(new Event("buzz:check-for-updates"));
-  });
-  expect(
-    await screen.findByRole("dialog", { name: "Ready to update!" }),
-  ).toBeVisible();
+  await updates.checkForUpdate();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  void updates.checkForUpdate();
+  expect(await screen.findByRole("button", { name: READY })).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it.each([
@@ -239,7 +224,7 @@ it("reports repeated menu requests during one check once", async () => {
   expect(screen.getAllByText("You're on the latest version.")).toHaveLength(1);
 });
 
-it("follows a menu check's download with its progress, then updates from the notice", async () => {
+it("follows a menu check's download with its progress, then hands off to the top bar", async () => {
   const download = deferred();
   let report!: (event: DownloadEvent) => void;
   const update = {
@@ -258,11 +243,7 @@ it("follows a menu check's download with its progress, then updates from the not
   const relaunch = vi.fn(async () => {});
   updates = createUpdates({ desktop: true, check, relaunch });
   await act(async () => {});
-  render(
-    <ToastProvider>
-      <UpdateNotice updates={updates} />
-    </ToastProvider>,
-  );
+  render(<UpdateSurfaces updates={updates} />);
   act(() => {
     window.dispatchEvent(new Event("buzz:check-for-updates"));
   });
@@ -275,20 +256,57 @@ it("follows a menu check's download with its progress, then updates from the not
     report({ event: "Progress", data: { chunkLength: 84 } });
   });
   expect(await screen.findByText("Downloading Buzz 1.2.3… 42%")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(screen.queryByRole("button", { name: READY })).not.toBeInTheDocument();
   download.resolve();
-  await screen.findByRole("dialog", { name: "Ready to update!" });
-  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  fireEvent.click(await screen.findByRole("button", { name: READY }));
   await waitFor(() => expect(relaunch).toHaveBeenCalledOnce());
   expect(update.install).toHaveBeenCalledOnce();
-  // The notice, not a second toast, carried the result.
+  // The progress notice closed at readiness; no result toast was shown.
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByText("You're on the latest version.")).toBeNull();
 });
 
-it("menu checks reveal the active download and preserve it through installation", async () => {
+it("keeps a dismissed download hidden through completion and remounts until asked again", async () => {
+  const download = deferred();
+  const update = {
+    version: "1.2.3",
+    download: () => download.promise,
+    install: async () => {},
+    close: async () => {},
+  };
+  updates = createUpdates({
+    desktop: true,
+    check: async () => update,
+    relaunch: async () => {},
+  });
+  const view = render(<UpdateSurfaces updates={updates} />);
+  await act(async () => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  await screen.findByRole("dialog", { name: "Update available" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss update notification" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+
+  view.unmount();
+  render(<UpdateSurfaces updates={updates} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  await act(async () => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  expect(
+    await screen.findByRole("dialog", { name: "Update available" }),
+  ).toBeVisible();
+  download.resolve();
+  await screen.findByRole("button", { name: READY });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("menu checks preserve the active download through installation", async () => {
   const download = deferred();
   const install = deferred();
   const restart = deferred();
@@ -306,11 +324,7 @@ it("menu checks reveal the active download and preserve it through installation"
     .mockResolvedValue(replacement);
   const relaunch = vi.fn(() => restart.promise);
   updates = createUpdates({ desktop: true, check, relaunch });
-  render(
-    <ToastProvider>
-      <UpdateNotice updates={updates} />
-    </ToastProvider>,
-  );
+  render(<UpdateSurfaces updates={updates} />);
   const request = () =>
     act(async () => {
       window.dispatchEvent(new Event("buzz:check-for-updates"));
@@ -321,15 +335,14 @@ it("menu checks reveal the active download and preserve it through installation"
     expect(await screen.findByText("Downloading Buzz 1.2.3…")).toBeVisible();
     expect(check).toHaveBeenCalledOnce();
     await act(async () => download.resolve());
-    await screen.findByRole("dialog", { name: "Ready to update!" });
+    await screen.findByRole("button", { name: READY });
     await request();
-    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
-    await screen.findByText("Updating");
+    expect(
+      await screen.findByText("An update is ready. Restart Buzz to install."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: READY }));
+    await screen.findByRole("button", { name: "Updating Buzz" });
     await request();
-    expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
     await act(async () => install.resolve());
     expect(relaunch).toHaveBeenCalledOnce();
     await request();

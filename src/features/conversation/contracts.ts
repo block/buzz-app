@@ -47,7 +47,9 @@ export type ComposerToolProps = Readonly<{
         toggle(recipient: Readonly<{ pubkey: string; name: string }>): void;
       }>
     | undefined;
-  /** False after removal, destination change, read-only state or a rejected edit. */
+  /** Insert text at the caret. Emoji-only text is followed by a space unless a
+   * space or tab already follows, which the caret then moves past. False after
+   * removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
    * Prose never resolves to identities. Membership is checked by session delivery.
@@ -157,6 +159,9 @@ export type LinkPreviewProps = Readonly<{
   /** Opens `url` through the host, as clicking the link does. False once the
    * contribution or message retires. */
   open(): boolean;
+  /** The message's `TargetOpener`, for targets other than `url`, such as the
+   * plugin's own panel. Absent on hosts that predate it. */
+  opener?: TargetOpener | undefined;
 }>;
 /** A card below a message for one of its links. The lowest `order` among
  * matches draws it, so a plugin can claim its own URLs ahead of the default
@@ -453,11 +458,28 @@ export type ComposerCompletion = Readonly<{
  * that message: in its thread when `threadId` is given, or else in the
  * conversation, or its thread if it is a reply or too old to find. Without
  * `messageId`, keyboard focus moves to the tab's composer once it is ready,
- * unless the user clicks or types first. */
+ * unless the user clicks or types first. With `threadId` and no `messageId`,
+ * `unreadSince` is the thread's read time from before a page's own read as it
+ * opens it, so the New messages divider goes above the replies after it. */
 export type PageTabTarget = {
   channelId: string;
   threadId?: string;
   messageId?: string;
+  unreadSince?: number;
+};
+/** A page-owned conversation with the host's reader, composer, and side pane. */
+export type ConversationWorkspaceProps = {
+  id: string;
+  session: RelaySession;
+  scope: string;
+  target: PageTabTarget;
+  label: string;
+  /** Content at the start of history. It scrolls with the messages. */
+  intro?: ReactNode;
+  /** Actions in the pane's menu and the main tab's context menu. */
+  actions?: readonly { label: string; run(): void }[];
+  /** Select this panel on entry. Closing it keeps the main conversation. */
+  detail?: { target: string; rootId?: string };
 };
 /** `keep` opens a tab beside the others instead of in place of the last.
  * `markRead: false` keeps a conversation tab from marking what it shows read,

@@ -1595,6 +1595,85 @@ async fn sidebar_signer_matches_projection_lengths_and_preserves_unknown_sort_en
 }
 
 #[tokio::test]
+async fn workspace_signer_round_trips_full_compact_filings() {
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+    let host = IdentityHost::fixture();
+    let coordinate = "channel-workspaces";
+    let mut sections = Vec::new();
+    let mut filings = serde_json::Map::new();
+    for workspace in 0..200_u16 {
+        let id = format!("00000000-0000-4000-8000-{workspace:012}");
+        sections.push(serde_json::json!({
+            "id":id, "name":format!("Workspace {workspace}"), "order":workspace
+        }));
+        let rows: Vec<String> = (0..10_u16)
+            .map(|offset| {
+                let mut bytes = [0_u8; 32];
+                bytes[..2].copy_from_slice(&(workspace * 10 + offset).to_be_bytes());
+                format!("~{}", STANDARD_NO_PAD.encode(bytes))
+            })
+            .collect();
+        filings.insert(id, serde_json::json!(rows));
+    }
+    let payload = serde_json::json!({
+        "version":1, "sections":sections, "filings":filings, "sectionOrder":[],
+        "packedUnfiled": [format!("~{}", STANDARD_NO_PAD.encode([200_u8; 32]))],
+        "unifiedOnly": STANDARD_NO_PAD.encode([1_u8; 275]),
+    });
+    let event = host
+        .sign_sidebar(coordinate.into(), payload.clone(), 1)
+        .await
+        .unwrap();
+    host.admit_sidebar(event.clone()).await.unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()[coordinate],
+        payload
+    );
+
+    let mut closed = payload.clone();
+    let closed_fields = closed.as_object_mut().unwrap();
+    closed_fields.remove("packedUnfiled");
+    closed_fields.remove("unifiedOnly");
+    closed_fields.insert("legacyImportClosed".into(), true.into());
+    let event = host
+        .sign_sidebar(coordinate.into(), closed.clone(), 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()[coordinate],
+        closed
+    );
+    let mut invalid = payload.clone();
+    invalid["legacyImportClosed"] = true.into();
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+
+    let mut invalid = payload.clone();
+    invalid["unifiedOnly"] = serde_json::json!("AQ");
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+    let mut invalid = payload.clone();
+    invalid["unfiled"] = serde_json::json!(["elsewhere"]);
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+    let mut invalid = payload;
+    let rows = invalid["filings"]["00000000-0000-4000-8000-000000000000"]
+        .as_array_mut()
+        .unwrap();
+    rows.push(rows[0].clone());
+    assert!(host
+        .sign_sidebar(coordinate.into(), invalid, 2)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn sidebar_signer_supports_large_records_without_expanding_general_signing() {
     let host = IdentityHost::fixture();
     let channels: serde_json::Map<String, serde_json::Value> = (0..500)
@@ -1921,7 +2000,7 @@ async fn webp_thumbnails_fall_back_to_jpeg_only_when_missing() {
     let webp = format!("/media/{hash}.thumb.webp");
     let jpeg = format!("/media/{hash}.thumb.jpg");
     let (base, paths) = thumbnail_server("404 Not Found");
-    let response = serve_media(
+    let (served, response) = serve_media(
         &IdentityHost::fixture(),
         None,
         base.join(&webp).unwrap(),
@@ -1930,7 +2009,8 @@ async fn webp_thumbnails_fall_back_to_jpeg_only_when_missing() {
     .await
     .unwrap();
     assert_eq!(response.body(), b"jpeg");
-    assert_eq!(*paths.lock().unwrap(), [webp.clone(), jpeg]);
+    assert_eq!(served, base.join(&jpeg).unwrap());
+    assert_eq!(*paths.lock().unwrap(), [webp.clone(), jpeg.clone()]);
 
     let (base, paths) = thumbnail_server("401 Unauthorized");
     let status = serve_media(
@@ -1946,6 +2026,25 @@ async fn webp_thumbnails_fall_back_to_jpeg_only_when_missing() {
 
     let png = Url::parse(&format!("https://relay.test/media/{hash}.png")).unwrap();
     assert_eq!(jpeg_thumb(&png), None);
+}
+
+#[tokio::test]
+async fn saved_webp_thumbnails_fall_back_to_jpeg_under_its_name() {
+    let hash = "a".repeat(64);
+    let (base, _) = thumbnail_server("404 Not Found");
+    let dir = tempfile::tempdir().unwrap();
+    let url = base.join(&format!("/media/{hash}.thumb.webp")).unwrap();
+    let saved = save_media(
+        &IdentityHost::fixture(),
+        None,
+        url,
+        dir.path().to_owned(),
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(saved, dir.path().join(format!("{hash}.thumb.jpg")));
+    assert_eq!(std::fs::read(&saved).unwrap(), b"jpeg");
 }
 
 #[test]
@@ -2516,7 +2615,7 @@ async fn failed_media_blocks_are_fetched_again() {
 }
 
 /// Answers each connection with the next canned response, ignoring the request.
-fn scripted_media_server(
+pub(super) fn scripted_media_server(
     responses: Vec<Vec<u8>>,
 ) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -3,6 +3,7 @@
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
+import { nativeToolClient } from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import { imageType } from "../features/relay/attachment-limits";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
@@ -38,6 +39,14 @@ export function appClient(
     captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
+    /** False when this client's `read` returns bytes from somewhere other than
+     * this desktop. Default true preserves existing local-reader behaviour.
+     * When false, publish drops managedAttachments hints before forwarding so
+     * a remote source cannot trigger local managed cleanup. Remote sends still
+     * publish normally; this option does not add remote deletion authority. */
+    localAttachments?: boolean;
+    /** Set only by the native runtime for an active tool request. */
+    nativeCall?: () => void;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -50,11 +59,19 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
+  const bestie = () => {
+    check();
+    const found = agent.bestie?.();
+    if (!found) throw new Error("Your community is not connected.");
+    return found;
+  };
   const handoff = agent.handoff;
+  const threadsApart = agent.threadsApart;
   const plugins = agent.plugins;
   const { settings, soloWorkspaces } = agent;
-  return {
-    ...(options.callSignal ? { signal: options.callSignal } : {}),
+  const signal = options.callSignal ?? options.signal;
+  const client: BuzzClient = {
+    ...(signal ? { signal } : {}),
     ...(agent.protection
       ? {
           protect: async (
@@ -182,9 +199,14 @@ export function appClient(
       check();
       return agent.searchProfiles(query, limit);
     },
-    publish: (event) => {
+    publish: (event, publishOptions) => {
       check();
-      return agent.publish(event, check);
+      // A remote source cannot trigger local managed cleanup.
+      const forwarded =
+        options.localAttachments === false ? undefined : publishOptions;
+      return forwarded
+        ? agent.publish(event, check, forwarded)
+        : agent.publish(event, check);
     },
     upload: async (data, mime) => {
       check();
@@ -316,6 +338,14 @@ export function appClient(
           },
         }
       : {}),
+    ...(threadsApart
+      ? {
+          threadsApart: (channel: string) => {
+            check();
+            return threadsApart(channel);
+          },
+        }
+      : {}),
     templates: async () => {
       check();
       return agent.templates();
@@ -345,7 +375,25 @@ export function appClient(
           },
         }
       : {}),
+    ...(agent.bestie && {
+      bestie: {
+        read: () => bestie().read(),
+        set: (pubkey: string) => bestie().set(pubkey, check),
+        clear: () => bestie().clear(),
+      },
+    }),
   };
+  if (options.nativeCall && options.callSignal) {
+    nativeToolClient(client, {
+      signal: options.callSignal,
+      check: () => {
+        check();
+        options.nativeCall?.();
+        agent.attention.enabled();
+      },
+    });
+  }
+  return client;
 }
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),

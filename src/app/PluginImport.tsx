@@ -675,6 +675,15 @@ export function PluginImport({
         result && updateId
           ? {
               ...result,
+              warnings: savedSource
+                ? result.warnings.filter((warning) =>
+                    warning.startsWith(
+                      savedSource.path === "."
+                        ? "Selected folder:"
+                        : `${savedSource.path}:`,
+                    ),
+                  )
+                : result.warnings,
               candidates: result.candidates.filter(
                 (item) =>
                   item.manifest.id === updateId &&
@@ -1184,7 +1193,6 @@ export function PluginImport({
                 : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
         size={error || (reviewing && updating) ? "compact" : "wide"}
-        headerGap={reviewing && updating ? "compact" : "default"}
         footerGap={reviewing && updating ? "compact" : "default"}
         leadingActions={
           !error &&

@@ -25,10 +25,13 @@ import {
 } from "./security";
 
 export type ActivityReceipt = Readonly<{
+  /** The harness acknowledged this input, whether or not it has message activity. */
+  delivered?: () => void;
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
+  accepted?: () => void;
   superseded?: () => void;
 }>;
 
@@ -61,6 +64,9 @@ export type ClaudeLaunch = Readonly<{
   model?: string;
   /** The session's own effort level; absent is Claude's default. */
   effort?: string;
+  /** The context size, in tokens, it compacts at; absent is Claude's
+   * default. A protected session never compacts. */
+  compactAt?: number;
   /** A saved session to continue. */
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
@@ -79,6 +85,8 @@ export type ToolServer = (
   message: unknown,
   /** Aborts when the process stops, so a stopped turn's tool does not act. */
   signal: AbortSignal,
+  /** Checks the exact active work that issued a native tool request. */
+  check?: () => void,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
@@ -187,6 +195,7 @@ export class ClaudeProcess {
   /** Aborts when the owner stops the work. The next turn, sent or its own,
    * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
+  private callEpoch = 0;
   /** The owner's Stop awaiting Claude's answer, for the work it stopped;
    * another Stop of that work shares it. */
   private stopRequest:
@@ -198,9 +207,13 @@ export class ClaudeProcess {
   private working = false;
   /** Its live background tasks that are activity, as Claude last listed them. */
   private tasks = 0;
+  private taskIds = new Set<string>();
+  /** A completion notification queues its own turn after the task disappears. */
+  private continuation: "waiting" | "running" | undefined;
   /** Called when it was active and is no longer. */
   onActivity: (() => void) | undefined;
   onQuiet?: () => void;
+  private readonly idleWaiters = new Set<() => void>();
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -271,6 +284,10 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
+        // A resumed session takes the system prompt it is launched with, not
+        // the one its session file saved when it began.
+        "--system-prompt-snapshot",
+        "off",
         // Recent models return empty thinking unless asked for summaries.
         "--thinking-display",
         "summarized",
@@ -334,6 +351,9 @@ export class ClaudeProcess {
               CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
               CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
             }
+          : {}),
+        ...(launch.compactAt && !security
+          ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(launch.compactAt) }
           : {}),
         ...(security
           ? {
@@ -528,7 +548,30 @@ export class ClaudeProcess {
   }
   /** Busy, in a turn of its own, or running background work that may call back. */
   get active() {
-    return this.busy || this.working || this.tasks > 0;
+    return (
+      this.busy ||
+      this.working ||
+      this.tasks > 0 ||
+      this.continuation !== undefined
+    );
+  }
+  /** Includes background tasks that can start tool-using continuations. */
+  idle(): Promise<void> {
+    if (!this.alive || !this.active) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+  /** Reports the activity change since `active`, its earlier state. */
+  private edge(active: boolean) {
+    if (!this.active) this.stopping = false;
+    if (active !== this.active) this.onActivity?.();
+    if (active && !this.active) {
+      this.onQuiet?.();
+      this.releaseIdle();
+    }
+  }
+  private releaseIdle() {
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
   }
   get started() {
     return this.began;
@@ -582,6 +625,7 @@ export class ClaudeProcess {
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
+    activity.accepted?.();
     this.write({
       type: "user",
       uuid,
@@ -717,6 +761,7 @@ export class ClaudeProcess {
     return this.readingEffort;
   }
   private settle(settled: Settled) {
+    this.callEpoch++;
     this.pending = 0;
     this.receipts.clear();
     this.activeReceipts.clear();
@@ -725,6 +770,7 @@ export class ClaudeProcess {
     this.stopped = false;
     this.compacting = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
+    if (!this.alive) this.releaseIdle();
   }
 
   private readError(data: string) {
@@ -788,12 +834,23 @@ export class ClaudeProcess {
       const active = this.active;
       const starts = !this.working && !this.busy && message.state !== "idle";
       this.working = message.state !== "idle";
+      if (this.working && this.continuation === "waiting")
+        this.continuation = "running";
+      if (!this.working && (this.continuation === "running" || this.stopping))
+        this.continuation = undefined;
+      if (!this.working) this.callEpoch++;
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
       if (!this.working && this.pending) this.done();
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      this.edge(active);
+      return;
+    }
+    if (
+      message.type === "system" &&
+      message.subtype === "task_notification" &&
+      this.taskIds.has(String(message.task_id))
+    ) {
+      this.continuation = this.working ? "running" : "waiting";
       return;
     }
     // The whole set each time; ambient tasks, such as watchers, are not activity.
@@ -803,12 +860,18 @@ export class ClaudeProcess {
       Array.isArray(message.tasks)
     ) {
       const active = this.active;
-      this.tasks = message.tasks.filter(
+      const tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
-      ).length;
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      );
+      this.tasks = tasks.length;
+      this.taskIds = new Set(
+        tasks.flatMap((task) => {
+          const id =
+            (task as Message | null)?.task_id ?? (task as Message | null)?.id;
+          return typeof id === "string" ? [id] : [];
+        }),
+      );
+      this.edge(active);
       return;
     }
     // `/compact` ends in a successful result even when compacting failed.
@@ -832,12 +895,14 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.delivered?.();
+        const steering = this.activeReceipts.size > 0;
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";
           this.activeReceipts.get(scope)?.superseded?.();
           this.activeReceipts.set(scope, receipt);
-          receipt.acknowledged?.();
+          receipt.acknowledged?.(steering ? { steering: true } : undefined);
         }
       }
       return;
@@ -869,7 +934,13 @@ export class ClaudeProcess {
         typeof message.result === "string" && message.result
           ? message.result
           : `Claude stopped (${String(message.subtype)})`;
-    if (!this.reportsState && this.pending) this.done();
+    if (!this.reportsState) {
+      const active = this.active;
+      this.continuation = undefined;
+      this.callEpoch++;
+      if (this.pending) this.done();
+      this.edge(active);
+    }
   }
   private done() {
     const error = this.lastError;
@@ -893,22 +964,31 @@ export class ClaudeProcess {
       response,
     });
     let response: Message;
-    if (request.subtype === "mcp_message" && this.tools)
+    if (request.subtype === "mcp_message" && this.tools) {
+      const work = this.workLifetime;
+      const epoch = this.callEpoch;
       response = success({
         mcp_response: await this.tools(
           this.conversation,
           request.message,
-          AbortSignal.any([
-            this.protectionLifetime.signal,
-            this.workLifetime.signal,
-          ]),
+          AbortSignal.any([this.protectionLifetime.signal, work.signal]),
+          () => {
+            work.signal.throwIfAborted();
+            if (
+              !this.alive ||
+              !this.active ||
+              this.workLifetime !== work ||
+              this.callEpoch !== epoch
+            )
+              throw new Error("The Claude turn has ended");
+          },
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
           error: { code: -32603, message: String(error?.message ?? error) },
         })),
       });
-    else if (
+    } else if (
       request.subtype === "hook_callback" &&
       this.protection &&
       [

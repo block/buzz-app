@@ -71,7 +71,6 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let installInFlight = false;
   let manualResultRequested = false;
   let inlineViews = 0;
-  let noticeDismissed = false;
   let noticePinned = false;
   const listeners = new Set<() => void>();
   const notify = () => {
@@ -80,12 +79,6 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   const setStatus = (next: UpdateStatus) => {
     status = next;
     if (next.state === "ready") noticePinned = false;
-    if (
-      next.state !== "downloading" &&
-      next.state !== "ready" &&
-      next.state !== "installing"
-    )
-      noticeDismissed = false;
     notify();
   };
 
@@ -156,12 +149,14 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       }
       return;
     }
-    // A menu request reveals the current update without replacing its handle.
+    // A menu request reveals a download in progress without replacing its
+    // handle; a ready update already shows in the top bar.
     if (CHECK_BLOCKED_STATES.has(status.state)) {
-      if (!background) {
-        noticeDismissed = false;
-        noticePinned =
-          status.state === "available" || status.state === "downloading";
+      if (
+        !background &&
+        (status.state === "available" || status.state === "downloading")
+      ) {
+        noticePinned = true;
         notify();
       }
       return;
@@ -218,13 +213,11 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       };
     },
     inlineVisible: () => inlineViews > 0,
-    /** Keep dismissal through download and readiness; another request reveals it. */
+    /** Dismissal lasts until another request pins the notice again. */
     dismissNotice() {
-      noticeDismissed = true;
       noticePinned = false;
       notify();
     },
-    noticeDismissed: () => noticeDismissed,
     /** Keep requested downloads, failed installs and their retry results reachable outside Settings. */
     noticePinned: () => noticePinned,
     checkForUpdate: () => runCheck(false),

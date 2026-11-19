@@ -6,6 +6,7 @@ import { eventDto, type EventData, type RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
 import { harnessKit } from "./kit";
+import { saved } from "./sections/fixtures/saved";
 
 const self = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -289,6 +290,28 @@ describe("harnessKit.turnPrompt", () => {
     expect(again.text).toBe(later.text);
   });
 
+  it("ends the prompt with its conversation's instructions, keyed as its notes are", async () => {
+    const root = message("1", "Kick off");
+    const event = reply("4", "1", "@Ampy and now?");
+    const { kit, agent, delivery } = setup({ thread: [root, event] });
+    const conversationInstructions = vi.fn(() => ({
+      plugin: "acme.tasks",
+      text: "Review only.",
+    }));
+    Object.assign(agent, { conversationInstructions });
+    const d = delivery({ type: "mention", event });
+    const conversation = await kit.conversation(d, "thread");
+    if (!conversation) throw new Error("not admitted");
+    const { text } = await kit.turnPrompt(d, conversation);
+    expect(text).toMatch(
+      /<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>$/,
+    );
+    expect(conversationInstructions).toHaveBeenCalledWith(
+      channel,
+      "1".repeat(64),
+    );
+  });
+
   it("keeps a mark for each thread of a channel conversation", async () => {
     const rootA = message("1", "Thread A");
     const rootB = message("2", "Thread B");
@@ -373,6 +396,8 @@ describe("harnessKit.systemPrompt", () => {
     expect(text).toContain("~/work");
     expect(text).toContain(`<repos for="https://kit.example:${alice}"/>`);
     expect(text).not.toContain("<buzz-tools-unavailable>");
+    // Byte for byte what it was before the base prompt had sections.
+    expect(`${text}\n`).toBe(saved("kit.thread"));
   });
 
   it("tells a session without tools that its final message is its reply", async () => {

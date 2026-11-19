@@ -9,6 +9,8 @@ import {
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { afterEach, expect, it, vi } from "vitest";
 import { MessageLink } from "./MessageLink";
+import { apply as registerLinks } from "../../bundled/links";
+import type { LinkRenderer } from "./contracts";
 import type { ChannelList, ChannelReference } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 
@@ -56,16 +58,32 @@ function fixture(status: ChannelList["status"] = "ready") {
   };
 }
 
+let inlineLink: LinkRenderer | undefined;
+registerLinks({
+  conversation: { registerLink: (value: LinkRenderer) => (inlineLink = value) },
+} as never);
+if (!inlineLink) throw new Error("Expected the bundled link renderer");
+const renderers = [
+  {
+    ...inlineLink,
+    pluginId: "buzz.links",
+    key: "buzz.links/links",
+    revision: "1",
+  },
+];
+const registry = { snapshot: () => renderers, subscribe: () => () => {} };
+
 const link = (
   session: RelaySession,
   id: string,
   label: string | null = "#authored",
   interactive = true,
+  withRenderer = false,
 ) => (
   <MessageLink
     key={`${id}:${label}`}
     url={`buzz://channel/${id}`}
-    registry={undefined}
+    registry={withRenderer ? registry : undefined}
     onOpenLink={() => true}
     session={session}
     interactive={interactive}
@@ -86,20 +104,16 @@ const crew: ChannelReference = {
   joined: false,
 };
 
-it("keeps an unavailable chat's bubble card, lock, sent name and accessible explanation", () => {
+it("preserves an unavailable chat's authored inline label and ordinary access explanation", () => {
   const t = fixture();
-  render(link(t.session, "private-session", "Session: PR 45 fixes"));
-  t.answer("private-session", { state: "withheld" });
-  const card = screen.getByRole("link", {
-    name: "Chat: PR 45 fixes, unavailable",
-  });
-  expect(card.getAttribute("title")).toContain(
-    "You don’t have access, or it no longer exists.",
+  render(
+    link(t.session, "private-session", "Session: PR 45 fixes", true, true),
   );
-  expect(card.getAttribute("aria-description")).toContain("Chat unavailable");
-  expect(card.querySelector("svg.tabler-icon-message-circle")).not.toBeNull();
-  expect(card.querySelector("svg.tabler-icon-lock")).not.toBeNull();
-  expect(card.querySelector("svg.tabler-icon-chevron-right")).toBeNull();
+  t.answer("private-session", { state: "withheld" });
+  const anchor = screen.getByRole("link", { name: "Session: PR 45 fixes" });
+  expect(anchor.textContent).toBe("Session: PR 45 fixes");
+  expect(anchor.getAttribute("title")).toContain("aren’t a member");
+  expect(anchor.querySelector("svg.tabler-icon-lock")).not.toBeNull();
 });
 
 it("names an open channel and shows its hover card", async () => {
@@ -165,6 +179,28 @@ it("marks a withheld channel private and keeps an authored label beside the lock
   expect(authored?.getAttribute("title")).toContain("aren’t a member");
 });
 
+it("does not open a withheld channel link, and keeps its href for copying", () => {
+  const t = fixture();
+  const open = vi.fn(() => true);
+  render(
+    <MessageLink
+      url="buzz://channel/secret"
+      registry={undefined}
+      onOpenLink={open}
+      session={t.session}
+      directoryLabel="Stale chat title"
+    />,
+  );
+  t.answer("secret", { state: "withheld" });
+  const raw = screen.getByRole("link", { name: "Private channel" });
+  expect(raw.getAttribute("aria-disabled")).toBe("true");
+  expect(raw.getAttribute("href")).toBe("buzz://channel/secret");
+  fireEvent.click(raw);
+  fireEvent(raw, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+  expect(open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 it("keeps the authored label while the answer is unknown", async () => {
   const t = fixture();
   render(link(t.session, "flaky"));
@@ -223,9 +259,9 @@ it("keeps a link focused while its name resolves, then opens its card", async ()
   );
 });
 
-it("shows an accessible private Solo chat as Chat with a navigation chevron, not a privacy lock", () => {
+it("renders an accessible private Solo chat with the ordinary authored link label", () => {
   const t = fixture();
-  render(link(t.session, "shared-chat", "Chat: Work"));
+  render(link(t.session, "shared-chat", "Chat: Work", true, true));
   t.answer("shared-chat", {
     state: "found",
     name: "Work",
@@ -235,8 +271,8 @@ it("shows an accessible private Solo chat as Chat with a navigation chevron, not
     archived: false,
     joined: true,
   });
-  const card = screen.getByRole("link", { name: "Open Chat: Work" });
+  const card = screen.getByRole("link", { name: "Chat: Work" });
   expect(card.querySelector("svg.tabler-icon-message-circle")).not.toBeNull();
-  expect(card.querySelector("svg.tabler-icon-chevron-right")).not.toBeNull();
+  expect(card.querySelector("svg.tabler-icon-chevron-right")).toBeNull();
   expect(card.querySelector("svg.tabler-icon-lock")).toBeNull();
 });

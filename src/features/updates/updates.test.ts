@@ -257,10 +257,10 @@ it.each([
       updates.dismissNotice();
       if (received < 100)
         report({ event: "Progress", data: { chunkLength: 100 - received } });
+      expect(updates.noticePinned()).toBe(false);
       report({ event: "Finished" });
       download.resolve();
       await vi.waitFor(() => expect(state()).toBe("ready"));
-      expect(updates.noticeDismissed()).toBe(true);
       expect(updates.noticePinned()).toBe(false);
     } finally {
       download.resolve();

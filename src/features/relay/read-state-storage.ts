@@ -17,6 +17,8 @@ import {
   READ_RESERVE_KEYS,
 } from "./read-state-retention";
 
+export const READ_LOCAL_UNREAD_KEYS = 10_000;
+
 export type ReadJournal = Readonly<{
   version: 1;
   slot: string;
@@ -24,6 +26,8 @@ export type ReadJournal = Readonly<{
   state: ReadState;
   /** Explicitly local-only intent; the counter fences older reading handles. */
   localUnread: Readonly<Record<string, number>>;
+  /** Local-only last change revision per unread key; reset with the undo epoch. */
+  localUnreadIntent?: Readonly<Record<string, number>>;
   /** Local interaction order, bounded with retained frontier hints. */
   recent?: Readonly<Record<string, number>>;
   /** Local-only evicted receipts, deleted with this partition even by old builds. */
@@ -49,6 +53,10 @@ export type ReadJournal = Readonly<{
   }>[];
   /** Further slots this installation owns after `slot`, in placement order. */
   spill?: readonly string[];
+  /** Local captured-Undo epoch; rotates on startup or intent-history retention. */
+  capturedReadUndo?: string;
+  /** Message keys held by in-session captured Undo actions. */
+  capturedUndoVersions?: Readonly<Record<string, string>>;
   revision: number;
   /** Saves among `revision` that read nothing (row `seen:` marks), from any
    * window, so unread intent is `revision - quiet`. */
@@ -70,6 +78,10 @@ export interface ReadStateStorage {
   close(): void;
 }
 export const newSlotId = () => crypto.randomUUID().replaceAll("-", "");
+export const newReadUndoEpochId = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 export function newReadJournal(): ReadJournal {
   return {
     version: 1,
@@ -77,6 +89,7 @@ export function newReadJournal(): ReadJournal {
     clientId: crypto.randomUUID(),
     state: EMPTY_READ_STATE,
     localUnread: {},
+    localUnreadIntent: {},
     revision: 0,
     acceptedRevision: 0,
     lastCreatedAt: 0,
@@ -94,6 +107,14 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     !record(raw.state.overrides) ||
     !record(raw.localUnread) ||
     !uint32(raw.lastCreatedAt) ||
+    (raw.capturedReadUndo !== undefined && !slotId(raw.capturedReadUndo)) ||
+    (raw.capturedUndoVersions !== undefined &&
+      (!record(raw.capturedUndoVersions) ||
+        Object.keys(raw.capturedUndoVersions).length > READ_LOCAL_UNREAD_KEYS ||
+        !Object.entries(raw.capturedUndoVersions).every(
+          ([key, action]) =>
+            contextId(key) && key.startsWith("msg:") && slotId(action),
+        ))) ||
     !Number.isSafeInteger(raw.revision) ||
     (raw.revision as number) < 0 ||
     !Number.isSafeInteger(raw.acceptedRevision) ||
@@ -129,7 +150,7 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
       Object.keys(raw.state.frontiers).length ||
     Object.keys(parsed.state.overrides).length !==
       Object.keys(raw.state.overrides).length ||
-    Object.keys(raw.localUnread).length > 10000 ||
+    Object.keys(raw.localUnread).length > READ_LOCAL_UNREAD_KEYS ||
     !Object.values(raw.localUnread).every(
       (v) =>
         Number.isSafeInteger(v) &&
@@ -138,6 +159,18 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     )
   )
     throw new Error("Invalid saved read entries");
+  if (
+    raw.localUnreadIntent !== undefined &&
+    (!record(raw.localUnreadIntent) ||
+      Object.keys(raw.localUnreadIntent).length > READ_LOCAL_UNREAD_KEYS ||
+      !Object.values(raw.localUnreadIntent).every(
+        (value) =>
+          Number.isSafeInteger(value) &&
+          (value as number) > 0 &&
+          (value as number) <= (raw.revision as number),
+      ))
+  )
+    throw new Error("Invalid saved read intent revisions");
   if (
     raw.recent !== undefined &&
     (!record(raw.recent) ||
@@ -277,6 +310,11 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     localUnread: Object.freeze({ ...raw.localUnread }) as Readonly<
       Record<string, number>
     >,
+    ...(raw.localUnreadIntent !== undefined && {
+      localUnreadIntent: Object.freeze({
+        ...(raw.localUnreadIntent as Record<string, number>),
+      }),
+    }),
     recent: Object.freeze({
       ...(raw.recent as Record<string, number> | undefined),
     }),
@@ -287,6 +325,14 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     ...(raw.floor ? { floor: raw.floor } : {}),
     own: Object.freeze({ ...own }),
     spill: Object.freeze([...(spill as string[])]),
+    ...(raw.capturedReadUndo !== undefined && {
+      capturedReadUndo: raw.capturedReadUndo as string,
+    }),
+    ...(raw.capturedUndoVersions !== undefined && {
+      capturedUndoVersions: Object.freeze({
+        ...(raw.capturedUndoVersions as Record<string, string>),
+      }),
+    }),
     revision: raw.revision as number,
     ...(raw.quiet !== undefined && { quiet: raw.quiet as number }),
     acceptedRevision: raw.acceptedRevision as number,

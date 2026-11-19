@@ -164,7 +164,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       ]),
       result("r", "3 messages"),
       send("s1", "Looks good."),
-      result("s1", "sent"),
+      result("s1", `sent ${"a".repeat(64)}`),
       send("n1", "Nested.", "reply_in_subthread"),
       result("n1", "sent"),
       send("s2", "One more thing."),
@@ -182,6 +182,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       type: "message",
       text: "Looks good.",
       posted: true,
+      messageId: "a".repeat(64),
     }),
     expect.objectContaining({ type: "message", text: "Nested.", posted: true }),
     expect.not.objectContaining({ posted: true }),
@@ -257,6 +258,50 @@ const turn = (content: string, context: readonly EventData[] = []) =>
     context,
     total: context.length + 1,
   });
+
+it("shows delivered steering attachments in the running turn", () => {
+  const attachment = (type: string, prompt: string, extra = {}) =>
+    line("attachment", undefined, {
+      attachment: { type, prompt },
+      ...extra,
+    });
+  const file = [
+    line("user", turn("fix the tests")),
+    line("assistant", [
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "test" } },
+    ]),
+    line("user", [{ type: "tool_result", tool_use_id: "t1", content: "ok" }]),
+    attachment("queued_command", steerPrompt(turn("also lint"))),
+    attachment("queued_command", steerPrompt(turn("check formatting"))),
+    attachment(
+      "queued_command",
+      `<new-message-arrived-while-you-were-working>\n${prompt("include legacy sessions")}\n</new-message-arrived-while-you-were-working>`,
+    ),
+    attachment("queued_command", steerPrompt("A scheduled wake.")),
+    attachment("queued_command", turn("ordinary queued prompt")),
+    attachment("other", steerPrompt(turn("other attachment"))),
+    attachment("queued_command", steerPrompt(turn("from a subagent")), {
+      isSidechain: true,
+    }),
+    line("assistant", [{ type: "text", text: "Fixed." }]),
+  ].join("\n");
+  const name = (pubkey: string) => (pubkey === sam ? "Sam" : undefined);
+  const turns = claudeTurns(file, conversation, false, name);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.items).toMatchObject([
+    { type: "prompt", text: "fix the tests", author: "Sam", steer: false },
+    { type: "tool", output: "ok", status: "completed" },
+    { type: "prompt", text: "also lint", author: "Sam", steer: true },
+    { type: "prompt", text: "check formatting", author: "Sam", steer: true },
+    {
+      type: "prompt",
+      text: "include legacy sessions",
+      author: "Sam",
+      steer: true,
+    },
+    { type: "message", text: "Fixed." },
+  ]);
+});
 
 it("reads a prompt and a steer sent as exact records, naming the sender", () => {
   clock = 0;
@@ -897,6 +942,39 @@ it("reads a session's latest whole turns from its end", async () => {
   ).toEqual([["2", "2"]]);
 });
 
+it("requests a full read when a clipped turn contains a delivered steer", async () => {
+  clock = 0;
+  const session = { ...conversation, sessionId: "clipped-steer" };
+  const { spawn } = host({
+    "./-Users-me--buzz/clipped-steer.jsonl": [
+      line("user", turn("older")),
+      line("assistant", [{ type: "text", text: "x".repeat(3 << 20) }]),
+      line("attachment", undefined, {
+        attachment: {
+          type: "queued_command",
+          prompt: steerPrompt(turn("also lint")),
+        },
+      }),
+      line("assistant", [{ type: "text", text: "Lint passed." }]),
+      line("user", turn("latest")),
+      line("assistant", [{ type: "text", text: "Done." }]),
+    ].join("\n"),
+  });
+  const signal = new AbortController().signal;
+  await expect(
+    readLatestTurns(spawn, "~/.buzz", session, true, signal),
+  ).resolves.toBeUndefined();
+  const full = await readTranscript(spawn, "~/.buzz", session, true, signal);
+  expect(full?.turns[0]?.items).toMatchObject([
+    { text: "older" },
+    expect.anything(),
+    expect.objectContaining({ text: "also lint", steer: true }),
+    expect.objectContaining({ text: "Lint passed." }),
+  ]);
+  const latest = await readLatestTurns(spawn, "~/.buzz", session, true, signal);
+  expect(latest?.map(({ turnId }) => turnId)).toEqual(["u5"]);
+});
+
 it("reads a turn larger than the chunk in full only every 30 s, keeping what is shown between", async () => {
   clock = 0;
   const { spawn } = host({
@@ -949,7 +1027,12 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
   // The runtime's own method, with only what it reads.
   const latest = (held: readonly TranscriptTurn[]) =>
     ClaudeRuntime.prototype.latestTurns.call(
-      { spawn, reads: () => undefined, prompts: () => prompts } as never,
+      {
+        spawn,
+        reads: () => undefined,
+        prompts: () => prompts,
+        place: (_agent: string, _key: string, workspace: string) => workspace,
+      } as never,
       conversation,
       "~/.buzz",
       false,
@@ -979,4 +1062,52 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
   expect(
     shown(await latest([earlier("other"), ...(first ? [first] : [])])),
   ).toEqual([{ prompts: 1, continued: false }]);
+});
+
+it("discovers a community transcript from a different source channel", async () => {
+  clock = 0;
+  const { spawn } = host({
+    "./-Users-me--buzz/community.jsonl": [
+      line(
+        "user",
+        turnPrompt({
+          agent,
+          event: message("e", "remember"),
+          channel: { id: "channel", name: "dev" },
+          scope: "community",
+          context: [],
+          total: 1,
+        }),
+      ),
+      line("assistant", [{ type: "text", text: "Remembered." }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "other", community: true },
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((turn) => turn.sessionId)).toEqual(["community"]);
+});
+
+it("discovers a community session whose first turn was an unaddressed wake", async () => {
+  const { spawn } = host({
+    "./-Users-me--buzz/wake.jsonl": [
+      line(
+        "user",
+        `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent}\n</context>\n\ncheck`,
+      ),
+      line("assistant", [{ type: "text", text: "checked" }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "other", community: true },
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((t) => t.sessionId)).toEqual(["wake"]);
 });

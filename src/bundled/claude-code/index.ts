@@ -7,16 +7,23 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { type ComponentType, createElement } from "react";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { withProviderWords } from "../../features/agents/failure-words";
 import { refusedByBuzz } from "./auth";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
+import {
+  followRecommended,
+  recommendedRun,
+} from "../../features/agents/recommended";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
+import { targetKey } from "../../features/navigation/targets";
+import type { ClaudeConnection } from "./ClaudeSettings";
 import { readUsage } from "./usage";
 
 export { TYPE_ID };
@@ -41,7 +48,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   // Older replacement auth implementations need not provide key management.
   const { Settings } = setup.auth as {
-    Settings?: ComponentType<{ setup: ClaudeSetup; active(): boolean }>;
+    Settings?: ComponentType<{
+      setup: ClaudeSetup;
+      active(): boolean;
+      connection?: ClaudeConnection | undefined;
+    }>;
   };
   if (Settings)
     ctx.settingsCards.register({
@@ -49,7 +60,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
       title: "Claude",
       icon: ClaudeLogoIcon,
       group: "Plugins",
-      component: ({ active }) => createElement(Settings, { setup, active }),
+      component: ({ active, navigation }) => {
+        let connection: ClaudeConnection | undefined;
+        if (navigation?.target.kind === "settings") {
+          const { route, ...parent } = navigation.target;
+          const target = {
+            ...parent,
+            route: { version: 1, params: "connect" },
+          } as const;
+          connection = {
+            open: route?.version === 1 && route.params === "connect",
+            onOpenChange(open) {
+              if (!active()) return;
+              if (open) {
+                if (!navigation.signal.aborted)
+                  void ctx.navigation.open(target);
+              } else {
+                ctx.navigation.dismiss(
+                  (candidate) => targetKey(candidate) === targetKey(target),
+                  parent,
+                );
+              }
+            },
+          };
+        }
+        return createElement(Settings, { setup, active, connection });
+      },
     });
   ctx.agentProtection.registerModels({
     label: "Claude",
@@ -60,10 +96,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
       })),
     complete: (model, prompt, signal) => setup.review(model, prompt, signal),
   });
-  const providerDefaults = new ClaudeDefaults(agents.storage);
+  // A candidate needs Claude signed in and its model and level listed.
+  const recommended = recommendedRun(TYPE_ID, (candidate) =>
+    setup.offers(candidate),
+  );
+  const providerDefaults = new ClaudeDefaults(agents.storage, recommended);
+  /** What an agent on Recommended runs on, found before its first run. */
+  const follow = (agent: AgentHandle | undefined) =>
+    providerDefaults.follow(
+      agents.snapshot().running.find((item) => item.key === agent?.key)?.config,
+    );
   // No turn starts without credentials.
   const runtime = new ClaudeRuntime(
-    spawn ? { spawn: setup.auth.authorize(spawn, true) } : {},
+    {
+      ...(spawn ? { spawn: setup.auth.authorize(spawn, true) } : {}),
+      ...(host.resolveDirectory
+        ? { resolveDirectory: host.resolveDirectory.bind(host) }
+        : {}),
+    },
     (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     agents.storage,
@@ -89,6 +139,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (key, session) => agents.execution(key, session),
     (key) => agents.inspectExecution(key),
     (key) => !!agents.executionBinding(key),
+    undefined,
+    undefined,
+    (agent, signal, channelId) =>
+      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -155,10 +209,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: providerDefaults,
     runtime,
     openSetup,
+    recommended,
   });
   agents.register<Config>({
     id: TYPE_ID,
     execution: true,
+    conversationFolders: true,
     hooks: { events: CLAUDE_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
@@ -167,6 +223,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    settingsProposal: {
+      compactAt: "unprotected",
+      resolveRecommended: recommended.find,
+    },
+    readModelSettings: (saved, context) =>
+      providerDefaults.readModelSettings(saved, context),
     Create,
     CreateAction,
     CreateConfiguration,
@@ -180,47 +242,59 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : undefined,
     exportShared: (saved) => ({
       runtime: "claude",
-      model: config(saved).model,
+      model: followRecommended(saved, config(saved), recommended.current())
+        .model,
     }),
+    recommends: (candidate) => setup.offers(candidate),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
+      scope: carry.sessionScope ?? saved.scope,
       workspace: carry.workspace ?? saved.workspace,
     }),
     carry: (saved) => {
-      const { instructions, workspace } = config(saved);
+      const { instructions, workspace, scope } = config(saved);
       return {
         ...(instructions.trim() && { instructions }),
         ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        ...(scope !== DEFAULT_CONFIG.scope && { sessionScope: scope }),
       };
     },
     describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
+      const { model, effort } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
         { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== DEFAULT_CONFIG.scope,
-          unchangedKey: scope,
-        },
       ];
     },
-    summary: (agent) => config(agent.config).model || "Claude",
+    summary: (agent) =>
+      followRecommended(
+        agent.config,
+        config(agent.config),
+        recommended.current(),
+      ).model || "Claude",
     ...(spawn &&
       readFile && {
         usage: async (agent, { since, signal }) => {
           if (await agents.inspectExecution(agent.key))
             throw new Error("Usage is unavailable for remote Claude agents.");
-          return readUsage(
-            { spawn, readFile },
-            config(agent.config).workspace,
-            agent.key,
-            runtime.conversations(agent.key).map((saved) => saved.sessionId),
-            since,
-            signal,
+          // Its workspace's sessions, and those of each conversation folder.
+          const found = await Promise.all(
+            runtime
+              .sessionPlaces(agent.key, config(agent.config).workspace)
+              .map(({ place, saved, standalone }) =>
+                readUsage(
+                  { spawn, readFile },
+                  place,
+                  agent.key,
+                  saved,
+                  since,
+                  signal,
+                  standalone,
+                ),
+              ),
           );
+          return found.flat().sort((a, b) => b.lastAt - a.lastAt);
         },
       }),
     provider: {
@@ -249,10 +323,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         );
         return runtime
           .conversations(key)
-          .map(({ key, channelId, root, at }) => {
+          .map(({ key, channelId, root, community, at }) => {
             const working = busy.get(key);
             return {
               channelId,
+              ...(community ? { community } : {}),
               ...(root && { root }),
               at,
               ...(working !== undefined && {
@@ -281,10 +356,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ],
     // A mention during the first download waits for it, within its deadline.
     ...claudeRun(runtime, async (signal, agent) => {
+      // A remote target runs Recommended on its own default.
       if (agent && (await agents.inspectExecution(agent.key))) return;
-      return agent?.protection
-        ? setup.protectedInstalled(signal)
-        : setup.installed(signal);
+      await (agent?.protection
+        ? setup.protectedInstalled(signal, () => runtime.room())
+        : setup.installed(signal));
+      await follow(agent);
     }),
   });
 };

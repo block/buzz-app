@@ -1,3 +1,7 @@
+import { createPortal } from "react-dom";
+import { ForwardDisclosure } from "./ForwardDisclosure";
+import { pastedForward } from "./forward-clipboard";
+import { ComposerForward, useComposerForward } from "./ComposerForward";
 import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
 import {
   soloModelPicksKey,
@@ -12,9 +16,9 @@ import {
   useGifDraftPreview,
 } from "../../bundled/emoji/GifDraftPreview";
 import { accentButtonStyle } from "../../shared/theme/accent";
-import { stageChatCards } from "./composer-chat-cards";
-import { chatCardIds } from "./chat-cards";
-import { ComposerChatCards } from "./ComposerChatCards";
+import { restoreChatLinks } from "./composer-chat-cards";
+import { pastedFiles } from "./composer-clipboard";
+import { chatLinkIds } from "./chat-cards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
@@ -36,8 +40,10 @@ import {
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
-  archivedMention,
+  outsideMentionReferences,
+  pickedAgents,
   mentionAdmission,
+  mentionChannel,
   pastedMentionRecipient,
 } from "./mention-admission";
 import { rememberMention } from "./mention-history";
@@ -76,6 +82,7 @@ import { useEditWithUpArrowPreference } from "./edit-key-preference";
 import { matches } from "../shortcuts/bindings";
 import { isApplePlatform } from "../shortcuts/format";
 import { useChosenAgent } from "../solo/default-agent";
+import { agentUnavailable } from "../agents/choices";
 import { useAgentChoices } from "../agents/use-choices";
 import {
   soloAgentsOnly,
@@ -311,6 +318,7 @@ export type MessageComposerProps = {
   session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
+  forwardAudience?: string;
   label?: string | undefined;
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
@@ -495,7 +503,8 @@ function untouchedDraft(draft: MentionDraft) {
     !draft.text &&
     !draft.recipients.length &&
     !draft.chatCards?.length &&
-    !draft.gifs?.length
+    !draft.gifs?.length &&
+    !draft.forward
   );
 }
 
@@ -522,6 +531,7 @@ function Composer({
   scope,
   channelId,
   channelName,
+  forwardAudience,
   label: customLabel,
   placeholder,
   onSend,
@@ -582,6 +592,7 @@ function Composer({
     [replyParentId, mediaTargetUrl],
   );
   const inputId = useId();
+  const forwardDisclosureId = useId();
   const draftKey =
     submission?.draftKey ??
     (threadRootId
@@ -691,9 +702,8 @@ function Composer({
     );
     // A follow-up an earlier release saved is this composer's prefill, not
     // the user's draft: history seeds it now, and the first save replaces it.
-    const saved = stageChatCards(
+    const saved = restoreChatLinks(
       legacyFollowupDraft(stored) ? mentionDraft("") : stored,
-      channels(),
     );
     // An own Solo chat alone with agents seeds its toolbar, not the text.
     const source =
@@ -732,6 +742,12 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  const forwarded = useComposerForward(
+    session,
+    value.forward,
+    channelId,
+    draft,
+  );
   const recipientKey = JSON.stringify(
     value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
   );
@@ -965,11 +981,14 @@ function Composer({
           ]),
         ]
       : pubkeys;
-  // Read at send time: inline mentions win, else the toolbar's agents.
-  const sendRecipients = () =>
-    routing && !valueRef.current.recipients.length
-      ? routed
-      : valueRef.current.recipients;
+  // Read at send time: inline mentions win, else the toolbar's agents. A
+  // reference addresses nobody, so it goes along with the toolbar's agents.
+  const sendRecipients = () => {
+    const typed = valueRef.current.recipients;
+    return routing && typed.every((person) => referenced(person.pubkey))
+      ? [...routed, ...typed]
+      : typed;
+  };
   const compactingNow = (
     recipients = sendRecipients().map((item) => item.pubkey),
   ) =>
@@ -1103,20 +1122,27 @@ function Composer({
   const sendWithModEnter = useSendWithModEnterPreference();
   const editWithUpArrow = useEditWithUpArrowPreference();
   const saveDraft = (next: MentionDraft, save = true) => {
-    next = stageChatCards(
-      {
-        ...next,
-        ...((next.chatCards ?? valueRef.current.chatCards)
-          ? {
-              chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
-            }
-          : {}),
-        ...((next.gifs ?? valueRef.current.gifs)
-          ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
-          : {}),
-      },
-      channels(),
-    );
+    next = restoreChatLinks({
+      ...next,
+      ...((next.chatCards ?? valueRef.current.chatCards)
+        ? {
+            chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
+          }
+        : {}),
+      ...((next.forward !== undefined
+        ? next.forward
+        : valueRef.current.forward) !== undefined
+        ? {
+            forward:
+              next.forward !== undefined
+                ? next.forward
+                : valueRef.current.forward,
+          }
+        : {}),
+      ...((next.gifs ?? valueRef.current.gifs)
+        ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
+        : {}),
+    });
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
@@ -1197,21 +1223,39 @@ function Composer({
   // A member not yet known to be an agent (say, an unloaded profile) is a
   // person: routing stays off and mentions in the text decide.
   const routing = solo && !withPeople && agentsOnly && !editing.target;
+  /** A Solo chat only references a person outside it: that tag notifies
+   * nobody, so it neither replaces the toolbar's agents nor joins them. Until
+   * the session has read all its agents, an outside name may be the viewer's
+   * agent, so it is named, not a reference: the send reads again. */
+  function referenced(pubkey: string) {
+    if (!solo) return false;
+    const chat = mentionChannel(session, channelId);
+    const agents = pickedAgents(session.agentChoices);
+    return (
+      !!agents &&
+      !chat?.members?.includes(pubkey) &&
+      outsideMentionReferences(chat, agents, pubkey)
+    );
+  }
+  // Whether the text's tags name anyone is settled once agents are known.
+  const tagsSettled = !solo || !!pickedAgents(session.agentChoices);
+  const named = routing
+    ? recipients.filter((person) => !referenced(person.pubkey))
+    : recipients;
   /** Who hears this message: inline mentions win; without any, the toolbar's
    * agents stand in. */
-  const addressed = routing && !recipients.length ? routed : recipients;
+  const addressed = routing && !named.length ? routed : named;
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
   const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
   const sessionState = useSessionState(agents, addressedKeys, sessionPlace);
   const compacting = sessionState === "compacting";
-  // In a saved chat, the viewer's own pick outlives a remount until the next
-  // send, which the chat's history then seeds from. A new chat always starts
-  // from the main agent, unless a refused start gave its pick back (SoloDraft
-  // saves that one) and the viewer has not picked since.
+  // An explicit pick stays with its draft across remounts. Saved chats clear
+  // it on send and then seed from history; SoloDraft consumes it when a new
+  // chat starts.
   const pillKey = `${draftKey}:agents`;
   const keepPick = (people: readonly MentionRecipient[] | null) => {
-    writeView(scope, pillKey, !submission && people?.length ? people : null);
+    writeView(scope, pillKey, people?.length ? people : null);
   };
   const choose = (people: readonly MentionRecipient[]) => {
     seededRoute.current = undefined;
@@ -1222,22 +1266,30 @@ function Composer({
   const audience = routing
     ? {
         recipients: addressed,
-        named: recipients.length > 0,
+        named: named.length > 0,
         only(people: readonly MentionRecipient[]) {
           if (!people.length) return;
           const team = people.map(({ pubkey, name }) => ({ pubkey, name }));
           // While tags in the text decide, a team replaces those tags, as a
           // pick edits them.
-          if (!recipients.length) choose(team);
-          else if (!replaceRecipients(team)) return;
+          if (!named.length) choose(team);
+          else if (
+            !replaceRecipients([
+              ...team,
+              ...recipients.filter((person) => referenced(person.pubkey)),
+            ])
+          )
+            return;
           // Typing resumes in the draft, at its caret.
           input.current?.focus();
         },
         toggle({ pubkey, name }: MentionRecipient) {
+          // The menu offers agents only: a reference never joins the route.
+          if (referenced(pubkey)) return;
           // While tags in the text decide, a pick edits those tags, so it
           // always changes who gets the message. Focus and the caret stay
           // put, and only an added agent must be admissible.
-          if (recipients.length) {
+          if (named.length) {
             if (!recipients.some((person) => person.pubkey === pubkey))
               keepProseCaret(
                 (at) =>
@@ -1256,8 +1308,8 @@ function Composer({
             // An added agent replaces any the message can no longer reach,
             // which the menu cannot uncheck.
             const admitted = admits();
-            const reachable = routed.filter((person) =>
-              admitted(person.pubkey),
+            const reachable = routed.filter(
+              (person) => admitted(person.pubkey) && !referenced(person.pubkey),
             );
             if (reachable.length < 32) choose([...reachable, { pubkey, name }]);
           } else if (routed.length > 1)
@@ -1269,16 +1321,17 @@ function Composer({
   // agents are set aside for good; a draft that already has mentions when the
   // pill takes over (restored, or before its agents were known) starts so.
   useEffect(() => {
+    if (!tagsSettled) return;
     const before = mentionCount.current;
-    mentionCount.current = routing ? recipients.length : 0;
-    if (!routing || !recipients.length || before) return;
+    mentionCount.current = routing ? named.length : 0;
+    if (!routing || !named.length || before) return;
     // The composer's own prefill is withdrawn as the pill takes over, not
     // the viewer's choice.
     if (automaticTag.current === JSON.stringify(valueRef.current)) return;
     setReplacedKey(draftKey);
     setRouted([]);
     writeView(scope, pillKey, null);
-  }, [routing, recipients.length, draftKey, scope, pillKey]);
+  }, [tagsSettled, routing, named.length, draftKey, scope, pillKey]);
   const editLocked = useListedChannel(
     listed,
     channelId,
@@ -1321,12 +1374,24 @@ function Composer({
     `${scope}:${draftKey}`,
     channelId,
     !!submission?.attachments,
+    host ? [scope, `${draftKey}:files`] : undefined,
   );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  const [announcementHost, setAnnouncementHost] = useState<Element | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    const node = form.current;
+    if (node)
+      setAnnouncementHost(
+        node.closest('[role="dialog"][aria-modal="true"]') ??
+          node.ownerDocument.body,
+      );
+  }, []);
   // Notices float above the composer, not over Send.
   useToastClearance(form);
   const notify = useToastNotification();
@@ -1471,10 +1536,7 @@ function Composer({
     diagnose("load", revision.current, raw);
     let next: MentionDraft;
     try {
-      next = stageChatCards(
-        mentionDraft(JSON.parse(raw ?? "null")),
-        channels(),
-      );
+      next = restoreChatLinks(mentionDraft(JSON.parse(raw ?? "null")));
     } catch {
       next = mentionDraft("");
     }
@@ -1662,13 +1724,8 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = stageChatCards(
-      mentionDraft(
-        editing.start(current, (body) =>
-          composerMarkdown(stageChatCards(mentionDraft(body), channels())),
-        ),
-      ),
-      channels(),
+    const next = mentionDraft(
+      editing.start(current, (body) => composerMarkdown(mentionDraft(body))),
     );
     valueRef.current = next;
     updateDraft(next);
@@ -1710,7 +1767,7 @@ function Composer({
         saveDraft: lease.save,
         cancelDraft: lease.cancel,
       });
-      const next = stageChatCards(mentionDraft(body), channels());
+      const next = mentionDraft(body);
       valueRef.current = next;
       updateDraft(next);
       input.current.reset(next);
@@ -1777,6 +1834,41 @@ function Composer({
     if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
     return true;
+  }
+  /** Completed and picked emoji are followed by a space, so typing continues
+   * as a new word. A space or tab already at `at` is reused: the caret moves
+   * past it instead of doubling it. */
+  function insertEmoji(
+    text: string,
+    at: number,
+    range?: CompletionQuery,
+    terminator?: string,
+  ) {
+    const separated = /^[ \t]/.test(valueRef.current.text.slice(at));
+    const start = range?.start ?? input.current?.selectionStart ?? at;
+    const value =
+      /^:\d{1,64}:/.test(text) &&
+      /\d/.test(valueRef.current.text[start - 1] ?? "")
+        ? ` ${text}`
+        : text;
+    if (!insert(separated ? value : `${value} `, undefined, range, terminator))
+      return false;
+    const field = input.current;
+    const end = field?.selectionEnd ?? 0;
+    // A typed colon can land without conversion at the length limit; the
+    // caret then stays after the literal colon.
+    if (separated && field?.value.slice(end - text.length, end) === text)
+      field.setSelectionRange(end + 1, end + 1);
+    return true;
+  }
+  function insertToolText(text: string) {
+    const end = input.current?.selectionEnd;
+    return (
+      attachGif(text) ??
+      (end !== undefined && isEmojiOnly(text, emojiCatalog.entries)
+        ? insertEmoji(text, end)
+        : insert(text))
+    );
   }
   /** A tool's lone GIF joins the attachment row, sent after the caption like
    * the row's other media, rather than sitting in prose at the caret. An edit
@@ -2204,15 +2296,11 @@ function Composer({
       completion.invalidate();
       return input.current?.insertToken(edit.token, query) ?? false;
     }
-    return (
-      typeof edit.text === "string" &&
-      insert(
-        `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
-        undefined,
-        query,
-        key === ":" ? key : undefined,
-      )
-    );
+    if (typeof edit.text !== "string") return false;
+    const terminator = key === ":" ? key : undefined;
+    return isEmojiOnly(edit.text, emojiCatalog.entries)
+      ? insertEmoji(edit.text, query.end, query, terminator)
+      : insert(`${edit.text} `, undefined, query, terminator);
   }
   const currentAdmission = () =>
     live.current &&
@@ -2255,12 +2343,18 @@ function Composer({
     )
       return undefined;
     // Once typed mentions replaced the remembered agents, the history is
-    // skipped.
+    // skipped. A reference is never a remembered agent.
+    const admitted = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+    );
     return seedAgents(
       session,
       channelId,
       replaced ? [] : (history?.rows ?? []),
-      mentionAdmission(session, channelId, agentChoices, mentionRoster),
+      (key) => admitted(key) && !referenced(key),
       session.agentChoices
         .snapshot()
         .selectable.some((choice) => choice.pubkey === chosenAgent)
@@ -2324,7 +2418,7 @@ function Composer({
     // Alone with agents, the agent joins the toolbar, never the text. An empty
     // pill is always refilled, even after a send, so removed mentions fall back.
     if (routing) {
-      if (routed.length || recipients.length) return;
+      if (routed.length || named.length) return;
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
       const chosen = readView<unknown>(scope, pillKey, null);
@@ -2397,7 +2491,8 @@ function Composer({
   // until the composer is shown again, a newer message of the viewer's
   // lands, or a send here replaces the draft with the composer's own
   // follow-up. reset() replaces the editor without a change event, so
-  // nothing persists; focus stays with its current owner.
+  // nothing persists; focus stays with its current owner, and the caret
+  // follows the prefill.
   useEffect(() => {
     if (!presented) {
       seedApplied.current = undefined;
@@ -2458,8 +2553,9 @@ function Composer({
     automaticTag.current = seed.recipients.length
       ? JSON.stringify(seed)
       : undefined;
-    if (input.current && document.activeElement === input.current)
-      input.current.setSelectionRange(seed.text.length, seed.text.length);
+    // reset() leaves the caret at the start. Put it after the prefill even
+    // while unfocused: a retained editor keeps its caret when focused later.
+    input.current?.setSelectionRange(seed.text.length, seed.text.length);
   });
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
   const needsRecipient = (requireMention || solo) && !withPeople;
@@ -2495,7 +2591,23 @@ function Composer({
       )
     )
       throw new Error("Someone joined this chat. Tag an agent to send.");
-    const recipients = [...explicit];
+    let references: readonly string[] = [];
+    if (explicit.some((key) => !channel.members?.includes(key))) {
+      // Only your agents join. Anyone else outside the chat is a reference,
+      // as in a DM; only a complete agent read can tell a name is not yours.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const agents = session.agentChoices.snapshot();
+      references = explicit.filter(
+        (key) =>
+          !channel.members?.includes(key) &&
+          outsideMentionReferences(channel, agents.identities, key),
+      );
+      if (references.length && !agents.complete)
+        throw new Error("Could not load your agents. Retry.");
+    }
+    const recipients = explicit.filter((key) => !references.includes(key));
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -2515,10 +2627,6 @@ function Composer({
     }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      // Classification no longer depends on inventory; refresh before admission.
-      await session.agentChoices.refresh();
-      if (!currentAdmission())
-        throw new Error("The session changed. Review its channel and retry.");
       if (
         missing.some(
           (key) =>
@@ -2538,10 +2646,10 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
     }
-    return recipients;
+    return { recipients, references };
   }
   async function send() {
-    if (!permitted.current || voice.isCapturing()) return;
+    if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if ("saveDraft" in editing.target) {
@@ -2660,6 +2768,7 @@ function Composer({
     // Named conversations require text unless their owner explicitly permits files alone.
     if (
       !draft.trim() &&
+      !value.forward &&
       !chatCards?.length &&
       ((!!submission && !submission.allowAttachmentOnly) ||
         (!attachments.items.length && !gifs?.length))
@@ -2729,33 +2838,22 @@ function Composer({
       onCommand &&
       !captured.recipients.length &&
       !captured.pending?.length &&
+      !captured.forward &&
       !captured.chatCards?.length &&
       !captured.gifs?.length &&
       !capturedAttachments.length &&
       captured.text.trim().startsWith("/")
         ? captured.text.trim()
         : undefined;
-    // A send is an agent follow-up unless it addresses a confirmed person
-    // (a loaded, non-agent profile). Those, and untagged conversation in a
-    // shared chat, go out now; recipients still being classified keep the
-    // owner's queue preference.
-    const profileSnapshot = session.profiles.snapshot();
-    const agentKeys = knownAgentPubkeys(
-      profileSnapshot,
-      session.agentChoices.snapshot(),
-    );
-    const queueFollowUp =
+    // The toolbar's agents stand in when the text tags only references.
+    const fromPill =
+      routing &&
+      captured.recipients.every((person) => referenced(person.pubkey));
+    const queueable =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
-      followUpBehaviorPreference() === "queue" &&
-      capturedRecipients.length > 0 &&
-      !soloHasPeople(
-        capturedRecipients.map(({ pubkey }) => pubkey),
-        session.viewer,
-        profileSnapshot,
-        agentKeys,
-      );
+      followUpBehaviorPreference() === "queue";
     try {
       const tokens = draftTokens(captured);
       messageTokenTags(tokens);
@@ -2789,20 +2887,23 @@ function Composer({
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
       if (
-        capturedRecipients.some(
-          (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
+        capturedRecipients.some((p) =>
+          agentUnavailable(session, p.pubkey, bringable),
         )
       )
         throw new Error(
-          routing && !captured.recipients.length
-            ? "An agent you're sending to is archived. Choose another agent to send."
-            : "A selected recipient is archived. Remove it before sending.",
+          fromPill
+            ? "An agent you're sending to is archived or being deleted. Choose another agent to send."
+            : "A selected recipient is archived or being deleted. Remove it before sending.",
         );
+      // Until agents are known, the new chat's start reads them and decides.
       if (
         ownSoloConversation &&
         submission &&
+        pickedAgents(session.agentChoices) &&
         capturedRecipients.some(
           (person) =>
+            !referenced(person.pubkey) &&
             !session.agentChoices
               .snapshot()
               .selectable.some((agent) => agent.pubkey === person.pubkey),
@@ -2829,10 +2930,10 @@ function Composer({
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(
+        ({ recipients, references } = await prepareRecipients(
           recipients,
-          routing && !captured.recipients.length,
-        );
+          fromPill,
+        ));
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
         const lookup = oldAgents.find(captured.recipients);
@@ -2944,12 +3045,7 @@ function Composer({
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
-      const stagedChats = new Set(
-        chatCardIds((captured.chatCards ?? []).join("\n\n")),
-      );
-      const linkedChats = chatCardIds(content).filter((id) =>
-        stagedChats.has(id),
-      );
+      const linkedChats = chatLinkIds(content, channels());
       if (linkedChats.length) {
         setSending(true);
         setError(undefined);
@@ -2999,6 +3095,38 @@ function Composer({
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
+        if (captured.forward) {
+          const main = fullSession(sender);
+          if (!main && sender.forwarding)
+            return sender.forwarding.send(
+              captured.forward,
+              content,
+              recipients,
+              uploaded,
+              references,
+              sentPicks,
+            );
+          if (!main || !forwarded.row || forwarded.blocked)
+            throw new Error(
+              "Couldn't load this message. Remove it or try pasting again.",
+            );
+          return main.messages.forward(
+            channelId,
+            forwarded.row,
+            forwarded.name,
+            content,
+            undefined,
+            {
+              ...(threadRootId ? { rootId: threadRootId } : {}),
+              ...(replyParentId ? { parentId: replyParentId } : {}),
+              ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
+              mentions: recipients,
+              references,
+              attachments: uploaded,
+              picks: sentPicks,
+            },
+          );
+        }
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -3033,9 +3161,27 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        if (!queueFollowUp || !host) return publishNow(uploaded, session);
+        // A send is an agent follow-up unless it addresses a confirmed person
+        // (a loaded, non-agent profile). Those, and untagged conversation in
+        // a shared chat, go out now; recipients still being classified keep
+        // the owner's queue preference. The recipients are the fresh ones,
+        // without references: someone may have joined or left since.
+        const profiles = session.profiles.snapshot();
+        if (
+          !queueable ||
+          !host ||
+          !recipients.length ||
+          soloHasPeople(
+            recipients,
+            session.viewer,
+            profiles,
+            knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+          )
+        )
+          return publishNow(uploaded, session);
         const message = {
           channelId,
+          ...(captured.forward ? { forward: captured.forward } : {}),
           text: content,
           recipients,
           attachments: uploaded,
@@ -3043,7 +3189,13 @@ function Composer({
           picks: sentPicks,
           ...(tokens.length ? { tokens } : {}),
         };
-        const send = followUpMessage(host, message);
+        const send = followUpMessage(
+          host,
+          message,
+          captured.forward && forwarded.row
+            ? { row: forwarded.row, name: forwarded.name }
+            : undefined,
+        );
         return followUpQueue(host).submit(
           {
             ...message,
@@ -3089,7 +3241,9 @@ function Composer({
           },
           capturedAttachments,
           async (uploaded) => {
-            const sent = await publish(uploaded);
+            // Report a synchronous publication before the new row can render.
+            const result = publish(uploaded);
+            const sent = typeof result === "string" ? result : await result;
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -3104,6 +3258,7 @@ function Composer({
                 return (
                   !draft.text.trim() &&
                   !draft.recipients.length &&
+                  !draft.forward &&
                   !composerMarkdown(draft).trim()
                 );
               } catch {
@@ -3118,6 +3273,8 @@ function Composer({
                   JSON.stringify(next.recipients) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
                   JSON.stringify(next.chatCards ?? []) ||
+                JSON.stringify(valueRef.current.forward) !==
+                  JSON.stringify(next.forward) ||
                 JSON.stringify(valueRef.current.gifs ?? []) !==
                   JSON.stringify(next.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
@@ -3139,12 +3296,20 @@ function Composer({
                   JSON.stringify(next.recipients) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
                   JSON.stringify(next.chatCards ?? []) &&
+                JSON.stringify(valueRef.current.forward) ===
+                  JSON.stringify(next.forward) &&
                 JSON.stringify(valueRef.current.gifs ?? []) ===
                   JSON.stringify(next.gifs ?? [])
               )
             )
               return "conflict";
-            const target = attachmentDraft(session, recoveryKey, channelId);
+            const target = attachmentDraft(
+              session,
+              recoveryKey,
+              channelId,
+              false,
+              host ? [scope, `${draftKey}:files`] : undefined,
+            );
             if (target.snapshot().length) return "conflict";
             if (
               current !== capturedRevision &&
@@ -3184,9 +3349,14 @@ function Composer({
         JSON.stringify(followUp) !== JSON.stringify(valueRef.current);
       valueRef.current = followUp;
       updateDraft(followUp);
-      // The toolbar keeps whoever heard this message for the follow-up.
+      // The toolbar keeps whoever heard this message for the follow-up; a
+      // reference named only this message.
       if (routing) {
-        setRouted(capturedRecipients);
+        setRouted(
+          capturedRecipients.filter((person) =>
+            recipients.includes(person.pubkey),
+          ),
+        );
         setReplacedKey(undefined);
         keepPick(null);
       }
@@ -3279,7 +3449,7 @@ function Composer({
           <RecipientAvatars
             session={session}
             recipients={addressed}
-            mentions={!!recipients.length}
+            mentions={!!named.length}
             disabled={editingDisabled}
             remove={(pubkey) => {
               const person = addressed.find((item) => item.pubkey === pubkey);
@@ -3332,6 +3502,17 @@ function Composer({
       )}
     </>
   );
+  const disclosure =
+    !editing.target && forwarded.disclosure ? (
+      <ForwardDisclosure
+        audience={
+          forwardAudience ??
+          (channelType === "dm" || channelType === "solo" || solo
+            ? "The recipients"
+            : `Everyone in #${channelName}`)
+        }
+      />
+    ) : null;
   if (readingOnly)
     return (
       <>
@@ -3357,6 +3538,19 @@ function Composer({
           focusComposer={() => input.current?.focus()}
         />
       )}
+      {/* Stay inside a modal host, but outside workspace modal-isolation boundaries. */}
+      {announcementHost &&
+        createPortal(
+          <div
+            id={`${inputId}-forward-announcement`}
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {presented ? disclosure : null}
+          </div>,
+          announcementHost,
+        )}
       <form
         ref={form}
         className={styles.composer}
@@ -3386,10 +3580,7 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
-          const files = Array.from(event.clipboardData.items)
-            .filter((item) => item.kind === "file")
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => file !== null);
+          const files = pastedFiles(event.clipboardData);
           if (!files.length) return;
           event.preventDefault();
           event.stopPropagation();
@@ -3495,6 +3686,18 @@ function Composer({
           )}
         </ComposerContext>
         <div className={styles.composerContent}>
+          {!editing.target && value.forward && (
+            <ComposerForward
+              session={host}
+              state={forwarded}
+              scope={scope}
+              onRemove={() => {
+                saveDraft({ ...valueRef.current, forward: null });
+                setError(undefined);
+                input.current?.focus();
+              }}
+            />
+          )}
           {!editing.target && (
             <ComposerAttachments
               media={session.media}
@@ -3537,23 +3740,6 @@ function Composer({
               }}
             />
           )}
-          <ComposerChatCards
-            cards={chatCards ?? []}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            extensions={extensions}
-            disabled={editingDisabled}
-            remove={(index) => {
-              saveDraft({
-                ...valueRef.current,
-                chatCards:
-                  valueRef.current.chatCards?.filter((_, i) => i !== index) ??
-                  [],
-              });
-              input.current?.focus();
-            }}
-          />
           <div className={styles.composerInput}>
             <RichComposerInput
               ref={input}
@@ -3566,6 +3752,28 @@ function Composer({
               channelId={channelId}
               extensions={extensions}
               emoji={emojiCatalog.entries}
+              onSemanticPaste={(data) => {
+                const reference = pastedForward(data);
+                if (reference) {
+                  if (editing.target || submission) {
+                    setError(
+                      "Finish this edit before pasting a forwarded message.",
+                    );
+                    return true;
+                  }
+                  if (valueRef.current.forward) {
+                    setError(
+                      "Only one forwarded message can be attached. Remove it before pasting another.",
+                    );
+                    return true;
+                  }
+                  const { note, ...source } = reference;
+                  if (note && !insert(note)) return true;
+                  saveDraft({ ...valueRef.current, forward: source });
+                  return true;
+                }
+                return false;
+              }}
               onPasteTooLong={() => setPasteTooLong(true)}
               aria-describedby={
                 pasteTooLong ? `${inputId}-paste-error` : undefined
@@ -3677,6 +3885,7 @@ function Composer({
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
                   !valueRef.current.chatCards?.length &&
+                  !valueRef.current.forward &&
                   !valueRef.current.gifs?.length &&
                   !attachments.items.length
                 ) {
@@ -3761,6 +3970,11 @@ function Composer({
               />
             </div>
           )}
+        {disclosure && (
+          <div id={forwardDisclosureId} className="text-subtle">
+            {disclosure}
+          </div>
+        )}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>
@@ -3792,7 +4006,7 @@ function Composer({
                     inviteAgents={agentChoices && !editing.target}
                     recipients={recipients}
                     audience={audience}
-                    insertText={(text) => attachGif(text) ?? insert(text)}
+                    insertText={insertToolText}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
@@ -3838,6 +4052,7 @@ function Composer({
             <IconButton
               variant={
                 draft.trim() ||
+                value.forward ||
                 chatCards?.length ||
                 gifs?.length ||
                 attachments.items.length
@@ -3848,6 +4063,11 @@ function Composer({
               type="submit"
               style={editing.target ? undefined : accentButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
+              aria-describedby={
+                !editing.target && forwarded.disclosure
+                  ? forwardDisclosureId
+                  : undefined
+              }
               title={
                 editing.target
                   ? "Save changes"
@@ -3872,8 +4092,10 @@ function Composer({
                 admitting ||
                 sending ||
                 submission?.disabled ||
+                (!editing.target && forwarded.blocked) ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
+                  !value.forward &&
                   !chatCards?.length &&
                   ((!!submission && !submission.allowAttachmentOnly) ||
                     (!attachments.items.length && !gifs?.length)) &&

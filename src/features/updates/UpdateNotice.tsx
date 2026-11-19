@@ -45,6 +45,9 @@ function useMenuCheck(updates: Updates) {
           notify("Automatic updates aren't available on this build.", "info");
         else if (status.state === "error")
           notify(`Couldn't check for updates: ${status.message}`, "error");
+        // The top-bar action carries a ready update; say so for the click.
+        else if (status.state === "ready")
+          notify("An update is ready. Restart Buzz to install.", "info");
       } finally {
         pending.current = false;
       }
@@ -56,9 +59,9 @@ function useMenuCheck(updates: Updates) {
 }
 
 /**
- * Offers restart once a downloaded update is ready, and follows a requested
- * download with its progress, except while Settings shows it inline; dismissal
- * lasts until it resolves.
+ * Follows a requested download with its progress and keeps a failed install's
+ * retry reachable outside Settings; the top-bar action offers ready updates.
+ * Dismissal lasts until another request pins the notice again.
  */
 export function UpdateNotice({ updates }: { updates: Updates }) {
   useMenuCheck(updates);
@@ -72,29 +75,18 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
     updates.inlineVisible,
     updates.inlineVisible,
   );
-  const dismissed = useSyncExternalStore(
-    updates.subscribe,
-    updates.noticeDismissed,
-    updates.noticeDismissed,
-  );
   const pinned = useSyncExternalStore(
     updates.subscribe,
     updates.noticePinned,
     updates.noticePinned,
   );
+  if (!pinned || inline) return null;
   const { state } = status;
-  const visible = state === "ready" || state === "installing" || pinned;
-  if (!visible || dismissed || inline) return null;
-  const pending = [
-    "checking",
-    "available",
-    "downloading",
-    "installing",
-  ].includes(state);
+  const downloading = state === "available" || state === "downloading";
   const descriptions = {
-    idle: "Click to update",
-    ready: "Click to update",
-    installing: "Updating",
+    idle: "",
+    ready: "",
+    installing: "",
     checking: "Checking for updates...",
     available: "Preparing update...",
     downloading:
@@ -111,11 +103,9 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       title={
         state === "error"
           ? "Update failed"
-          : state === "available" || state === "downloading"
+          : downloading
             ? "Update available"
-            : pinned
-              ? "Software Updates"
-              : "Ready to update!"
+            : "Software Updates"
       }
       description={
         status.state === "error" ? status.message : descriptions[state]
@@ -124,20 +114,16 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       onDismiss={updates.dismissNotice}
       closeLabel="Dismiss update notification"
     >
-      <Button
-        type="button"
-        size="sm"
-        loading={pending}
-        onClick={() =>
-          void (state === "ready"
-            ? updates.installAndRelaunch()
-            : updates.checkForUpdate())
-        }
-      >
-        {["available", "downloading", "ready", "installing"].includes(state)
-          ? "Update now"
-          : "Retry"}
-      </Button>
+      {!downloading && (
+        <Button
+          type="button"
+          size="sm"
+          loading={state === "checking"}
+          onClick={() => void updates.checkForUpdate()}
+        >
+          Retry
+        </Button>
+      )}
     </ToastNotice>
   );
 }

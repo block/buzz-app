@@ -7,9 +7,11 @@ import type {
   AgentAttention,
   SoloPlacement,
   AgentReadout,
+  AgentUpdateInput,
   TeamReadout,
   TeamUpdateInput,
 } from "../features/agents/service";
+import type { DefaultAgentControl } from "../features/solo/default-agent";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -26,6 +28,17 @@ export type Template = Readonly<{
   kind: number;
   content: string;
   tags: readonly (readonly string[])[];
+}>;
+/** Trusted app read/upload hints, never independent deletion authority.
+ * Native requires creation-time consent and exact confirmed event/file matches. */
+export type ManagedAttachment = Readonly<{
+  path: string;
+  sha256: string;
+  size: number;
+  url: string;
+}>;
+export type PublishOptions = Readonly<{
+  managedAttachments?: readonly ManagedAttachment[];
 }>;
 export type Filter = Readonly<Record<string, unknown>>;
 /** The community's description of an uploaded blob. */
@@ -86,9 +99,8 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
-  /** The host's cancellation signal for this call. Keep this signal across
-   * waits; a later turn cannot restore a canceled call. Hosts without request
-   * cancellation omit it. */
+  /** Cancellation for this call, or its owning turn or connection when the
+   * host only supplies a lifetime signal. Keep it across waits. */
   readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */
@@ -109,14 +121,7 @@ export interface BuzzClient {
     }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent?(
-    input: Readonly<{
-      agent: string;
-      name?: string;
-      type?: string;
-      instructions?: string;
-      /** Uploads the picture once the request is valid: its URL. */
-      picture?: () => Promise<string>;
-    }>,
+    input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
   readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
@@ -135,6 +140,11 @@ export interface BuzzClient {
       from: Readonly<{ channel?: string; root?: string }>;
     }>,
   ): void;
+  /** Whether the agent's threads in `channel` have sessions of their own,
+   * apart from its channel-level conversation there; undefined while the host
+   * cannot tell yet. Unless it says yes, a conversation with no thread is the
+   * whole channel. */
+  threadsApart?(channel: string): boolean | undefined;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
@@ -152,7 +162,7 @@ export interface BuzzClient {
     limit: number,
   ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
-  publish(event: Template): Promise<BuzzEvent>;
+  publish(event: Template, options?: PublishOptions): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
   /** Uploads an image for an avatar, without its metadata, as the owner's
@@ -195,11 +205,14 @@ export interface BuzzClient {
     get(key: unknown): SettingState;
     set(key: unknown, value: unknown): SettingState;
   }>;
+  /** The owner's Bestie in the agent's community, in an agent's own run. */
+  bestie?: DefaultAgentControl;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps
  * this channel's messages out of threads. With no `root`, or with
- * `wholeChannel`, its session is the whole channel. */
+ * `wholeChannel`, its session is the whole channel, unless the client's
+ * `threadsApart` says the channel's threads have sessions of their own. */
 export type Context = Readonly<{
   session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;

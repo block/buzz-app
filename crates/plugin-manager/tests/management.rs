@@ -1374,7 +1374,6 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let default = !matches!(
             id,
             "buzz.pi"
-                | "buzz.todos"
                 | "buzz.usage"
                 | "buzz.relay-notes"
                 | "buzz.reminders"
@@ -1384,6 +1383,8 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.drafts-and-sent"
                 | "buzz.changesets"
                 | "buzz.charts"
+                | "buzz.file-viewer"
+                | "buzz.performance-diagnostics"
         );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {

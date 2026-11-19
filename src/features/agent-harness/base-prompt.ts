@@ -1,9 +1,15 @@
 // The Buzz base prompt every agent harness plugin gives its agents, before
 // its own instructions, and what a turn a mention or DM starts adds to it.
-import basePrompt from "./base_prompt.md?raw";
 import mentionPrompt from "./mention_prompt.md?raw";
+import { composeBase } from "./sections/compose";
 
-export const BASE_PROMPT = basePrompt.trim();
+export const BASE_PROMPT = composeBase().text;
+
+/** The base prompt, for a conversation in a folder of its own when
+ * `workspace`, the agent's workspace as an absolute path, is given. */
+export function basePromptFor(workspace?: string) {
+  return workspace ? composeBase({ ownFolder: workspace }).text : BASE_PROMPT;
+}
 
 /** Shown with each turn a mention or DM starts, and with each message that
  * arrives while one runs: what the agent owes it. Watch, timer and wake

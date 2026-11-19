@@ -1,13 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent } from "nostr-tools";
 import {
   browserReadPublisherLock,
   CapturedReadNotRetainedError,
   createReadState,
 } from "./read-state";
-import { effectiveFrontier, overrideActive } from "./read-state-model";
+import {
+  effectiveFrontier,
+  overrideActive,
+  READ_RETENTION_SECONDS,
+} from "./read-state-model";
 import {
   newReadJournal,
+  READ_LOCAL_UNREAD_KEYS,
   readJournal,
   type ReadJournal,
   type ReadStateStorage,
@@ -2471,6 +2476,768 @@ describe("durable read-state owner", () => {
       effectiveFrontier(reloaded.state(), selectedKey, "target-room"),
     ).toBeUndefined();
   });
+  it("captured Undo survives the publication debounce when only local receipts changed", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    await vi.advanceTimersByTimeAsync(60000);
+    await result.undo();
+    expect(owner.state().frontiers[key]).toBeUndefined();
+    expect(f.host.publish).not.toHaveBeenCalled();
+    expect(result.sync).toBe("local-only");
+    expect(owner.snapshot().status).toBe("local");
+  });
+  it("captured local receipts preserve earlier pending publication work", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    await owner.read("room", 20, () => true);
+    const beforeCaptured = owner.state();
+    const result = await owner.readMessages(
+      [{ key: "msg:selected", timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set(["msg:selected"]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    expect(result.sync).toBe("local-only");
+    expect(owner.snapshot().status).toBe("pending");
+    await vi.advanceTimersByTimeAsync(60000);
+    await owner.flush();
+    expect(f.published()).toEqual({ room: 20 });
+    await result.undo();
+    expect(owner.state()).toEqual(beforeCaptured);
+    expect(f.published()).toEqual({ room: 20 });
+  });
+  it("captured Undo preserves an unrelated retention floor while its inverse entries remain retained", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const capturedKey = "msg:captured";
+    const captured = await owner.readMessages(
+      [{ key: capturedKey, timestamp: 8000, channelId: "room-a" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([capturedKey]), valid: () => true },
+      },
+    );
+    assert(captured.undo);
+
+    const later = Array.from({ length: 7000 }, (_, index) => ({
+      key: `msg:other-${index.toString(16).padStart(64, "0")}`,
+      timestamp: index + 10,
+      channelId: "room-b",
+    }));
+    await owner.readMessages(later, undefined, () => true);
+    const floor = owner.floor();
+    expect(floor).toBeGreaterThan(10);
+    expect(floor).toBeLessThan(8000);
+    expect(owner.state().frontiers[capturedKey]).toBe(8000);
+    const otherKey = later.at(-1)?.key ?? "";
+    expect(owner.state().frontiers[otherKey]).toBe(7009);
+
+    await captured.undo();
+    expect(owner.floor()).toBe(floor);
+    expect(owner.state().frontiers[capturedKey]).toBeUndefined();
+    expect(owner.state().frontiers[otherKey]).toBe(7009);
+  });
+  it("expires captured Undo when retention relocates its receipt to the reserve", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = `msg:${"f".repeat(64)}`;
+    const captured = await owner.readMessages(
+      [{ key, timestamp: 8000, channelId: "room-a" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(captured.undo);
+    await owner.readMessages(
+      Array.from({ length: 7000 }, (_, index) => ({
+        key: `msg:${index.toString(16).padStart(64, "0")}`,
+        timestamp: index + 10,
+        channelId: "room-b",
+      })),
+      undefined,
+      () => true,
+    );
+    expect(owner.floor()).toBeLessThan(8000);
+    expect(f.journal()?.state.frontiers[key]).toBeUndefined();
+    expect(f.journal()?.reserve?.[key]).toBe(8000);
+    const retained = f.journal();
+    await expect(captured.undo()).rejects.toThrow(
+      "Reading observation expired",
+    );
+    expect(f.journal()).toEqual(retained);
+  });
+  it("expires captured Undo when a later retention floor crosses its timestamp", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const captured = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room-a" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(captured.undo);
+    const afterRead = f.journal();
+    assert(afterRead);
+    expect(afterRead.floor ?? 0).toBeLessThan(30);
+
+    const unrelated = Array.from({ length: 7000 }, (_, index) => ({
+      key: `msg:other-${index.toString(16).padStart(64, "0")}`,
+      timestamp: index + 10,
+      channelId: "room-b",
+    }));
+    await owner.readMessages(unrelated, undefined, () => true);
+    expect(owner.floor()).toBeGreaterThan(30);
+    // Retention has made the selected timestamp read independently of its
+    // receipt; Undo must not report success while that read-through remains.
+    expect(owner.state().frontiers[key]).toBe(30);
+    const afterRetention = f.journal();
+    assert(afterRetention);
+    await expect(captured.undo()).rejects.toThrow(
+      "Reading observation expired",
+    );
+    expect(f.journal()).toEqual(afterRetention);
+    expect(owner.state().frontiers[key]).toBe(30);
+  });
+  it.each(["forward", "reverse"] as const)(
+    "captured reads on separate channels remain independently undoable (%s)",
+    async (order) => {
+      const f = fixture();
+      const owner = f.make();
+      await owner.ready;
+      const capture = (key: string, timestamp: number, channelId: string) =>
+        owner.readMessages(
+          [{ key, timestamp, channelId }],
+          undefined,
+          () => true,
+          false,
+          undefined,
+          [],
+          {
+            preserveCapturedSet: true,
+            undo: { keys: new Set([key]), valid: () => true },
+          },
+        );
+      const a = await capture("msg:a", 30, "room-a");
+      const b = await capture("msg:b", 40, "room-b");
+      const undoA = a.undo;
+      const undoB = b.undo;
+      assert(undoA);
+      assert(undoB);
+      expect(owner.state().frontiers).toMatchObject({
+        "msg:a": 30,
+        "msg:b": 40,
+      });
+
+      const firstKey = order === "forward" ? "msg:a" : "msg:b";
+      const secondKey = order === "forward" ? "msg:b" : "msg:a";
+      const secondFrontier = order === "forward" ? 40 : 30;
+      const firstUndo = order === "forward" ? undoA : undoB;
+      const secondUndo = order === "forward" ? undoB : undoA;
+      await firstUndo();
+      expect(owner.state().frontiers[firstKey]).toBeUndefined();
+      expect(owner.state().frontiers[secondKey]).toBe(secondFrontier);
+
+      const afterFirst = f.journal();
+      await expect(firstUndo()).rejects.toThrow("Reading observation expired");
+      expect(f.journal()).toEqual(afterFirst);
+
+      await secondUndo();
+      expect(owner.state().frontiers[firstKey]).toBeUndefined();
+      expect(owner.state().frontiers[secondKey]).toBeUndefined();
+    },
+  );
+  it("rejects superseded overlapping captured reads and consumes Undo once", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const capture = (timestamp: number) =>
+      owner.readMessages(
+        [{ key: "msg:overlap", timestamp, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set(["msg:overlap"]), valid: () => true },
+        },
+      );
+    const earlier = await capture(30);
+    const later = await capture(40);
+    assert(earlier.undo);
+    assert(later.undo);
+
+    const afterLaterRead = f.journal();
+    await expect(earlier.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterLaterRead);
+    await later.undo();
+    expect(owner.state().frontiers["msg:overlap"]).toBe(30);
+
+    const afterUndo = f.journal();
+    await expect(later.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterUndo);
+    expect(owner.state().frontiers["msg:overlap"]).toBe(30);
+  });
+  it.each(["action validity", "journal slot replacement"] as const)(
+    "captured Undo expires on %s without changing saved state",
+    async (replacement) => {
+      const f = fixture();
+      let actionValid = true;
+      const owner = f.make();
+      await owner.ready;
+      const key = "msg:guarded";
+      const result = await owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => actionValid,
+        false,
+        undefined,
+        [],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => actionValid },
+        },
+      );
+      assert(result.undo);
+      if (replacement === "action validity") actionValid = false;
+      else {
+        const current = f.journal();
+        assert(current);
+        f.setJournal({ ...current, slot: "c".repeat(32) });
+      }
+      const afterReplacement = f.journal();
+
+      await expect(result.undo()).rejects.toThrow(
+        "Reading observation expired",
+      );
+      expect(f.journal()).toEqual(afterReplacement);
+      expect(owner.state().frontiers[key]).toBe(30);
+    },
+  );
+  it("keeps captured Undo retryable when its atomic journal write fails", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:atomic";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    const actionId = f.journal()?.capturedUndoVersions?.[key];
+    assert(actionId);
+    const beforeFailure = f.journal();
+    vi.mocked(f.storage.update).mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(result.undo()).rejects.toThrow("disk full");
+    expect(f.journal()).toEqual(beforeFailure);
+    expect(f.journal()?.capturedUndoVersions?.[key]).toBe(actionId);
+    expect(owner.state().frontiers[key]).toBe(30);
+
+    await result.undo();
+    expect(owner.state().frontiers[key]).toBeUndefined();
+    expect(f.journal()?.capturedUndoVersions?.[key]).toBeUndefined();
+  });
+  it("keeps earlier Undo when bounded key ownership cannot track another action", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:captured";
+    const first = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room-a" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(first.undo);
+    const actionId = f.journal()?.capturedUndoVersions?.[key];
+    assert(actionId);
+    const current = f.journal();
+    assert(current);
+    f.setJournal({
+      ...current,
+      capturedUndoVersions: Object.fromEntries([
+        [key, actionId],
+        ...Array.from({ length: READ_LOCAL_UNREAD_KEYS - 1 }, (_, index) => [
+          `msg:retained-${index}`,
+          "b".repeat(32),
+        ]),
+      ]),
+    });
+
+    const later = await owner.readMessages(
+      [{ key: "msg:later", timestamp: 40, channelId: "room-b" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set(["msg:later"]), valid: () => true },
+      },
+    );
+    expect(later.undo).toBeUndefined();
+    expect(f.journal()?.capturedUndoVersions?.[key]).toBe(actionId);
+    await first.undo();
+    expect(owner.state().frontiers).toMatchObject({ "msg:later": 40 });
+    expect(owner.state().frontiers[key]).toBeUndefined();
+  });
+  it("another shared-storage owner's startup expires captured Undo without changing revision", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    const revision = f.journal()?.revision;
+    const epoch = f.journal()?.capturedReadUndo;
+    const other = f.make();
+    await other.ready;
+    expect(f.journal()?.revision).toBe(revision);
+    expect(f.journal()?.capturedReadUndo).not.toBe(epoch);
+    const afterStartup = f.journal();
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterStartup);
+    expect(other.state().frontiers[key]).toBe(30);
+
+    const subsequent = await owner.readMessages(
+      [{ key: "msg:subsequent", timestamp: 31, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set(["msg:subsequent"]), valid: () => true },
+      },
+    );
+    assert(subsequent.undo);
+    await subsequent.undo();
+    expect(owner.state().frontiers[key]).toBe(30);
+    expect(owner.state().frontiers["msg:subsequent"]).toBeUndefined();
+  });
+  it("another shared-storage owner's mark-then-clear expires overlapping captured Undo", async () => {
+    const f = fixture();
+    const owner = f.make();
+    const other = f.make();
+    await Promise.all([owner.ready, other.ready]);
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+
+    await other.markLocalUnread(key, () => true);
+    expect(other.localUnread(key)).toBeGreaterThan(0);
+    await other.clearLocalUnread(key, [key], () => true);
+    expect(other.localUnread(key)).toBeUndefined();
+    const afterIntent = f.journal();
+
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterIntent);
+    expect(owner.state().frontiers[key]).toBe(30);
+  });
+  it("bounds local unread intent history and expires handles when it prunes", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    const before = f.journal();
+    assert(before);
+    f.setJournal({
+      ...before,
+      localUnreadIntent: Object.fromEntries(
+        Array.from({ length: READ_LOCAL_UNREAD_KEYS }, (_, index) => [
+          `msg:old-${index}`,
+          before.revision,
+        ]),
+      ),
+    });
+
+    await owner.markLocalUnread("msg:new", () => true);
+    const afterPrune = f.journal();
+    assert(afterPrune);
+    expect(Object.keys(afterPrune.localUnreadIntent ?? {})).toHaveLength(
+      READ_LOCAL_UNREAD_KEYS,
+    );
+    expect(afterPrune.capturedReadUndo).not.toBe(before.capturedReadUndo);
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterPrune);
+  });
+  it.each(["identical", "older", "newer-unrelated", "newer-selected"] as const)(
+    "scopes captured Undo to changed peer receipts (%s)",
+    async (replay) => {
+      const f = fixture();
+      const owner = f.make();
+      await owner.ready;
+      const key = `msg:${"a".repeat(64)}`;
+      const otherKey = `msg:${"c".repeat(64)}`;
+      const receipt = (createdAt: number, extra: Record<string, number> = {}) =>
+        signReadState(
+          {
+            slot: "b".repeat(32),
+            createdAt,
+            blob: {
+              v: 1,
+              client_id: "peer",
+              contexts: { [key]: 30, ...extra },
+            },
+          },
+          f.key.secret,
+          100,
+        );
+      const admitted = receipt(90);
+      f.addRemote(admitted);
+      await owner.refresh();
+      await owner.markLocalUnread(key, () => true);
+      const captured = await owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [key],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => true },
+        },
+      );
+      assert(captured.undo);
+      expect(owner.localUnread(key)).toBeUndefined();
+      const next =
+        replay === "identical"
+          ? admitted
+          : replay === "older"
+            ? receipt(80)
+            : receipt(95, {
+                [replay === "newer-selected" ? key : otherKey]: 35,
+              });
+      f.reader.read.mockResolvedValueOnce([next]);
+      await owner.refresh();
+      expect(owner.snapshot().status).not.toBe("error");
+
+      if (replay === "newer-selected") {
+        const afterPeerRead = f.journal();
+        await expect(captured.undo()).rejects.toThrow(
+          "Reading observation expired",
+        );
+        expect(f.journal()).toEqual(afterPeerRead);
+        expect(owner.localUnread(key)).toBeUndefined();
+        expect(owner.state().frontiers[key]).toBe(35);
+      } else {
+        await captured.undo();
+        expect(owner.localUnread(key)).toBeDefined();
+        expect(owner.state().frontiers[key]).toBe(30);
+        if (replay === "newer-unrelated")
+          expect(owner.state().frontiers[otherKey]).toBe(35);
+      }
+    },
+  );
+  it.each([
+    { captureFloor: 29, undoFloor: 29, expires: false },
+    { captureFloor: 29, undoFloor: 30, expires: true },
+    { captureFloor: 30, undoFloor: 31, expires: false },
+  ])(
+    "captured Undo honors the time-based floor ($captureFloor -> $undoFloor)",
+    async ({ captureFloor, undoFloor, expires }) => {
+      const f = fixture(READ_RETENTION_SECONDS + captureFloor);
+      const owner = f.make();
+      await owner.ready;
+      const key = `msg:${"a".repeat(64)}`;
+      await owner.markLocalUnread(key, () => true);
+      const captured = await owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [key],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => true },
+        },
+      );
+      assert(captured.undo);
+      const afterRead = f.journal();
+      f.setNow(READ_RETENTION_SECONDS + undoFloor);
+      expect(owner.floor()).toBe(undoFloor);
+      if (expires) {
+        await expect(captured.undo()).rejects.toThrow(
+          "Reading observation expired",
+        );
+        expect(f.journal()).toEqual(afterRead);
+      } else {
+        await captured.undo();
+        expect(owner.localUnread(key)).toBeDefined();
+      }
+    },
+  );
+  it("expires an inverse that no longer fits the reserve without reporting a storage failure", async () => {
+    const f = fixture();
+    const key = `msg:${"a".repeat(64)}`;
+    f.setJournal({ ...newReadJournal(), reserve: { [key]: 30 } });
+    const owner = f.make();
+    await owner.ready;
+    const captured = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(captured.undo);
+    expect(f.journal()?.reserve?.[key]).toBeUndefined();
+    // A concurrent valid checkpoint can fill the space that promotion freed.
+    await f.storage.update((current) => {
+      assert(current);
+      return {
+        ...current,
+        reserve: Object.fromEntries(
+          Array.from({ length: READ_RESERVE_KEYS }, (_, index) => [
+            `msg:${index.toString(16).padStart(64, "0")}`,
+            40,
+          ]),
+        ),
+      };
+    });
+    const afterRetention = f.journal();
+    await expect(captured.undo()).rejects.toThrow(
+      "Reading observation expired",
+    );
+    expect(f.journal()).toEqual(afterRetention);
+    expect(owner.snapshot().status).not.toBe("error");
+  });
+  it("captured Undo restores receipt retention and expires on equal-valued peer ingest without a new revision", async () => {
+    const f = fixture();
+    const key = "msg:selected";
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 }, floor: 3 });
+    const owner = f.make();
+    await owner.ready;
+    const before = owner.state();
+    const capture = () =>
+      owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [key],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => true },
+        },
+      );
+    const result = await capture();
+    assert(result.undo);
+    await result.undo();
+    expect(owner.state()).toEqual(before);
+    expect(owner.floor()).toBe(3);
+    expect(owner.localUnread(key)).toBeUndefined();
+
+    const newer = await capture();
+    assert(newer.undo);
+    const revision = f.journal()?.revision;
+    // A legacy peer can affirm the exact same msg receipt without changing revision.
+    f.addRemote(
+      signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts: { [key]: 30 } },
+        },
+        f.key.secret,
+        100,
+      ),
+    );
+    await owner.refresh();
+    expect(f.journal()?.revision).toBe(revision);
+    const afterIngest = f.journal();
+    await expect(newer.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterIngest);
+    expect(owner.state().frontiers[key]).toBe(30);
+  });
+  it("does not undo an equal-valued peer receipt saved by another shared-storage owner", async () => {
+    const f = fixture();
+    const options = { broadcastName: `read-equal-peer:${crypto.randomUUID()}` };
+    const owner = f.make(options);
+    const peer = f.make(options);
+    await Promise.all([owner.ready, peer.ready]);
+    const key = "msg:selected";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [key],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    const revision = f.journal()?.revision;
+    f.addRemote(
+      signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts: { [key]: 30 } },
+        },
+        f.key.secret,
+        100,
+      ),
+    );
+    await peer.refresh();
+    expect(f.journal()?.revision).toBe(revision);
+    const afterPeerRead = f.journal();
+    expect(afterPeerRead?.state.frontiers[key]).toBe(30);
+
+    await expect(result.undo()).rejects.toThrow("Reading observation expired");
+    expect(f.journal()).toEqual(afterPeerRead);
+    expect(owner.state().frontiers[key]).toBe(30);
+  });
+  it("keeps captured Undo when another owner ingests an unrelated message receipt", async () => {
+    const f = fixture();
+    const options = {
+      broadcastName: `read-unrelated-peer:${crypto.randomUUID()}`,
+    };
+    const owner = f.make(options);
+    const peer = f.make(options);
+    await Promise.all([owner.ready, peer.ready]);
+    const key = "msg:selected";
+    const otherKey = "msg:other";
+    const result = await owner.readMessages(
+      [{ key, timestamp: 30, channelId: "room-a" }],
+      undefined,
+      () => true,
+      false,
+      undefined,
+      [key],
+      {
+        preserveCapturedSet: true,
+        undo: { keys: new Set([key]), valid: () => true },
+      },
+    );
+    assert(result.undo);
+    f.addRemote(
+      signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts: { [otherKey]: 40 } },
+        },
+        f.key.secret,
+        100,
+      ),
+    );
+    await peer.refresh();
+    expect(f.journal()?.capturedUndoVersions?.[key]).toBeDefined();
+    await result.undo();
+    expect(owner.state().frontiers).toMatchObject({ [otherKey]: 40 });
+    expect(owner.state().frontiers[key]).toBeUndefined();
+  });
   it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
     const f = fixture();
     f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
@@ -2686,6 +3453,149 @@ describe("durable read-state owner", () => {
     expect(() =>
       readJournal({ ...newReadJournal(), homes: { [id]: 5 } }, f.key.pubkey),
     ).toThrow("mark channels");
+  });
+  it.each([undefined, "a".repeat(32)])(
+    "round-trips journals with an optional captured Undo token (%s)",
+    (capturedReadUndo) => {
+      const f = fixture();
+      const saved = readJournal(
+        { ...newReadJournal(), capturedReadUndo },
+        f.key.pubkey,
+      );
+      expect(saved.capturedReadUndo).toBe(capturedReadUndo);
+      expect(
+        readJournal(JSON.parse(JSON.stringify(saved)), f.key.pubkey),
+      ).toEqual(saved);
+    },
+  );
+  it.each([null, "", "not-a-slot", 42])(
+    "rejects a malformed captured Undo token (%s)",
+    (capturedReadUndo) => {
+      const f = fixture();
+      expect(() =>
+        readJournal({ ...newReadJournal(), capturedReadUndo }, f.key.pubkey),
+      ).toThrow("Invalid saved read state");
+    },
+  );
+  it("reads legacy journals and bounds captured Undo key ownership", () => {
+    const f = fixture();
+    expect(
+      readJournal(newReadJournal(), f.key.pubkey).capturedUndoVersions,
+    ).toBeUndefined();
+    const versions = { "msg:selected": "a".repeat(32) };
+    const saved = readJournal(
+      { ...newReadJournal(), capturedUndoVersions: versions },
+      f.key.pubkey,
+    );
+    expect(saved.capturedUndoVersions).toEqual(versions);
+    expect(
+      readJournal(JSON.parse(JSON.stringify(saved)), f.key.pubkey),
+    ).toEqual(saved);
+    expect(() =>
+      readJournal(
+        { ...newReadJournal(), capturedUndoVersions: { "msg:selected": "x" } },
+        f.key.pubkey,
+      ),
+    ).toThrow("Invalid saved read state");
+    expect(() =>
+      readJournal(
+        {
+          ...newReadJournal(),
+          capturedUndoVersions: Object.fromEntries(
+            Array.from({ length: READ_LOCAL_UNREAD_KEYS + 1 }, (_, index) => [
+              `msg:key-${index}`,
+              "b".repeat(32),
+            ]),
+          ),
+        },
+        f.key.pubkey,
+      ),
+    ).toThrow("Invalid saved read state");
+  });
+  it.each([false, true])(
+    "expires captured Undo after a legacy writer drops action metadata (epoch retained: %s)",
+    async (keepEpoch) => {
+      const f = fixture();
+      const owner = f.make();
+      await owner.ready;
+      const key = `msg:${"a".repeat(64)}`;
+      const captured = await owner.readMessages(
+        [{ key, timestamp: 30, channelId: "room" }],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [],
+        {
+          preserveCapturedSet: true,
+          undo: { keys: new Set([key]), valid: () => true },
+        },
+      );
+      assert(captured.undo);
+      const saved = f.journal();
+      assert(saved);
+      const {
+        localUnreadIntent: _intent,
+        capturedUndoVersions: _versions,
+        capturedReadUndo: epoch,
+        ...legacy
+      } = saved;
+      f.setJournal(
+        readJournal(
+          { ...legacy, ...(keepEpoch && { capturedReadUndo: epoch }) },
+          f.key.pubkey,
+        ),
+      );
+      const afterLegacyWrite = f.journal();
+      await expect(captured.undo()).rejects.toThrow(
+        "Reading observation expired",
+      );
+      expect(f.journal()).toEqual(afterLegacyWrite);
+    },
+  );
+  it("loads legacy journals and round-trips validated local unread intent revisions", async () => {
+    const f = fixture();
+    const { localUnreadIntent: _intentHistory, ...journal } = newReadJournal();
+    const legacy = { ...journal, capturedReadUndo: "a".repeat(32) };
+    const loadedLegacy = readJournal(
+      {
+        ...legacy,
+        revision: 1,
+        acceptedRevision: 1,
+        localUnread: { "msg:legacy": 1 },
+      },
+      f.key.pubkey,
+    );
+    expect(loadedLegacy.localUnreadIntent).toBeUndefined();
+    f.setJournal(loadedLegacy);
+    const owner = f.make();
+    await owner.ready;
+    expect(owner.localUnread("msg:legacy")).toBe(1);
+    expect(f.journal()?.localUnreadIntent).toEqual({});
+    expect(f.journal()?.capturedReadUndo).not.toBe(legacy.capturedReadUndo);
+
+    const saved = readJournal(
+      {
+        ...newReadJournal(),
+        revision: 2,
+        localUnreadIntent: { "msg:legacy": 2 },
+      },
+      f.key.pubkey,
+    );
+    expect(saved.localUnreadIntent).toEqual({ "msg:legacy": 2 });
+    expect(
+      readJournal(JSON.parse(JSON.stringify(saved)), f.key.pubkey),
+    ).toEqual(saved);
+    expect(() =>
+      readJournal(
+        {
+          ...newReadJournal(),
+          revision: 1,
+          localUnreadIntent: { "msg:future": 2 },
+        },
+        f.key.pubkey,
+      ),
+    ).toThrow("intent revisions");
   });
   it.each([1, 5001])(
     "loads old journals and round-trips valid overlap metadata (%i records)",

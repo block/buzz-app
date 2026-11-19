@@ -24,6 +24,7 @@ export type {
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
 export type {
+  AppOverlay,
   Page,
   PagePreviewProps,
   PageSidebarProps,
@@ -47,6 +48,8 @@ export type {
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
+  PluginReleaseCandidate,
+  PluginReleaseComparison,
 } from "./installer";
 export type {
   SidebarRestriction,
@@ -57,9 +60,23 @@ export type {
   Panels,
   ChannelPanelContext,
   ChannelLauncherProps,
+  PanelWorkspaceItem,
+  PanelWorkspaceProps,
 } from "../features/panels/service";
+export type { PanelSplit } from "../features/panels/usePanelSplit";
+export type { MarkdownProps } from "../features/messages/PluginMarkdown";
 export type { Conversation } from "../features/conversation/service";
+export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
+  ChannelGeneralAccessProps,
+  GeneralAccessPolicy,
+} from "../bundled/channels/ChannelGeneralAccess";
+export type { MemberChange } from "../features/channel-members/administration-protocol";
+export type {
+  ConversationWorkspaceProps,
+  PageTabTarget,
+  PageTabOptions,
+  PageTabsProps,
   ComposerObservation,
   CompletionContext,
   CompletionQuery,
@@ -151,6 +168,10 @@ export type {
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
+export type {
+  RecommendedCandidate,
+  RecommendedSetup,
+} from "../features/agents/recommended";
 
 export type {
   Agents,
@@ -161,6 +182,10 @@ export type {
   AgentSession,
   AgentSessions,
   Delivery,
+  ModelSettings,
+  NoteChange,
+  PluginNote,
+  RecommendedSource,
   StandaloneTurn,
   TurnResult,
 } from "../features/agents/service";
@@ -197,6 +222,7 @@ export type {
   SoloWorkspaces,
   SoloWorkspaceSnapshot,
   SoloWorkspaceProps,
+  SoloChannelGroupProps,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,

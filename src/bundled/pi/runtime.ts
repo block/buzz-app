@@ -1175,7 +1175,7 @@ export class PiRuntime {
       const where =
         final &&
         new Set(receipts.map(({ scope }) => scope)).size > 1 &&
-        (await destination(client, call.context, call.arguments));
+        (await destination(client(), call.context, call.arguments));
       const answering = where
         ? receipts.filter(({ scope }) => scope === where)
         : final

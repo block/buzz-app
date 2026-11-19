@@ -293,11 +293,9 @@ export function AgentCreateDialog({
       item?.key === agent.type
         ? agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    const withInstructions =
-      proposed.instructions !== undefined && item?.adopt
-        ? item.adopt({ instructions: proposed.instructions }, config)
-        : config;
-    return withInstructions;
+    return proposed.instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions: proposed.instructions }, config)
+      : config;
   };
   const [config, setConfig] = useState(() => seed(type));
   const proposedSettings =

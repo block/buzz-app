@@ -883,6 +883,51 @@ it("pins from the message menu, and offers unpin for a pinned message", async ()
   ).toBeInTheDocument();
 });
 
+it("stops retrying a pin refused as too old and reads the list again", async () => {
+  let listReads = 0;
+  const h = await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      pins: () => {
+        listReads++;
+        return [];
+      },
+    },
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Pin to channel" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const reads = listReads;
+  await act(async () =>
+    h
+      .publication(0)
+      .result.reject(
+        new PublishRejected(
+          "invalid: event timestamp too far from server time",
+        ),
+      ),
+  );
+  expect(
+    await screen.findByText(
+      "Pin or unpin it again from the message menu if still needed.",
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(listReads).toBe(reads + 1));
+  expect(
+    screen.queryByRole("button", { name: "Retry message update" }),
+  ).toBeNull();
+  expect(h.publications).toHaveLength(1);
+});
+
 it("offers no pin action when the relay does not support pins", async () => {
   await fixture(false);
   await screen.findByRole("menuitem", { name: "Follow thread" });

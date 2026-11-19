@@ -31,7 +31,7 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
-import { PIN_KIND, UNPIN_KIND } from "../relay/pins";
+import { PIN_KIND, UNPIN_KIND, pinLists } from "../relay/pins";
 import { followUpQueue } from "./follow-up-queue";
 import { usePinnedMessages } from "./use-pins";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -918,7 +918,13 @@ export function MessageManagementStatus() {
               same operation; dismissing does not undo it.
             </p>
           )}
-          <RetryMessageUpdate session={session} event={item.event} />
+          {[PIN_KIND, UNPIN_KIND].includes(item.event.kind) &&
+          item.delivery === "failed" &&
+          item.error?.includes("too far from server time") ? (
+            <ExpiredPin session={session} event={item.event} />
+          ) : (
+            <RetryMessageUpdate session={session} event={item.event} />
+          )}
           <Button
             onClick={async () => {
               try {
@@ -942,6 +948,23 @@ export function MessageManagementStatus() {
       {error && <p role="alert">{error}</p>}
     </>
   );
+}
+
+/** The relay refuses a pin command it deems too old however often it is
+ * resent. Show the list as the relay holds it now and leave any new command
+ * to the person, since one signed now could undo another member's change. */
+function ExpiredPin({
+  session,
+  event,
+}: {
+  session: RelaySession;
+  event: OutgoingEvent["event"];
+}) {
+  const channel = event.tags.find(([name]) => name === "h")?.[1];
+  useEffect(() => {
+    if (channel) pinLists(session).retry(channel);
+  }, [session, channel]);
+  return <p>Pin or unpin it again from the message menu if still needed.</p>;
 }
 
 function RetryMessageUpdate({

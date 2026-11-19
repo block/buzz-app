@@ -216,7 +216,7 @@ function createPinLists(source: PinSource) {
         owned.listeners.delete(listener);
       };
     },
-    /** Reads a list again, as after a failed read. */
+    /** Reads a list again, as after a failed read or a refused command. */
     retry: (channelId: string) => read([channelId]),
   };
 }

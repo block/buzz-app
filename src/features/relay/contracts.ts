@@ -169,6 +169,8 @@ export type ChannelMessage = Readonly<{
   }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
+  /** The edit supplying the current body; absent when unedited. */
+  editId?: string;
   /** Offsets in `content` where attachment removal joined once-separate text; a
    * bound name never spans one. */
   attachmentSeams?: readonly number[];

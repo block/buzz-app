@@ -100,6 +100,7 @@ export type ThreadPanelProps = {
   revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
+  latestRequest?: AbortSignal | undefined;
   /** An opening that reads the thread as it opens it names the thread's read
    * time from before that read; each new request decides the divider again. */
   unreadRequest?: { readThrough: number } | undefined;
@@ -352,11 +353,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           revealSelected ||
           (navigation?.target.kind === "conversation" &&
             navigation.target.threadRootId !== messageId);
-        const view = session.thread(
-          channelId,
-          messageId,
-          exact ? { exact: true } : undefined,
-        );
+        const view = session.thread(channelId, messageId, {
+          exact,
+          reading: true,
+        });
         prior?.view.dispose();
         const next = {
           view,
@@ -461,9 +461,10 @@ function OwnedThreadPanel({
         revealSelected ||
         (navigation?.target.kind === "conversation" &&
           navigation.target.threadRootId !== messageId);
-      const owned = exact
-        ? session.thread(channelId, messageId, { exact: true })
-        : session.thread(channelId, messageId);
+      const owned = session.thread(channelId, messageId, {
+        exact,
+        reading: true,
+      });
       const cancel = () => {
         owned.dispose();
         setView(undefined);
@@ -553,6 +554,7 @@ function ThreadMessages({
   revealSelected,
   revealFocus,
   revealRequest,
+  latestRequest,
   unreadRequest,
   requireReadyRoot,
   onDraftSaved,
@@ -587,6 +589,7 @@ function ThreadMessages({
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
+  latestRequest?: AbortSignal | undefined;
   unreadRequest?: ThreadPanelProps["unreadRequest"];
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
@@ -746,6 +749,7 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
@@ -889,20 +893,20 @@ function ThreadMessages({
     request: [] as unknown[],
     ids: new Set<string>(),
   });
-  // A continuation may supply the parent of the visible reply. Commit its new
-  // ancestors before restoring geometry; expanded branches stay open.
+  // A page may supply the parent of a reply shown without it. The reply stays
+  // shown, in its parent's branch: commit that before restoring geometry.
+  const shownTree = useRef(tree);
   useLayoutEffect(() => {
-    const anchor = olderAnchor.current;
-    if (!anchor || snapshot.status === "loading") return;
-    const added = tree
-      .ancestors(anchor.id)
-      .filter((id) => !anchor.ancestors.includes(id));
+    const added = (shownTree.current.children.get(undefined) ?? []).flatMap(
+      (row) => tree.parents.get(row.id) ?? [],
+    );
+    shownTree.current = tree;
     if (added.length)
       setExpanded((current) => {
         if (added.every((id) => current.has(id))) return current;
         return new Set([...current, ...added]);
       });
-  }, [tree, snapshot.status]);
+  }, [tree]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -977,6 +981,8 @@ function ThreadMessages({
   }>(() => ({ opening }));
   if (opening && opening !== boundary.opening) setBoundary({ opening });
   const unreadBoundary = boundary.id;
+  // The line stays with a reply that moved under its late parent.
+  const lineRow = tree.parents.get(unreadBoundary ?? "") ?? unreadBoundary;
   const placed = useRef<typeof boundary>(undefined);
   // Focus as this panel opened, and whether pointer or keyboard input has
   // come since: either way the person owns focus now.
@@ -1001,7 +1007,11 @@ function ThreadMessages({
     if (boundary.id !== undefined) {
       // A failed read decided nothing: decide again once it recovers, unless
       // the reader has left the latest reply since.
-      if (boundary.failed && snapshot.status === "ready")
+      if (
+        boundary.failed &&
+        snapshot.status === "ready" &&
+        !snapshot.recovering
+      )
         setBoundary(
           follow.current
             ? { opening: boundary.opening }
@@ -1012,13 +1022,15 @@ function ThreadMessages({
     if (
       revealSelected ||
       returning ||
+      (latestRequest && positionedLatestRequest.current === latestRequest) ||
       (navigation && !rootTarget) ||
       (snapshot.status === "ready" && snapshot.root?.id !== messageId)
     ) {
       setBoundary({ ...boundary, id: null });
       return;
     }
-    if (snapshot.status === "error") {
+    // A read waiting on recovery may wait long: show what is loaded.
+    if (snapshot.status === "error" || snapshot.recovering) {
       setBoundary({ ...boundary, id: null, failed: true });
       return;
     }
@@ -1114,6 +1126,7 @@ function ThreadMessages({
     active,
     unreadRequest,
     revealSelected,
+    latestRequest,
     returning,
     navigation,
     rootTarget,
@@ -1397,6 +1410,12 @@ function ThreadMessages({
       revealed.current = navigation.signal;
       navigation.complete({ status: "opened" });
     }
+    const openLatest =
+      active &&
+      element.clientHeight > 0 &&
+      latestRequest &&
+      !latestRequest.aborted &&
+      positionedLatestRequest.current !== latestRequest;
     if (
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
@@ -1406,7 +1425,7 @@ function ThreadMessages({
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore))) ||
-      (!positioned.current && unreadBoundary === undefined)
+      (!positioned.current && unreadBoundary === undefined && !openLatest)
     )
       return;
     // Native scroll anchoring is off here, so this panel owns ordinary reading
@@ -1427,7 +1446,14 @@ function ThreadMessages({
     // Back/Forward returns once to where this visit was left: its row, with
     // the branch holding it reopened, or else its nearest ancestor shown.
     // When neither is loaded the visit opens again as it first did.
-    if (
+    if (openLatest) {
+      positionedLatestRequest.current = latestRequest;
+      targetAnchor.current = undefined;
+      olderAnchor.current = undefined;
+      lineTop.current = undefined;
+      jumpingToLatest.current = false;
+      follow.current = true;
+    } else if (
       navigation &&
       returning &&
       restoredVisit.current !== navigation.signal
@@ -1472,6 +1498,9 @@ function ThreadMessages({
       correctScrollTop(element, readingDrift(element, reading.anchor));
       if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
     }
+    // An exact target holds its own place through a page: a second anchor
+    // would correct for the same page again.
+    if (targetAnchor.current !== undefined) olderAnchor.current = undefined;
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree
@@ -1508,7 +1537,7 @@ function ThreadMessages({
     const placing = unreadBoundary !== undefined && placed.current !== boundary;
     if (placing) placed.current = boundary;
     const line =
-      placing && unreadBoundary
+      !openLatest && placing && unreadBoundary
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
     if (line) {
@@ -1556,6 +1585,7 @@ function ThreadMessages({
   }, [
     captureResizePosition,
     active,
+    latestRequest,
     revealSelected,
     inlineReveal,
     revealSignal,
@@ -1859,7 +1889,7 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.id === unreadBoundary && (
+          {!parent && row.id === lineRow && (
             <div className={styles.newMessages} data-new-messages-boundary>
               <hr className="sr-only select-none" aria-label="New messages" />
               <span className="select-none" aria-hidden="true">
@@ -1867,7 +1897,10 @@ function ThreadMessages({
               </span>
             </div>
           )}
+          {/* Not while the root, or history that may hold the parent, loads. */}
           {!parent &&
+            rootId &&
+            !snapshot.seeking &&
             row.replyParentId &&
             row.replyParentId !== rootId &&
             !requestRows.has(row.replyParentId) && (
@@ -1972,8 +2005,8 @@ function ThreadMessages({
         : plainText(selectedParent?.content ?? ""),
     [selectedParent?.diff, selectedParent?.content],
   );
-  const captureOlderAnchor = (element: HTMLElement) => {
-    follow.current = false;
+  const captureOlderAnchor = (element: HTMLElement, following = false) => {
+    follow.current &&= following;
     const row = [
       ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
     ].find(
@@ -1989,6 +2022,18 @@ function ThreadMessages({
         }
       : undefined;
   };
+  // A page read for a missing parent lands with no gesture: hold the reader's
+  // place through it as through a page scrolled for, still following. Every
+  // commit may have used the anchor or moved its row.
+  useLayoutEffect(() => {
+    if (
+      snapshot.seeking &&
+      !olderAnchor.current &&
+      positioned.current &&
+      scroller.current
+    )
+      captureOlderAnchor(scroller.current, true);
+  });
   const loadOlder = () => {
     const element = scroller.current;
     if (

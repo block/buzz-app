@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   type ComponentProps,
+  type ComponentPropsWithoutRef,
   type ReactElement,
 } from "react";
 import Markdown, {
@@ -71,6 +72,13 @@ export function SharedLink({
   );
 }
 
+export function MarkdownTable({
+  node: _node,
+  ...props
+}: ComponentPropsWithoutRef<"table"> & ExtraProps) {
+  return <table ref={observeTableOverflow} {...props} />;
+}
+
 /** Component types stay module-stable, so a re-render never remounts a
  * focused link or a plugin block; what changes per render is read here. */
 export const sharedComponents: Components = {
@@ -81,9 +89,7 @@ export const sharedComponents: Components = {
     const { codeBlocks, copy } = useContext(CapabilitiesContext);
     return <CodeFence {...props} copy={copy} registry={codeBlocks} />;
   },
-  table: ({ node: _node, ...props }) => (
-    <table ref={observeTableOverflow} {...props} />
-  ),
+  table: MarkdownTable,
 };
 
 /** A Markdown document with the shared element styles and components. The

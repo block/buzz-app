@@ -330,11 +330,55 @@ it("moves Tab through Peek's groups, then on past the last and before the first"
   expect(shown()).toMatch(/^Channels/);
 });
 
+it("moves through Peek's groups with Control+L/F and H/B, staying in the field at either end", () => {
+  render(
+    <SearchChoices
+      query="channel"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      groups={[{ label: "Channels", destinations: destinations.slice(0, 2) }]}
+      peek={{ ranked: true, preview: () => null }}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  const shown = () =>
+    screen.getByRole("button", { pressed: true }).textContent ?? "";
+  const control = (key: string) =>
+    fireEvent.keyDown(field, { key, ctrlKey: true });
+  const pairs = [
+    ["l", "h"],
+    ["f", "b"],
+  ] as const;
+  for (const [next, previous] of pairs) {
+    expect(control(next)).toBe(false);
+    expect(shown()).toMatch(/^Channels/);
+    expect(control(next)).toBe(false);
+    expect(shown()).toMatch(/^Channels/);
+    expect(control(previous)).toBe(false);
+    expect(shown()).toMatch(/^Top results/);
+    expect(control(previous)).toBe(false);
+    expect(shown()).toMatch(/^Top results/);
+  }
+  // Command and other modifiers keep their own meaning.
+  expect(fireEvent.keyDown(field, { key: "l", metaKey: true })).toBe(true);
+  expect(
+    fireEvent.keyDown(field, { key: "L", ctrlKey: true, shiftKey: true }),
+  ).toBe(true);
+  expect(shown()).toMatch(/^Top results/);
+});
+
+it("leaves Control's group keys to the text without groups to show", () => {
+  render(choices({ top: 0, key: "" }));
+  const field = screen.getByRole("combobox");
+  for (const key of ["l", "f", "h", "b"])
+    expect(fireEvent.keyDown(field, { key, ctrlKey: true })).toBe(true);
+});
+
 it("keeps an action-only group in place when Peek's order freezes", () => {
   const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
   const palette = (labels: string[]) => (
     <SearchChoices
-      query=""
+      query="a"
       onQueryChange={() => {}}
       input={createRef<HTMLElement>()}
       isAction={(key) => key.startsWith("scope:")}
@@ -355,6 +399,94 @@ it("keeps an action-only group in place when Peek's order freezes", () => {
   fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
   rerender(palette(["This conversation", "Recent activity"]));
   expect(order()).toEqual(["This conversation", "Recent activity"]);
+});
+
+it("opens an empty Peek on its first group, which Escape leaves search from", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  render(
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      conversationShortcut={{ key: "f", mod: true }}
+      groups={[
+        { label: "Unread", destinations: [row("unread")] },
+        { label: "Recents", destinations: [row("recent")] },
+      ]}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  const shown = () =>
+    screen.getByRole("button", { pressed: true }).textContent ?? "";
+  // No Top results above it: the first group is the view, shown whole.
+  expect(
+    screen
+      .getAllByRole("button", { pressed: false })
+      .map((chip) => chip.textContent),
+  ).toEqual([expect.stringMatching(/^Recents/)]);
+  expect(shown()).toMatch(/^Unread/);
+  expect(
+    screen.getAllByRole("option").map((option) => option.textContent),
+  ).toEqual([expect.stringMatching(/^unread/)]);
+  // Before the first group, Shift+Tab leaves the field.
+  expect(fireEvent.keyDown(field, { key: "Tab", shiftKey: true })).toBe(true);
+  expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(false);
+  expect(shown()).toMatch(/^Recents/);
+  expect(screen.getByText("Back to Unread")).toBeInTheDocument();
+  // Escape from another group comes back to the first.
+  expect(fireEvent.keyDown(field, { key: "Escape" })).toBe(false);
+  expect(shown()).toMatch(/^Unread/);
+  // From the first, Escape is left to close search.
+  expect(screen.getByText("Close")).toBeInTheDocument();
+  expect(fireEvent.keyDown(field, { key: "Escape" })).toBe(true);
+  // The chord that searches the current conversation is hinted.
+  expect(screen.getByText("This conversation")).toHaveTextContent(
+    "Ctrl+F This conversation",
+  );
+});
+
+it("steps an empty Peek's groups with Control+L and H from its first group, and rows within one with Control+J and K", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  render(
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      groups={[
+        { label: "Unread", destinations: [row("unread-0"), row("unread-1")] },
+        { label: "Recents", destinations: [row("recent-0"), row("recent-1")] },
+      ]}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  const shown = () =>
+    screen.getByRole("button", { pressed: true }).textContent ?? "";
+  const highlighted = () =>
+    screen.getByRole("option", { selected: true }).textContent;
+  const control = (key: string) =>
+    fireEvent.keyDown(field, { key, ctrlKey: true });
+  // The first group is the view: there is no Top results before it.
+  expect(shown()).toMatch(/^Unread/);
+  expect(control("h")).toBe(false);
+  expect(shown()).toMatch(/^Unread/);
+  expect(control("j")).toBe(false);
+  expect(highlighted()).toMatch(/^unread-0/);
+  expect(control("j")).toBe(false);
+  expect(highlighted()).toMatch(/^unread-1/);
+  expect(control("l")).toBe(false);
+  expect(shown()).toMatch(/^Recents/);
+  expect(highlighted()).toMatch(/^recent-0/);
+  expect(control("n")).toBe(false);
+  expect(highlighted()).toMatch(/^recent-1/);
+  expect(control("k")).toBe(false);
+  expect(highlighted()).toMatch(/^recent-0/);
+  expect(control("f")).toBe(false);
+  expect(shown()).toMatch(/^Recents/);
+  expect(control("b")).toBe(false);
+  expect(shown()).toMatch(/^Unread/);
+  expect(highlighted()).toMatch(/^unread-0/);
 });
 
 it("draws a long group Peek shows whole near the view, keeping the highlighted row drawn and placed", () => {
@@ -418,6 +550,77 @@ it("opens the whole result group from its header while keeping typing focus", ()
   );
   expect(screen.getAllByRole("option")).toHaveLength(6);
   expect(field).toHaveFocus();
+});
+
+it("keeps an attached row with the row above it where Top results cuts a group", () => {
+  const attach = (rows: typeof destinations, at: number) =>
+    rows.map((row, index) => (index === at ? { ...row, attached: true } : row));
+  render(
+    <SearchChoices
+      query="channel"
+      onQueryChange={() => {}}
+      input={createRef<HTMLInputElement>()}
+      groups={[
+        // The lead group shows five rows; the sixth is attached to the fifth.
+        { label: "Agents", destinations: attach(destinations.slice(0, 6), 5) },
+        // Later groups show three rows; the fourth is attached to the third.
+        {
+          label: "Channels",
+          destinations: attach(destinations.slice(6, 12), 3),
+        },
+        // Unattached rows past the limit are still cut.
+        { label: "Pages", destinations: destinations.slice(12, 17) },
+      ]}
+      peek={{ ranked: true, preview: () => null }}
+    />,
+  );
+  const shown = (label: string) =>
+    within(screen.getByRole("group", { name: label }))
+      .getAllByRole("option")
+      .map((row) => row.textContent);
+  expect(shown("Agents")).toEqual(
+    destinations.slice(0, 6).map(({ label }) => label),
+  );
+  expect(
+    within(screen.getByRole("group", { name: "Agents" })).queryByRole(
+      "button",
+      { name: "Show all Agents" },
+    ),
+  ).toBeNull();
+  expect(shown("Channels")).toEqual(
+    destinations.slice(6, 10).map(({ label }) => label),
+  );
+  expect(shown("Pages")).toEqual(
+    destinations.slice(12, 15).map(({ label }) => label),
+  );
+});
+
+it("still shows an attached row when Top results cuts the row above it", () => {
+  // Five rows show; the row above the attached one (index 6) is cut.
+  const rows = destinations
+    .slice(0, 8)
+    .map((row, index) => (index === 6 ? { ...row, attached: true } : row));
+  render(
+    <SearchChoices
+      query="channel"
+      onQueryChange={() => {}}
+      input={createRef<HTMLInputElement>()}
+      groups={[{ label: "Agents", destinations: rows }]}
+      peek={{ ranked: true, preview: () => null }}
+    />,
+  );
+  const group = within(screen.getByRole("group", { name: "Agents" }));
+  expect(group.getAllByRole("option").map((row) => row.textContent)).toEqual([
+    ...destinations.slice(0, 5).map(({ label }) => label),
+    "channel-6",
+  ]);
+  // The rest are still a click away, in their own order.
+  fireEvent.click(group.getByRole("button", { name: "Show all Agents" }));
+  expect(
+    within(screen.getByRole("group", { name: "Agents" }))
+      .getAllByRole("option")
+      .map((row) => row.textContent),
+  ).toEqual(destinations.slice(0, 8).map(({ label }) => label));
 });
 
 it("keeps a chosen group while an edited query's results land, and lets it go if they settle without it", () => {
@@ -621,4 +824,46 @@ it("gives the person's result keys precedence over the field's other keys, consu
   expect(fireEvent.keyDown(combobox(), { key: "k", ctrlKey: true })).toBe(
     false,
   );
+});
+
+it("steps through results with Control+J/N and K/P after the person's own keys", () => {
+  const view = render(choices({ top: 0, key: "" }, destinations.slice(0, 3)));
+  const field = () => screen.getByRole("combobox");
+  const highlighted = () =>
+    screen.getByRole("option", { selected: true }).textContent;
+  const control = (key: string, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(field(), { key, ctrlKey: true, ...init });
+  expect(highlighted()).toContain("channel-0");
+  expect(control("j")).toBe(false);
+  expect(highlighted()).toContain("channel-1");
+  expect(control("n")).toBe(false);
+  expect(highlighted()).toContain("channel-2");
+  expect(control("k")).toBe(false);
+  expect(highlighted()).toContain("channel-1");
+  expect(control("p")).toBe(false);
+  expect(highlighted()).toContain("channel-0");
+  // Command, Shift, Alt, AltGr and composition never step.
+  for (const init of [
+    { metaKey: true },
+    { shiftKey: true },
+    { altKey: true },
+    { modifierAltGraph: true },
+    { isComposing: true },
+    { keyCode: 229 },
+  ] as KeyboardEventInit[])
+    expect(control("j", init)).toBe(true);
+  expect(highlighted()).toContain("channel-0");
+  // A key the person chose for the other step wins (jsdom is not a Mac,
+  // so Mod is Control).
+  view.rerender(
+    <SearchStepsContext.Provider
+      value={{ previous: { key: "j", mod: true }, next: { key: "ArrowDown" } }}
+    >
+      {choices({ top: 0, key: "" }, destinations.slice(0, 3))}
+    </SearchStepsContext.Provider>,
+  );
+  fireEvent.keyDown(field(), { key: "ArrowDown" });
+  expect(highlighted()).toContain("channel-1");
+  expect(control("j")).toBe(false);
+  expect(highlighted()).toContain("channel-0");
 });

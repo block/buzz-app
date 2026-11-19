@@ -18,6 +18,7 @@ import {
 } from "../../features/agent-harness/plugin-wake";
 import {
   type AuthorNames,
+  CONTENT_LIMIT,
   contentFields,
   eventBody,
   quoted,
@@ -31,8 +32,6 @@ import threadHandoff from "./session_handoff_thread.md?raw";
 export type Scope = "thread" | "channel";
 /** Messages of thread context shown with a turn, newest kept. */
 export const CONTEXT_LIMIT = 12;
-/** Characters of each context message shown. */
-const CONTENT_LIMIT = 4000;
 
 const section = (tag: string, body: string, attributes = "") =>
   `<${tag}${attributes}>\n${body.trim()}\n</${tag}>`;

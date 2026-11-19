@@ -66,16 +66,19 @@ export const editedTags = (
   ...emoji.filter(([name]) => name === "emoji"),
 ];
 
-/** A context record's content and the tags that fit beside it in the 4000
- * characters a message may take, saying when some didn't. */
+/** The characters a context record's content and tags may take together. */
+export const CONTENT_LIMIT = 4000;
+
+/** A context record's content and the tags that fit beside it in
+ * CONTENT_LIMIT, saying when some didn't. */
 export const contentFields = (
   content: string,
   tags: readonly (readonly string[])[],
 ) => {
-  const text = content.slice(0, 4000);
+  const text = content.slice(0, CONTENT_LIMIT);
   const readable = readableTags(tags);
   const fit: (readonly string[])[] = [];
-  let room = 4000 - text.length;
+  let room = CONTENT_LIMIT - text.length;
   for (const tag of readable) {
     room -= JSON.stringify(tag).length;
     if (room < 0) break;

@@ -1,5 +1,6 @@
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import {
+  CONTENT_LIMIT,
   contentFields,
   editedTags,
   quoted,
@@ -126,7 +127,7 @@ export async function conversationHistory(
     );
   const section = root ? "thread-context" : "conversation-context";
   const text = quoted({
-    note: "Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, 4000 characters each.",
+    note: `Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, ${CONTENT_LIMIT} characters each.`,
     messages,
   });
   return `<${section}>\n${text}\n</${section}>\n`;

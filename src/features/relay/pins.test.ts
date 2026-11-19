@@ -1,7 +1,8 @@
 import { assert, expect, it, vi } from "vitest";
 import type { EventData, ReadFilter } from "./events";
 import type { LiveListener } from "./incoming";
-import { OLD_EVENT_NOT_FOUND } from "./outbox";
+import { OLD_EVENT_NOT_FOUND, PublishRejected } from "./outbox";
+import { acceptPublish } from "./transport";
 import {
   expiredPinCommand,
   LOADING_PINS,
@@ -336,12 +337,21 @@ const relayPage = (corpus: readonly EventData[], filter: ReadFilter) =>
     )
     .slice(0, filter.limit);
 
-it("classifies a pin command refused as too old by the relay or this device", () => {
+it("classifies a pin command refused as too old by the relay or this device", async () => {
   const command = (kind: number, error?: string) => ({
     event: event({ kind, tags: [["h", "c"]] }),
     error,
   });
-  const relayRefusal = "invalid: event timestamp too far from server time";
+  // The relay's refusal as the transport reports it.
+  const refused = await acceptPublish(
+    Response.json(
+      { error: "invalid: event timestamp too far from server time" },
+      { status: 400 },
+    ),
+    "pin",
+  ).catch((error: unknown) => error);
+  assert.instanceOf(refused, PublishRejected);
+  const relayRefusal = refused.message;
   expect(expiredPinCommand(command(PIN_KIND, relayRefusal))).toBe(true);
   expect(
     expiredPinCommand(command(UNPIN_KIND, `Retry blocked: ${relayRefusal}`)),

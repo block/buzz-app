@@ -9,6 +9,9 @@ import { READ_STATE_TIMESTAMP_REFUSAL } from "./read-state-host";
 /** Member-signed commands; the relay applies them and re-signs the list. */
 export const PIN_KIND = 40010;
 export const UNPIN_KIND = 40011;
+/** The relay's refusal as the outbox stores it: the transport drops the
+ * NIP-01 prefix and capitalizes the rest for display. */
+const TOO_OLD = READ_STATE_TIMESTAMP_REFUSAL.replace(/^invalid:\s*/, "");
 /** A pin command refused as too old, by the relay or by the desktop host
  * before resending it. Its outcome is unknown and resending it is refused
  * again, so NIP-PM has the client read the list and leave any new command to
@@ -16,12 +19,12 @@ export const UNPIN_KIND = 40011;
 export function expiredPinCommand(
   item: Pick<OutgoingEvent, "event" | "error">,
 ): boolean {
-  const { error } = item;
+  const error = item.error?.toLowerCase();
   return (
     (item.event.kind === PIN_KIND || item.event.kind === UNPIN_KIND) &&
     !!error &&
-    (error.includes(READ_STATE_TIMESTAMP_REFUSAL) ||
-      error.includes(OLD_EVENT_NOT_FOUND))
+    (error.includes(TOO_OLD) ||
+      error.includes(OLD_EVENT_NOT_FOUND.toLowerCase()))
   );
 }
 export const EXPIRED_PIN_RECOVERY =

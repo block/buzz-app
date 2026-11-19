@@ -39,6 +39,7 @@ import {
   type OutgoingEvent,
 } from "../relay/outbox";
 import { EXPIRED_PIN_RECOVERY } from "../relay/pins";
+import { acceptPublish } from "../relay/transport";
 import {
   keypair,
   message,
@@ -886,8 +887,22 @@ it("pins from the message menu, and offers unpin for a pinned message", async ()
 });
 
 it.each([
-  ["the relay", "invalid: event timestamp too far from server time"],
-  ["this device", OLD_EVENT_NOT_FOUND],
+  [
+    "the relay",
+    // As the transport reports the relay's refusal.
+    () =>
+      acceptPublish(
+        Response.json(
+          { error: "invalid: event timestamp too far from server time" },
+          { status: 400 },
+        ),
+        "pin",
+      ),
+  ],
+  [
+    "this device",
+    () => Promise.reject(new PublishRejected(OLD_EVENT_NOT_FOUND)),
+  ],
 ])(
   "resends an unanswered pin as itself, then stops when %s refuses it as too old and reads the list again",
   async (_, refusal) => {
@@ -924,7 +939,9 @@ it.each([
     expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
     const reads = listReads;
     await act(async () =>
-      h.publication(1).result.reject(new PublishRejected(refusal)),
+      h
+        .publication(1)
+        .result.reject(await refusal().catch((error: unknown) => error)),
     );
     expect(await screen.findByText(EXPIRED_PIN_RECOVERY)).toBeInTheDocument();
     // Still unknown: the refusal does not say whether the pin was applied.

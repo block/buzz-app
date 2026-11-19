@@ -1424,7 +1424,7 @@ export function ChannelInventory({
       const sectionKey = filteredSection ?? channelSectionKey(channelId);
       if (!filteredSection && !sidebar.collapsed.includes(sectionKey)) return;
       return list?.querySelector<HTMLElement>(
-        `[data-sidebar-section="${CSS.escape(sectionKey)}"] :is(details > summary, button[aria-controls^="workspace-"])`,
+        `[data-sidebar-section="${CSS.escape(sectionKey)}"] :is(details > summary, button[aria-expanded]:not([aria-haspopup]))`,
       );
     },
     [channelSectionKey, sidebar.collapsed, sidebar.list],

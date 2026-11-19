@@ -237,7 +237,7 @@ export function SoloWorkspaces({
     const target = CSS.escape(closed ? `project-${project}` : rowFocus);
     document
       .querySelector<HTMLElement>(
-        `[data-solo-menu-id="${target}"]:not([inert] *) ${closed ? 'button[aria-controls^="workspace-"]' : "button"}`,
+        `[data-solo-menu-id="${target}"]:not([inert] *) ${closed ? "button[aria-expanded]:not([aria-haspopup])" : "button"}`,
       )
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);

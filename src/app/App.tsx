@@ -372,7 +372,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   const entered =
     !launching && !!client.viewer && client.memberships.length > 0;
   useEffect(() => {
-    if (entered) services.notifications.requestOnEntry();
+    if (!entered) return;
+    services.notifications.setEntered(true);
+    return () => services.notifications.setEntered(false);
   }, [entered, services]);
   const select = route.select;
   useEffect(

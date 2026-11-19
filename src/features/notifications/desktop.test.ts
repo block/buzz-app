@@ -168,12 +168,12 @@ it("entering the app on a macOS first run asks the system once; an arriving aler
   await flush();
   expect(sdk.bannerRequest).not.toHaveBeenCalled();
   expect(sdk.show).not.toHaveBeenCalled();
-  service.requestOnEntry();
+  service.setEntered(true);
   await flush();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
   // Allowed: the alert held meanwhile is shown, and nothing asks again.
   expect(sdk.show).toHaveBeenCalledOnce();
-  service.requestOnEntry();
+  service.setEntered(true);
   await submit("second");
   await flush();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
@@ -182,6 +182,74 @@ it("entering the app on a macOS first run asks the system once; an arriving aler
     requesting: false,
     error: null,
   });
+});
+
+it("an automatic request nobody answers leaves Delivery showing denied, with no in-app request and no error", async () => {
+  sdk.bannerPermission.mockResolvedValue("default");
+  // As macOS does: the native wait gives up and the status then reads denied.
+  sdk.bannerRequest.mockImplementationOnce(async () => {
+    sdk.bannerPermission.mockResolvedValue("denied");
+    throw new Error("Dock authorization request timed out");
+  });
+  const { service } = setup(storage(), () => true);
+  service.setEntered(true);
+  await flush();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+  expect(service.snapshot()).toMatchObject({
+    permission: "denied",
+    requesting: false,
+    error: null,
+  });
+  expect(
+    renderToStaticMarkup(
+      createElement(NotificationSettings, { notifications: service }),
+    ),
+  ).not.toContain("Allow notifications");
+});
+
+it("Allow lights the Dock dot even when a Dock read sent during the prompt answers denied afterwards", async () => {
+  sdk.bannerPermission.mockResolvedValue("default");
+  sdk.permission.mockResolvedValue("default");
+  let answer!: (permission: string) => void;
+  sdk.bannerRequest.mockImplementationOnce(
+    () => new Promise<string>((resolve) => (answer = resolve)),
+  );
+  let earlier!: (permission: string) => void;
+  const { service } = setup(storage(), () => true);
+  service.indicator.setUnread(true);
+  service.setEntered(true);
+  try {
+    await flush();
+    expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+    expect(sdk.permission).toHaveBeenCalledOnce();
+    // What a window focus does while the prompt is up: a Dock read that macOS
+    // will answer denied, still on its way when the person allows.
+    sdk.permission.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (earlier = resolve)),
+    );
+    void service.indicator.refresh();
+    await flush();
+    expect(sdk.permission).toHaveBeenCalledTimes(2);
+    sdk.bannerPermission.mockResolvedValue("granted");
+    sdk.permission.mockResolvedValue("enabled");
+  } finally {
+    answer?.("granted");
+    await flush();
+    earlier?.("denied");
+    await flush();
+  }
+  expect(service.snapshot()).toMatchObject({
+    permission: "granted",
+    requesting: false,
+  });
+  // The read behind the late one is a read, never a request.
+  expect(sdk.permission.mock.calls).toEqual([
+    [{ request: false }],
+    [{ request: false }],
+    [{ request: false }],
+  ]);
+  expect(service.indicator.snapshot().permission).toBe("enabled");
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
@@ -428,7 +496,7 @@ it.each(["Win32", "Linux x86_64"])(
     await service.indicator.request();
     expect(sdk.permission).not.toHaveBeenCalled();
     // Entry with a usable device record and a focused window sends nothing.
-    service.requestOnEntry();
+    service.setEntered(true);
     await flush();
     expect(sdk.bannerRequest).not.toHaveBeenCalled();
     await submit("banner");

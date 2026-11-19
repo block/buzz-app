@@ -200,7 +200,7 @@ it.each([
   async (_name, requestsAutomatically, present) => {
     const t = setup({ requestsAutomatically, permission: "default" });
     t.present(present);
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     await t.service.refreshPermission();
     await t.submit();
     await flush();
@@ -230,12 +230,12 @@ it("entering the app while present sends one system request; later entries and f
   const t = firstRun();
   const request = t.holdRequest();
   try {
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     await flush();
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
     expect(t.service.snapshot().requesting).toBe(true);
     expect(t.values.get(askedKey)).toBe("1");
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     await t.service.refreshPermission();
     await flush();
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
@@ -250,7 +250,7 @@ it("entering the app while present sends one system request; later entries and f
   });
   // Nor does this run ask again once the device record is gone.
   t.values.delete(askedKey);
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await t.service.refreshPermission();
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
@@ -259,7 +259,7 @@ it("entering the app while present sends one system request; later entries and f
 it("entering while the window is not in front waits, unspent, for the focus that finds it there", async () => {
   const t = firstRun();
   t.present(false);
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await t.service.refreshPermission();
   await flush();
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
@@ -275,7 +275,7 @@ it.each(["denied", "unknown", "unsupported"] as const)(
   async (permission) => {
     const t = setup({ requestsAutomatically: true, permission });
     // Entered before any read completes: the unread initial state is no status.
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     await flush();
     await t.service.refreshPermission();
     expect(t.service.snapshot().permission).toBe(permission);
@@ -291,7 +291,7 @@ it("a superseded not-yet-asked reading never asks once the OS itself reports a d
   vi.mocked(t.platform.permission).mockReturnValueOnce(stale.promise);
   t.permission("denied");
   try {
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     // A newer read supersedes the entry's own, which is still outstanding.
     await t.service.refreshPermission();
     expect(t.platform.permission).toHaveBeenCalledTimes(3);
@@ -308,7 +308,7 @@ it("the development pause never asks on entry", async () => {
   vi.stubEnv("VITE_BUZZ_NOTIFICATIONS_PAUSED", "1");
   const t = firstRun();
   expect(t.service.snapshot().developmentPaused).toBe(true);
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await flush();
   expect(t.platform.permission).toHaveBeenCalledTimes(2);
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
@@ -317,7 +317,7 @@ it("the development pause never asks on entry", async () => {
 it("Desktop alerts turned off never ask on entry; the focus after they are turned back on does", async () => {
   const t = firstRun();
   t.service.updatePreferences({ enabled: false });
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await t.service.refreshPermission();
   await flush();
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
@@ -328,20 +328,93 @@ it("Desktop alerts turned off never ask on entry; the focus after they are turne
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   expect(t.values.get(askedKey)).toBe("1");
 });
+it("leaving the app before the request is sent withdraws it; entering again restores it", async () => {
+  const t = firstRun();
+  t.service.updatePreferences({ enabled: false });
+  t.service.setEntered(true);
+  await flush();
+  // The last community goes while Desktop alerts are still off.
+  t.service.setEntered(false);
+  t.service.updatePreferences({ enabled: true });
+  await t.service.refreshPermission();
+  await flush();
+  expect(t.service.snapshot().permission).toBe("default");
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+  t.service.setEntered(true);
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.values.get(askedKey)).toBe("1");
+});
+it("leaving the app while the entry read is in flight sends nothing", async () => {
+  const t = firstRun();
+  await flush();
+  const read = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.permission).mockImplementationOnce(() => read.promise);
+  t.service.setEntered(true);
+  try {
+    // The construction read and the entry read, which is still unanswered.
+    expect(t.platform.permission).toHaveBeenCalledTimes(2);
+    t.service.setEntered(false);
+  } finally {
+    read.resolve("default");
+    await flush();
+  }
+  expect(t.service.snapshot().permission).toBe("default");
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+});
+it.each<[string, boolean, string | null]>([
+  ["automatic request stays quiet", true, null],
+  [
+    "explicit request reports it",
+    false,
+    "Timed out waiting for notification permission",
+  ],
+])(
+  "a request nobody answers is followed by a read of the status, and the %s",
+  async (_name, automatic, error) => {
+    const t = firstRun();
+    const request = t.holdRequest();
+    let reads = 0;
+    try {
+      if (automatic) t.service.setEntered(true);
+      else void t.service.requestPermission();
+      await flush();
+      expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+      expect(t.service.snapshot()).toMatchObject({
+        permission: "default",
+        requesting: true,
+      });
+      reads = vi.mocked(t.platform.permission).mock.calls.length;
+    } finally {
+      request.timeout();
+      await flush();
+    }
+    // Delivery no longer offers a request that macOS will not show again.
+    expect(t.platform.permission).toHaveBeenCalledTimes(reads + 1);
+    expect(t.service.snapshot()).toMatchObject({
+      permission: "denied",
+      requesting: false,
+      error,
+    });
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  },
+);
 it("an ignored automatic request is not reported, retried or repeated, and keeps a shown error", async () => {
   const t = firstRun();
   t.service.reportError(new Error("Earlier failure"));
   vi.mocked(t.platform.requestPermission).mockRejectedValueOnce(
     new Error("Timed out waiting for notification permission"),
   );
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await flush();
   expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   expect(t.service.snapshot()).toMatchObject({
     requesting: false,
     error: "Earlier failure",
   });
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await t.service.refreshPermission();
   await t.submit();
   await flush();
@@ -357,7 +430,7 @@ it("an ignored automatic request is not reported, retried or repeated, and keeps
 });
 it("the automatic request is remembered on this device across runs and accounts; explicit Allow still asks", async () => {
   const first = firstRun();
-  first.service.requestOnEntry();
+  first.service.setEntered(true);
   await flush();
   expect(first.platform.requestPermission).toHaveBeenCalledTimes(1);
   await first.ctx.fiber.dispose();
@@ -366,7 +439,7 @@ it("the automatic request is remembered on this device across runs and accounts;
   // yet asked is the one case left for the device record to stop.
   const next = firstRun(first.values);
   next.service.selectViewer("b".repeat(64));
-  next.service.requestOnEntry();
+  next.service.setEntered(true);
   await next.submit();
   await flush();
   expect(next.platform.requestPermission).not.toHaveBeenCalled();
@@ -383,7 +456,7 @@ it("a device that cannot record the automatic request never sends it", async () 
   vi.spyOn(t.host.localStorage, "setItem").mockImplementation(() => {
     throw new Error("disk");
   });
-  t.service.requestOnEntry();
+  t.service.setEntered(true);
   await t.submit();
   await flush();
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
@@ -398,7 +471,7 @@ it("an alert arriving during an explicit request is kept for its answer and spen
   const request = t.holdRequest();
   const allow = t.service.requestPermission();
   try {
-    t.service.requestOnEntry();
+    t.service.setEntered(true);
     await t.submit();
     await flush();
     // The construction read and the alert's own probe, which read denied.
@@ -424,7 +497,7 @@ it.each<[string, NotificationPermissionState | undefined, number]>([
     const t = firstRun();
     const request = t.holdRequest();
     try {
-      t.service.requestOnEntry();
+      t.service.setEntered(true);
       await flush();
       expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
       await t.submit();
@@ -458,7 +531,7 @@ it.each<[string, NotificationPermissionState, number]>([
     const request = t.holdRequest();
     const probe = deferred<NotificationPermissionState>();
     try {
-      t.service.requestOnEntry();
+      t.service.setEntered(true);
       await flush();
       expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
       vi.mocked(t.platform.permission).mockImplementationOnce(
@@ -493,7 +566,7 @@ it.each<[string, NotificationPermissionState, number]>([
 );
 it("the Dock indicator re-reads its permission when a request settles", async () => {
   const t = setup({ permission: "default" });
-  const refresh = vi.spyOn(t.service.indicator, "refresh");
+  const refresh = vi.spyOn(t.service.indicator, "reread");
   const request = t.holdRequest();
   const allow = t.service.requestPermission();
   try {

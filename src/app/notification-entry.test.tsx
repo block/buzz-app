@@ -10,7 +10,7 @@ import { createServices, type AppServices } from "./services";
 import { keypair, signed } from "../features/relay/testing";
 
 // The notifications service sends its one automatic permission request only
-// after the app tells it the person has landed: in the shell with a community,
+// while the app tells it the person has landed: in the shell with a community,
 // the launch screen gone. This proves that wiring. What the service then does
 // with it lives in features/notifications/service.test.ts.
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -131,12 +131,12 @@ function relayAnswer(args: unknown) {
 function start(container?: HTMLElement) {
   const current = createServices();
   services = current;
-  const entered = vi.spyOn(current.notifications, "requestOnEntry");
+  const entered = vi.spyOn(current.notifications, "setEntered");
   render(<App services={current} />, container ? { container } : undefined);
   return { current, entered };
 }
 
-it("does not report entry on the community landing, and reports it once a community is joined", async () => {
+it("does not report entry on the community landing, reports it once a community is joined, and withdraws it when the last one goes", async () => {
   const { current, entered } = start();
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -150,10 +150,13 @@ it("does not report entry on the community landing, and reports it once a commun
   expect(launchVisible()).toBe(false);
   expect(entered).not.toHaveBeenCalled();
   act(() => current.communities.joined(membership, profile));
-  await waitFor(() => expect(entered).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(entered.mock.calls).toEqual([[true]]));
   expect(
     screen.queryByRole("heading", { name: "Join a community" }),
   ).not.toBeInTheDocument();
+  await act(() => current.communities.leave(relay));
+  expect(current.communities.snapshot().memberships).toEqual([]);
+  await waitFor(() => expect(entered.mock.calls).toEqual([[true], [false]]));
 });
 
 it("on a launch with a community, reports entry only once the launch screen has gone", async () => {
@@ -188,6 +191,6 @@ it("on a launch with a community, reports entry only once the launch screen has 
   } finally {
     act(() => pending.remove());
   }
-  await waitFor(() => expect(entered).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(entered.mock.calls).toEqual([[true]]));
   expect(launchVisible()).toBe(false);
 });

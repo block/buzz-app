@@ -232,12 +232,14 @@ export class NotificationsService extends Service implements Notifications {
       if (generation === this.permissionGeneration) this.reportError(error);
     }
   }
-  /** The person is in the app with a community. Only records that: the one
-   * automatic system prompt follows from this read or a later window focus. */
-  requestOnEntry() {
-    if (this.entered || !this.platform.requestsAutomatically) return;
-    this.entered = true;
-    void this.refreshPermission();
+  /** Whether the person is in the app with a community right now. Only
+   * records that: the one automatic system prompt follows from this read or a
+   * later window focus, and from neither once they are no longer there. */
+  setEntered(entered: boolean) {
+    if (this.entered === entered || !this.platform.requestsAutomatically)
+      return;
+    this.entered = entered;
+    if (entered) void this.refreshPermission();
   }
   /** `quiet` is the automatic request: nobody acted, so an ignored system
    * prompt (a native timeout) is not reported and no shown error is cleared. */
@@ -246,6 +248,7 @@ export class NotificationsService extends Service implements Notifications {
     if (this.permissionRequest) return this.permissionRequest;
     const generation = ++this.permissionGeneration;
     const report = quiet ? () => {} : this.reportError;
+    let failed = false;
     this.publish({ requesting: true, ...(quiet ? {} : { error: null }) });
     // Keep the browser's user gesture: no asynchronous probe before the request.
     try {
@@ -255,7 +258,10 @@ export class NotificationsService extends Service implements Notifications {
           if (generation === this.permissionGeneration)
             this.publish({ permission });
         })
-        .catch(report)
+        .catch((error: unknown) => {
+          failed = true;
+          report(error);
+        })
         .finally(() => {
           this.permissionRequest = undefined;
           // A read sent while the prompt was up says denied whatever the
@@ -263,8 +269,12 @@ export class NotificationsService extends Service implements Notifications {
           this.permissionGeneration++;
           this.publish({ requesting: false });
           // Allow is answered with Buzz in front, and the Dock dot otherwise
-          // re-reads its permission only at the next window focus.
-          void this.indicator.refresh();
+          // re-reads its permission only at the next window focus. A Dock
+          // read still in flight was sent while the prompt was up.
+          void this.indicator.reread();
+          // A request that failed says nothing, and macOS reports the prompt
+          // it left unanswered as denied: read what the status is now.
+          if (failed) void this.refreshPermission();
           // Alerts held for the answer are examined once nothing is in flight.
           this.schedule();
         });

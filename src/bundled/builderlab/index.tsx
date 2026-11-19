@@ -213,12 +213,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.effect(() => () => stopProvider());
     // Native validation stays in place; the dev transport uses a public
     // revision. Each community's decisions use its own sign-in server's
-    // session, which this plugin's card signs in to.
+    // session.
     offerBuilderlabDecisions(
       ctx,
       agentSession,
       dev?.decide,
-      openSettings,
+      // A community's own server is signed in to under Community sign-ins;
+      // without them, only the build's, on this plugin's card.
+      openIdentity
+        ? {
+            label: "Community sign-ins",
+            section: "identity",
+            open: openIdentity,
+          }
+        : {
+            label: "Builderlab settings",
+            section: "block.builderlab/login",
+            open: openSettings,
+          },
       sessions &&
         communityDecisionSessions(
           sessions,

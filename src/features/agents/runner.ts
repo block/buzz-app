@@ -791,8 +791,8 @@ export type RunnerHost = {
   settings?(): DeviceSettings | undefined;
   /** The owner's Bestie as the agent's run handle offers it. */
   bestie(agent: Agent): ReturnType<NonNullable<AgentHandle["bestie"]>>;
-  /** Whether watch classifiers can run here. */
-  classifier(): ClassifierAvailability;
+  /** Whether watch classifiers can run in `community`, the agent's. */
+  classifier(community: string): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
   decisions(): Decisions | undefined;
   /** The event's surroundings for the classifier. */
@@ -4697,7 +4697,11 @@ export class AgentRunners {
     return guarded(
       {
         enabled: () => this.host.attentionShown(),
-        classifier: () => this.host.classifier(),
+        // The community its classifiers run in, so the answer matches them.
+        classifier: () => {
+          const agent = this.host.agent(key);
+          return agent ? this.host.classifier(agent.relay) : "unavailable";
+        },
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);
           const object = result.object;

@@ -39,6 +39,8 @@ type CommunityState = Readonly<{
   shown: string;
   /** The provider that answers now, or "" when none does. */
   answering: string;
+  /** The user chose Off here, rather than its provider being unavailable. */
+  chosenOff: boolean;
   status: Status;
   /** Provider key -> whether it can be chosen here. */
   offered: Readonly<Record<string, boolean>>;
@@ -109,6 +111,7 @@ export function DecisionsSettings({
               // itself is kept, so it returns with its plugin.
               shown: answering || DECISIONS_OFF,
               answering,
+              chosenOff: decisions.chosenIn(url) === DECISIONS_OFF,
               status: decisions.status(url),
               offered: Object.fromEntries(
                 registered.map((provider) => [
@@ -224,7 +227,7 @@ export function DecisionsSettings({
           </>
         }
       />
-      {providers.length === 0 ? (
+      {providers.length === 0 && (
         <p role="status" className="mt-4 text-body-sm text-secondary">
           No decision provider is turned on. Turn one on in{" "}
           <SettingsSectionLink section="plugins" open={onSection}>
@@ -232,7 +235,8 @@ export function DecisionsSettings({
           </SettingsSectionLink>
           .
         </p>
-      ) : communities.length === 0 ? (
+      )}
+      {communities.length === 0 ? (
         <div
           data-buzz-ui=""
           className="mt-section-gap flex w-full flex-col gap-4"
@@ -296,25 +300,37 @@ export function DecisionsSettings({
                       variant="compact"
                       describedBy={describedBy}
                       leading={current && providerMark(current.key, 20)}
-                      value={row?.shown ?? ""}
+                      // Off by choice is selected; off because its provider
+                      // is unavailable shows Off unselected, so choosing Off
+                      // saves it.
+                      value={
+                        row?.answering || (row?.chosenOff ? DECISIONS_OFF : "")
+                      }
+                      placeholder="Off"
                       disabled={!active()}
                       onValueChange={(key) => choose(key, url)}
                       groups={[
-                        {
-                          label: "Providers",
-                          options: providers.map((provider) => {
-                            const offered = row?.offered[provider.key] ?? false;
-                            return {
-                              value: provider.key,
-                              label: provider.label,
-                              leading: providerMark(provider.key, 20),
-                              disabled: !offered && provider.key !== row?.shown,
-                              description: offered
-                                ? undefined
-                                : "Not offered in this community",
-                            };
-                          }),
-                        },
+                        ...(providers.length === 0
+                          ? []
+                          : [
+                              {
+                                label: "Providers",
+                                options: providers.map((provider) => {
+                                  const offered =
+                                    row?.offered[provider.key] ?? false;
+                                  return {
+                                    value: provider.key,
+                                    label: provider.label,
+                                    leading: providerMark(provider.key, 20),
+                                    disabled:
+                                      !offered && provider.key !== row?.shown,
+                                    description: offered
+                                      ? undefined
+                                      : "Not offered in this community",
+                                  };
+                                }),
+                              },
+                            ]),
                         {
                           label: "",
                           separator: true,

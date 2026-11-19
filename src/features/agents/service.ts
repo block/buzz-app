@@ -3726,7 +3726,10 @@ export class AgentsService extends Service implements Agents {
         const binding = this.bindingOf(agent);
         return binding && defaultAgentControl(binding.session, binding.scope);
       },
-      classifier: () => this.classifier(),
+      classifier: (community) =>
+        this.decisions?.status(community) === "ready"
+          ? "available"
+          : "unavailable",
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),

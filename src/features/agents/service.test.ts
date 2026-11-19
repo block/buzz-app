@@ -10768,6 +10768,8 @@ it("does not classify in a community where the user turned decisions off", async
   const jev = fakeJev();
   const { run, emit, decisions } = await classifiedAgent(jev);
   if (!decisions) throw new Error("no decisions");
+  const provider = decisions.backend("wss://relay.example.test");
+  if (!provider) throw new Error("no provider");
   decisions.setBackend(DECISIONS_OFF, "wss://relay.example.test");
   expect(decisions.chosenIn("wss://relay.example.test")).toBe(DECISIONS_OFF);
   emit({ events: [event("w")] });
@@ -10776,6 +10778,18 @@ it("does not classify in a community where the user turned decisions off", async
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "not-run" },
   });
+  // The key is ready, but the agent's attention reports what its own
+  // community's classifiers do.
+  expect(decisions.status()).toBe("ready");
+  expect(run.mock.calls[0]?.[0].agent.attention.classifier()).toBe(
+    "unavailable",
+  );
+  decisions.setBackend(provider, "wss://relay.example.test");
+  await vi.waitFor(() =>
+    expect(run.mock.calls[0]?.[0].agent.attention.classifier()).toBe(
+      "available",
+    ),
+  );
 });
 
 it("a provider that never finishes checking its setup does not hold an event forever", async () => {

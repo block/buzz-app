@@ -401,6 +401,34 @@ it("shows decisions off where the chosen provider's plugin is off, until it retu
   expect(row("Block")).not.toHaveTextContent("off");
 });
 
+it("saves Off in a community while no provider is turned on", async () => {
+  const user = userEvent.setup();
+  const { decisions, register, remove } = setup();
+  await register(TYPESAFE, () => "ready");
+  act(() => decisions.setBackend(TYPESAFE, BLOCK));
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  remove(TYPESAFE);
+  // The notice, and each community's row, still with Off.
+  expect(screen.getByText(/No decision provider is turned on/)).toBeVisible();
+  const menu = () =>
+    screen.getByRole("combobox", { name: "Decision provider for Block" });
+  expect(menu()).toHaveTextContent("Off");
+  await user.click(menu());
+  await user.click(await screen.findByRole("option", { name: "Off" }));
+  expect(decisions.chosenIn(BLOCK)).toBe(DECISIONS_OFF);
+  // It stays off when TypeSafe returns; Pals made no choice and uses it.
+  await act(() => register(TYPESAFE, () => "ready"));
+  expect(menu()).toHaveTextContent("Off");
+  expect(decisions.backend(BLOCK)).toBeUndefined();
+  expect(decisions.backend(FRIENDS)).toBe(TYPESAFE);
+});
+
 it("keeps rendering when the community list has one that is not a relay", async () => {
   const { decisions, register } = setup();
   await register(TYPESAFE, () => "ready");

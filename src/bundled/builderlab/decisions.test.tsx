@@ -502,7 +502,13 @@ it("answers each community with its own sign-in server's account, and leaves the
   const fiber = root
     .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
     .plugin((ctx) =>
-      offerBuilderlabDecisions(ctx, build, decide, opened, communities),
+      offerBuilderlabDecisions(
+        ctx,
+        build,
+        decide,
+        { label: "Community sign-ins", section: "identity", open: opened },
+        communities,
+      ),
     );
   await fiber.await();
   await flush();
@@ -523,11 +529,10 @@ it("answers each community with its own sign-in server's account, and leaves the
   if (!Settings) throw new Error("Builderlab has settings");
   const signedOut = render(<Settings active={() => true} community={BLOCK} />);
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Not signed in to Builderlab for this community. Sign in from Builderlab settings.",
+    "Not signed in to Builderlab for this community. Sign in from Community sign-ins.",
   );
-  expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Builderlab settings" }));
-  expect(opened).toHaveBeenCalledExactlyOnceWith("block.builderlab/login");
+  fireEvent.click(screen.getByRole("button", { name: "Community sign-ins" }));
+  expect(opened).toHaveBeenCalledExactlyOnceWith("identity");
   signedOut.unmount();
   // Signed in to Block alone, while the build's server is signed out.
   await block.signIn();

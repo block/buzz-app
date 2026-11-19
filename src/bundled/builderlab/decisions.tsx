@@ -42,6 +42,16 @@ export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
         })
     : undefined;
 
+/** Where Settings sends a community that is not signed in: the sign-in of
+ * that community's server, which an FI build keeps in Identity > Community
+ * sign-ins. */
+export type BuilderlabSignInLink = Readonly<{
+  label: string;
+  /** The Settings section it opens. */
+  section: string;
+  open(section: string): void;
+}>;
+
 /** The Builderlab sign-ins that answer each community's decisions. */
 export type CommunityDecisionSessions = Readonly<{
   /** The joined communities, as relay URLs. */
@@ -139,22 +149,17 @@ export function communityDecisionSessions(
  * decisions; reading its status keeps that fresh. Where it is ready it is a default provider,
  * so it answers unless the user chose another. Builds without native calls
  * never offer it. `communities`, when given, answers each community with its
- * own sign-in server's session, else `session` answers. `openSettings` opens
- * a Settings section, where Builderlab's sign-in is. */
+ * own sign-in server's session, else `session` answers. `signIn` is where
+ * Settings sends a community that is not signed in. */
 export function offerBuilderlabDecisions(
   ctx: Context,
   session: BuilderlabSession,
   native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
-  openSettings?: (section: string) => void,
+  signIn?: BuilderlabSignInLink,
   communities?: CommunityDecisionSessions,
 ) {
   if (!native) return;
-  const provider = builderlabProvider(
-    session,
-    native,
-    openSettings,
-    communities,
-  );
+  const provider = builderlabProvider(session, native, signIn, communities);
   // A saved sign-in being restored stays registered, so a choice of
   // Builderlab waits for it rather than going to TypeSafe.
   const signedIn = (each: BuilderlabSession | undefined) => {
@@ -189,7 +194,7 @@ export function offerBuilderlabDecisions(
 export function builderlabProvider(
   session: BuilderlabSession,
   native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
-  openSettings?: (section: string) => void,
+  signIn?: BuilderlabSignInLink,
   communities?: CommunityDecisionSessions,
 ): DecisionProvider {
   /** The session that answers `community`: its sign-in server's, or with no
@@ -293,7 +298,7 @@ export function builderlabProvider(
         <BuilderlabDecisionsState
           session={sessionIn(community)}
           active={active}
-          openSettings={openSettings}
+          signIn={signIn}
         />
       ) : null,
   };
@@ -305,11 +310,11 @@ export function builderlabProvider(
 function BuilderlabDecisionsState({
   session,
   active,
-  openSettings,
+  signIn,
 }: {
   session: BuilderlabSession | undefined;
   active(): boolean;
-  openSettings: ((section: string) => void) | undefined;
+  signIn: BuilderlabSignInLink | undefined;
 }) {
   const state = useSyncExternalStore(session?.subscribe ?? noSubscription, () =>
     session?.snapshot(),
@@ -319,19 +324,22 @@ function BuilderlabDecisionsState({
   if (state?.status !== "signed-in")
     return (
       <p role="status" className="m-0 text-body-sm text-secondary">
-        Not signed in to Builderlab for this community. Sign in from{" "}
-        <SettingsSectionLink
-          section="block.builderlab/login"
-          open={
-            openSettings &&
-            ((section) => {
-              if (active()) openSettings(section);
-            })
-          }
-        >
-          Builderlab settings
-        </SettingsSectionLink>
-        .
+        Not signed in to Builderlab for this community.
+        {signIn && (
+          <>
+            {" "}
+            Sign in from{" "}
+            <SettingsSectionLink
+              section={signIn.section}
+              open={(section) => {
+                if (active()) signIn.open(section);
+              }}
+            >
+              {signIn.label}
+            </SettingsSectionLink>
+            .
+          </>
+        )}
       </p>
     );
   if (state.checkingPermissions || state.account?.canUseBuilderlabDecisions)

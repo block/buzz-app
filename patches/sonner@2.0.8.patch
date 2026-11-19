@@ -109,7 +109,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..0fcb2ea0432847dac77ef6b950139cc3
 -                    });
 +                    // Preserve a destination intentionally focused by a toast action.
 +                    if (document.activeElement === document.body || listRef.current?.contains(document.activeElement)) {
-+                        lastFocusedElementRef.current.focus({ preventScroll: true });
++                        lastFocusedElementRef.current.focus?.({ preventScroll: true });
 +                    }
                      lastFocusedElementRef.current = null;
                      isFocusWithinRef.current = false;
@@ -133,7 +133,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..0fcb2ea0432847dac77ef6b950139cc3
 +                    lastFocusedElementRef.current = null;
 +                    // Tab, pointer and action-driven focus moves already have a destination.
 +                    if (previous && (!event.relatedTarget || event.relatedTarget === document.body)) {
-+                        previous.focus({ preventScroll: true });
++                        previous.focus?.({ preventScroll: true });
                      }
                  }
              },
@@ -294,7 +294,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..27f2fb1bed2607477a790e5d7c182b6c
 -                    });
 +                    // Preserve a destination intentionally focused by a toast action.
 +                    if (document.activeElement === document.body || listRef.current?.contains(document.activeElement)) {
-+                        lastFocusedElementRef.current.focus({ preventScroll: true });
++                        lastFocusedElementRef.current.focus?.({ preventScroll: true });
 +                    }
                      lastFocusedElementRef.current = null;
                      isFocusWithinRef.current = false;
@@ -318,7 +318,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..27f2fb1bed2607477a790e5d7c182b6c
 +                    lastFocusedElementRef.current = null;
 +                    // Tab, pointer and action-driven focus moves already have a destination.
 +                    if (previous && (!event.relatedTarget || event.relatedTarget === document.body)) {
-+                        previous.focus({ preventScroll: true });
++                        previous.focus?.({ preventScroll: true });
                      }
                  }
              },

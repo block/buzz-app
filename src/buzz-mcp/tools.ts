@@ -218,7 +218,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "send",
-    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread. To wake yourself in another conversation, use self_handoff; self-mentions are refused.",
+    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread. To wake yourself in another conversation, use self_handoff; self-mentions are refused, and so are mentions of anyone the relay archived.",
     {
       text: str,
       path: str,
@@ -408,7 +408,12 @@ export const TOOLS: readonly Tool[] = [
     "Profiles by pubkey or name: each row's quoted profile name, then, for a name search, (verified: …) when the relay verified a different name, then the quoted about text, then archived for an identity the relay archived. A name search leaves archived identities out unless include_archived is true; ids always returns them.",
     { ids: strs, q: str, include_archived: { type: "boolean" } },
   ),
-  tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
+  tool(
+    "dm",
+    "Open a DM; returns its channel. A new DM with anyone the relay archived is refused; an existing one still opens.",
+    { to: strs },
+    ["to"],
+  ),
   tool(
     "mem_get",
     "Read memory: slug gives its version and text; q finds entries with every word; neither lists slugs.",
@@ -1334,7 +1339,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const found = rows.map(({ row }) => row).join("\n") || "No users.";
     return archived
       ? found
-      : `${found}\nwarning: the relay's archive list could not be read, so archived identities are not left out or marked.`;
+      : `${found}\n${ARCHIVE_UNREAD}, so archived identities are not left out or marked.`;
   },
 
   async dm(tools, args) {
@@ -1342,7 +1347,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const to = list(args.to).map(pubkey);
     if (!to.length) throw new Error("to is required.");
     let found = await tools.findDm(to);
+    let warning = "";
     if (!found) {
+      warning = await tools.unarchived(to, "No DM was opened.");
       await client.publish({
         kind: 41010,
         content: "",
@@ -1356,7 +1363,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     }
     const channel = found && tag(found, "d");
     if (!channel) throw new Error("The DM did not open.");
-    return channel;
+    return `${channel}${warning}`;
   },
 
   async mem_get(tools, args) {
@@ -1899,6 +1906,7 @@ async function post(
     throw new Error(
       "Self-mentions do not wake your other sessions. Nothing was posted. Use self_handoff with channel, text, and thread outside a Solo chat.",
     );
+  const warning = await tools.unarchived(mentions, "Nothing was posted.");
   const template: Template = {
     kind: 9,
     content,
@@ -1916,7 +1924,7 @@ async function post(
         managedAttachments: files.managedAttachments,
       })
     : tools.client.publish(template));
-  return `sent ${event.id}`;
+  return `sent ${event.id}${warning}`;
 }
 
 /** One call's helpers, so lookups it repeats are made once. */
@@ -2480,6 +2488,21 @@ class Tools {
       // Aborts a read still held open.
       archives.dispose();
     }
+  }
+
+  /** Fails, naming them, when the relay archived any of `people`; otherwise
+   * "", or a warning line when the archive list can't be read. */
+  async unarchived(people: readonly string[], outcome: string) {
+    if (!people.length) return "";
+    const archived = await this.archivedIdentities();
+    if (!archived)
+      return `\n${ARCHIVE_UNREAD}, so archived identities were not checked.`;
+    const gone = people.filter((key) => archived.has(key));
+    if (!gone.length) return "";
+    const names = await this.names(gone);
+    throw new Error(
+      `${gone.map((key) => `${names.get(key) ?? key} (${key})`).join(", ")} ${gone.length > 1 ? "are" : "is"} archived. ${outcome}`,
+    );
   }
 
   async searchPeople(q: string, key = this.relayKey()) {
@@ -3078,6 +3101,7 @@ const NAME_WEIGHT = {
 const HEX_KEY = /^[0-9a-f]{64}$/;
 /** How long a users lookup waits for the archive list before going on without it. */
 const ARCHIVE_READ_MS = 5000;
+const ARCHIVE_UNREAD = "warning: the relay's archive list could not be read";
 
 const relayAuthorityOf = (relay: string | undefined) =>
   relay && HEX_KEY.test(relay)

@@ -4142,7 +4142,7 @@ it("reads users by id without the name search", async () => {
   expect(client.searchProfiles).not.toHaveBeenCalled();
 });
 
-function archivedPeople(forge = false) {
+function archivedPeople(forge = false, extra: readonly BuzzEvent[] = []) {
   const relay = keypair();
   const list = {
     kind: 13535,
@@ -4156,6 +4156,7 @@ function archivedPeople(forge = false) {
     forge
       ? event({ ...list, pubkey: relay.pubkey })
       : eventDto(signed(relay, list)),
+    ...extra,
   ]);
   const client = {
     ...base,
@@ -4241,6 +4242,54 @@ it("searches unfiltered, with a warning, when the archive list can't be read", a
     expect(await callTool(broken, {}, "users", { q: "b" })).toBe(
       `${alice} "Alice Smith"\n${bob} "Bob"\n${warning}`,
     );
+});
+
+it("refuses to mention an archived identity, by key or by name", async () => {
+  const context = { channel: "chan", root };
+  for (const args of [
+    { text: "see this", mentions: [bob] },
+    { text: "@Bob see this" },
+  ]) {
+    const client = archivedPeople();
+    const publish = vi.spyOn(client, "publish");
+    await expect(
+      callTool(client, context, "send", { ...args, audience: "everyone" }),
+    ).rejects.toThrow(`Bob (${bob}) is archived. Nothing was posted.`);
+    expect(publish).not.toHaveBeenCalled();
+  }
+});
+
+it("refuses a new DM with an archived identity, but opens an existing one", async () => {
+  const client = archivedPeople();
+  const publish = vi.spyOn(client, "publish");
+  await expect(callTool(client, {}, "dm", { to: [bob] })).rejects.toThrow(
+    `Bob (${bob}) is archived. No DM was opened.`,
+  );
+  expect(publish).not.toHaveBeenCalled();
+  const dm = event({
+    kind: 39000,
+    tags: [
+      ["d", "dm-bob"],
+      ["t", "dm"],
+      ["p", me],
+      ["p", bob],
+    ],
+  });
+  const existing = archivedPeople(false, [dm]);
+  expect(await callTool(existing, {}, "dm", { to: [bob] })).toBe("dm-bob");
+});
+
+it("sends to an archived identity, with a warning, when the archive list can't be read", async () => {
+  const client = archivedPeople(true);
+  expect(
+    await callTool(client, { channel: "chan", root }, "send", {
+      text: "@Bob see this",
+      audience: "everyone",
+    }),
+  ).toMatch(
+    /^sent [0-9a-f]+\nwarning: the relay's archive list could not be read, so archived identities were not checked\.$/,
+  );
+  expect(client.publish).toHaveBeenCalledOnce();
 });
 
 it("refuses ids with q, and more than 100 ids", async () => {

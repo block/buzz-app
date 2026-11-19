@@ -24,7 +24,7 @@ const json = {
 
 const FAILURES: Record<DecisionFailure, string> = {
   unavailable:
-    "No decisions provider is set up on this device. Your owner can choose one in Settings > Decisions API.",
+    "Decisions are not available here: no provider is set up, or your owner turned decisions off in this community. Your owner chooses this in Settings > Decisions API.",
   missing_credentials:
     "The decisions provider has no key or sign-in. Your owner can set it up in Settings > Decisions API.",
   unauthorized:

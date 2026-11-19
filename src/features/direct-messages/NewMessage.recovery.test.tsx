@@ -1496,7 +1496,7 @@ it("waits for uploads before opening a DM and reports failure only on the chip",
   ).toBeEnabled();
   expect(
     await screen.findByText(
-      "A file couldn’t upload. Retry or remove it, then send again.",
+      "A file couldn’t upload. Follow the guidance on each file that shows an error, then send again.",
     ),
   ).toHaveAttribute("role", "status");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
@@ -1528,10 +1528,11 @@ it("offers only removal for a file whose type the relay refuses while a DM waits
   } finally {
     await act(async () => rejectUpload(new UploadError("type")));
   }
-  // The relay would refuse the same bytes again, so nothing says to retry.
+  // The relay would refuse the same bytes again, so the chip offers no Retry
+  // and the page points at each chip rather than naming an action.
   expect(
     await screen.findByText(
-      "A file couldn’t upload. Remove it, then send again.",
+      "A file couldn’t upload. Follow the guidance on each file that shows an error, then send again.",
     ),
   ).toHaveAttribute("role", "status");
   expect(screen.getByRole("alert")).toHaveTextContent(

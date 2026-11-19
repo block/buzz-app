@@ -27,6 +27,9 @@ import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 
+/** Follows the relay's refusal of a file's type, which offers no Retry. */
+const UNSUPPORTED_GUIDANCE = " Remove it to send.";
+
 /** A GIF staged with the draft. It sends as its Markdown, not as an upload. */
 export type ComposerGif = Readonly<{
   markdown: string;
@@ -307,7 +310,10 @@ function AttachmentItem({
         </AttachmentDownloadContext>
         {item.error && (
           <>
-            <span role="alert">{item.error}</span>
+            <span role="alert">
+              {item.error}
+              {item.unsupported && UNSUPPORTED_GUIDANCE}
+            </span>
             {!item.unsupported && (
               <button
                 type="button"
@@ -420,6 +426,7 @@ function AttachmentItem({
         <p className={styles.error} role="alert">
           <span className="sr-only">{item.file.name}: </span>
           {item.error || "Upload failed. Retry or remove it to send."}
+          {item.unsupported && UNSUPPORTED_GUIDANCE}
         </p>
       )}
       <div

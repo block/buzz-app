@@ -2374,7 +2374,9 @@ it.each(["drop", "picker", "paste"])(
     expect(
       await screen.findByRole("dialog", { name: "Could not attach file" }),
     ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
-    expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]);
+    expect(chipErrors()).toEqual([
+      `setup.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
+    ]);
     // The same bytes would be refused again, so the chip offers only Remove.
     expect(
       screen.queryByRole("button", { name: "Retry setup.exe" }),
@@ -2423,8 +2425,8 @@ it("names every file of a drop the relay refuses for its type in one notice, apa
   await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
   await act(async () => h.uploadCalls[2]?.result.resolve(uploadDescriptor()));
   expect(chipErrors()).toEqual([
-    `a.exe: ${UPLOAD_FAILURES.type}`,
-    `b.exe: ${UPLOAD_FAILURES.type}`,
+    `a.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
+    `b.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
   ]);
   // Dismissing the notice leaves the chips, and does not bring it back.
   // A click event: jsdom has no pointer capture for the stack's swipe handler.
@@ -2504,7 +2506,9 @@ it.each([
       h.uploadCalls[0]?.result.reject(new UploadError("type"));
     });
     await waitFor(() =>
-      expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+      expect(chipErrors()).toEqual([
+        `setup.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
+      ]),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     h.present(true);
@@ -2542,7 +2546,9 @@ it("does not raise the type notice again for a draft that returns with a refused
   );
   // The chip still says why the draft cannot send.
   await waitFor(() =>
-    expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+    expect(chipErrors()).toEqual([
+      `setup.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
+    ]),
   );
   // A notice would be mounted by the render that shows the chip.
   await act(async () => {});
@@ -2575,7 +2581,9 @@ it.each(["mounted", "returned to after the failure"])(
       );
     // The restored file's chip says why, without Retry.
     await waitFor(() =>
-      expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+      expect(chipErrors()).toEqual([
+        `setup.exe: ${UPLOAD_FAILURES.type} Remove it to send.`,
+      ]),
     );
     expect(
       screen.queryByRole("button", { name: "Retry setup.exe" }),
@@ -2584,7 +2592,10 @@ it.each(["mounted", "returned to after the failure"])(
     const notice = await screen.findByRole("dialog", {
       name: "Upload to #General failed",
     });
-    expect(notice).toHaveAccessibleDescription(UPLOAD_FAILURES.type);
+    // It is the only notice, so it names the file as the composer's would.
+    expect(notice).toHaveAccessibleDescription(
+      "setup.exe isn’t a supported file type.",
+    );
     await act(async () => {});
     expect(screen.getAllByRole("dialog")).toEqual([notice]);
   },

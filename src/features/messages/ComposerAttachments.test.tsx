@@ -443,7 +443,9 @@ it.each([
     );
     await act(async () => {});
     expect(screen.getByRole("alert").textContent).toBe(
-      "The relay refused this voice note.",
+      unsupported
+        ? "The relay refused this voice note. Remove it to send."
+        : "The relay refused this voice note.",
     );
     expect(
       !!screen.queryByRole("button", { name: "Retry voice note upload" }),

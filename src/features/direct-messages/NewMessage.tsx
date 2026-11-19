@@ -22,7 +22,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { attachmentMessage, UploadError } from "../relay/attachments";
+import { attachmentMessage } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -239,10 +239,7 @@ export function NewMessage({
   const retiring = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
   const [error, setError] = useState("");
-  // "refused": the relay refused the file's type, so its chip offers no Retry.
-  const [uploadFailed, setUploadFailed] = useState<
-    false | "failed" | "refused"
-  >(false);
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
   const outbox = session.outbox;
@@ -512,12 +509,7 @@ export function NewMessage({
       retire();
       onStarted(current.channelId, current.id);
     } catch (reason) {
-      if (!controller.signal.aborted && preparingFiles)
-        setUploadFailed(
-          reason instanceof UploadError && reason.code === "type"
-            ? "refused"
-            : "failed",
-        );
+      if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
       else if (!controller.signal.aborted)
         setError(
           reason instanceof Error
@@ -636,10 +628,11 @@ export function NewMessage({
           </p>
         )}
         {uploadFailed && (
+          // A failed send also pauses the files queued behind the one that
+          // failed, and each chip names its own way out.
           <p role="status">
-            A file couldn’t upload.{" "}
-            {uploadFailed === "refused" ? "Remove" : "Retry or remove"} it, then
-            send again.
+            A file couldn’t upload. Follow the guidance on each file that shows
+            an error, then send again.
           </p>
         )}
         {!session.directMessages.available && (

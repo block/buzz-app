@@ -3958,7 +3958,9 @@ it("asks for the relay's key once per people search", async () => {
     q: "Jordan Rivera",
   });
   expect(relayAuthorLookup).toHaveBeenCalledOnce();
-  expect(found).toBe(`${alice} "Alice Smith"`);
+  expect(found).toBe(
+    `${alice} "Alice Smith"\nwarning: the relay's archive list could not be read, so archived identities are not left out or marked.`,
+  );
 });
 
 it("names no author while the relay's key can't be learned, then asks which one is meant", async () => {
@@ -4138,6 +4140,66 @@ it("reads users by id without the name search", async () => {
     `${bob} "Bob"`,
   );
   expect(client.searchProfiles).not.toHaveBeenCalled();
+});
+
+function archivedPeople(forge = false) {
+  const relay = keypair();
+  const list = {
+    kind: 13535,
+    content: "",
+    created_at: 100,
+    tags: [["-"], ["p", bob]],
+  };
+  const { client: base } = fake([
+    ...community,
+    // Unsigned, the connection never admitted it.
+    forge
+      ? event({ ...list, pubkey: relay.pubkey })
+      : eventDto(signed(relay, list)),
+  ]);
+  const client = {
+    ...base,
+    relayAuthor: relay.pubkey,
+    searchProfiles: vi.fn(async () => [
+      profile(alice, "Alice Smith"),
+      profile(bob, "Bob"),
+    ]),
+  };
+  return client;
+}
+
+it("leaves archived identities out of a name search unless asked", async () => {
+  const client = archivedPeople();
+  expect(await callTool(client, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"`,
+  );
+  expect(
+    await callTool(client, {}, "users", { q: "b", include_archived: true }),
+  ).toBe(`${alice} "Alice Smith"\n${bob} "Bob" archived`);
+});
+
+it("marks an archived identity read by id", async () => {
+  const client = archivedPeople();
+  expect(await callTool(client, {}, "users", { ids: [bob, alice] })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob" archived`,
+  );
+});
+
+it("searches unfiltered, with a warning, when the archive list can't be read", async () => {
+  const forged = archivedPeople(true);
+  const { relayAuthor: _, ...lost } = archivedPeople();
+  const unreachable = {
+    ...lost,
+    relayAuthorLookup: vi.fn(async () => {
+      throw new Error("offline");
+    }),
+  };
+  const warning =
+    "warning: the relay's archive list could not be read, so archived identities are not left out or marked.";
+  for (const broken of [forged, unreachable])
+    expect(await callTool(broken, {}, "users", { q: "b" })).toBe(
+      `${alice} "Alice Smith"\n${bob} "Bob"\n${warning}`,
+    );
 });
 
 it("refuses ids with q, and more than 100 ids", async () => {

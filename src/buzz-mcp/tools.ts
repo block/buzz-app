@@ -30,7 +30,9 @@ import {
   EMOJI_SET_KIND,
   referencedEmoji,
 } from "../features/relay/emoji";
-import { newer } from "../features/relay/events";
+import { hasEventProof, newer } from "../features/relay/events";
+import { createIdentityArchives } from "../features/relay/identity-archives";
+import type { RelayReader } from "../features/relay/reader";
 import { normalizeName } from "../features/search/person-match";
 import {
   VERIFIED_PROFILE_BATCH,
@@ -403,8 +405,8 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "users",
-    "Profiles by pubkey or name: each row's quoted profile name, then, for a name search, (verified: …) when the relay verified a different name, then the quoted about text.",
-    { ids: strs, q: str },
+    "Profiles by pubkey or name: each row's quoted profile name, then, for a name search, (verified: …) when the relay verified a different name, then the quoted about text, then archived for an identity the relay archived. A name search leaves archived identities out unless include_archived is true; ids always returns them.",
+    { ids: strs, q: str, include_archived: { type: "boolean" } },
   ),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
   tool(
@@ -1269,7 +1271,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!ids.length && !q) throw new Error("Give ids or q.");
     if (ids.length && q) throw new Error("Give ids or q, not both.");
     if (ids.length > 100) throw new Error("Give at most 100 ids.");
-    const people = ids.length ? undefined : await tools.searchPeople(q ?? "");
+    // One key lookup serves both the search and the archive list.
+    const relay = tools.relayKey();
+    const [people, archived] = await Promise.all([
+      ids.length ? undefined : tools.searchPeople(q ?? "", relay),
+      tools.archivedIdentities(relay),
+    ]);
+    const hidden = (key: string) =>
+      !ids.length && args.include_archived !== true && !!archived?.has(key);
     const profiles =
       people?.profiles ??
       (await client.query([{ kinds: [0], authors: ids, limit: ids.length }]));
@@ -1294,7 +1303,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               ...profileNames(profile),
               ...verifiedAliases(verified.get(event.pubkey)),
             ],
-            row: `${event.pubkey} ${JSON.stringify(name)}${shown(event.pubkey, name)}${about}`,
+            row: `${event.pubkey} ${JSON.stringify(name)}${shown(event.pubkey, name)}${about}${archived?.has(event.pubkey) ? " archived" : ""}`,
           },
         ] as const;
       }),
@@ -1306,14 +1315,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               key,
               {
                 aliases: verifiedAliases(found),
-                row: `${key}${shown(key, "")}`,
+                row: `${key}${shown(key, "")}${archived?.has(key) ? " archived" : ""}`,
               },
             ] as const,
         ),
     ]);
     const needle = normalizeName(q ?? "");
     const rows = (people?.order ?? [...byKey.keys()])
-      .flatMap((key) => byKey.get(key) ?? [])
+      .flatMap((key) => (hidden(key) ? [] : (byKey.get(key) ?? [])))
       .filter(
         ({ aliases }) =>
           !q ||
@@ -1321,7 +1330,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
           people?.searched ||
           aliases.some((alias) => normalizeName(alias).includes(needle)),
       );
-    return rows.map(({ row }) => row).join("\n") || "No users.";
+    const found = rows.map(({ row }) => row).join("\n") || "No users.";
+    return archived
+      ? found
+      : `${found}\nwarning: the relay's archive list could not be read, so archived identities are not left out or marked.`;
   },
 
   async dm(tools, args) {
@@ -2407,17 +2419,57 @@ class Tools {
     };
   }
 
-  async searchPeople(q: string) {
+  /** The relay's signed NIP-IA archive list, read fresh; undefined when it
+   * can't be read, so callers fail open. A relay with no key archives no one. */
+  /** The relay's key: rejects when it can't be learned now. */
+  async relayKey() {
+    return this.client.relayAuthor ?? this.client.relayAuthorLookup?.();
+  }
+
+  async archivedIdentities(
+    relay = this.relayKey(),
+  ): Promise<ReadonlySet<string> | undefined> {
+    const authority = await relay.catch(() => null);
+    if (authority === null) return undefined;
+    if (!authority) return new Set();
+    const client = this.client;
+    const archives = createIdentityArchives(
+      {
+        async read(filters) {
+          const events = await client.query(filters as readonly Filter[]);
+          // The connection admits signed events; anything else is no evidence.
+          if (
+            !events.every((event) =>
+              hasEventProof(event as unknown as RelayEvent),
+            )
+          )
+            throw new Error("Unsigned archive snapshot");
+          return events as unknown as readonly RelayEvent[];
+        },
+      } as RelayReader,
+      authority,
+    );
+    try {
+      await archives.queries.refresh();
+      const snapshot = archives.queries.snapshot();
+      return snapshot.status === "ready"
+        ? new Set(snapshot.archived)
+        : undefined;
+    } finally {
+      archives.dispose();
+    }
+  }
+
+  async searchPeople(q: string, key = this.relayKey()) {
     let unknownKey = false;
     const [named, relay] = await Promise.all([
       [...q].length <= PROFILE_SEARCH_QUERY_MAX
         ? this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
         : undefined,
-      this.client.relayAuthor ??
-        this.client.relayAuthorLookup?.().catch(() => {
-          unknownKey = true;
-          return undefined;
-        }),
+      key.catch(() => {
+        unknownKey = true;
+        return undefined;
+      }),
     ]);
     const profiles = newest(
       named?.filter((event) => event.kind === 0) ??

@@ -68,6 +68,8 @@ it("defers new sources, uses eager loading after success, and forgets a failed r
   if (!image) throw new Error("Expected initial artwork");
   expect(image).toHaveAttribute("loading", "lazy");
   fireEvent.load(image);
+  // Artwork that arrives after mount keeps decoding off the main thread.
+  expect(image).toHaveAttribute("decoding", "async");
   first.unmount();
 
   const second = render(<Avatar {...props} />);

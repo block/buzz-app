@@ -51,6 +51,10 @@ function AvatarArtwork({
   const [showFallback, setShowFallback] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [previouslyLoaded] = useState(() => loadedAvatarSources.has(src));
+  // WebKit paints a ready async-decoded image (even with `auto`) as empty
+  // until a later frame. Decode artwork that is ready at mount in the paint
+  // that reveals it; network loads keep decoding off the main thread.
+  const [readyAtMount, setReadyAtMount] = useState(false);
   const image = useRef<HTMLImageElement>(null);
   useLayoutEffect(() => {
     // Cached artwork is already ready at mount; reveal it before the first paint
@@ -58,6 +62,7 @@ function AvatarArtwork({
     if (image.current?.complete) {
       if (image.current.naturalWidth > 0) {
         rememberAvatar(src);
+        setReadyAtMount(true);
         setStatus("loaded");
       } else {
         loadedAvatarSources.delete(src);
@@ -102,10 +107,7 @@ function AvatarArtwork({
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         loading={loading ?? (previouslyLoaded ? "eager" : "lazy")}
-        // WebKit paints a loaded async-decoded (and even `auto`) image as empty
-        // until a later frame, so remounted avatars blink in after navigation.
-        // Avatars are small enough to decode during the paint that shows them.
-        decoding="sync"
+        decoding={readyAtMount ? "sync" : "async"}
         referrerPolicy="no-referrer"
         onLoad={() => {
           rememberAvatar(src);

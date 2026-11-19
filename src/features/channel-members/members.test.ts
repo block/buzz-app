@@ -1613,6 +1613,41 @@ it.each([
   },
 );
 
+it("reuses a refused smaller batch while the original Retry receipt still exists", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const members = people(3);
+  const add = (batchReceipt?: string) =>
+    Promise.allSettled(
+      members.map((key) =>
+        t.session.memberAdditions.add(t.id, key, {
+          migration: "slack",
+          batchReceipt,
+        }),
+      ),
+    );
+  t.onPublish(() => {
+    throw new PublishRejected("Not sent");
+  });
+  await add();
+  const [original] = t.records();
+  const joined = members[0];
+  if (!original || !joined) throw new Error("Expected the saved batch");
+  t.admit(joined);
+  await add(original.event.id);
+  await add(original.event.id);
+  const [first, second, third] = t.publish.mock.calls.map(
+    ([event]) => event.id,
+  );
+  expect(t.publish).toHaveBeenCalledTimes(3);
+  expect(second).not.toBe(first);
+  expect(third).toBe(second);
+  expect(t.records()).toHaveLength(2);
+  t.dismissInAnotherWindow(original.event.id);
+  await add(original.event.id);
+  expect(t.publish).toHaveBeenCalledTimes(3);
+});
+
 it("retries the exact labeled single after restart and refuses a different source", async () => {
   const t = setup();
   await t.ready();

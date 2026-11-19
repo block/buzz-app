@@ -157,8 +157,8 @@ export type MemberAdditionIntent = {
   batchReceipt?: string | undefined;
 };
 
-/** Admit a replacement while the original batch still owns the retry. */
-async function replaceMigrationBatch(
+/** Require the original batch's ownership before admitting a retry. */
+async function withMigrationBatch(
   outbox: Outbox,
   id: string,
   migration: string | undefined,
@@ -437,7 +437,7 @@ async function addOneMember(
   const id =
     intent.batchReceipt === undefined
       ? send()
-      : await replaceMigrationBatch(
+      : await withMigrationBatch(
           outbox,
           intent.batchReceipt,
           intent.migration,
@@ -662,7 +662,8 @@ export async function addChannelMembersAtOnce(
                 if (
                   item.event.kind !== 9000 ||
                   (batchReceipt !== undefined &&
-                    item.event.id !== batchReceipt) ||
+                    item.event.id !== batchReceipt &&
+                    item.recovery?.value !== batchReceipt) ||
                   !isBatchAddition(item) ||
                   item.acknowledged ||
                   (!item.signed && item.delivery !== "sending") ||
@@ -689,18 +690,32 @@ export async function addChannelMembersAtOnce(
               });
               if (saved?.recovery) {
                 const id = saved.event.id;
-                if (saved.delivery !== "sending") {
-                  if (!outbox.withRecovery)
-                    throw new Error(
-                      "The original migration batch cannot be retried on this host.",
-                    );
-                  await outbox.withRecovery(id, saved.recovery, () => {
-                    checkRetry();
-                    outbox.retry(id);
-                    return waitForAddition(outbox, id, signal);
-                  });
-                }
-                return id;
+                if (saved.delivery === "sending") return id;
+                const { withRecovery } = outbox;
+                const { recovery } = saved;
+                if (!withRecovery)
+                  throw new Error(
+                    "The original migration batch cannot be retried on this host.",
+                  );
+                // The older receipt authorizes the selection. The smaller
+                // batch owns its own signed delivery and has a separate lock.
+                const target =
+                  batchReceipt !== undefined && id !== batchReceipt
+                    ? await withMigrationBatch(
+                        outbox,
+                        batchReceipt,
+                        migration,
+                        channelId,
+                        recipients,
+                        () => id,
+                      )
+                    : id;
+                await withRecovery(target, recovery, () => {
+                  checkRetry();
+                  outbox.retry(target);
+                  return waitForAddition(outbox, target, signal);
+                });
+                return target;
               }
             }
             const send = () =>
@@ -715,11 +730,14 @@ export async function addChannelMembersAtOnce(
                     ...(migration ? [["migration", migration]] : []),
                   ],
                 },
-                { key: `${batchPrefix}${crypto.randomUUID()}`, value: "1" },
+                {
+                  key: `${batchPrefix}${crypto.randomUUID()}`,
+                  value: batchReceipt ?? "1",
+                },
               );
             return batchReceipt === undefined
               ? send()
-              : replaceMigrationBatch(
+              : withMigrationBatch(
                   outbox,
                   batchReceipt,
                   migration,

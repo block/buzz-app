@@ -17996,6 +17996,12 @@ it("keeps a failed watch read's backoff while a relay agent's set is read again"
     });
     await f.seed("watch/chat", { ...chat["watch/chat"], channels: [lobby] });
     await vi.advanceTimersByTimeAsync(1_000);
+    // The set is read before time moves, so the watch's poll is due.
+    await vi.waitFor(() => {
+      const agent = f.service.find(bot);
+      expect(agent?.attentionPending).toBeUndefined();
+      expect(agent?.attention["watch/chat"]).toBeDefined();
+    });
     const read = vi.mocked(f.session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>

@@ -565,8 +565,7 @@ it("restores Settings on the first commit without briefly selecting Identity", (
   expect(selected).toEqual(["Settings"]);
 });
 
-it("forgets a recovery focus request when its navigation is kept", async () => {
-  const user = userEvent.setup();
+function recoveryFixture() {
   const { props } = editingFixture(false);
   const expected = {
     channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
@@ -601,7 +600,7 @@ it("forgets a recovery focus request when its navigation is kept", async () => {
       schema: { scope: ["thread", "channel"] },
     },
   };
-  const recovering = {
+  return {
     ...props,
     agent: {
       ...props.agent,
@@ -618,6 +617,11 @@ it("forgets a recovery focus request when its navigation is kept", async () => {
       </button>
     ),
   };
+}
+
+it("forgets a recovery focus request when its navigation is kept", async () => {
+  const user = userEvent.setup();
+  const recovering = recoveryFixture();
   const view = render(
     <AgentTabs {...recovering} settingsHost={{ pendingSave: vi.fn() }} />,
   );
@@ -630,4 +634,25 @@ it("forgets a recovery focus request when its navigation is kept", async () => {
   expect(settings).toHaveFocus();
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   expect(screen.getByRole("tab", { name: "Settings" })).toHaveFocus();
+});
+
+it("focuses previous versions after discarding changes to open recovery", async () => {
+  const user = userEvent.setup();
+  render(
+    <AgentTabs
+      {...recoveryFixture()}
+      settingsHost={{ pendingSave: vi.fn() }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Previous Versions" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.getByRole("button", { name: "Previous versions" }),
+  ).toHaveFocus();
 });

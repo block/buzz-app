@@ -18,21 +18,17 @@ import { IconButton } from "./IconButton";
 
 const ToastHost = createContext("");
 
-/** Space reserved by mounted surfaces at either window edge. */
-const clearances = new Map<object, { edge: "top" | "bottom"; value: number }>();
+/** Space reserved by mounted surfaces at the top window edge. */
+const clearances = new Map<object, number>();
 /** Each mounted toast host's always-present Sonner section. */
 const viewports = new Set<HTMLElement>();
 // Scoped to the toast host, not the root: a root custom property restyles the
 // whole document, and the next layout read in that commit pays for it.
 let publishQueued = false;
 const writeClearance = (viewport: HTMLElement) => {
-  for (const edge of ["top", "bottom"] as const) {
-    const value = `${Math.max(0, ...[...clearances.values()].filter((entry) => entry.edge === edge).map((entry) => entry.value))}px`;
-    const property =
-      edge === "top" ? "--buzz-toast-top-clearance" : "--buzz-toast-clearance";
-    if (viewport.style.getPropertyValue(property) !== value)
-      viewport.style.setProperty(property, value);
-  }
+  const value = `${Math.max(0, ...clearances.values())}px`;
+  if (viewport.style.getPropertyValue("--buzz-toast-top-clearance") !== value)
+    viewport.style.setProperty("--buzz-toast-top-clearance", value);
 };
 // Publish once a commit's effects settle, so a surface replaced by one of the
 // same height (switching channels) writes nothing.
@@ -53,27 +49,16 @@ const attachViewport = (viewport: HTMLElement | null) => {
   };
 };
 
-/** Reserves space for mounted edge controls. Bottom remains the default for
- * existing composer callers; top keeps the shell header clear. Hidden surfaces
- * take no room. */
-export function useToastClearance(
-  ref: RefObject<HTMLElement | null>,
-  edge: "top" | "bottom" = "bottom",
-) {
+/** Keeps the stack below a mounted top-edge surface, such as the shell header.
+ * Hidden surfaces take no room. */
+export function useToastClearance(ref: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     const key = {};
     const measure = () => {
-      const { top, bottom, height } = element.getBoundingClientRect();
-      clearances.set(key, {
-        edge,
-        value: height
-          ? edge === "top"
-            ? bottom
-            : window.innerHeight - top
-          : 0,
-      });
+      const { bottom, height } = element.getBoundingClientRect();
+      clearances.set(key, height ? bottom : 0);
       publishClearance();
     };
     measure();
@@ -89,7 +74,7 @@ export function useToastClearance(
       clearances.delete(key);
       publishClearance();
     };
-  }, [ref, edge]);
+  }, [ref]);
 }
 type Tone = "error" | "warning" | "info" | "success";
 
@@ -137,8 +122,6 @@ export function ToastProvider({
           hotkey={["F6"]}
           customAriaLabel="App notifications"
           className="buzz-toast-viewport"
-          offset="var(--space-2)"
-          mobileOffset="var(--space-2)"
         />,
         portalContainer ?? document.body,
       )}
@@ -358,8 +341,10 @@ export function useToastNotification() {
     title: string,
     tone: "success" | "error" | "info",
     action?: { label: string; onClick(): void; timeout?: number },
-  ) =>
-    String(
+  ) => {
+    // The card stays focusable while Sonner animates it out; act once.
+    let acted = false;
+    return String(
       toast.custom(
         (id) => (
           <ToastCard
@@ -373,6 +358,8 @@ export function useToastNotification() {
               <Button
                 size="compact"
                 onClick={() => {
+                  if (acted) return;
+                  acted = true;
                   toast.dismiss(id);
                   action.onClick();
                 }}
@@ -389,4 +376,5 @@ export function useToastNotification() {
         },
       ),
     );
+  };
 }

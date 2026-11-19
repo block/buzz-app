@@ -147,7 +147,7 @@ function AppShellContent({
   children: ReactNode;
 }) {
   const header = useRef<HTMLElement>(null);
-  useToastClearance(header, "top");
+  useToastClearance(header);
   const historyRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);

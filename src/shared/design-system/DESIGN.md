@@ -1561,7 +1561,7 @@ Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the top right with safe-area insets. The app shell registers its
-header with `useToastClearance(ref, "top")` and reserves the workspace header
+header with `useToastClearance(ref)` and reserves the workspace header
 height on non-Mac shells. Mac uses a 12px top inset and an 8px right inset. Integrated Windows/Linux
 chrome aligns the card with the room/content divider. On touch,
 notices form a bounded scrolling list. Trailing actions wrap below the message

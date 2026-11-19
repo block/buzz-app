@@ -67,8 +67,16 @@ function revealCurrent(viewport: HTMLElement): number | false {
   ].map((entry) => {
     let owner = entry;
     for (let node: HTMLElement | null = entry; node && node !== viewport; ) {
-      if (node.hidden && node.previousElementSibling instanceof HTMLElement)
-        owner = node.previousElementSibling;
+      if (node.hidden) {
+        // A notice can sit between the section heading and its panel.
+        const heading = node.id
+          ? node.parentElement?.querySelector<HTMLElement>(
+              `summary[aria-controls="${CSS.escape(node.id)}"]`,
+            )
+          : undefined;
+        const proxy = heading ?? node.previousElementSibling;
+        if (proxy instanceof HTMLElement) owner = proxy;
+      }
       node = node.parentElement;
     }
     return owner.getBoundingClientRect();

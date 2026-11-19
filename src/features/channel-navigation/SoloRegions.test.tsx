@@ -1209,9 +1209,15 @@ it.each([true, false])(
       function (this: HTMLElement) {
         const hidden = !!this.closest("[hidden]");
         const row = this.matches('[aria-current="page"]');
-        const top = this.matches("nav")
-          ? 0
-          : (row ? 200 : 60) - (this.closest("nav")?.scrollTop ?? 0);
+        const offset = row
+          ? 200
+          : this.getAttribute("role") === "alert"
+            ? 450
+            : 60;
+        const top =
+          this.tagName === "NAV"
+            ? 0
+            : offset - (this.closest("nav")?.scrollTop ?? 0);
         return {
           top,
           bottom: top + 20,
@@ -1220,7 +1226,19 @@ it.each([true, false])(
       },
     );
     const h = fixture();
-    await h.register({ component: Body });
+    await h.register({
+      component: Body,
+      actions: () => [
+        {
+          id: "fail",
+          label: "Run action",
+          icon: "plus",
+          onSelect: () => {
+            throw new Error("Action unavailable");
+          },
+        },
+      ],
+    });
     const target: OpenTarget = {
       version: 1,
       kind: "conversation",
@@ -1271,6 +1289,8 @@ it.each([true, false])(
     expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
       "open",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Run action" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
     const reveal = screen.getByRole("button", { name: "In Work" });
     viewport.scrollTop = 400;
     fireEvent.scroll(viewport);

@@ -18,7 +18,7 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { Appearance } from "../shared/theme/service";
+import { parseEmojiSize, type Appearance } from "../shared/theme/service";
 
 import {
   setThreadPlacementPreference,
@@ -371,7 +371,7 @@ export function AppearanceSettings({
           )}
           <PreferenceRow
             title="Emoji size"
-            subtitle="Large shows emoji-only messages and reactions bigger."
+            subtitle="Emoji-only messages show at this size. You can also drag the corner of one in a conversation."
             trailing={(control) => (
               <Select
                 describedBy={control["aria-describedby"]}
@@ -383,13 +383,13 @@ export function AppearanceSettings({
                     label: "Size",
                     options: [
                       { value: "default", label: "Default" },
+                      { value: "medium", label: "Medium" },
                       { value: "large", label: "Large" },
                     ],
                   },
                 ]}
                 onValueChange={(value) => {
-                  if (value === "default" || value === "large")
-                    appearance.setEmojiSize(value);
+                  appearance.setEmojiSize(parseEmojiSize(value));
                 }}
               />
             )}

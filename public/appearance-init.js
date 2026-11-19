@@ -76,8 +76,8 @@
   document.documentElement.dataset.messageDensity = density;
   let emojiSize = "default";
   try {
-    if (localStorage.getItem("buzz-emoji-size.v1") === "large")
-      emojiSize = "large";
+    const stored = localStorage.getItem("buzz-emoji-size.v1");
+    if (stored === "medium" || stored === "large") emojiSize = stored;
   } catch {
     /* Default emoji remain usable without storage. */
   }

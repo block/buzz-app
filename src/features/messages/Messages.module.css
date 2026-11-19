@@ -316,6 +316,55 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   font-size: var(--size-emoji-display);
   line-height: var(--size-emoji-line);
 }
+/* Emoji-only content sizes to its glyphs so the size handle sits at their
+   corner, clear of the message's hover toolbar. */
+.resizableEmoji {
+  position: relative;
+  inline-size: fit-content;
+  padding-inline-end: var(--space-6);
+}
+.emojiSizeHandle {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+  border-radius: var(--radius-chip);
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+}
+.emojiSizeHandle:dir(rtl) {
+  cursor: nesw-resize;
+}
+/* A rounded corner mark, like a resize grip. */
+.emojiSizeHandle::before {
+  content: "";
+  position: absolute;
+  inset: var(--space-2);
+  border-block-end: 2px solid var(--text-metadata);
+  border-inline-end: 2px solid var(--text-metadata);
+  border-end-end-radius: var(--radius-chip);
+}
+.resizableEmoji:hover .emojiSizeHandle,
+.resizableEmoji[data-resizing] .emojiSizeHandle,
+.emojiSizeHandle:focus-visible {
+  opacity: 1;
+}
+html[data-keyboard-navigation] .emojiSizeHandle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+@media (hover: none) {
+  .emojiSizeHandle {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .emojiSizeHandle {
+    transition: opacity var(--duration-state) var(--easing-enter);
+  }
+}
 .reactions {
   min-inline-size: 0;
   border: 0;
@@ -3740,8 +3789,8 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .audienceAvatar {
   display: grid;
   flex: none;
-  inline-size: var(--space-4);
-  block-size: var(--space-4);
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
 }
 .audiencePreviewText {
   min-inline-size: 0;

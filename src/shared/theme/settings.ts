@@ -3,6 +3,7 @@ import { ACCENTS, type Accent, type Contrast } from "./accent";
 import {
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
+  EMOJI_SIZES,
   type Appearance,
   type ColorModePreference,
   type EmojiSize,
@@ -65,8 +66,8 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
     {
       key: "conversations.emoji_size",
       description:
-        "Emoji size: large shows emoji-only messages and reactions bigger.",
-      schema: { type: "string", enum: ["default", "large"] },
+        "Emoji size: medium or large shows emoji-only messages bigger; large also enlarges reactions.",
+      schema: { type: "string", enum: [...EMOJI_SIZES] },
       read: () => ({ value: now().emojiSize, unsaved: now().emojiSizeError }),
       write: (value) => appearance.setEmojiSize(value as EmojiSize),
       live,

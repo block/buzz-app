@@ -572,6 +572,7 @@ it.each([
   [null, "default"],
   ["LARGE", "default"],
   ["default", "default"],
+  ["medium", "medium"],
   ["large", "large"],
 ] as const)(
   "bootstrap and service agree on stored emoji size %j",

@@ -757,8 +757,11 @@ and are asked to sign in again in Buzz.
   to exactly the same people. Its earlier messages appear before you send,
   without being marked read. Sending a message reopens the DM and brings it
   back to the sidebar. For a one-to-one DM, choosing the person in search is
-  quicker and brings it back the same way. After **Hide conversation**, the row
-  can take until the channel list next refreshes to return. If this connection
+  quicker and brings it back the same way. A new message from someone else in
+  the DM also brings it back, including one that arrived while you were
+  offline, once you reconnect. Messages only for agents don't. After **Hide
+  conversation**, the row can take until the channel list next refreshes to
+  return. If this connection
   can't start DMs, New message still shows the earlier messages but Send is
   disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.

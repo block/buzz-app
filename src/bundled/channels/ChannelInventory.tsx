@@ -85,6 +85,7 @@ import { CreateSidebarSection } from "./CreateSidebarSection";
 import { useSidebarStartup } from "./useSidebarStartup";
 import { useChannelLabels } from "./useChannelLabels";
 import { useHiddenDms } from "./useHiddenDms";
+import { resurfaceHiddenDms } from "../../features/relay/dm-resurfacing";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { useSidebarView } from "./useSidebarView";
 import { useSidebarFilters } from "./useSidebarFilters";
@@ -303,26 +304,10 @@ export function ChannelInventory({
       ),
     [queries, lifecycle],
   );
-  // A new message from someone else resurfaces a DM the viewer hid: the relay
-  // clears the hide before it fans the message out, so read from its writer.
-  // Agent-only coordination leaves the hide in place, so it needs no read.
   useEffect(
     () =>
-      queries.subscribeIncoming((messages) => {
-        const { hidden } = lifecycle.snapshot();
-        if (
-          messages.some(
-            (message) =>
-              message.audience !== "agents" &&
-              hidden.includes(message.channelId),
-          )
-        )
-          void lifecycle.refreshVisibility(visibilityRequest.current?.signal, {
-            trailing: true,
-            strong: true,
-          });
-      }),
-    [queries, lifecycle],
+      resurfaceHiddenDms(queries, viewer, visibilityRequest.current?.signal),
+    [queries, viewer],
   );
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);

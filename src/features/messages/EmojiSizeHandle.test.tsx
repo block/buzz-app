@@ -175,3 +175,22 @@ it("follows only the pointer that started the drag", () => {
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("medium");
 });
+
+it("grows leftward when the handle sits at the emoji's left", () => {
+  const { saved, handle } = renderEmoji();
+  vi.spyOn(handle, "getBoundingClientRect").mockReturnValue(
+    DOMRect.fromRect({ x: 0, y: 0, width: 24, height: 24 }),
+  );
+  vi.spyOn(frame(handle), "getBoundingClientRect").mockReturnValue(
+    DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 60 }),
+  );
+  fireEvent.pointerDown(handle, {
+    pointerId: 1,
+    button: 0,
+    clientX: 50,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 10, clientY: 40 });
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("large");
+});

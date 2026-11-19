@@ -91,8 +91,12 @@ function EmojiSizeFrame({
   const onPointerMove = (event: PointerEvent<HTMLSpanElement>) => {
     const active = drag.current;
     if (active?.pointer !== event.pointerId) return;
-    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
-    const dx = (event.clientX - active.x) * (rtl ? -1 : 1);
+    // Growing pulls the corner away from the emoji: rightward when the handle
+    // sits at their right, leftward on your own messages, where it sits left.
+    const handle = event.currentTarget.getBoundingClientRect();
+    const frame = event.currentTarget.parentElement?.getBoundingClientRect();
+    const onLeft = !!frame && handle.left < frame.left + frame.width / 2;
+    const dx = (event.clientX - active.x) * (onLeft ? -1 : 1);
     const dy = event.clientY - active.y;
     if (!active.size && Math.hypot(dx, dy) < SLOP) return;
     const steps = Math.round((dx + dy) / 2 / STEP);

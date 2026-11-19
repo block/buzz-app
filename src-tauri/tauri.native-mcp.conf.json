@@ -5,6 +5,7 @@
       "capabilities": [
         "main-window",
         "desktop-window",
+        "downloads-folder",
         "huddle-window",
         "compute-widget",
         {

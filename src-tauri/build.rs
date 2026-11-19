@@ -150,6 +150,7 @@ fn main() {
             "relay_upload_chunk",
             "relay_upload",
             "relay_upload_cancel",
+            "open_downloads_folder",
             "media_download",
             "file_download",
             "media_copy_image",

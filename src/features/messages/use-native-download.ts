@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { downloadNativeMedia } from "./native-download";
+import { canOpenDownloadsFolder, downloadNativeMedia } from "./native-download";
+import { useMediaActionNotifications } from "./MediaActionAnnouncements";
 
 export type DownloadState = "idle" | "pending" | "saved" | "failed";
 
@@ -9,6 +10,7 @@ export function useNativeDownload(
   name: string,
   savedDuration = 4000,
 ) {
+  const { downloadSaved } = useMediaActionNotifications();
   const [state, setState] = useState<DownloadState>("idle");
   const pending = useRef(false);
   useEffect(() => {
@@ -23,6 +25,7 @@ export function useNativeDownload(
     try {
       await downloadNativeMedia(source, name);
       setState("saved");
+      if (canOpenDownloadsFolder()) downloadSaved();
     } catch {
       setState("failed");
     } finally {

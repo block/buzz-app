@@ -17578,3 +17578,130 @@ it("pastes a copied forward literally inside a code block", async () => {
     screen.queryByRole("button", { name: "Remove forwarded message" }),
   ).not.toBeInTheDocument();
 });
+
+describe("table editing controls", () => {
+  const cells = (input: HTMLElement) =>
+    Array.from(input.querySelectorAll("tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("th, td")).map((cell) => cell.textContent),
+    );
+
+  it("starts a table from the formatting tools and edits it with the toolbar", async () => {
+    const h = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+    fireEvent.mouseDown(await screen.findByRole("button", { name: "Table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    const toolbar = await screen.findByRole("toolbar", { name: "Table" });
+    expect(cells(h.input())).toEqual([
+      ["", "", ""],
+      ["", "", ""],
+    ]);
+    expect(
+      within(toolbar).getByRole("button", { name: "Add row above" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      within(toolbar).getByRole("button", { name: "Add column right" }),
+    );
+    expect(cells(h.input())[0]).toHaveLength(4);
+    fireEvent.click(
+      within(toolbar).getByRole("button", { name: "Add row below" }),
+    );
+    expect(cells(h.input())).toHaveLength(3);
+    fireEvent.click(
+      within(toolbar).getByRole("button", { name: "Delete table" }),
+    );
+    expect(h.input().querySelector("table")).toBeNull();
+    expect(screen.queryByRole("toolbar", { name: "Table" })).toBeNull();
+  });
+
+  it("accepts an emoji with Tab in a cell without leaving it, then Tab moves on", async () => {
+    const h = mountEmojiTypeahead();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+    fireEvent.mouseDown(await screen.findByRole("button", { name: "Table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    await h.user.keyboard(":smil");
+    await screen.findByRole("option", { name: ":smile:" });
+    await h.user.keyboard("{Tab}");
+    expect(cells(h.input())[0]).toEqual(["\u{1F604} ", "", ""]);
+    expect(h.input().querySelector("th[data-active]")).toHaveTextContent(
+      "\u{1F604}",
+    );
+    await h.user.keyboard("{Tab}");
+    expect(h.input().querySelectorAll("th")[1]).toHaveAttribute("data-active");
+    expect(h.input()).toHaveFocus();
+  });
+
+  it("disables the Table control in a list and a quote", async () => {
+    const h = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+    const control = await screen.findByRole("button", { name: "Table" });
+    expect(control).toBeEnabled();
+    for (const name of ["Bullet list", "Quote"]) {
+      fireEvent.mouseDown(screen.getByRole("button", { name }));
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(control).toBeDisabled());
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(control).toBeEnabled());
+    }
+    expect(h.input().querySelector("table")).toBeNull();
+  });
+
+  it.each([undefined, "root"])(
+    "sends the table as Markdown with Enter, and Shift+Enter stays in it, in scope %s",
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      act(() => h.input().insertText("| a | b |\n| - | - |\n| 1 | 2 |"));
+      act(() => h.input().setSelectionRange(0, 0));
+      fireEvent.keyDown(h.input(), { key: "Enter", shiftKey: true });
+      expect(h.input().querySelector("[data-active]")?.textContent).toBe("1");
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.messages.reply).not.toHaveBeenCalled();
+      fireEvent.keyDown(h.input(), { key: "Enter" });
+      const sent = threadRootId ? h.messages.reply : h.messages.send;
+      await waitFor(() => expect(sent).toHaveBeenCalledOnce());
+      expect(sent.mock.calls[0]?.[threadRootId ? 2 : 1]).toBe(
+        "| a | b |\n| --- | --- |\n| 1 | 2 |",
+      );
+    },
+  );
+
+  it("edits a sent table as a grid and saves the same Markdown", () => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([
+      editableMessage({
+        content: "Intro\n\n| a | b |\n| :-- | --: |\n| 1 | 2 |",
+      }),
+    ]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(cells(h.input())).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    act(() => h.input().setSelectionRange(0, 0));
+    act(() => h.input().insertText("!"));
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+      "c".repeat(64),
+      "!Intro\n\n| a | b |\n| :--- | ---: |\n| 1 | 2 |",
+      "c".repeat(64),
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+  });
+
+  it("moves focus into the toolbar with Alt+F10 and back with Escape", async () => {
+    const h = mount();
+    act(() => h.input().insertText("| a | b |\n| - | - |\n| 1 | 2 |"));
+    act(() => h.input().setSelectionRange(0, 0));
+    const toolbar = await screen.findByRole("toolbar", { name: "Table" });
+    fireEvent.keyDown(h.input(), { key: "F10", altKey: true });
+    const enabled = within(toolbar)
+      .getAllByRole("button")
+      .filter((button) => !(button as HTMLButtonElement).disabled);
+    expect(enabled[0]).toHaveFocus();
+    fireEvent.keyDown(enabled[0] as HTMLElement, { key: "ArrowRight" });
+    expect(enabled[1]).toHaveFocus();
+    fireEvent.keyDown(document.activeElement as HTMLElement, {
+      key: "Escape",
+    });
+    await waitFor(() => expect(h.input()).toHaveFocus());
+  });
+});

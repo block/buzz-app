@@ -19,6 +19,13 @@ import {
   type ComposerToken,
 } from "./composer-token";
 
+export const tableAlignments: readonly unknown[] = ["left", "center", "right"];
+
+function cellAttrs(element: HTMLElement, header: boolean) {
+  const align = element.getAttribute("data-align");
+  return { header, align: tableAlignments.includes(align) ? align : null };
+}
+
 /** The document owns editable marks and exact source tokens. Unimplemented
  * Markdown stays source text, never round-trips through an HTML serializer. */
 export const composerSchema = new Schema<
@@ -29,6 +36,9 @@ export const composerSchema = new Schema<
   | "bullet_list"
   | "ordered_list"
   | "list_item"
+  | "table"
+  | "table_row"
+  | "table_cell"
   | "text"
   | "hard_break"
   | "token",
@@ -42,7 +52,7 @@ export const composerSchema = new Schema<
   | "strike"
 >({
   nodes: {
-    doc: { content: "block+" },
+    doc: { content: "(block | table)+" },
     paragraph: {
       group: "block",
       content: "inline*",
@@ -85,6 +95,49 @@ export const composerSchema = new Schema<
     bullet_list: { ...bulletList, group: "block", content: "list_item+" },
     ordered_list: { ...orderedList, group: "block", content: "list_item+" },
     list_item: { ...listItem, content: "paragraph block*" },
+    table: {
+      content: "table_row+",
+      isolating: true,
+      defining: true,
+      toDOM: () => [
+        "div",
+        { "data-composer-table": "" },
+        ["table", ["tbody", 0]],
+      ],
+      parseDOM: [{ tag: "table" }],
+    },
+    table_row: {
+      content: "table_cell+",
+      toDOM: () => ["tr", 0],
+      parseDOM: [{ tag: "tr" }],
+    },
+    table_cell: {
+      content: "(text | token)*",
+      isolating: true,
+      whitespace: "pre",
+      attrs: {
+        header: { default: false, validate: "boolean" },
+        align: {
+          default: null,
+          validate: (value) => {
+            if (value !== null && !tableAlignments.includes(value))
+              throw new RangeError("Invalid table alignment");
+          },
+        },
+      },
+      toDOM: (node) => [
+        node.attrs.header ? "th" : "td",
+        {
+          "data-align": node.attrs.align,
+          scope: node.attrs.header ? "col" : null,
+        },
+        0,
+      ],
+      parseDOM: [
+        { tag: "th", getAttrs: (element) => cellAttrs(element, true) },
+        { tag: "td", getAttrs: (element) => cellAttrs(element, false) },
+      ],
+    },
     text: { group: "inline" },
     hard_break: {
       group: "inline",

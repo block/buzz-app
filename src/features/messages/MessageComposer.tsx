@@ -158,6 +158,7 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
+import { ComposerTableTools } from "./ComposerTableTools";
 import { AgentsContext, useSessionState } from "../agents/react";
 import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
@@ -190,7 +191,7 @@ import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
-  ComposerFormat,
+  ActiveFormat,
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
 import { channelText } from "../channels/channel-icon";
@@ -999,6 +1000,7 @@ function Composer({
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const tableTools = useRef<HTMLDivElement>(null);
   const hasFocused = useRef(false);
   const focusFromControl = useRef(
     typeof autoFocus === "object" ? autoFocus : undefined,
@@ -1116,7 +1118,7 @@ function Composer({
   );
   const [linkEdit, setLinkEdit] = useState<ComposerLinkEdit | null>(null);
   if (!active && linkEdit) setLinkEdit(null);
-  const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
+  const [activeFormats, setActiveFormats] = useState<readonly ActiveFormat[]>(
     [],
   );
   const sendWithModEnter = useSendWithModEnterPreference();
@@ -3868,6 +3870,13 @@ function Composer({
                   return;
                 }
                 if (completion.keys.current?.(event)) return;
+                if (event.key === "F10" && event.altKey && tableTools.current) {
+                  event.preventDefault();
+                  tableTools.current
+                    .querySelector<HTMLButtonElement>("button:not(:disabled)")
+                    ?.focus();
+                  return;
+                }
                 if (
                   event.key === "ArrowUp" &&
                   !event.shiftKey &&
@@ -3952,6 +3961,15 @@ function Composer({
               >
                 <ChannelIcon className={channelIconClass(ChannelIcon)} />
               </span>
+            )}
+            {active && activeFormats.includes("table") && (
+              <ComposerTableTools
+                ref={tableTools}
+                disabled={editingDisabled}
+                header={activeFormats.includes("table_header")}
+                run={(command) => input.current?.runTableCommand(command)}
+                focusEditor={() => input.current?.focus()}
+              />
             )}
           </div>
         </div>

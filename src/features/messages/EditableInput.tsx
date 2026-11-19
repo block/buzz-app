@@ -41,6 +41,7 @@ import {
 import {
   composerSchema,
   readComposerDocument,
+  readComposerSnapshot,
   projectComposerDocument,
   composerMarkdownContext,
   markdownRanges,
@@ -78,6 +79,32 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
+  addTableColumn,
+  addTableRow,
+  atCellEdge,
+  convertTables,
+  deleteAcrossTables,
+  deleteEmptyTable,
+  deleteSelectedCells,
+  deleteTable,
+  deleteTableColumn,
+  deleteTableRow,
+  hasTable,
+  pasteGrid,
+  leaveTable,
+  tableArrow,
+  tableBelow,
+  tableCursor,
+  tableFromRows,
+  tableAllowed,
+  tableNeighbour,
+  tableShape,
+  tableTab,
+  tidyTables,
+  tsvRows,
+  withTables,
+} from "./composer-table";
+import {
   annotationAt,
   annotationPlugin,
   annotationRevision,
@@ -106,8 +133,10 @@ import {
   composerFormats,
   formatBindings,
   linkBindings,
+  type ActiveFormat,
   type ComposerFormat,
   type ComposerFormatBinding,
+  type TableCommand,
   type ComposerLinkEdit,
   type ComposerInputElement,
   type AnnotationMenuRequest,
@@ -416,7 +445,7 @@ export type EditableInputProps = Omit<
   placeholder: string;
   maxLength: number;
   onDraftChange(draft: MentionDraft): void;
-  onFormatsChange(active: readonly ComposerFormat[]): void;
+  onFormatsChange(active: readonly ActiveFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
@@ -561,10 +590,14 @@ export function EditableInput({
 
   useLayoutEffect(() => {
     if (!mount.current) return;
-    const initial = readComposerDocument(
-      current.current.draft,
-      current.current.decorationsFor(current.current.draft),
-    );
+    const readDocument = (draft: MentionDraft) => {
+      const doc = readComposerDocument(
+        draft,
+        current.current.decorationsFor(draft),
+      );
+      return readComposerSnapshot(draft.document) ? doc : withTables(doc);
+    };
+    const initial = readDocument(current.current.draft);
     let editor: EditorView;
     let separateHistory = false;
     // Mod+Shift+V (and Apple's ⌥⇧⌘V) pastes plain text verbatim. The native
@@ -838,7 +871,10 @@ export function EditableInput({
       () => composing.current || !!editor?.composing,
     );
     const state = (doc = initial) =>
-      EditorState.create({ doc, plugins: [history(), normalize, annotations] });
+      EditorState.create({
+        doc,
+        plugins: [history(), tableShape, normalize, annotations],
+      });
     const setRange = (start: number, end: number, direction?: string) => {
       openTokens(start, end);
       const source = projection();
@@ -892,6 +928,7 @@ export function EditableInput({
       terminator?: string,
       focus = true,
       onTooLong?: () => void,
+      tables = true,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
       flushTokens();
@@ -920,6 +957,10 @@ export function EditableInput({
         range = { start: range.start, end: range.end + terminator.length };
         openTokens(range.start, range.end);
       } else if (range && focus) setRange(range.start, range.end);
+      if (tables && !recipient && !range && text.includes("|")) {
+        const lift = tableBelow(editor.state, text.replace(/\r\n?/g, "\n"));
+        if (lift) editor.dispatch(lift);
+      }
       const source = projection();
       // Do not select the shortcode in a separate transaction: undo must retain
       // the collapsed caret following the colon, not the replacement range.
@@ -934,7 +975,13 @@ export function EditableInput({
         .allowedMarks(editor.state.storedMarks ?? $from.marks())
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
       text = text.replace(/\r\n?/g, "\n");
+      const inCell = !!tableCursor($from);
+      if (inCell) text = text.replace(/\s*[\n\t]+\s*/g, " ");
       const tr = closeHistory(editor.state.tr);
+      const across =
+        !recipient && !range && from !== to
+          ? deleteAcrossTables(tr, from, to)
+          : undefined;
       if (recipient) {
         const recipients: readonly MentionRecipient[] = Array.isArray(recipient)
           ? recipient
@@ -961,14 +1008,27 @@ export function EditableInput({
             ]),
           ),
         );
+      } else if (across !== undefined) {
+        if (text) tr.insert(across, composerSchema.text(text, marks));
       } else if (text)
         tr.replaceWith(from, to, composerSchema.text(text, marks));
       else tr.delete(from, to);
       tr.setSelection(
-        focus || !source.draft.text
-          ? Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1)
-          : editor.state.selection.map(tr.doc, tr.mapping),
+        across !== undefined
+          ? Selection.near(tr.doc.resolve(across + text.length), -1)
+          : focus || !source.draft.text
+            ? Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1)
+            : editor.state.selection.map(tr.doc, tr.mapping),
       );
+      const start = across ?? from;
+      const converted =
+        tables &&
+        !recipient &&
+        !inCell &&
+        !$from.parent.type.spec.code &&
+        text.includes("|") &&
+        text.includes("\n") &&
+        convertTables(tr, start, start + text.length);
       if (
         Array.isArray(recipient) &&
         projectComposerDocument(tr.doc).draft.recipients.length > 32
@@ -990,6 +1050,7 @@ export function EditableInput({
       // recipients at once, so they need their chips in this transaction.
       if (
         onTooLong &&
+        !converted &&
         text.length >= deferredPasteLength &&
         !text.includes("nostr:")
       )
@@ -1000,7 +1061,7 @@ export function EditableInput({
       if (focus) editor.focus();
       return true;
     };
-    const insertPastedText = (text: string) =>
+    const insertPastedText = (text: string, tables = true) =>
       insert(
         text,
         undefined,
@@ -1008,7 +1069,23 @@ export function EditableInput({
         undefined,
         true,
         current.current.onPasteTooLong,
+        tables,
       );
+    const insertPastedGrid = (node: EditorNode) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const tr = pasteGrid(editor.state, node);
+      if (!tr) return false;
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      ) {
+        current.current.onPasteTooLong?.();
+        return true;
+      }
+      editor.dispatch(closeHistory(tr).scrollIntoView());
+      editor.focus();
+      return true;
+    };
     /** Paste this app's own copied blocks and marks as the nodes they are. One
      * paragraph joins the caret's line; anything else lands as sibling blocks,
      * splitting the caret's paragraph rather than merging into its text. The
@@ -1071,6 +1148,7 @@ export function EditableInput({
           tr.replaceSelection(new Slice(doc.content, 0, 0));
         }
       }
+      leaveTable(tr);
       if (
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength
@@ -1708,8 +1786,11 @@ export function EditableInput({
       };
     };
     const copySelection = (event: ClipboardEvent) => {
-      const { from, to } = editor.state.selection;
-      const content = editor.state.doc.slice(from, to, true).content;
+      const { from, to, $from, $to } = editor.state.selection;
+      const cell = $from.parent === $to.parent && !!tableCursor($from);
+      const content = tidyTables(
+        editor.state.doc.slice(from, to, !cell).content,
+      );
       const doc = composerSchema.nodes.doc.create(
         null,
         content.firstChild?.isBlock
@@ -2113,12 +2194,25 @@ export function EditableInput({
           const marks = (
             editor.state.storedMarks ?? editor.state.doc.resolve(from).marks()
           ).filter((mark) => mark.type !== composerSchema.marks.recipient);
-          if (text) tr.replaceWith(from, to, composerSchema.text(text, marks));
+          const across =
+            from === to ? undefined : deleteAcrossTables(tr, from, to);
+          const typed = tableCursor(editor.state.doc.resolve(from))
+            ? text.replace(/[\r\n\t]+/g, " ")
+            : text;
+          if (across !== undefined) {
+            if (typed) tr.insert(across, composerSchema.text(typed, marks));
+          } else if (typed)
+            tr.replaceWith(from, to, composerSchema.text(typed, marks));
           else tr.delete(from, to);
           // DOM reconciliation may describe only the changed middle of a native
           // replacement. The browser selection can be after an unchanged suffix.
           tr.setSelection(
-            Selection.fromJSON(tr.doc, defaultTransaction().selection.toJSON()),
+            across === undefined
+              ? Selection.fromJSON(
+                  tr.doc,
+                  defaultTransaction().selection.toJSON(),
+                )
+              : Selection.near(tr.doc.resolve(across + typed.length), -1),
           );
           // Only an explicit code toggle persists at the edge; merely moving there
           // or deleting a span must not switch the next text back into code.
@@ -2209,6 +2303,22 @@ export function EditableInput({
             historyCommand(event.shiftKey || key === "y");
             return true;
           }
+          if (
+            (named === "ArrowLeft" || named === "ArrowRight") &&
+            !event.altKey &&
+            !primary &&
+            !event.shiftKey &&
+            atCellEdge(editor.state, named === "ArrowLeft" ? "left" : "right")
+          ) {
+            const tr = tableArrow(
+              editor.state,
+              named === "ArrowLeft" ? "left" : "right",
+            );
+            if (tr) {
+              editor.dispatch(closeHistory(tr).scrollIntoView());
+              return true;
+            }
+          }
           if (named === "ArrowLeft" || named === "ArrowRight") {
             if (
               !event.altKey &&
@@ -2240,6 +2350,11 @@ export function EditableInput({
           if (named !== event.key) return moveCaret(named, event);
           if (event.key === "Backspace" || event.key === "Delete") {
             if (!editable()) return false;
+            const cells = closeHistory(editor.state.tr);
+            if (deleteSelectedCells(cells)) {
+              editor.dispatch(cells.scrollIntoView());
+              return true;
+            }
             if (
               deleteSelection(editor.state, (tr) =>
                 editor.dispatch(closeHistory(tr)),
@@ -2248,6 +2363,22 @@ export function EditableInput({
               return true;
             if (event.altKey || primary) return false;
             adjacent(event.key === "Backspace", false, false);
+            const backward = event.key === "Backspace";
+            const emptyTable = backward ? deleteEmptyTable(editor.state) : null;
+            const beside = emptyTable ?? tableNeighbour(editor.state, backward);
+            if (beside) {
+              editor.dispatch(closeHistory(beside).scrollIntoView());
+              return true;
+            }
+            if (
+              tableCursor(editor.state.selection.$from) &&
+              editor.state.selection.empty &&
+              (backward
+                ? editor.state.selection.$from.parentOffset === 0
+                : editor.state.selection.$from.parentOffset ===
+                  editor.state.selection.$from.parent.content.size)
+            )
+              return true;
             const { empty, $from } = editor.state.selection;
             if (
               empty &&
@@ -2351,6 +2482,19 @@ export function EditableInput({
               separateHistory = true;
               // Some native deletion commands arrive without a keydown. A selected
               // range still belongs to ProseMirror, especially across block nodes.
+              const cells = closeHistory(editor.state.tr);
+              if (
+                event.cancelable &&
+                !event.isComposing &&
+                !composing.current &&
+                editable() &&
+                event.inputType !== "deleteByCut" &&
+                deleteSelectedCells(cells)
+              ) {
+                event.preventDefault();
+                editor.dispatch(cells.scrollIntoView());
+                return true;
+              }
               if (
                 event.cancelable &&
                 !event.isComposing &&
@@ -2388,8 +2532,11 @@ export function EditableInput({
           cut(_view, event) {
             flushTokens();
             copySelection(event);
-            if (editable())
-              editor.dispatch(closeHistory(editor.state.tr.deleteSelection()));
+            if (editable()) {
+              const tr = closeHistory(editor.state.tr);
+              if (!deleteSelectedCells(tr)) tr.deleteSelection();
+              editor.dispatch(tr);
+            }
             return true;
           },
           paste(_view, event) {
@@ -2403,7 +2550,7 @@ export function EditableInput({
             // Raw text replaces the selection with the caret's marks: no copied
             // structure, links, selection linking, URL spacing or recipients.
             if (raw) {
-              if (plain) insertPastedText(plain);
+              if (plain) insertPastedText(plain, false);
               return true;
             }
             const code = editor.state.selection.$from.parent.type.spec.code;
@@ -2413,11 +2560,17 @@ export function EditableInput({
               current.current.onSemanticPaste?.(event.clipboardData)
             )
               return true;
-            // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
+            const inCell = !!tableCursor(editor.state.selection.$from);
+            const flat = !tableAllowed(editor.state);
+            const grid = code || flat ? undefined : tsvRows(plain, html);
+            if (grid && insertPastedGrid(tableFromRows(grid))) return true;
+            // Code takes visible text verbatim; prose preserves copied web links.
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
-            const copy = code ? undefined : buzzCopyDocument(html);
+            const found = code || inCell ? undefined : buzzCopyDocument(html);
+            const tableSource = !!found && flat && hasTable(found);
+            const copy = tableSource ? undefined : found;
             // Unformatted prose takes the text path: it inherits the caret's
             // marks and the link spacing below. Structure pastes as nodes.
             const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
@@ -2445,6 +2598,7 @@ export function EditableInput({
               end = source.source(editor.state.selection.to);
             let text =
               (!code &&
+                !tableSource &&
                 (prose ??
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||
@@ -2601,6 +2755,27 @@ export function EditableInput({
       insertResource: { configurable: true, value: insertResource },
       insertToken: { configurable: true, value: insertToken },
       toggleFormat: { configurable: true, value: toggleFormat },
+      runTableCommand: {
+        configurable: true,
+        value: (command: TableCommand) => {
+          if (!editable() || composing.current || editor.composing)
+            return false;
+          const state = editor.state;
+          const commands: Record<TableCommand, Transaction | undefined> = {
+            row_above: addTableRow(state, false),
+            row_below: addTableRow(state, true),
+            column_left: addTableColumn(state, false),
+            column_right: addTableColumn(state, true),
+            delete_row: deleteTableRow(state),
+            delete_column: deleteTableColumn(state),
+            delete_table: deleteTable(state),
+          };
+          const tr = commands[command];
+          if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
+          editor.focus();
+          return !!tr;
+        },
+      },
       insertLineBreak: {
         configurable: true,
         value: () => {
@@ -2793,7 +2968,8 @@ export function EditableInput({
           held.resolve(held.apply());
       },
       indent(outdent) {
-        if (!editable()) return false;
+        if (!editable() || tableCursor(editor.state.selection.$from))
+          return false;
         syncNativeSelection();
         return (outdent ? liftListItem : sinkListItem)(
           composerSchema.nodes.list_item,
@@ -2807,10 +2983,7 @@ export function EditableInput({
           return;
         plain.current = [];
         pendingTokens = [];
-        const doc = readComposerDocument(
-          next,
-          current.current.decorationsFor(next),
-        );
+        const doc = readDocument(next);
         if (reset) {
           separateHistory = false;
           editor.updateState(state(doc));
@@ -2971,6 +3144,35 @@ export function EditableInput({
           if (!event.defaultPrevented && event.key === "Enter") {
             event.preventDefault();
             ref.current?.insertLineBreak();
+          }
+          const grid = view.current;
+          if (
+            !event.defaultPrevented &&
+            grid &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            tableCursor(grid.state.selection.$from)
+          ) {
+            let tr: Transaction | undefined;
+            if (event.key === "Tab") tr = tableTab(grid.state, event.shiftKey);
+            else if (
+              !event.shiftKey &&
+              (event.key === "ArrowUp" || event.key === "ArrowDown")
+            ) {
+              const direction = event.key === "ArrowUp" ? "up" : "down";
+              let edge = true;
+              try {
+                edge = grid.endOfTextblock(direction);
+              } catch {
+                edge = true;
+              }
+              if (edge) tr = tableArrow(grid.state, direction);
+            }
+            if (tr) {
+              event.preventDefault();
+              grid.dispatch(closeHistory(tr).scrollIntoView());
+            }
           }
           // After the host, which claims Up and Down for a completion list.
           if (

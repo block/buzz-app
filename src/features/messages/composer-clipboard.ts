@@ -97,6 +97,13 @@ const serializer = new DOMSerializer(
       0,
     ],
     list_item: () => ["li", 0],
+    table: () => ["table", ["tbody", 0]],
+    table_row: () => ["tr", 0],
+    table_cell: (node) => [
+      node.attrs.header ? "th" : "td",
+      node.attrs.align ? { "data-align": node.attrs.align } : {},
+      0,
+    ],
     hard_break: () => ["br"],
     token: (node) => {
       const link = tokenLink(node);

@@ -26,7 +26,7 @@ import {
   type EditableInputProps,
   type EditorDecoration,
 } from "./EditableInput";
-import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
+import type { ActiveFormat, ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
 import {
@@ -98,7 +98,7 @@ function mount(
 ) {
   const ref = createRef<ComposerInputElement>();
   let draft: MentionDraft = mentionDraft(initial);
-  let formats: readonly ComposerFormat[] = [];
+  let formats: readonly ActiveFormat[] = [];
   const text = draft.text;
   function Editor() {
     const [value, setValue] = useState(draft);
@@ -3893,7 +3893,9 @@ it.each([
     expect(copied.text).toBe(plain);
     const target = mount();
     paste(target.input, copied.text, copied.html);
-    expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+    expect(target.markdown()).toBe(
+      content.startsWith("|") ? "| a | b |\n| --- | --- |\n| 1 | 2 |" : content,
+    );
     // The composer shows the copied blocks, not their source.
     for (const selector of shown ? shown.split(", ") : [])
       expect(target.input.querySelector(selector)).not.toBeNull();
@@ -5023,5 +5025,470 @@ describe("quoting timeline content", () => {
     });
     expect(onPasteTooLong).toHaveBeenCalledOnce();
     expect(h.markdown()).toBe("keep");
+  });
+});
+
+describe("editable tables", () => {
+  const source = "| a | b |\n| :-- | --: |\n| 1 | 2 |";
+  const cells = (input: ComposerInputElement) =>
+    Array.from(input.querySelectorAll("tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("th, td")).map((c) => c.textContent),
+    );
+  const activeCell = (input: ComposerInputElement) =>
+    input.querySelector("[data-active]")?.textContent;
+
+  it("turns inserted Markdown into a grid and sends the same Markdown", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+    });
+    expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    expect(cells(h.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    expect(h.input.querySelectorAll("th")).toHaveLength(2);
+    expect(h.input.querySelector("th")).toHaveAttribute("scope", "col");
+    expect(h.markdown()).toBe("| a | b |\n| :--- | ---: |\n| 1 | 2 |");
+  });
+
+  it("keeps the caret in a cell while an IME composes, then commits the text", async () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+    });
+    act(() => h.input.setSelectionRange(0, 0));
+    const cell = h.input.querySelector("th") as HTMLElement;
+    act(() => fireEvent.compositionStart(h.input));
+    cell.firstChild?.replaceWith(document.createTextNode("\u3053\u3093"));
+    for (const key of ["Tab", "ArrowDown", "Enter"]) {
+      act(() => {
+        fireEvent.keyDown(h.input, { key, isComposing: true, keyCode: 229 });
+      });
+    }
+    expect(activeCell(h.input)).toBe("\u3053\u3093");
+    await act(async () => fireEvent.compositionEnd(h.input));
+    expect(cells(h.input)).toEqual([
+      ["\u3053\u3093", "b"],
+      ["1", "2"],
+    ]);
+    expect(h.markdown()).toBe(
+      "| \u3053\u3093 | b |\n| :--- | ---: |\n| 1 | 2 |",
+    );
+  });
+
+  it.each([
+    ["wide", 40, 2],
+    ["long", 2, 300],
+  ])("keeps a %s table intact", (_name, columns, rows) => {
+    const h = mount();
+    const row = (n: number) =>
+      `| ${Array.from({ length: columns }, (_, c) => `r${n}c${c}`).join(" | ")} |`;
+    const lines = [
+      row(0),
+      `| ${Array(columns).fill("---").join(" | ")} |`,
+      ...Array.from({ length: rows - 1 }, (_, n) => row(n + 1)),
+    ];
+    act(() => {
+      h.input.insertText(lines.join("\n"));
+    });
+    expect(h.input.querySelectorAll("tr")).toHaveLength(rows);
+    expect(h.input.querySelectorAll("tr")[0]?.children).toHaveLength(columns);
+    expect(h.markdown()).toBe(lines.join("\n"));
+  });
+
+  it("places a Markdown table inserted from a cell below the current table", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    act(() => {
+      h.input.insertText(source);
+    });
+    expect(h.input.querySelectorAll("table")).toHaveLength(2);
+    expect(cells(h.input).slice(2)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    expect(cells(h.input).slice(0, 2)).toEqual([
+      ["", "", ""],
+      ["", "", ""],
+    ]);
+  });
+
+  it("turns a pasted Markdown table into a grid", () => {
+    const h = mount();
+    paste(h.input, source);
+    expect(cells(h.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("turns spreadsheet cells into a grid", () => {
+    const h = mount();
+    paste(h.input, "Name\tQty\nTea\t2\n");
+    expect(cells(h.input)).toEqual([
+      ["Name", "Qty"],
+      ["Tea", "2"],
+    ]);
+    expect(h.markdown()).toBe("| Name | Qty |\n| --- | --- |\n| Tea | 2 |");
+  });
+
+  describe("a table copied from the timeline", () => {
+    const html =
+      '<div data-buzz-copy="timeline"><p>intro</p><table><tbody><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table><p>outro</p></div>';
+
+    it("pastes as tab separated rows, as it did before tables", () => {
+      const h = mount();
+      paste(h.input, "intro\na\tb\n1\t2\noutro", html);
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe("intro\na\tb\n1\t2\noutro");
+    });
+
+    it("is quoted as tab separated rows", () => {
+      const h = mount();
+      act(() => {
+        expect(h.input.insertQuote(html)).toBe(true);
+      });
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe("> intro\n> a\tb\n> 1\t2\n> outro\n\n");
+    });
+  });
+
+  it("pastes tab-indented code as text, not a table", () => {
+    const go = "\tif err != nil {\n\t\treturn err\n\t}\n";
+    const make = "build:\n\tgo build ./...\n\tgo test ./...";
+    const editor =
+      "<meta charset='utf-8'><div style=\"white-space: pre;\"><div><span>\tif err != nil {</span></div><div><span>\t\treturn err</span></div><div><span>\t}</span></div></div>";
+    for (const [text, html] of [
+      [go, ""],
+      [go, editor],
+      [make, ""],
+    ] as const) {
+      const h = mount();
+      paste(h.input, text, html);
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe(text);
+      cleanup();
+    }
+  });
+
+  it("pastes cells copied from a spreadsheet as a table", () => {
+    const html =
+      "<meta charset='utf-8'><google-sheets-html-origin><table><tbody><tr><td>Name</td><td>Qty</td></tr><tr><td>Tea</td><td>2</td></tr></tbody></table>";
+    const h = mount();
+    paste(h.input, "Name\tQty\nTea\t2\n", html);
+    expect(cells(h.input)).toEqual([
+      ["Name", "Qty"],
+      ["Tea", "2"],
+    ]);
+    cleanup();
+    const sheet = mount();
+    paste(sheet.input, "\tQ1\tQ2\n\ta\tb\n", html);
+    expect(cells(sheet.input)).toEqual([
+      ["", "Q1", "Q2"],
+      ["", "a", "b"],
+    ]);
+  });
+
+  describe("inside a list or quote", () => {
+    const grid = "| a | b |\n| - | - |\n| 1 | 2 |";
+    const composerHtml =
+      '<div data-buzz-copy="composer"><table><tbody><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table></div>';
+    const sheetsHtml =
+      "<meta charset='utf-8'><google-sheets-html-origin><table><tbody><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></tbody></table>";
+    const cases = [
+      ["bullet_list", "- ", "  "],
+      ["ordered_list", "1. ", "   "],
+      ["blockquote", "> ", "> "],
+    ] as const;
+    const sent = (prefix: string, indent: string, text: string) =>
+      prefix +
+      text
+        .split("\n")
+        .map((line, index) => (index ? indent : "") + line)
+        .join("\n")
+        .trimEnd();
+
+    it.each(cases)(
+      "keeps a table pasted into a %s as Markdown text, and restores it",
+      (kind, prefix, indent) => {
+        const flavors = [
+          [grid, ""],
+          [grid, composerHtml],
+          ["a\tb\n1\t2", sheetsHtml],
+        ] as const;
+        for (const [text, html] of flavors) {
+          const h = mount();
+          act(() => h.input.toggleFormat(kind));
+          paste(h.input, text, html);
+          expect(h.input.querySelector("table")).toBeNull();
+          expect(h.markdown()).toBe(sent(prefix, indent, text));
+          const saved = h.draft();
+          cleanup();
+          const again = mount(saved);
+          expect(again.input.querySelector("table")).toBeNull();
+          expect(again.markdown()).toBe(sent(prefix, indent, text));
+        }
+      },
+    );
+
+    it.each(cases)(
+      "keeps a table inserted into a %s as Markdown text",
+      (kind, prefix, indent) => {
+        const h = mount();
+        act(() => h.input.toggleFormat(kind));
+        act(() => {
+          h.input.insertText(grid);
+        });
+        expect(h.input.querySelector("table")).toBeNull();
+        expect(h.markdown()).toBe(sent(prefix, indent, grid));
+      },
+    );
+
+    it.each(cases)("keeps the lines typed into a %s as text", async (kind) => {
+      const h = mount();
+      act(() => h.input.toggleFormat(kind));
+      await h.user.keyboard(
+        "| a | b |{Shift>}{Enter}{/Shift}| - | - |{Shift>}{Enter}{/Shift}| 1 | 2 |{Shift>}{Enter}{/Shift}",
+      );
+      expect(h.input.querySelector("table")).toBeNull();
+      const saved = h.draft();
+      cleanup();
+      const again = mount(saved);
+      expect(again.input.querySelector("table")).toBeNull();
+      expect(again.markdown()).toBe(composerMarkdown(saved));
+    });
+
+    it("does not start a table from the formatting control", () => {
+      const h = mount();
+      act(() => h.input.toggleFormat("bullet_list"));
+      act(() => h.input.toggleFormat("table"));
+      expect(h.input.querySelector("table")).toBeNull();
+    });
+
+    it("still pastes a table at the top level beside a list", () => {
+      const h = mount();
+      act(() => h.input.toggleFormat("bullet_list"));
+      act(() => h.input.toggleFormat("bullet_list"));
+      paste(h.input, grid);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    });
+  });
+
+  it("keeps Before when Backspace walks up from the paragraph below", async () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(`Before\n\n${source}\n\nAfter`);
+    });
+    const at = h.draft().text.indexOf("After");
+    act(() => h.input.setSelectionRange(at, at));
+    await h.user.keyboard("{Backspace}");
+    expect(activeCell(h.input)).toBe("2");
+    await h.user.keyboard("{Backspace}");
+    expect(h.input.querySelector("p")?.textContent).toBe("Before");
+    expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    expect(h.markdown()).toBe(
+      "Before\n\n| a | b |\n| :--- | ---: |\n| 1 |  |\n\nAfter",
+    );
+  });
+
+  describe("message length", () => {
+    const small = "| a | b |\n| - | - |\n| 1 | 2 |";
+    const size = "| a | b |\n| --- | --- |\n| 1 | 2 |".length;
+    const limit = size * 2 + 1;
+
+    it("counts every table together when Markdown is pasted", () => {
+      const tooLong = vi.fn();
+      const h = mount("", { maxLength: limit, onPasteTooLong: tooLong });
+      paste(h.input, small);
+      paste(h.input, small);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+      expect(tooLong).toHaveBeenCalledTimes(1);
+      expect(h.markdown().length).toBeLessThanOrEqual(limit);
+    });
+
+    it("counts every table together when cells are pasted", () => {
+      const tooLong = vi.fn();
+      const html = "<table><tr><td>a</td><td>b</td></tr></table>";
+      const h = mount("", { maxLength: limit, onPasteTooLong: tooLong });
+      paste(h.input, "a\tb\n1\t2", html);
+      paste(h.input, "a\tb\n1\t2", html);
+      expect(h.input.querySelectorAll("table")).toHaveLength(1);
+      expect(tooLong).toHaveBeenCalledTimes(1);
+      expect(h.markdown().length).toBeLessThanOrEqual(limit);
+    });
+
+    it("stops typing and growing a table at the limit", async () => {
+      const h = mount(small, { maxLength: size + 2 });
+      act(() => h.input.setSelectionRange(0, 0));
+      await h.user.keyboard("xxxxxx");
+      expect(h.markdown().length).toBeLessThanOrEqual(size + 2);
+      act(() => {
+        h.input.runTableCommand("row_below");
+      });
+      act(() => {
+        h.input.runTableCommand("column_right");
+      });
+      expect(h.markdown().length).toBeLessThanOrEqual(size + 2);
+      expect(cells(h.input)).toHaveLength(2);
+    });
+  });
+
+  it("keeps a table in a restored draft", () => {
+    const first = mount();
+    act(() => {
+      first.input.insertText(source);
+    });
+    cleanup();
+    const again = mount(first.draft());
+    expect(cells(again.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("starts a table from the formatting control", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    expect(cells(h.input)).toEqual([
+      ["", "", ""],
+      ["", "", ""],
+    ]);
+    expect(h.formats()).toEqual(
+      expect.arrayContaining(["table", "table_header"]),
+    );
+  });
+
+  it("moves with Tab and adds a row from the last cell", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a{Tab}b{Tab}c{Tab}d{Tab}e{Tab}f");
+    expect(cells(h.input)).toEqual([
+      ["a", "b", "c"],
+      ["d", "e", "f"],
+    ]);
+    await h.user.keyboard("{Tab}g");
+    expect(cells(h.input)).toEqual([
+      ["a", "b", "c"],
+      ["d", "e", "f"],
+      ["g", "", ""],
+    ]);
+    await h.user.keyboard("{Shift>}{Tab}{/Shift}!");
+    expect(cells(h.input)[1]?.[2]).toBe("f!");
+  });
+
+  it("types a literal pipe as an escaped pipe", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a|b");
+    expect(h.markdown()).toContain("| a\\|b |");
+  });
+
+  it("moves down with Shift+Enter and adds a row after the last one", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a{Tab}{Tab}{Tab}d");
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(activeCell(h.input)).toBe("");
+    expect(h.input.querySelectorAll("tr")).toHaveLength(3);
+    expect(h.input.querySelector("[data-active]")?.closest("tr")).toBe(
+      h.input.querySelectorAll("tr")[2],
+    );
+    expect(h.input.querySelector("[data-active]")).toBe(
+      h.input.querySelectorAll("tr")[2]?.firstElementChild,
+    );
+  });
+
+  it("runs the table commands for the caret's cell", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+      h.input.setSelectionRange(0, 0);
+    });
+    act(() => {
+      h.input.runTableCommand("column_right");
+    });
+    expect(cells(h.input)).toEqual([
+      ["a", "", "b"],
+      ["1", "", "2"],
+    ]);
+    act(() => {
+      h.input.runTableCommand("row_below");
+    });
+    expect(cells(h.input)).toHaveLength(3);
+    act(() => {
+      h.input.runTableCommand("delete_column");
+    });
+    expect(cells(h.input)[0]).toEqual(["a", "b"]);
+    act(() => {
+      h.input.runTableCommand("delete_row");
+    });
+    expect(cells(h.input)).toHaveLength(2);
+    act(() => {
+      expect(h.input.runTableCommand("delete_table")).toBe(true);
+    });
+    expect(h.input.querySelector("table")).toBeNull();
+  });
+
+  it("removes an empty table with Backspace", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    expect(fireEvent.keyDown(h.input, { key: "Backspace" })).toBe(false);
+    expect(h.input.querySelector("table")).toBeNull();
+    expect(h.markdown()).toBe("");
+  });
+
+  it("keeps the table when Backspace has text to delete", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("ab");
+    expect(fireEvent.keyDown(h.input, { key: "Backspace" })).toBe(true);
+    expect(h.input.querySelector("table")).not.toBeNull();
+    expect(cells(h.input)[0]?.[0]).toBe("ab");
+  });
+
+  it("undoes a table insertion in one step", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector("table")).toBeNull();
+  });
+
+  it("leaves the table above with ArrowUp", async () => {
+    const h = mount("before");
+    act(() => {
+      h.input.setSelectionRange(6, 6);
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("x");
+    await h.user.keyboard("{ArrowUp}");
+    expect(h.input.querySelector("[data-active]")).toBeNull();
+    expect(h.input.querySelector("p")?.textContent).toBe("before");
+  });
+
+  it("clamps a pasted selection that spans two cells", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+      h.input.setSelectionRange(0, 3);
+    });
+    paste(h.input, "z");
+    expect(cells(h.input).flat().length).toBe(4);
   });
 });

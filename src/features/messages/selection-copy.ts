@@ -237,7 +237,17 @@ function serialize(
           // The first item the copy keeps, not one it only touches.
           (range && kept[0] ? [...node.children].indexOf(kept[0]) : 0)
         : 1;
-    return `<${tag.toLowerCase()}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
+    const align =
+      tag === "TD" || tag === "TH"
+        ? (node.getAttribute("data-align") ?? node.getAttribute("align"))
+        : null;
+    const attributes =
+      tag === "OL" && Number.isFinite(start) && start !== 1
+        ? ` start="${start}"`
+        : align === "left" || align === "center" || align === "right"
+          ? ` data-align="${align}"`
+          : "";
+    return `<${tag.toLowerCase()}${attributes}>${inner}</${tag.toLowerCase()}>`;
   }
   if (format !== "html" || !blockTag.test(tag) || node.querySelector(blocks))
     return inner;
@@ -367,9 +377,10 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
     for (const paragraph of container.querySelectorAll("p + p"))
       paragraph.before(html.createElement("p"));
   }
-  // Tables remain tab-separated source in the composer, whose schema has no table.
-  for (const row of container.querySelectorAll("tr"))
-    for (const cell of [...row.children].slice(1)) cell.prepend("\t");
+  const grid = !!origin?.closest('[data-buzz-copy="composer"]');
+  if (!grid)
+    for (const row of container.querySelectorAll("tr"))
+      for (const cell of [...row.children].slice(1)) cell.prepend("\t");
   const parser = new EditorDOMParser(composerSchema, [
     {
       tag: "a",
@@ -396,8 +407,10 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
           : Fragment.empty;
       },
     },
-    { tag: "tr", node: "paragraph" },
-    ...EditorDOMParser.fromSchema(composerSchema).rules,
+    ...(grid ? [] : [{ tag: "tr", node: "paragraph" } as const]),
+    ...EditorDOMParser.fromSchema(composerSchema).rules.filter(
+      (rule) => grid || !("node" in rule && rule.node?.startsWith("table")),
+    ),
   ]);
   return parser.parse(container, { preserveWhitespace: "full" });
 }

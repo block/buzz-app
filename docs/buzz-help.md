@@ -875,6 +875,16 @@ and are asked to sign in again in Buzz.
   ⌘/Ctrl+Enter sends. It starts off.
 - Arrow keys move out of a code block, even when it's the first or last thing
   in a message.
+- **Tables** are edited as a grid in the composer. Choose **Table** in the
+  formatting tools, or type or paste a Markdown table or cells copied from a
+  spreadsheet. Tab and Shift+Tab move between cells, and Tab in the last cell adds
+  a row. Up and Down move between rows and leave the table at its first or last
+  row. Shift+Enter moves down a row. Backspace in an empty table removes it. While
+  the caret is in a table, a toolbar adds or deletes rows and columns, and Alt+F10
+  moves focus to it. Wide or long tables scroll inside the composer. A table is
+  sent as the same Markdown, and Enter still sends. Only cells copied from a
+  spreadsheet paste as a table, so tab-indented code stays text. Tables sit
+  outside lists and quotes; one pasted or typed there stays as Markdown text.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
   Some plugins prepare before a message sends. After a restart, Buzz can't

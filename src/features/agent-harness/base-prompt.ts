@@ -2,6 +2,7 @@
 // its own instructions, and what a turn a mention or DM starts adds to it.
 import basePrompt from "./base_prompt.md?raw";
 import mentionPrompt from "./mention_prompt.md?raw";
+import { basePromptPreference } from "./base-prompt-preference";
 
 export const BASE_PROMPT = basePrompt.trim();
 
@@ -26,6 +27,9 @@ const OWN_FOLDER = [
 /** The base prompt, for a conversation in a folder of its own when
  * `workspace`, the agent's workspace as an absolute path, is given. */
 export function basePromptFor(workspace?: string) {
+  const custom = basePromptPreference();
+  // A replacement is the owner's exact text, not another bundled template.
+  if (custom !== null) return custom;
   if (!workspace) return BASE_PROMPT;
   return OWN_FOLDER.reduce((text, [from, to]) => {
     if (!text.includes(from))

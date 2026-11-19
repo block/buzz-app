@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BasePromptSettings } from "./BasePromptSettings";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
@@ -120,6 +121,7 @@ export function AgentSettings({
           )}
         </SettingsGroup>
       </div>
+      <BasePromptSettings />
       {active && mentionError && (
         <ToastNotice
           title="Agent preference wasn’t saved"

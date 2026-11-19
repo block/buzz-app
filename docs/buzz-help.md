@@ -1425,6 +1425,17 @@ available rather than silently discarding it.
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
   Never say changes were saved until Save succeeds.
+- **Settings → Agent setup → Advanced → Base prompt** shows Buzz’s bundled
+  base prompt and lets you save a replacement on this device. The editor keeps a
+  comparison with the read-only bundled original visible, showing a live diff
+  when text differs. Replacements are used exactly as written, including any
+  workspace guidance you maintain yourself. An empty replacement
+  removes this shared base text; **Restore bundled default** removes your override.
+  It applies across communities to agents run by this app using the shared prompt
+  builder, not remote hosts or unrelated harness instructions. After saving, use
+  **New** in an agent conversation to ensure the changed prompt is used. Running
+  turns are not interrupted. Removing tool or routing guidance can break agents’
+  ability to work in Buzz.
 - Claude Code's open settings follow saved changes to fields you haven't edited.
   Your unsaved edits stay in the form. If the same setting changed elsewhere,
   review the values beside that setting, then choose **Use latest** or **Keep mine**

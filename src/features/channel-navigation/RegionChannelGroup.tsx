@@ -87,6 +87,10 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         }
       : undefined;
   const Icon = channelIcon(channel);
+  const leading = props.headerLeading;
+  const activateLeading = () => {
+    if (eligible(current())) leading?.onActivate();
+  };
   const accessory =
     typeof props.headerAccessory === "boolean"
       ? undefined
@@ -147,6 +151,13 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
                 size="compact"
                 label={`Actions for ${channel.name}`}
                 openDetails={() => void openDetails()}
+                leadingAction={
+                  leading && (
+                    <MenuItem onClick={activateLeading}>
+                      {leading.label}
+                    </MenuItem>
+                  )
+                }
                 startChat={
                   newTask && <MenuItem onClick={newTask}>New task</MenuItem>
                 }
@@ -156,6 +167,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         >
           <div className={styles.heading}>
             <SoloDisclosure
+              leading={leading && { ...leading, onActivate: activateLeading }}
               label={props.disclosureLabel}
               summary=""
               expanded={props.expanded}
@@ -167,7 +179,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
             <NavigationItem
               label={channel.name}
               title={channel.name}
-              icon={<Icon size={14} />}
+              icon={leading ? undefined : <Icon size={14} />}
               selected={!!props.selected}
               onClick={() => {
                 if (eligible(current())) props.onSelect();

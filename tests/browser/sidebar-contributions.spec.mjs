@@ -562,6 +562,107 @@ appTest.describe("Solo header accessories", () => {
       }
     },
   );
+  appTest(
+    "shares the leading slot between a header action and disclosure",
+    async ({ page, app }) => {
+      await page.goto(
+        `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
+      );
+      await openPage(page, "Messages");
+      const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+      const resize = page.getByRole("separator", { name: "Resize sidebar" });
+      await resize.dblclick();
+      for (const [selector, title] of [
+        ['[data-solo-workspace="work"]', "Work"],
+        ['[data-solo-channel-group="alpha"]', "Alpha"],
+      ]) {
+        const group = sidebar.locator(selector);
+        const heading = group.getByRole("button", { name: title, exact: true });
+        const action = group.getByRole("button", { name: /open .* summary/i });
+        const disclosure = group.getByRole("button", { name: /tasks/i });
+        if ((await disclosure.getAttribute("aria-expanded")) === "true") {
+          await disclosure.click();
+        }
+        await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+        await heading.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        await resize.focus();
+        await expect(action).toHaveCSS("opacity", "1");
+        await expect(disclosure).toHaveCSS("opacity", "0");
+        const titleBox = await heading.boundingBox();
+        const leadingBox = await action.boundingBox();
+        await heading.hover();
+        await expect(action).toHaveCSS("opacity", "0");
+        await expect(disclosure).toHaveCSS("opacity", "1");
+        expect(await disclosure.boundingBox()).toEqual(leadingBox);
+        expect(await heading.boundingBox()).toEqual(titleBox);
+        await disclosure.click();
+        await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+        await disclosure.click();
+        await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+
+        await page.mouse.move(0, 0);
+        await heading.focus();
+        await page.keyboard.press("Shift+Tab");
+        await expect(disclosure).toBeFocused();
+        await expect(disclosure).toHaveCSS("opacity", "1");
+        await page.keyboard.press("Shift+Tab");
+        await expect(action).toBeFocused();
+        await expect(action).toHaveCSS("opacity", "1");
+        await expect(disclosure).toHaveCSS("opacity", "0");
+        await page.keyboard.press("Enter");
+        await expect(action).toHaveAccessibleName(`Reopen ${title} summary`);
+        await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+
+        await group
+          .getByRole("button", { name: `Actions for ${title}` })
+          .press("Enter");
+        await page
+          .getByRole("menuitem", { name: `Reopen ${title} summary` })
+          .click();
+        await expect(action).toHaveAccessibleName(`Open ${title} summary`);
+        await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+        await expect(heading).not.toHaveAttribute("data-selected");
+      }
+    },
+  );
+
+  appTest.describe("touch workspace header", () => {
+    appTest.use({ hasTouch: true });
+
+    appTest(
+      "opens the leading action after a workspace drag",
+      async ({ page, app }) => {
+        await page.goto(
+          `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
+        );
+        await openPage(page, "Messages");
+        const workspace = page.locator('[data-solo-workspace="work"]');
+        const title = workspace.getByRole("button", {
+          name: "Work",
+          exact: true,
+        });
+        const leading = workspace.getByRole("button", {
+          name: /open work summary/i,
+        });
+        await title.scrollIntoViewIfNeeded();
+        const box = await title.boundingBox();
+        if (!box) throw new Error("Workspace title is missing");
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + 40, y);
+        await expect(page.locator("[data-section-dragging]")).toHaveCount(1);
+        await page.keyboard.press("Escape");
+        await page.mouse.up();
+        await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
+        await leading.tap();
+        await expect(leading).toHaveAccessibleName("Reopen Work summary");
+        await expect(title).not.toHaveAttribute("data-selected");
+      },
+    );
+  });
 });
 
 appTest.describe("Focus", () => {

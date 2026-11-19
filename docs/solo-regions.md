@@ -220,3 +220,10 @@ it at the trailing edge. Hovering that slot or focusing its controls reveals
 the native Actions button and, when available, the New task pencil. They
 overlay the metadata and adjacent accessory without shifting the header.
 Touch shows the controls directly. New task also remains available in the menu.
+
+Both headers accept optional `headerLeading` with a non-interactive `icon`, an
+action `label`, and an `onActivate` callback. With a fine pointer, the icon and
+native caret share a slot. Hover reveals the caret, and keyboard focus reveals
+the focused button. Touch shows both buttons. The Actions menu also offers the
+leading action with the same label and callback. The title continues to select
+the workspace or channel.

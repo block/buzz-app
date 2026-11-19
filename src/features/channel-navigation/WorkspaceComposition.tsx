@@ -69,8 +69,10 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
   }, [props.reveal]);
   if (!workspace || !props.id) return null;
   const title = props.id ? workspace.name : "Unfiled";
+  const leading = props.headerLeading;
   const disclosure = (
     <SoloDisclosure
+      leading={leading}
       label={`${workspace.open ? "Hide" : "Show"} tasks and chats in ${title}`}
       summary={props.id ? "" : title}
       expanded={workspace.open}
@@ -83,7 +85,11 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
       {disclosure}
       <NavigationItem
         label={title}
-        icon={<Cube3dSphereIcon size={14} aria-hidden="true" />}
+        icon={
+          leading ? undefined : (
+            <Cube3dSphereIcon size={14} aria-hidden="true" />
+          )
+        }
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
         onClick={() => props.onSelect?.()}
@@ -111,10 +117,14 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
               onClick={props.onNewTask}
             />
           ),
-          props.onNewTask && (
-            // Also in the menu, where it is never hidden.
-            <MenuItem onClick={props.onNewTask}>New task</MenuItem>
-          ),
+          <>
+            {leading && (
+              <MenuItem onClick={leading.onActivate}>{leading.label}</MenuItem>
+            )}
+            {props.onNewTask && (
+              <MenuItem onClick={props.onNewTask}>New task</MenuItem>
+            )}
+          </>,
           props.headerAccessory,
           props.headerMetadata,
         )}

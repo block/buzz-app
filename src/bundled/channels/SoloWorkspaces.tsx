@@ -1486,13 +1486,16 @@ function ChatActionsMenu({
   const ownsContextTarget = ({ target, currentTarget }: SyntheticEvent) =>
     target instanceof Element &&
     currentTarget.contains(target) &&
-    !target.closest("[data-solo-workspace-accessory]");
+    !target.closest(
+      "[data-solo-workspace-accessory], [data-solo-leading-action]",
+    );
   const restoreFocus = () => {
     const row = document.querySelector(
       `[data-solo-menu-id="${id}"]:not([inert] *)`,
     );
     return (
       row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
+      row?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
       row?.querySelector<HTMLElement>("button:not([data-solo-disclosure])") ??
       false
     );

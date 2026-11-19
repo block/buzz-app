@@ -24,6 +24,15 @@ function HeaderAccessory({ label }: { label: string }) {
   );
 }
 
+function useHeaderSummary(label: string) {
+  const [opened, setOpened] = useState(false);
+  return {
+    icon: <StarFilledIcon size={15} aria-hidden="true" />,
+    label: `${opened ? "Reopen" : "Open"} ${label} summary`,
+    onActivate: () => setOpened((value) => !value),
+  };
+}
+
 declare global {
   interface Window {
     fixtureSoloRegion?: {
@@ -62,11 +71,15 @@ export const soloRegionFixture: BundledPlugin = {
       const headerAccessories = new URL(location.href).searchParams.has(
         "header-accessories",
       );
+      const leadingHeader = new URL(location.href).searchParams.has(
+        "leading-header",
+      );
       function Workspaces({
         ui,
         binding,
       }: Pick<SoloRegionProps, "ui" | "binding">) {
         const [selected, select] = useState<string>();
+        const summary = useHeaderSummary("Work");
         const workspaces = useSyncExternalStore(
           (notify) => navigation.workspaces.subscribe(binding, notify),
           () => navigation.workspaces.snapshot(binding),
@@ -79,8 +92,13 @@ export const soloRegionFixture: BundledPlugin = {
               selected={selected === workspace.id}
               onSelect={() => select(workspace.id)}
               onNewTask={() => select(undefined)}
+              headerLeading={
+                leadingHeader && workspace.id === "work" ? summary : undefined
+              }
               headerAccessory={
-                headerAccessories && workspace.id === "work" ? (
+                headerAccessories &&
+                !leadingHeader &&
+                workspace.id === "work" ? (
                   <HeaderAccessory label={`Mark ${workspace.name} workspace`} />
                 ) : undefined
               }
@@ -101,6 +119,7 @@ export const soloRegionFixture: BundledPlugin = {
       }: Pick<SoloRegionProps, "ui"> & { id: string }) {
         const [expanded, setExpanded] = useState(false);
         const [selected, select] = useState(false);
+        const summary = useHeaderSummary("Alpha");
         if (!ui.ChannelGroup) return null;
         return (
           <ui.ChannelGroup
@@ -112,8 +131,11 @@ export const soloRegionFixture: BundledPlugin = {
             disclosureLabel={`Toggle ${id} tasks`}
             onToggle={() => setExpanded(!expanded)}
             onNewTask={() => select(false)}
+            headerLeading={
+              leadingHeader && id === "alpha" ? summary : undefined
+            }
             headerAccessory={
-              id === "alpha" ? (
+              !leadingHeader && id === "alpha" ? (
                 <HeaderAccessory label="Mark Alpha channel" />
               ) : undefined
             }

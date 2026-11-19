@@ -129,6 +129,13 @@ export type SoloRegionProps = Readonly<{
     ChatList?: ComponentType;
   }>;
 }>;
+/** A leading action whose artwork shares the native disclosure slot. */
+export type SoloHeaderLeading = Readonly<{
+  /** Non-interactive artwork for the action button. */
+  icon: ReactNode;
+  label: string;
+  onActivate(): void;
+}>;
 export type SoloChannelGroupProps = Readonly<{
   channelId: string;
   selected?: boolean;
@@ -139,6 +146,7 @@ export type SoloChannelGroupProps = Readonly<{
   onToggle(): void;
   /** Offered only while the host permits starting a chat from this channel. */
   onNewTask?(): void;
+  headerLeading?: SoloHeaderLeading | undefined;
   /** Independent header content that stays visible when collapsed. */
   headerAccessory?: ReactNode;
   /** Compact, non-interactive content shown in place of quiet header actions. */
@@ -150,6 +158,7 @@ export type SoloWorkspaceProps = Readonly<{
   selected?: boolean;
   onSelect?(): void;
   onNewTask?(): void;
+  headerLeading?: SoloHeaderLeading | undefined;
   /** Independent header content that stays visible when collapsed. */
   headerAccessory?: ReactNode;
   /** Compact, non-interactive content shown in place of quiet header actions. */

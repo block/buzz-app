@@ -18,7 +18,6 @@ import {
   useState,
   useRef,
   type ComponentProps,
-  type PointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -295,9 +294,9 @@ export function useSidebarSectionDrag({
           },
           listeners: {
             ...drag.listeners,
-            onPointerDown: (event: PointerEvent<HTMLElement>) => {
+            // Child controls can stop drag activation in the bubble phase.
+            onPointerDownCapture: () => {
               suppressClick.current = false;
-              drag.listeners?.onPointerDown?.(event);
             },
           },
         }

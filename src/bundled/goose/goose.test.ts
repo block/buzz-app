@@ -1762,6 +1762,62 @@ it("keeps Goose steers in order across an Attention refresh", async () => {
   }
 });
 
+it("says a message's steer only when it joins the running turn", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open({
+    choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+  });
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  const steered = session.send("two", { steer: "steer two" });
+  // Another model cannot join the running turn: it runs as its own.
+  const other = session.send("three", { steer: "steer three" }, "o3");
+  const refresh = vi.fn(async (_fresh?: boolean, steers?: boolean) =>
+    steers ? "steer four" : "four",
+  );
+  const woken = session.send("old four", { current: () => true, refresh });
+  try {
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
+    expect(process.turns[0]?.steered).toEqual(["steer two"]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toBe("three");
+    process.turns[1]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(3));
+    // Queued behind the pick, the wake is rebuilt as a turn of its own.
+    expect(process.turns[2]?.text).toBe("four");
+    expect(refresh).toHaveBeenCalledWith();
+    process.turns[2]?.finish();
+  } finally {
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, steered, other, woken]);
+  }
+});
+
+it("rebuilds an Attention steer as one when it joins the running turn", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  const refresh = vi.fn(async (_fresh?: boolean, steers?: boolean) =>
+    steers ? "steer wake" : "wake",
+  );
+  const woken = session.send("old wake", { current: () => true, refresh });
+  try {
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(false, true);
+    expect(process.turns[0]?.steered[0]).toContain("steer wake");
+    process.turns[0]?.finish();
+  } finally {
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, woken]);
+  }
+});
+
 it.each([1, 2])(
   "keeps %s refreshing Attention steers ahead of a later queued model pick",
   async (count) => {

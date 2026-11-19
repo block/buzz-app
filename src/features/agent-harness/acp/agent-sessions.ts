@@ -355,7 +355,7 @@ export class AgentSessions {
   }
 
   /** Sends `text` into the conversation `key`, and resolves when the session
-   * has answered it. `steer` replaces `text` when the session is mid-turn;
+   * has answered it, or the running turn, with the activity's `steer`;
    * `fresh` builds it again when the session it was built for was closed;
    * `title` names a session opened for it, except that the conversation's
    * first one is left for the harness to name, if it names sessions, when `named`
@@ -370,7 +370,6 @@ export class AgentSessions {
     text: string,
     seen: number,
     {
-      steer = text,
       current,
       fresh,
       title,
@@ -381,7 +380,6 @@ export class AgentSessions {
       kept,
       ...activity
     }: Readonly<{
-      steer?: string;
       current?: () => boolean;
       fresh?: () => Promise<string>;
       title?: string;
@@ -457,7 +455,7 @@ export class AgentSessions {
         key,
         live,
         seen,
-        live.session.busy ? steer : text,
+        text,
         { ...activity, ...(current ? { current } : {}) },
         model,
         effort,

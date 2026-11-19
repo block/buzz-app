@@ -1514,7 +1514,7 @@ Base UI instant states and keyboard navigation skip transitions; reduced motion
 keeps only the fade.
 
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
-in the host, portaled outside the app layout to the bottom right. Features and
+in the host, portaled outside the app layout to the top right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
 Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
@@ -1560,7 +1560,9 @@ no dismissal unless the source supplies onDismiss; preserve all recovery actions
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the top right with safe-area insets. The app shell registers its
 header with `useToastClearance(ref, "top")` and reserves the workspace header
-height, keeping window, update, and conversation controls reachable. On touch,
+height on non-Mac shells, keeping window, update, and conversation controls reachable.
+The native Mac shell retains the window-edge placement; integrated Windows/Linux
+chrome aligns the card with the room/content divider. On touch,
 notices form a bounded scrolling list. Trailing actions wrap below the message
 when their intrinsic width cannot fit beside it.
 F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.

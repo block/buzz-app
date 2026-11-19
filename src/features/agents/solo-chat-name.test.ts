@@ -69,6 +69,13 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
   expect(load).not.toHaveBeenCalled();
   await nameSoloChat(relay, owner, first, event, "A useful title");
   expect(name).toBe("A useful title");
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ name: event.content }),
+    expect.objectContaining({ name: "A useful title" }),
+    undefined,
+    undefined,
+    "automatic",
+  );
   // A plain NIP-01 read: the relay rejects a channel-window `until` without a cursor.
   expect(read).toHaveBeenLastCalledWith([
     {

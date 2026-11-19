@@ -77,7 +77,7 @@ export function SoloChatName({
     if (form.current?.contains(document.activeElement)) input.current?.focus();
     try {
       await name.run(name.checkOnly ? "check" : "save");
-      if (active.current)
+      if (active.current && !name.checkingAutomatic)
         finish(
           focus &&
             (document.activeElement === document.body ||
@@ -146,8 +146,8 @@ export function SoloChatName({
               ref={input}
               controlSize="sm"
               value={name.base ? name.name : title}
-              readOnly={!name.base || name.busy || name.blocked}
-              aria-disabled={!name.base || name.busy || name.blocked}
+              readOnly={!name.base || name.busy || name.nameBlocked}
+              aria-disabled={!name.base || name.busy || name.nameBlocked}
               onChange={(event) => name.changeName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && event.nativeEvent.isComposing)

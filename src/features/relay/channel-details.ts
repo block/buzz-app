@@ -21,6 +21,7 @@ import { SOLO_NAMED_LABEL, soloLabels } from "../solo/labels";
 export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;
   status: "saving" | "unconfirmed";
+  automaticName?: true;
 }>;
 type ChannelNames = Pick<ChannelQueries, "get" | "subscribeList">;
 
@@ -33,17 +34,52 @@ export interface ChannelDetailsCapability {
     signal?: AbortSignal,
     /** Checked synchronously right before publishing; false publishes nothing. */
     active?: () => boolean,
-    /** Present only for name edits initiated by this app's Solo editor. */
-    manualRename?: ChannelNames,
+    /** Name edit from this session, either automatic or from the Solo editor. */
+    rename?: ChannelNames | "automatic",
   ): Promise<void>;
   /** An in-memory revision of a matching title change initiated here. */
   localRename?(id: string, name: string): number | undefined;
-  check(id: string, signal?: AbortSignal): Promise<void>;
+  check(id: string, signal?: AbortSignal): Promise<ChannelDetails | undefined>;
   snapshot(id: string): DetailsAttempt | undefined;
   subscribe(listener: () => void): () => void;
 }
 const uncertain =
   "The change may have been saved. Check its status before trying again.";
+
+function matchesDetails(details: ChannelDetails, draft: ChannelDetailsDraft) {
+  return (
+    details.name === draft.name &&
+    details.description === draft.description &&
+    details.visibility === draft.visibility &&
+    details.ttlSeconds === draft.ttlSeconds &&
+    (draft.joinRole === undefined || details.joinRole === draft.joinRole) &&
+    (draft.labels === undefined ||
+      sameLabels(draft.labels, details.labels ?? []))
+  );
+}
+
+function onlyAutomaticNameChanged(before: RelayEvent, after: RelayEvent) {
+  // A rename can refresh the derived expiry deadline or add an empty about
+  // tag. Compare the configured lifetime and all other signed metadata.
+  const otherTags = (event: RelayEvent) =>
+    event.tags
+      .filter(
+        (tag) =>
+          tag[0] !== "name" &&
+          tag[0] !== "ttl_deadline" &&
+          !(
+            tag.length === 2 &&
+            ((tag[0] === "t" && tag[1] === SOLO_NAMED_LABEL) ||
+              (tag[0] === "about" && tag[1] === ""))
+          ),
+      )
+      .map((tag) => JSON.stringify(tag))
+      .sort();
+  return (
+    before.content === after.content &&
+    JSON.stringify(otherTags(before)) === JSON.stringify(otherTags(after))
+  );
+}
 
 /** Session owns uncertain intent through panel close/reopen; no automatic publication retry. */
 export function createChannelDetails({
@@ -66,6 +102,11 @@ export function createChannelDetails({
 }) {
   let closed = false;
   const attempts = new Map<string, DetailsAttempt>();
+  const automaticSaves = new Map<string, Promise<void>>();
+  const automaticRevisions = new Map<
+    string,
+    { before: string; after: string }
+  >();
   const manualNames = new Map<
     string,
     { name: string; previous?: string | undefined; revision: number }
@@ -155,19 +196,8 @@ export function createChannelDetails({
     acceptDiscovery([metadata]);
     signal.throwIfAborted();
     assertAccess(id);
-    if (
-      details.name !== draft.name ||
-      details.description !== draft.description ||
-      details.visibility !== draft.visibility ||
-      details.ttlSeconds !== draft.ttlSeconds ||
-      (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
-      (draft.labels !== undefined &&
-        JSON.stringify([...new Set(draft.labels)].sort()) !==
-          JSON.stringify([...(details.labels ?? [])].sort()))
-    )
-      throw new Error(uncertain);
-    attempts.delete(id);
-    emit();
+    if (!matchesDetails(details, draft)) throw new Error(uncertain);
+    return { details, metadata };
   }
   const capability: ChannelDetailsCapability = Object.freeze({
     available: !!reader && !!writer,
@@ -204,23 +234,33 @@ export function createChannelDetails({
           const attempt = attempts.get(id);
           if (attempt?.status !== "unconfirmed")
             throw new Error("No unconfirmed change to check.");
-          await confirm(id, attempt.draft, signal);
+          const { details } = await confirm(id, attempt.draft, signal);
+          if (attempts.get(id) !== attempt) return;
+          attempts.delete(id);
+          emit();
+          return details;
         },
         caller,
       );
     },
     async save(
       base: ChannelDetails,
-      input: ChannelDetailsDraft,
+      edit: ChannelDetailsDraft,
       caller?: AbortSignal,
       active?: () => boolean,
-      manualRename?: ChannelNames,
+      rename?: ChannelNames | "automatic",
     ) {
       const id = lifecycleChannelId(base.channelId);
       if (!writer || !reader)
         throw new Error("Channel editing is unavailable on this connection.");
+      const automaticName = rename === "automatic";
+      const manualRename = automaticName ? undefined : rename;
+      const automaticSave = manualRename && automaticSaves.get(id);
+      if (automaticSave) await automaticSave;
+      caller?.throwIfAborted();
       if (attempts.has(id))
         throw new Error("Check the previous change before saving again.");
+      const input = automaticName ? { ...base, name: edit.name } : edit;
       validateDetailsDraft(input);
       // Renaming a Solo chat records that its title is chosen, not automatic.
       const chosenName =
@@ -258,25 +298,59 @@ export function createChannelDetails({
         throw channelIdentityUnsupported();
       let publicationStarted = false;
       let phase = "Could not verify current channel access";
-      attempts.set(id, Object.freeze({ draft, status: "saving" }));
+      let releaseAutomatic!: () => void;
+      if (automaticName)
+        automaticSaves.set(
+          id,
+          new Promise((resolve) => {
+            releaseAutomatic = resolve;
+          }),
+        );
+      const saving: DetailsAttempt = Object.freeze({
+        draft,
+        status: "saving",
+        ...(automaticName ? { automaticName: true } : {}),
+      });
+      attempts.set(id, saving);
       emit();
       try {
         await owned(
           id,
           async (signal) => {
-            const authorize = async () => {
-              const { details } = await read(id, signal);
+            const authorize = async (
+              version: string,
+              allowAutomatic = false,
+            ) => {
+              const fresh = await read(id, signal);
+              const { details } = fresh;
               if (!details.canEdit)
                 throw new Error(
                   "You no longer have permission to edit this channel.",
                 );
-              if (details.version !== base.version)
+              const automatic = allowAutomatic && automaticRevisions.get(id);
+              if (
+                details.version !== version &&
+                !(
+                  automatic &&
+                  automatic.before === version &&
+                  automatic.after === details.version
+                )
+              )
                 throw new Error(
                   "Channel details changed. Reload details before saving your edits.",
                 );
+              return fresh;
             };
-            await authorize();
-            const template = detailsTemplate(id, draft, base);
+            const { details: current, metadata } = await authorize(
+              base.version,
+              !!manualRename && chosenName,
+            );
+            if (
+              current.version !== base.version &&
+              matchesDetails(current, draft)
+            )
+              return;
+            const template = detailsTemplate(id, draft, current);
             phase = "Could not sign the channel change";
             const signed = await writer.sign(structuredClone(template), signal);
             signal.throwIfAborted();
@@ -291,22 +365,40 @@ export function createChannelDetails({
             )
               throw new Error("Signer changed the channel details command.");
             phase = "Could not recheck channel access after signing";
-            await authorize();
+            await authorize(current.version);
             signal.throwIfAborted();
             if (active?.() === false)
               throw new DOMException("Channel edit cancelled", "AbortError");
             if (manualRename && chosenName)
-              rememberManualName(manualRename, id, base.name, draft.name);
+              rememberManualName(manualRename, id, current.name, draft.name);
             publicationStarted = true;
             await writer.publish(signed, signal);
-            await confirm(id, draft, signal);
+            const saved = await confirm(id, draft, signal);
+            if (
+              automaticName &&
+              onlyAutomaticNameChanged(metadata, saved.metadata)
+            ) {
+              automaticRevisions.set(id, {
+                before: base.version,
+                after: saved.details.version,
+              });
+              // Keep recent automatic names available to editors that opened before them.
+              if (automaticRevisions.size > 256) {
+                const oldest = automaticRevisions.keys().next().value;
+                if (oldest !== undefined) automaticRevisions.delete(oldest);
+              }
+            }
           },
           caller,
         );
+        attempts.delete(id);
       } catch (error) {
         if (publicationStarted && !(error instanceof PublishRejected)) {
           if (!closed)
-            attempts.set(id, Object.freeze({ draft, status: "unconfirmed" }));
+            attempts.set(
+              id,
+              Object.freeze({ ...saving, status: "unconfirmed" }),
+            );
           throw new Error(uncertain);
         }
         if (publicationStarted && manualRename && chosenName)
@@ -320,6 +412,10 @@ export function createChannelDetails({
           );
         throw error;
       } finally {
+        if (automaticName) {
+          automaticSaves.delete(id);
+          releaseAutomatic();
+        }
         emit();
       }
     },
@@ -338,6 +434,7 @@ export function createChannelDetails({
       attempts.clear();
       unsubscribeNames?.();
       manualNames.clear();
+      automaticRevisions.clear();
       listeners.clear();
     },
   };

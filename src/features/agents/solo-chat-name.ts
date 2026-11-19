@@ -128,5 +128,11 @@ export async function nameSoloChat(
     !isStartingChatTitle(base.name, { text: original.content, recipients })
   )
     return skip("chat already renamed");
-  await details.save(base, { ...base, name });
+  await details.save(
+    base,
+    { ...base, name },
+    undefined,
+    undefined,
+    "automatic",
+  );
 }

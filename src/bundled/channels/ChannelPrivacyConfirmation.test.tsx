@@ -34,7 +34,7 @@ function access(visibility: "public" | "private") {
     available: true,
     load: vi.fn(async () => base),
     save,
-    check: vi.fn(async () => {}),
+    check: vi.fn(async () => undefined),
     snapshot: () => undefined,
     subscribe: () => () => {},
   };

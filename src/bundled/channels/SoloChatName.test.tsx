@@ -29,7 +29,7 @@ function setup(overrides: Partial<ChannelDetailsCapability> = {}) {
       canEdit: true,
     })),
     save,
-    check: vi.fn(async () => {}),
+    check: vi.fn(async () => undefined),
     snapshot: () => undefined,
     subscribe: () => () => {},
     ...overrides,
@@ -120,6 +120,59 @@ it("checks an uncertain save without republishing", async () => {
   await waitFor(() => expect(f.close).toHaveBeenCalledWith(true));
   expect(f.details.check).toHaveBeenCalledWith("chat", expect.any(AbortSignal));
   expect(f.save).not.toHaveBeenCalled();
+});
+
+it("keeps a typed title through checking an uncertain automatic save", async () => {
+  const draft = {
+    name: "Automatic title",
+    description: "Keep this",
+    visibility: "private" as const,
+    labels: ["buzz.solo", "buzz.session.named"],
+    ttlSeconds: 1200,
+  };
+  let attempt: DetailsAttempt | undefined = {
+    status: "saving",
+    automaticName: true,
+    draft,
+  };
+  let notify = () => {};
+  const check = vi.fn(async () => {
+    attempt = undefined;
+    notify();
+    return { ...draft, channelId: "chat", version: "two", canEdit: true };
+  });
+  const f = setup({
+    snapshot: () => attempt,
+    subscribe: (listener) => {
+      notify = listener;
+      return () => {};
+    },
+    check,
+  });
+  const input = screen.getByRole("textbox", { name: "Chat name" });
+  await waitFor(() => expect(input).toHaveValue("Plan"));
+  expect(input).not.toHaveAttribute("readonly");
+  await f.user.clear(input);
+  await f.user.keyboard("My title");
+  act(() => {
+    attempt = { status: "unconfirmed", automaticName: true, draft };
+    notify();
+  });
+  await f.user.click(screen.getByRole("button", { name: "Check save status" }));
+  await waitFor(() => expect(input).not.toHaveAttribute("readonly"));
+  expect(input).toHaveValue("My title");
+  expect(f.close).not.toHaveBeenCalled();
+  expect(f.save).not.toHaveBeenCalled();
+
+  await f.user.keyboard("{Enter}");
+  await waitFor(() => expect(f.close).toHaveBeenCalledWith(true));
+  expect(f.save).toHaveBeenCalledWith(
+    expect.objectContaining({ version: "two" }),
+    expect.objectContaining({ name: "My title", ttlSeconds: 1200 }),
+    expect.any(AbortSignal),
+    undefined,
+    f.channels,
+  );
 });
 
 it("quietly disables the name while a real pending receipt is saving", async () => {

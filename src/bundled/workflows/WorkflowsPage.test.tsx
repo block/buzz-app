@@ -1855,7 +1855,6 @@ function navigatedPage(
         forSession: () => request,
         passThrough: () => () => {},
         resolve: () => false,
-        passThrough: () => () => {},
         complete: (result) => controller.complete(snapshot.attempt, result),
       };
       return request;

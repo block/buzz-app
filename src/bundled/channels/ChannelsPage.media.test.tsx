@@ -211,6 +211,7 @@ async function mount(h: Awaited<ReturnType<typeof channels>>) {
   const available = [profilePanel];
   let handleOpen: Parameters<Panels["handleOpenRequests"]>[0] | undefined;
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn() },
     snapshot: () => available,
     subscribe: () => () => {},
     resolve: (target) => available.find((entry) => entry.matches(target)),

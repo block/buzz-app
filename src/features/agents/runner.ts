@@ -1956,11 +1956,10 @@ export class AgentRunners {
       const attention =
         agent?.attention ?? this.host.savedAttention(runner.key);
       let retriesChanged = false;
+      // Waiting for the relay set keeps backoff, as startup does.
       for (const [key, retry] of runner.readRetries)
         if (
           !shown ||
-          // Waiting for the relay set keeps backoff, as startup does.
-          (agent?.attentionEnabled === false && !agent.attentionPending) ||
           !runner.type?.run ||
           !this.currentReadRetry(attention, retry.object)
         ) {
@@ -1968,8 +1967,10 @@ export class AgentRunners {
           retriesChanged = true;
         }
       if (retriesChanged) this.host.watchReadFailuresChanged();
-      const waits = held || !!agent?.attentionPending;
-      for (const stream of waits ? [] : streams) {
+      // Mentions need no attention, so only watches wait for the relay set.
+      const waits = (stream: Stream) =>
+        held || (!!agent?.attentionPending && !stream.mentions);
+      for (const stream of streams.filter((stream) => !waits(stream))) {
         const checkpoint = this.checkpoints[stream.key];
         // Mentions are answered with Attention off or not shown.
         const hidden = !shown && !stream.mentions;

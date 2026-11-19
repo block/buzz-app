@@ -17957,6 +17957,29 @@ it("catches a relay agent's watch up from its saved checkpoint once its first se
   }
 });
 
+it("catches up a relay agent's lost mentions while its watches wait for its set", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const start = nowSeconds();
+    const f = await relayAttentionSetup({ synced: false });
+    await f.seed("watch/chat", chat["watch/chat"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    // The live subscription lost it; the set is still not read.
+    f.history.push(
+      eventDto(
+        message(author, "other", "lost mention", start + 20, [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(heard(f.run)).toEqual(["lost mention"]));
+    expect(turns(f.run)).toEqual(["mention"]);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("saves a relay agent's attention tool write on the relay first, as the agent, with prev", async () => {
   const f = await relayAttentionSetup();
   await f.seed("interest/default", {

@@ -29,6 +29,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   conversationTarget,
+  newMessageTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
@@ -1973,13 +1974,18 @@ it("offers the team's member actions from Chat actions → Share access", async 
       name: "Send message",
     }),
   );
-  expect(openDm).toHaveBeenCalledExactlyOnceWith(
-    [person],
-    expect.any(AbortSignal),
-  );
+  // The viewer has no DM with them, so this opens a New message draft
+  // addressed to them. Only a send creates the DM.
   await waitFor(() =>
-    expect(f.open).toHaveBeenLastCalledWith(conversationTarget(f.scope, dm)),
+    expect(f.open).toHaveBeenLastCalledWith(
+      newMessageTarget(
+        splitPartition(f.scope) as never,
+        person,
+        expect.any(Number),
+      ),
+    ),
   );
+  expect(openDm).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   dialog = await share();
   await user.click(

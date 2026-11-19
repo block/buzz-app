@@ -20,6 +20,7 @@ import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { newMessageLink } from "../direct-messages/message-person";
 import { ProfilePeek } from "./ProfilePeek";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { stubAvatarAnimationFetch } from "./avatar-animation-testing";
 
 beforeEach(() => {
   vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(
@@ -49,7 +50,8 @@ it.each(["escape", "blur", "pointer-leave"])(
     const source = `https://community.test/media/${"1".repeat(64)}.webp`;
     const media = (url: string, size?: "small") =>
       size ? "still" : `protected:${url}`;
-    const loads: Array<{ onload: (() => void) | null }> = [];
+    const transfer = stubAvatarAnimationFetch();
+    const loads: Array<{ src: string; onload: (() => void) | null }> = [];
     let motion = true;
     const motionListeners = new Set<() => void>();
     vi.stubGlobal("matchMedia", () => ({
@@ -64,6 +66,7 @@ it.each(["escape", "blur", "pointer-leave"])(
     vi.stubGlobal(
       "Image",
       class {
+        src = "";
         onload = null;
         constructor() {
           loads.push(this);
@@ -102,26 +105,28 @@ it.each(["escape", "blur", "pointer-leave"])(
       if (dismissal === "pointer-leave") await user.hover(trigger);
       else await user.tab();
       await screen.findByRole("dialog", { name: "Agent profile preview" });
-      expect(loads).toHaveLength(1);
-      expect(
-        document.querySelector(`img[src="protected:${source}"]`),
-      ).toBeNull();
+      await waitFor(() => expect(loads).toHaveLength(1));
+      expect(transfer.fetch).toHaveBeenCalledWith(`protected:${source}`, {
+        signal: expect.any(AbortSignal),
+      });
+      expect(loads[0]?.src).toBe("blob:avatar-1");
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
       act(() => loads[0]?.onload?.());
       expect(
-        document.querySelectorAll(`img[src="protected:${source}"]`),
+        document.querySelectorAll('img[src="blob:avatar-1"]'),
       ).toHaveLength(2);
       act(() => {
         motion = false;
         for (const listener of motionListeners) listener();
       });
-      expect(
-        document.querySelector(`img[src="protected:${source}"]`),
-      ).toBeNull();
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
+      expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
       act(() => {
         motion = true;
         for (const listener of motionListeners) listener();
       });
-      expect(loads).toHaveLength(2);
+      await waitFor(() => expect(loads).toHaveLength(2));
+      expect(loads[1]?.src).toBe("blob:avatar-2");
       // A missing or failed animation never replaces the still.
       expect(trigger.querySelector('img[src="still"]')).not.toBeNull();
       if (dismissal === "escape") await user.keyboard("{Escape}");
@@ -132,9 +137,9 @@ it.each(["escape", "blur", "pointer-leave"])(
       }
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(loads[1]?.onload).toBeNull();
-      expect(
-        document.querySelector(`img[src="protected:${source}"]`),
-      ).toBeNull();
+      expect(loads[1]?.src).toBe("");
+      expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-2");
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
       expect(trigger.querySelector('img[src="still"]')).not.toBeNull();
     } finally {
       view.unmount();

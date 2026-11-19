@@ -1,36 +1,65 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, renderHook } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  waitFor,
+} from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useChatAvatar } from "./use-chat-avatar";
+import { stubAvatarAnimationFetch } from "./avatar-animation-testing";
 
+const url = `https://community.test/media/${"a".repeat(64)}.webp`;
+const media = (source: string, size?: "small") =>
+  size ? `thumb:${source}` : `protected:${source}`;
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-
-it("does not reuse loaded animation on the first commit after motion is disabled while idle", () => {
-  const url = `https://community.test/media/${"c".repeat(64)}.webp`;
-  const media = (source: string, size?: "small") =>
-    size ? "still" : `protected:${source}`;
+function fixture() {
+  const network = stubAvatarAnimationFetch();
   let motion = true;
+  const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", () => ({
     get matches() {
       return motion;
     },
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
   }));
-  const loads: Array<{ onload?: (() => void) | null }> = [];
+  const loads: Array<{
+    src: string;
+    onload: (() => void) | null;
+    onerror: (() => void) | null;
+  }> = [];
   vi.stubGlobal(
     "Image",
     class {
+      src = "";
       onload = null;
+      onerror = null;
       constructor() {
         loads.push(this);
       }
     },
   );
+  return {
+    ...network,
+    loads,
+    listeners,
+    motion(value: boolean) {
+      act(() => {
+        motion = value;
+        for (const fn of listeners) fn();
+      });
+    },
+  };
+}
+
+it("does not reuse a loaded animation when motion is disabled while idle", async () => {
+  const f = fixture();
   const commits: Array<string | undefined> = [];
   function Portrait({ responding }: { responding: boolean }) {
     const src = useChatAvatar(url, media, responding);
@@ -40,151 +69,156 @@ it("does not reuse loaded animation on the first commit after motion is disabled
     return null;
   }
   const view = render(<Portrait responding />);
-  act(() => loads[0]?.onload?.());
-  expect(commits.at(-1)).toBe(`protected:${url}`);
+  await waitFor(() => expect(f.loads).toHaveLength(1));
+  act(() => f.loads[0]?.onload?.());
+  expect(commits.at(-1)).toBe("blob:avatar-1");
   view.rerender(<Portrait responding={false} />);
-  motion = false;
+  f.motion(false);
   commits.length = 0;
   view.rerender(<Portrait responding />);
   expect(commits.length).toBeGreaterThan(0);
-  expect(commits.every((src) => src === "still")).toBe(true);
-  expect(loads).toHaveLength(1);
+  expect(commits.every((src) => src === `thumb:${url}`)).toBe(true);
+  expect(f.fetch).toHaveBeenCalledTimes(1);
 });
 
 it.each(["webp", "gif", "png"])(
-  "keeps the cached portrait while idle, plays %s during a response, and follows motion changes",
-  (extension) => {
-    const url = `https://community.test/media/${"a".repeat(64)}.${extension}`;
-    const media = (source: string, size?: "small") =>
-      size ? "cached-thumb" : `protected:${source}`;
-    let motion = true;
-    const listeners = new Set<() => void>();
-    vi.stubGlobal("matchMedia", () => ({
-      get matches() {
-        return motion;
-      },
-      addEventListener: (_event: string, fn: () => void) => listeners.add(fn),
-      removeEventListener: (_event: string, fn: () => void) =>
-        listeners.delete(fn),
-    }));
-    const loads: Array<{ onload?: (() => void) | null }> = [];
-    vi.stubGlobal(
-      "Image",
-      class {
-        onload = null;
-        constructor() {
-          loads.push(this);
-        }
-      },
-    );
+  "loads protected %s bytes only while active and retires playback on motion change",
+  async (extension) => {
+    const f = fixture();
+    const source = url.replace(/webp$/, extension);
     const { result, rerender, unmount } = renderHook(
-      ({ value, responding }) => useChatAvatar(value, media, responding),
-      { initialProps: { value: url, responding: false } },
+      ({ active }) => useChatAvatar(source, media, active),
+      { initialProps: { active: false } },
     );
-    expect(loads).toHaveLength(0);
-    rerender({ value: url, responding: true });
-    expect(result.current).toBe("cached-thumb");
-    act(() => loads[0]?.onload?.());
-    expect(result.current).toBe(`protected:${url}`);
-    rerender({ value: url, responding: false });
-    expect(result.current).toBe("cached-thumb");
-    rerender({ value: url, responding: true });
-    act(() => loads.at(-1)?.onload?.());
-    expect(result.current).toBe(`protected:${url}`);
-    act(() => {
-      motion = false;
-      for (const fn of listeners) fn();
+    expect(f.fetch).not.toHaveBeenCalled();
+    rerender({ active: true });
+    expect(result.current).toBe(`thumb:${source}`);
+    await waitFor(() => expect(f.loads).toHaveLength(1));
+    expect(f.fetch).toHaveBeenCalledWith(`protected:${source}`, {
+      signal: expect.any(AbortSignal),
     });
-    expect(result.current).toBe("cached-thumb");
-    rerender({ value: url.replace(/\.[^.]+$/, ".jpg"), responding: true });
-    expect(loads).toHaveLength(2);
+    expect(f.loads[0]?.src).toBe("blob:avatar-1");
+    act(() => f.loads[0]?.onload?.());
+    expect(result.current).toBe("blob:avatar-1");
+    rerender({ active: false });
+    expect(result.current).toBe(`thumb:${source}`);
+    expect(f.loads[0]?.src).toBe("");
+    expect(f.loads[0]?.onload).toBeNull();
+    expect(f.revoke).toHaveBeenCalledWith("blob:avatar-1");
+    rerender({ active: true });
+    await waitFor(() => expect(f.loads).toHaveLength(2));
+    act(() => f.loads[1]?.onload?.());
+    expect(result.current).toBe("blob:avatar-2");
+    f.motion(false);
+    expect(result.current).toBe(`thumb:${source}`);
+    expect(f.loads[1]?.src).toBe("");
+    expect(f.revoke).toHaveBeenCalledWith("blob:avatar-2");
     unmount();
-    expect(listeners.size).toBe(0);
+    expect(f.listeners.size).toBe(0);
   },
 );
 
-it("keeps the still while loading and retires pending images when the source changes or unmounts", () => {
-  const url = `https://community.test/media/${"a".repeat(64)}.webp`;
+it("retires pending images on source changes and ignores stale load callbacks", async () => {
+  const f = fixture();
   const other = url.replace("a".repeat(64), "b".repeat(64));
-  const media = (source: string, size?: "small") =>
-    (size ? "thumb:" : "protected:") + source;
-  vi.stubGlobal("matchMedia", () => ({
-    matches: true,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
-  const loads: Array<{ onload: (() => void) | null }> = [];
-  vi.stubGlobal(
-    "Image",
-    class {
-      onload = null;
-      constructor() {
-        loads.push(this);
-      }
-    },
-  );
   const { result, rerender, unmount } = renderHook(
     ({ source }) => useChatAvatar(source, media, true),
     { initialProps: { source: url } },
   );
-  expect(result.current).toBe(`thumb:${url}`);
+  await waitFor(() => expect(f.loads).toHaveLength(1));
+  const stale = f.loads[0]?.onload;
   rerender({ source: other });
-  expect(loads[0]?.onload).toBeNull();
+  expect(f.loads[0]?.src).toBe("");
+  expect(f.loads[0]?.onload).toBeNull();
+  act(() => stale?.());
   expect(result.current).toBe(`thumb:${other}`);
-  act(() => loads[1]?.onload?.());
-  expect(result.current).toBe(`protected:${other}`);
+  await waitFor(() => expect(f.loads).toHaveLength(2));
+  act(() => f.loads[1]?.onload?.());
+  expect(result.current).toBe("blob:avatar-2");
   unmount();
-  expect(loads[1]?.onload).toBeNull();
+  expect(f.loads[1]?.src).toBe("");
+  expect(f.revoke).toHaveBeenCalledTimes(2);
 });
 
-it("never preloads an original that the community resolver does not protect", () => {
-  const url = `https://other.test/media/${"a".repeat(64)}.webp`;
-  const image = vi.fn();
-  vi.stubGlobal("Image", image);
-  vi.stubGlobal("matchMedia", () => ({ matches: true }));
-  const media = (source: string) => source;
-  const { result } = renderHook(() => useChatAvatar(url, media, true));
+it.each(["idle", "motion", "unmount"])(
+  "aborts pending fetch on %s and never decodes its late result",
+  async (stop) => {
+    const f = fixture();
+    const response = await f.fetch("/fixture");
+    f.fetch.mockClear();
+    let release!: (r: Response) => void;
+    f.fetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { result, rerender, unmount } = renderHook(
+      ({ active }) => useChatAvatar(url, media, active),
+      { initialProps: { active: true } },
+    );
+    expect(f.fetch).toHaveBeenCalledOnce();
+    const signal = f.fetch.mock.calls[0]?.[1]?.signal;
+    if (stop === "idle") rerender({ active: false });
+    else if (stop === "motion") f.motion(false);
+    else unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      release(response);
+    });
+    expect(f.loads).toHaveLength(0);
+    expect(f.create).not.toHaveBeenCalled();
+    expect(result.current).toBe(`thumb:${url}`);
+  },
+);
+
+it("never downloads originals that the community resolver does not protect", () => {
+  const f = fixture();
+  const { result } = renderHook(() =>
+    useChatAvatar(url, (source) => source, true),
+  );
   expect(result.current).toBe(url);
-  expect(image).not.toHaveBeenCalled();
+  expect(f.fetch).not.toHaveBeenCalled();
 });
 
-it("uses the protected legacy animation and keeps the poster for unsupported fragments", () => {
-  const origin = "https://community.test";
-  const poster = `${origin}/media/${"1".repeat(64)}.png`;
-  const loop = `${origin}/media/${"2".repeat(64)}.png`;
-  const media = vi.fn((src: string, size?: "small") =>
-    size ? "thumb" : `protected:${src}`,
-  );
-  let complete: (() => void) | undefined;
-  vi.stubGlobal("matchMedia", () => ({
-    matches: true,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
-  vi.stubGlobal(
-    "Image",
-    class {
-      set onload(fn: () => void) {
-        complete = fn;
-      }
-    },
-  );
+it("uses the protected legacy animation and rejects unsupported fragments", async () => {
+  const f = fixture();
+  const poster = url.replace("webp", "png");
+  const loop = poster.replace("a".repeat(64), "b".repeat(64));
   const { result, rerender } = renderHook(
     ({ fragment }) => useChatAvatar(poster + fragment, media, true),
     { initialProps: { fragment: `#buzz-anim=${encodeURIComponent(loop)}` } },
   );
-  expect(result.current).toBe("thumb");
-  act(() => complete?.());
-  expect(result.current).toBe(`protected:${loop}`);
+  await waitFor(() => expect(f.loads).toHaveLength(1));
+  expect(f.fetch.mock.calls[0]?.[0]).toBe(`protected:${loop}`);
+  act(() => f.loads[0]?.onload?.());
+  expect(result.current).toBe("blob:avatar-1");
   for (const fragment of [
     "#buzz-anim=%",
-    "#buzz-anim=" +
-      encodeURIComponent(loop.replace(origin, "https://other.test")),
+    `#buzz-anim=${encodeURIComponent(loop.replace("community.test", "other.test"))}`,
     "#unknown",
   ]) {
-    media.mockClear();
     rerender({ fragment });
-    expect(result.current).toBe("thumb");
-    expect(media.mock.calls.every((args) => args[1] === "small")).toBe(true);
+    expect(result.current).toBe(`thumb:${poster + fragment}`);
+    expect(f.fetch).toHaveBeenCalledOnce();
   }
+});
+
+it("keeps the still for rejected bytes and releases an image that fails to decode", async () => {
+  const f = fixture();
+  f.fetch.mockResolvedValueOnce(new Response("not an image"));
+  const { result, rerender } = renderHook(
+    ({ source }) => useChatAvatar(source, media, true),
+    { initialProps: { source: url } },
+  );
+  await act(async () => {});
+  expect(f.loads).toHaveLength(0);
+  expect(result.current).toBe(`thumb:${url}`);
+  const other = url.replace("a".repeat(64), "b".repeat(64));
+  rerender({ source: other });
+  await waitFor(() => expect(f.loads).toHaveLength(1));
+  act(() => f.loads[0]?.onerror?.());
+  expect(result.current).toBe(`thumb:${other}`);
+  expect(f.loads[0]?.src).toBe("");
+  expect(f.revoke).toHaveBeenCalledWith("blob:avatar-1");
 });

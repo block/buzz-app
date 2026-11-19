@@ -8704,6 +8704,29 @@ it.each([false, true])(
   },
 );
 
+it("stops the shared turn when Stop races a community steer that Codex accepts", async () => {
+  const f = fixture();
+  const thread = f.delivery("Work in the channel");
+  const solo = f.delivery("Quick question in Solo", "e".repeat(64));
+  const { config } = scoped(thread);
+  f.soloChannels.add("channel");
+  await f.runtime.run({ ...thread, channelId: "other", config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const steering = deferred<void>();
+  f.held.set("turn/steer", steering.promise);
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const running = f.runtime.run({ ...solo, config, interruptible });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  const stopped = interruptible.mock.calls[0]?.[0]();
+  steering.resolve();
+  await Promise.all([running, stopped]);
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+});
+
 it("steers community follow-ups received while Codex starts the first turn", async () => {
   const f = fixture();
   const first = f.delivery("Start the channel task");

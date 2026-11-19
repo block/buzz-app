@@ -132,6 +132,8 @@ const scopedKey = (scope: Config["scope"], channel: string, root?: string) =>
 
 type Request = {
   current?: () => boolean;
+  /** Settles once Codex accepts or refuses this request's steer. */
+  steering?: Promise<void>;
   unaddressed?: Pick<StandaloneTurn, "prompt" | "signal">;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
@@ -2349,13 +2351,18 @@ export class CodexRuntime {
                     request.solo ? request.canvas : NO_PROJECT,
                   ).section
                 : undefined;
-              await active.rpc.request("turn/steer", {
+              const steered = active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
                   `${context}${project ? `${project}\n\n` : ""}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
                 ),
               });
+              request.steering = steered.then(
+                () => void delete request.steering,
+                () => void delete request.steering,
+              );
+              await steered;
               if (communityLane)
                 entry.project.resolve(
                   request.conversation.channelId,
@@ -2709,12 +2716,19 @@ export class CodexRuntime {
 
   /** Drops a queued community request or stops the turn that took it in.
    * Stops of one turn share its interrupt, so one that fails cannot undo another. */
-  private interrupt(entry: Entry, key: string, request: Request) {
+  private interrupt(
+    entry: Entry,
+    key: string,
+    request: Request,
+  ): Promise<void> {
     if (entry.waiting.has(request)) {
       if (request.settings.scope !== "community")
         return Promise.reject(
           new Error("Codex has not started on this message yet"),
         );
+      // Codex is still deciding on its steer: stop the turn it joins, or drop it.
+      if (request.steering)
+        return request.steering.then(() => this.interrupt(entry, key, request));
       request.current = () => false;
       request.answered(true);
       return Promise.resolve();

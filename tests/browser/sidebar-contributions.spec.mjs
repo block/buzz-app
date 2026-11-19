@@ -601,6 +601,13 @@ appTest.describe("Solo header accessories", () => {
         await expect(marker).toBeVisible();
         expect(await disclosure.boundingBox()).toEqual(leadingBox);
         expect(await heading.boundingBox()).toEqual(titleBox);
+        const anchor = group.locator("[data-fixture-summary-anchor]");
+        await expect(anchor).toHaveCount(1);
+        await expect(anchor.getByRole("button")).toHaveCount(2);
+        await disclosure.hover();
+        await expect(anchor).toHaveAttribute("data-hovered", "true");
+        await heading.hover();
+        await expect(anchor).not.toHaveAttribute("data-hovered");
         await disclosure.click();
         await expect(disclosure).toHaveAttribute("aria-expanded", "true");
         await disclosure.click();

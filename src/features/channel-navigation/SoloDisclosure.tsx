@@ -35,8 +35,8 @@ export function SoloDisclosure(
     </Button>
   );
   if (!props.leading) return disclosure;
-  const { icon, label, onActivate } = props.leading;
-  return (
+  const { icon, label, onActivate, wrapControls } = props.leading;
+  const controls = (
     <span className={styles.leading}>
       <Button
         variant="plain"
@@ -51,4 +51,5 @@ export function SoloDisclosure(
       {disclosure}
     </span>
   );
+  return wrapControls?.(controls) ?? controls;
 }

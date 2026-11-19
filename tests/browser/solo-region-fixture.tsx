@@ -1,5 +1,5 @@
 import type { BundledPlugin } from "../../src/plugins/manager";
-import { useState, useSyncExternalStore } from "react";
+import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { StarFilledIcon } from "../../src/shared/design-system/icons";
 import { IconButton } from "../../src/shared/design-system/ui/IconButton";
 import type {
@@ -26,10 +26,22 @@ function HeaderAccessory({ label }: { label: string }) {
 
 function useHeaderSummary(label: string) {
   const [opened, setOpened] = useState(false);
+  const [hovered, setHovered] = useState(false);
   return {
     icon: <StarFilledIcon size={15} aria-hidden="true" />,
     label: `${opened ? "Reopen" : "Open"} ${label} summary`,
     onActivate: () => setOpened((value) => !value),
+    wrapControls: (controls: ReactNode) => (
+      <span
+        className="inline-flex shrink-0"
+        data-fixture-summary-anchor=""
+        data-hovered={hovered || undefined}
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+      >
+        {controls}
+      </span>
+    ),
   };
 }
 

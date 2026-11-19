@@ -227,3 +227,8 @@ native caret share a slot. Hover reveals the caret, and keyboard focus reveals
 the focused button. Touch shows both buttons. The Actions menu also offers the
 leading action with the same label and callback. The title continues to select
 the workspace or channel.
+
+`headerLeading.wrapControls(controls)` can attach a hover anchor around the
+shared slot. Render the supplied controls once inside a non-interactive
+inline-flex wrapper that keeps their width. The host controls keep their own
+focus and activation. Render any popup outside the controls.

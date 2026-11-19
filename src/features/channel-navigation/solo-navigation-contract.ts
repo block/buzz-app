@@ -135,6 +135,8 @@ export type SoloHeaderLeading = Readonly<{
   icon: ReactNode;
   label: string;
   onActivate(): void;
+  /** Render the intact controls in a non-interactive anchor, for example for a hover card. */
+  wrapControls?(controls: ReactNode): ReactNode;
 }>;
 export type SoloChannelGroupProps = Readonly<{
   channelId: string;

@@ -149,11 +149,12 @@ semantic tokens, UI authoring rules and the local component reference.
   and non-primary or missing destinations leave every dock tile unselected.
   Sidebar page links retain their exact route and focus main content when
   selected. Dock destinations never become companion launchers.
-  The shell owns one joined Panel around navigation and page content, with a
-  panel-gap outer gutter beside the dock, at the right and below. Nested Panels
-  keep their opaque fill and clipping but drop individual borders, radii, and shadows. Layout
-  owners add one-pixel semantic dividers. Document pages scroll inside the
-  remaining viewport.
+  The shell owns one joined Panel around navigation and page content. The shell
+  body uses `--space-panel-gap` minus `--space-half` on its inline edges and the
+  full `--space-panel-gap` below. When the dock is present, it supplies the
+  leading space. Nested Panels keep their opaque fill and clipping but drop
+  individual borders, radii, and shadows. Layout owners add one-pixel semantic
+  dividers. Document pages scroll inside the remaining viewport.
 - `SettingsSidebar.tsx` composes shared SidebarNavigation with
   NavigationSection/NavigationItem content inside Dialog's integrated navigation.
   The same composition wraps SidebarFrame (the Solo/Team sidebar),

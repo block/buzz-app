@@ -8444,9 +8444,11 @@ it("refuses an agent type with more skill folders than the composer can list", a
   ).toThrow("skillFolders");
   const skillFolders = Array.from({ length: 8 }, (_, n) => `~/.skills/${n}`);
   plugin.agents.register({ ...type, skillFolders });
+  skillFolders.push("~/.skills/8");
   expect(
-    service.types().find((entry) => entry.key === "example/skills"),
-  ).toMatchObject({ skillFolders });
+    service.types().find((entry) => entry.key === "example/skills")
+      ?.skillFolders,
+  ).toEqual(skillFolders.slice(0, 8));
 });
 
 it("returns the created agent after the community changes mid-create", async () => {

@@ -60,9 +60,10 @@ export function SkillCompletion({
     agents.length === 1 && agents[0]?.managed && agents[0].execution === "local"
       ? agents[0]
       : undefined;
-  const folders = agent?.type
+  const declared = agent?.type
     ? types?.find((type) => type.key === agent.type)?.skillFolders
     : undefined;
+  const folders = declared?.length ? declared : undefined;
   // One `/` token in one composer, for one agent, lists the skills once.
   const skills = useHeldListing(
     JSON.stringify([

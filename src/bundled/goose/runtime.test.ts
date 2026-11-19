@@ -744,7 +744,8 @@ it.each(["retire", "dispose"] as const)(
     };
     const f = setup({ hold: true, protection });
     let pending:
-      ReturnType<NonNullable<ReturnType<typeof f.goose>>["mcp"]> | undefined;
+      | ReturnType<NonNullable<ReturnType<typeof f.goose>>["mcp"]>
+      | undefined;
     try {
       await f.deliver(message("1", "Post my notes"));
       await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));

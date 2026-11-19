@@ -5703,7 +5703,8 @@ it.each(["unpublished", "published", "failed", "delegated"])(
       let interrupt: unknown;
       const held = vi.spyOn(worker, "emit").mockImplementation((message) => {
         const response = message.response as
-          { request_id?: unknown } | undefined;
+          | { request_id?: unknown }
+          | undefined;
         const request = worker.received.find(
           (row) => row.request_id === response?.request_id,
         );

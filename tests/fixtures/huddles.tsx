@@ -314,6 +314,8 @@ const stats = {
   audioClosed: 0,
   audioOpened: 0,
   ringPlays: 0,
+  // Every raw `playing` event, diagnostic only: ringPlays is what tests assert.
+  ringPlayingEvents: 0,
   ringEnds: 0,
   ringPaused: 0,
 };
@@ -414,6 +416,7 @@ const stopRing = createHuddleRing(huddles, () => {
     started = false;
   });
   audio.addEventListener("playing", () => {
+    stats.ringPlayingEvents++;
     if (started) return;
     started = true;
     stats.ringPlays++;

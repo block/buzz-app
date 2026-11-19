@@ -2,6 +2,7 @@ import { generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { newChat } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
+import { peerPresenceAdmitted } from "./presence.mjs";
 
 const solo = "33333333-3333-4333-8333-333333333333";
 test.use({
@@ -399,20 +400,7 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   const row = page.locator('button[data-channel-id="dm-peer"]');
   await row.click();
   await expect(row).toHaveAttribute("aria-current", "page");
-  // The first presence read carries only the viewer: the DM row's avatar
-  // subscribes after it. presence.ts admits the peer behind its read gate
-  // (5 s after the previous read settles), and a busy presence lane answers
-  // null and defers another 5–6 s. Budget for those gates, not for the
-  // default expect timeout, which a loaded runner can exceed.
-  await expect
-    .poll(
-      () =>
-        app.report.presenceSnapshots.some((snapshot) =>
-          snapshot.filter.authors.includes(app.participants[0]),
-        ),
-      { timeout: 20_000 },
-    )
-    .toBe(true);
+  await peerPresenceAdmitted(app);
   // Snapshot admission precedes the separate live presence REQ.
   await expect
     .poll(() => app.relay.hasPresenceRoute("primary", app.participants[0]))

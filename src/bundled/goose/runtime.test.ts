@@ -2491,6 +2491,37 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
   }
 });
 
+it("keeps steering a turn's effort through a follow-up without a pick", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  try {
+    await f.deliver(message("1", "threaded work"), { effort: "high" });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    const wake = (id: string, text: string) => ({
+      type: "plugin" as const,
+      plugin: "example",
+      channel,
+      topLevel: true as const,
+      id: id.repeat(64),
+      at: 200_000,
+      text,
+    });
+    await f.run(wake("e", "no pick"));
+    await f.run(wake("f", "high again"), { effort: "high" });
+    await vi.waitFor(() =>
+      expect(process.turns[0]?.steered).toEqual([
+        expect.stringContaining("no pick"),
+        expect.stringContaining("high again"),
+      ]),
+    );
+    expect(process.turns).toHaveLength(1);
+    process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps a queued Goose prompt in its admitted scope after settings change", async () => {
   const f = setup({ hold: true, scope: "channel" });
   try {

@@ -575,6 +575,22 @@ it.each([
   expect(host.processes).toEqual([]);
 });
 
+it("keeps steering a busy run's effort through a follow-up without a pick", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver } = setup({ wait: () => finished.promise });
+  await deliver(
+    { type: "mention", event: reply("2", "first") },
+    { effort: "high" },
+  ).run;
+  await deliver({ type: "mention", event: reply("3", "no pick") }).run;
+  await deliver(
+    { type: "mention", event: reply("4", "high again") },
+    { effort: "high" },
+  ).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(3));
+  finished.resolve(undefined);
+});
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({

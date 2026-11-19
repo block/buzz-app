@@ -94,7 +94,11 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
           { disabled: true },
           h(loose.Input, { "aria-label": "Locked" }),
         ),
-        h("div", { hidden: true }, h(loose.Input, { "aria-label": "Later" })),
+        h(
+          "div",
+          { style: { display: "none" } },
+          h(loose.Input, { "aria-label": "Later" }),
+        ),
         h(
           "form",
           { id: "profile", onSubmit: save },
@@ -171,6 +175,7 @@ it("treats plain-JS values of the wrong type as absent", async () => {
       h(loose.Button, { disabled: 1, onClick: "x" }, "Go"),
       h(loose.Input, { "aria-label": "Name", disabled: 1, maxLength: "4" }),
       h(loose.Switch, { label: "Alerts", disabled: 1, checked: "yes" }),
+      h(loose.Switch, { label: null, "aria-label": "Sync" }),
     ),
   );
   const go = screen.getByRole("button", { name: "Go" });
@@ -182,4 +187,5 @@ it("treats plain-JS values of the wrong type as absent", async () => {
   const alerts = screen.getByRole("switch", { name: "Alerts" });
   expect(alerts).not.toHaveAttribute("aria-disabled");
   expect(alerts).not.toBeChecked();
+  expect(screen.getByRole("switch", { name: "Sync" })).toBeInTheDocument();
 });

@@ -19,12 +19,21 @@ import type {
 const tabbable =
   'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
+/** Hidden by CSS on it or a container. `checkVisibility` needs Safari 17.4. */
+function rendered(element: HTMLElement) {
+  if (element.checkVisibility)
+    return element.checkVisibility({ visibilityProperty: true });
+  for (let node: Element | null = element; node; node = node.parentElement)
+    if (getComputedStyle(node).display === "none") return false;
+  return getComputedStyle(element).visibility !== "hidden";
+}
+
 /** Not disabled by a fieldset, and not inside a hidden or inert container. */
 function focusable(element: HTMLElement) {
   return (
     !element.matches(":disabled") &&
     !element.closest("[hidden], [inert]") &&
-    (element.checkVisibility?.({ visibilityProperty: true }) ?? true)
+    rendered(element)
   );
 }
 
@@ -134,10 +143,11 @@ export const pluginUi: PluginUi = Object.freeze({
       name: str(props.name),
       id: str(props.id),
     };
-    return props.label === undefined ? (
+    const label = str(props.label);
+    return label === undefined ? (
       <Switch {...shared} aria-label={str(props["aria-label"]) ?? ""} />
     ) : (
-      <Switch {...shared} label={props.label} />
+      <Switch {...shared} label={label} />
     );
   },
   Dialog: function PluginDialog(props: PluginDialogProps) {

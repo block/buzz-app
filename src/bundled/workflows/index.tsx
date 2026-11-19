@@ -1,9 +1,11 @@
 import type { PluginModule } from "../../plugins/api";
-import { workflowRoute } from "../../features/workflows/route";
+import { workflowLinks, workflowRoute } from "../../features/workflows/route";
 import { WorkflowsPage } from "./WorkflowsPage";
 export const inject = ["pages", "relay", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
+  // Workflow messages link to this page only while it is registered.
+  ctx.effect(() => workflowLinks.provide());
   ctx.pages.register({
     id: "workflows",
     title: "Workflows",

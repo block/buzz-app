@@ -38,7 +38,11 @@ import {
   WorkflowMentionMembers,
 } from "./WorkflowMessageText";
 import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
-import { WorkflowLanding, workflowOperationLocked } from "./WorkflowLanding";
+import {
+  WorkflowLanding,
+  workflowOperationLocked,
+  WORKFLOW_NOT_FOUND,
+} from "./WorkflowLanding";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import "./workflows.css";
@@ -166,6 +170,19 @@ export function WorkflowCommunity({
         : undefined,
     [entryId, inScope, route?.owner, route?.id],
   );
+  // Withdrawn once the page holds its answer.
+  const pending =
+    onRevealed && reveal?.entryId !== revealed ? reveal : undefined;
+  const partial = channels.coverage === "partial";
+  // The landing answers a linked visit, but never mounts without a channel:
+  // a settled list with none answers it here.
+  const unlisted = settled && !eligible.length ? pending?.entryId : undefined;
+  const [notFound, setNotFound] = useState<string>();
+  useEffect(() => {
+    if (!unlisted) return;
+    setNotFound(unlisted);
+    if (!partial) onRevealed?.(unlisted);
+  }, [unlisted, partial, onRevealed]);
   const visit = useRef({ navigation, navigator, reveal });
   visit.current = { navigation, navigator, reveal };
   const selectDetail = useCallback((key: string | undefined, name?: string) => {
@@ -364,16 +381,13 @@ export function WorkflowCommunity({
                   capability={capability}
                   channels={eligible}
                   channelsSettled={settled}
+                  channelsPartial={partial}
                   filter={filter}
                   onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}
-                  reveal={
-                    onRevealed && reveal?.entryId !== revealed
-                      ? reveal
-                      : undefined
-                  }
+                  reveal={pending}
                   onRevealed={onRevealed}
                   onCreate={beginCreate}
                   onDelete={deleteWorkflow}
@@ -418,6 +432,12 @@ export function WorkflowCommunity({
           </aside>
         )}
       </div>
+      {notFound && (
+        <ToastNotice
+          title={WORKFLOW_NOT_FOUND}
+          onDismiss={() => setNotFound(undefined)}
+        />
+      )}
       {deleteError && (
         <ToastNotice
           title="Couldn't start deletion"

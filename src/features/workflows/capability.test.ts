@@ -1290,3 +1290,61 @@ it("equal concurrent lookups share one relay read through the session reader", a
   await later.refresh({ ifStale: true });
   expect(scripted.pending).toHaveLength(0);
 });
+
+it("retires the open lookups of a workflow when its deletion is receipted", async () => {
+  const key = keypair();
+  const h = setup(undefined, key);
+  const coordinate = { owner: key.pubkey, id };
+  const row = signed(key, {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+  h.capability.delete(h.definition);
+  await flush();
+  // Back at the message before the receipt, the relay still has the workflow.
+  h.read.mockResolvedValueOnce([row]);
+  const shown = h.capability.locate(coordinate);
+  const changed = vi.fn();
+  shown.subscribe(changed);
+  await shown.refresh({ ifStale: true });
+  expect(shown.snapshot()).toMatchObject({ status: "ready", data: { id } });
+  // Another lookup's read is still in flight when the receipt arrives.
+  let respond!: (events: RelayEvent[]) => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((resolve) => {
+        respond = resolve;
+      }),
+  );
+  const reading = h.capability.locate(coordinate);
+  const pending = reading.refresh();
+  // A lookup of another workflow is not this deletion's to retire.
+  const other = h.capability.locate({
+    owner: key.pubkey,
+    id: "44444444-4444-4444-8444-444444444444",
+  });
+  await other.refresh();
+  await flush();
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(reading.snapshot().status).toBe("loading");
+  changed.mockClear();
+
+  h.settle("");
+  await flush();
+  expect(shown.snapshot()).toEqual({ status: "idle", data: undefined });
+  expect(changed).toHaveBeenCalled();
+  // The read begun before the receipt cannot answer after it.
+  respond([row]);
+  await pending;
+  await flush();
+  expect(reading.snapshot()).toEqual({ status: "idle", data: undefined });
+  expect(other.snapshot()).toEqual({ status: "ready", data: undefined });
+  // Retiring reads nothing; a later lookup reads once more.
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(h.capability.locate(coordinate).snapshot().status).toBe("idle");
+});

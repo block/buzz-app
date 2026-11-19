@@ -162,6 +162,11 @@ export function saveAwaitsReadback(
   );
 }
 
+/** Not finding a linked workflow is not proof it is gone: the page reads only
+ * the channels it lists. */
+export const WORKFLOW_NOT_FOUND =
+  "Couldn’t find this workflow. It may have been deleted.";
+
 function useLandingDefinitions(
   capability: WorkflowCapability,
   channels: readonly ChannelSummary[],
@@ -169,6 +174,8 @@ function useLandingDefinitions(
   retryRequest: number,
   operationRefreshKey: string,
   saveReadback: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined,
+  /** The linked visit still waiting for its workflow, by entry ID. */
+  revealId: string | undefined,
 ) {
   // Mount already reads current definitions; only consume subsequent notifications.
   const observedRefresh = useRef(refreshRequest);
@@ -177,7 +184,9 @@ function useLandingDefinitions(
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
     let purgeGeneration = 0;
-    let state = { snapshots, paused, purgeGeneration };
+    // The linked visit whose reads these are: see `demand`.
+    let demanded: string | undefined;
+    let state = { snapshots, paused, purgeGeneration, demanded };
     let channelIds: readonly string[] = [];
     const queued = new Map<string, boolean>();
     const listeners = new Set<() => void>();
@@ -193,7 +202,7 @@ function useLandingDefinitions(
     // discovery finishes. All other views are disposed; at most two are live.
     let retained: Read | undefined;
     const emit = () => {
-      state = { snapshots, paused, purgeGeneration };
+      state = { snapshots, paused, purgeGeneration, demanded };
       for (const listener of listeners) listener();
     };
     const release = (read: Read | undefined) => {
@@ -365,8 +374,33 @@ function useLandingDefinitions(
               ...snapshots,
               [id]: { status: "loading", data: EMPTY_DEFINITIONS },
             };
-            queued.set(id, true);
+            queued.set(id, !demanded);
           }
+        emit();
+        readNext();
+      },
+      /** A linked visit is answered from reads made for it, never from an
+       * answer retained before it: every channel is read again, and "ready"
+       * then means read for this visit. The list keeps what it shows. */
+      demand(visit: string | undefined) {
+        demanded = visit;
+        // A session clear alone never restarts discovery; nor does a visit.
+        if (visit && !invalidated && channelIds.length) {
+          paused = false;
+          const previous = active;
+          active = undefined;
+          release(previous);
+          for (const id of channelIds) {
+            queued.set(id, false);
+            snapshots = {
+              ...snapshots,
+              [id]: {
+                status: "loading",
+                data: snapshots[id]?.data ?? EMPTY_DEFINITIONS,
+              },
+            };
+          }
+        }
         emit();
         readNext();
       },
@@ -395,7 +429,7 @@ function useLandingDefinitions(
         retained = undefined;
         snapshots = {};
         paused = false;
-        state = { snapshots, paused, purgeGeneration };
+        state = { snapshots, paused, purgeGeneration, demanded };
       },
     };
   }, [capability]);
@@ -404,6 +438,10 @@ function useLandingDefinitions(
     .sort()
     .join(":");
   useEffect(() => () => store.dispose(), [store]);
+  // Before the channels below are queued, so a visit's first reads are its own.
+  useEffect(() => {
+    store.demand(revealId);
+  }, [revealId, store]);
   useEffect(() => {
     store.channels(channelIdsKey ? channelIdsKey.split(":") : []);
   }, [channelIdsKey, store]);
@@ -1389,6 +1427,7 @@ export function WorkflowLanding({
   capability,
   channels,
   channelsSettled = true,
+  channelsPartial = false,
   filter,
   onFilterChange,
   refreshRequest,
@@ -1410,6 +1449,9 @@ export function WorkflowLanding({
   /** False while more channels may still be listed: `reveal` then waits
    * rather than report its workflow missing. */
   channelsSettled?: boolean | undefined;
+  /** The settled list may be incomplete: a `reveal` whose workflow is missing
+   * is told so, but stays unanswered in case its channel is listed later. */
+  channelsPartial?: boolean | undefined;
   /** Element that receives the selected workflow's detail. */
   detailTarget: HTMLElement | null;
   selected: string | undefined;
@@ -1418,7 +1460,7 @@ export function WorkflowLanding({
   /** A visit's request to open one workflow, until `onRevealed` answers it. */
   reveal?: Readonly<{ entryId: string; owner: string; id: string }> | undefined;
   /** The request is answered for good and its owner withdraws it: the
-   * workflow opened or was not found. */
+   * workflow opened, or was not found in a complete channel list. */
   onRevealed?: ((entryId: string) => void) | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
@@ -1482,14 +1524,22 @@ export function WorkflowLanding({
         `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused, purgeGeneration, refresh } = useLandingDefinitions(
-    capability,
-    channels,
-    refreshRequest,
-    retryRequest,
-    operationRefreshKey,
-    saveReadback,
-  );
+  // The reader's own selection or filter change also answers a visit still
+  // waiting for its workflow: a read that lands later must not replace their
+  // choice. That answer is kept here, with the filters it protects, so a
+  // remount that resets them leaves the visit to open its workflow.
+  const [declined, setDeclined] = useState<string>();
+  const reveal = requested?.entryId === declined ? undefined : requested;
+  const { snapshots, paused, purgeGeneration, refresh, demanded } =
+    useLandingDefinitions(
+      capability,
+      channels,
+      refreshRequest,
+      retryRequest,
+      operationRefreshKey,
+      saveReadback,
+      reveal?.entryId,
+    );
   const filteredSnapshots = useMemo(() => {
     if (!mineOnly && status === "all" && triggers.length === 0)
       return snapshots;
@@ -1523,12 +1573,6 @@ export function WorkflowLanding({
   }, [snapshots, mineOnly, status, triggers, viewer]);
   const filtered =
     mineOnly || status !== "all" || triggers.length > 0 || filter.length > 0;
-  // The reader's own selection or filter change also answers a visit still
-  // waiting for its workflow: a read that lands later must not replace their
-  // choice. That answer is kept here, with the filters it protects, so a
-  // remount that resets them leaves the visit to open its workflow.
-  const [declined, setDeclined] = useState<string>();
-  const reveal = requested?.entryId === declined ? undefined : requested;
   const own =
     <Args extends unknown[]>(choose: (...args: Args) => void) =>
     (...args: Args) => {
@@ -1591,10 +1635,17 @@ export function WorkflowLanding({
   }, [onSelect, reading, selected, selectedName, selectionFilteredOut]);
   // A visit opened at one workflow selects it once, clearing the filters that
   // hide it; selecting, filtering and closing afterwards stay the reader's.
+  // It is resolved only from reads made for this visit (`demand`): a batch
+  // answer retained from before it, or still being read again, can miss a new
+  // workflow or name a deleted one.
+  const revealRead = (channel: ChannelSummary) =>
+    demanded === reveal?.entryId && snapshots[channel.id]?.status === "ready";
   const revealItem =
     reveal &&
     ordered
-      .flatMap((channel) => snapshots[channel.id]?.data.items ?? [])
+      .flatMap((channel) =>
+        revealRead(channel) ? (snapshots[channel.id]?.data.items ?? []) : [],
+      )
       .find(
         (definition) =>
           definition.owner === reveal.owner && definition.id === reveal.id,
@@ -1603,21 +1654,21 @@ export function WorkflowLanding({
   // Only a completed read of every channel, once no more can be listed, shows
   // that it is not here.
   const revealAbsent =
-    !!reveal &&
-    !revealItem &&
-    channelsSettled &&
-    ordered.every((channel) => snapshots[channel.id]?.status === "ready");
+    !!reveal && !revealItem && channelsSettled && ordered.every(revealRead);
+  const noticed = useRef<string>(undefined);
   useEffect(() => {
     if (!reveal || (!revealItem && !revealAbsent)) return;
-    onRevealed?.(reveal.entryId);
     if (!revealItem) {
-      // Not finding it here is not proof it is gone: this page reads fewer
-      // channels than the lookup that offered the link.
-      setError(
-        "Couldn’t find that workflow here. It may have been deleted, or its channel may not be listed on this page.",
-      );
+      // Said once per visit, however often the list is read again.
+      if (noticed.current !== reveal.entryId) setError(WORKFLOW_NOT_FOUND);
+      noticed.current = reveal.entryId;
+      // A partial list may still be listing channels page by page, so the
+      // visit stays open for a channel that arrives later.
+      if (!channelsPartial) onRevealed?.(reveal.entryId);
       return;
     }
+    onRevealed?.(reveal.entryId);
+    setError((current) => (current === WORKFLOW_NOT_FOUND ? null : current));
     if (!revealShown) {
       onFilterChange([]);
       setMineOnly(false);
@@ -1634,6 +1685,7 @@ export function WorkflowLanding({
     revealItem,
     revealShown,
     revealAbsent,
+    channelsPartial,
     onFilterChange,
     onSelect,
     onRevealed,

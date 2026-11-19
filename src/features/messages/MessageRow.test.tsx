@@ -67,7 +67,7 @@ import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { attestedOwner } from "../agents/owner-attestation";
 import { createWorkflows } from "../workflows/capability";
-import { workflowLink } from "../workflows/route";
+import { workflowLink, workflowLinks } from "../workflows/route";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import type { RelayEvent } from "../relay/events";
 
@@ -2842,12 +2842,16 @@ function renderIdentifiedWorkflowMessage({
   canAccess = () => true,
   open = vi.fn(() => true),
   named = true,
+  page = true,
 }: {
   canAccess?: ((channel: string) => boolean) | undefined;
   open?: (url: string) => boolean;
   /** Whether the relay named the workflow on this message. */
   named?: boolean;
+  /** Whether a Workflows page is running, as while its plugin is on. */
+  page?: boolean;
 } = {}) {
+  const withdraw = page ? workflowLinks.provide() : () => {};
   const owner = keypair();
   const definition = signed(owner, {
     kind: 30620,
@@ -2896,7 +2900,13 @@ function renderIdentifiedWorkflowMessage({
     owner: owner.pubkey,
     definition,
     read,
-    workflows,
+    workflows: {
+      ...workflows,
+      dispose() {
+        withdraw();
+        workflows.dispose();
+      },
+    },
     trigger,
     link: workflowLink({ owner: owner.pubkey, id: workflowDefinitionId }),
     async openCard(user: ReturnType<typeof userEvent.setup>) {
@@ -2942,6 +2952,8 @@ it("offers View workflow to a viewer who can read the workflow, and opens that w
       normalizeWhitespace: false,
     });
     expect(card).not.toHaveTextContent(/Standup|npub1/);
+    // A body-copy link: label type with no inset, in line with the card's text.
+    expect(action).toHaveAttribute("data-size", "text");
 
     // Reachable and operable from the keyboard.
     await user.tab();
@@ -3028,11 +3040,17 @@ it.each([
     const card = await message.openCard(user);
     await waitFor(() => expect(message.read).toHaveBeenCalledTimes(1));
     await act(async () => {});
-    // Exactly the card as it was: no link, disabled link, placeholder or name.
-    expect(card).toHaveTextContent(WORKFLOW_CARD, {
-      normalizeWhitespace: false,
-    });
-    expect(card.textContent).toBe(WORKFLOW_CARD);
+    if (answer === "pending") {
+      // The action's line is held, hidden and unannounced, while its lookup
+      // is out, so the open card does not grow when the action arrives.
+      const held = within(card).getByText("View workflow");
+      expect(held).toHaveAttribute("aria-hidden", "true");
+      expect(held.className).toContain("workflowActionPending");
+      expect(card.textContent).toBe(`${WORKFLOW_CARD}View workflow`);
+    } else {
+      // Exactly the card as it was: no link, disabled link, placeholder or name.
+      expect(card.textContent).toBe(WORKFLOW_CARD);
+    }
     expect(within(card).queryByRole("button")).toBeNull();
     expect(within(card).queryByRole("link")).toBeNull();
     expect(within(card).queryByRole("status")).toBeNull();
@@ -3074,6 +3092,38 @@ it("looks nothing up for a workflow message that names no workflow", async () =>
   }
 });
 
+it("reads nothing and offers nothing while no Workflows page is running", async () => {
+  const user = userEvent.setup();
+  // As with the Workflows plugin turned off, the default for a new profile.
+  const message = renderIdentifiedWorkflowMessage({ page: false });
+  message.read.mockResolvedValue([message.definition]);
+  let withdraw = () => {};
+  try {
+    const card = await message.openCard(user);
+    await act(async () => {});
+    expect(card.textContent).toBe(WORKFLOW_CARD);
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(message.read).not.toHaveBeenCalled();
+    // The page starts, as when the plugin is turned on: the open card looks
+    // the workflow up once and offers it.
+    act(() => {
+      withdraw = workflowLinks.provide();
+    });
+    expect(
+      await within(card).findByRole("button", { name: "View workflow" }),
+    ).toBeVisible();
+    expect(message.read).toHaveBeenCalledTimes(1);
+    // And stops again: the action goes, and its lookup with it.
+    act(() => withdraw());
+    expect(card.textContent).toBe(WORKFLOW_CARD);
+    expect(message.read).toHaveBeenCalledTimes(1);
+  } finally {
+    withdraw();
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
 it("says so in the card when the surface cannot open the workflow link", async () => {
   const open = vi.fn(() => false);
   const user = userEvent.setup();
@@ -3088,7 +3138,7 @@ it("says so in the card when the surface cannot open the workflow link", async (
       rootId: "root",
     });
     expect(within(card).getByRole("status")).toHaveTextContent(
-      "This Buzz link couldn’t be opened here.",
+      "Couldn’t open this workflow.",
     );
   } finally {
     cleanup();

@@ -10,7 +10,7 @@ import {
   PopoverDescription,
 } from "../../shared/design-system/ui/Popover";
 import { profileTarget } from "../profiles/target";
-import { workflowLink } from "../workflows/route";
+import { workflowLink, workflowLinks } from "../workflows/route";
 import type {
   WorkflowCapability,
   WorkflowDefinition,
@@ -19,9 +19,11 @@ import type {
 import styles from "./Messages.module.css";
 
 /** Mounted only while the card is open, so opening it is the reader's request
- * to look the workflow up and closing it cancels that read. Shows nothing
- * until this session holds a definition the viewer can read: an unknown,
- * loading, failed, deleted or inaccessible workflow leaves the card as it was. */
+ * to look the workflow up and closing it cancels that read. Offers the action
+ * only once this session holds a definition the viewer can read. While that is
+ * being read the action's line is kept empty, so the open card does not grow;
+ * an unknown, failed, deleted or inaccessible workflow leaves the card as it
+ * was. */
 function ViewWorkflow({
   capability,
   owner,
@@ -36,9 +38,13 @@ function ViewWorkflow({
   const store = useMemo(() => {
     let view: WorkflowView<WorkflowDefinition | undefined> | undefined;
     return {
-      readable() {
+      state() {
         const snapshot = view?.snapshot();
-        return snapshot?.status === "ready" && !!snapshot.data;
+        return snapshot?.status === "loading"
+          ? "reading"
+          : snapshot?.status === "ready" && snapshot.data
+            ? "readable"
+            : "none";
       },
       subscribe(listener: () => void) {
         let owned: typeof view;
@@ -58,25 +64,32 @@ function ViewWorkflow({
       },
     };
   }, [capability, owner, id]);
-  const readable = useSyncExternalStore(
+  const state = useSyncExternalStore(
     store.subscribe,
-    store.readable,
-    () => false,
+    store.state,
+    () => "none" as const,
   );
   const [unopened, setUnopened] = useState(false);
-  if (!readable) return null;
+  if (state === "none") return null;
+  if (state === "reading")
+    return (
+      <p
+        className={`${styles.workflowAction} ${styles.workflowActionPending} text-body-sm`}
+        aria-hidden="true"
+      >
+        View workflow
+      </p>
+    );
   return (
     <p className={`${styles.workflowAction} text-body-sm`}>
       <Button
         variant="link"
-        size="inline"
+        size="text"
         onClick={() => setUnopened(!onOpenLink(workflowLink({ owner, id })))}
       >
         View workflow
       </Button>
-      {unopened && (
-        <span role="status"> This Buzz link couldn’t be opened here.</span>
-      )}
+      {unopened && <span role="status"> Couldn’t open this workflow.</span>}
     </p>
   );
 }
@@ -98,6 +111,13 @@ export function WorkflowByline({
   onOpenLink(url: string): boolean;
 }) {
   const target = profileTarget(ownerId);
+  // Without a running Workflows page there is nothing to open, so the card
+  // neither offers the workflow nor reads it.
+  const linked = useSyncExternalStore(
+    workflowLinks.subscribe,
+    workflowLinks.available,
+    () => false,
+  );
   return (
     <span className={styles.workflowAttribution}>
       <strong className={styles.author}>Workflow</strong>
@@ -134,7 +154,7 @@ export function WorkflowByline({
             Sent automatically by a workflow. Its owner set it up but didn’t
             send this message personally.
           </PopoverDescription>
-          {workflow && (
+          {workflow && linked && (
             <ViewWorkflow
               capability={workflow.capability}
               owner={ownerId}

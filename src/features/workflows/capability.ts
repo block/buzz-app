@@ -135,6 +135,8 @@ export function createWorkflows({
     definitionCacheVersion++;
   }
   const views = new Set<{
+    /** The coordinate a lookup answers, as `owner:id`. */
+    coordinate?: string | undefined;
     clear(): void;
     interrupt(): void;
     emit(): void;
@@ -235,6 +237,7 @@ export function createWorkflows({
     accept?: (data: T) => void,
     cached?: { data: T; isFresh(): boolean },
     needsFreshRead?: () => boolean,
+    coordinate?: string,
   ): WorkflowView<T> {
     const channelIds =
       channelId === undefined
@@ -283,6 +286,7 @@ export function createWorkflows({
       });
     }
     const owner = {
+      coordinate,
       clear,
       interrupt() {
         controller?.abort();
@@ -659,6 +663,8 @@ export function createWorkflows({
             return !!current && current.definition === retained.definition;
           },
         },
+        undefined,
+        `${owner}:${id}`,
       );
     },
     runs(workflow, cursor) {
@@ -739,6 +745,23 @@ export function createWorkflows({
     receipt(event: EventData, message: string | undefined) {
       if (closed || !receiptInterest.delete(event.id)) return;
       if (event.kind !== 46020) invalidateDefinitionCache();
+      if (event.kind === 5) {
+        // A deletion's receipt retires the open lookups of its workflow: the
+        // answer they show, and any read begun before the receipt, predate it.
+        // Nothing reads again until a lookup is asked to.
+        let coordinate: string | undefined;
+        try {
+          const { owner, id } = workflowReference(event);
+          coordinate = `${owner}:${id}`;
+        } catch {
+          /* No coordinate, no lookup to retire. */
+        }
+        for (const owned of views)
+          if (coordinate && owned.coordinate === coordinate) {
+            owned.clear();
+            owned.emit();
+          }
+      }
       if (message === undefined) {
         if (results.get(event.id)?.outcome !== "succeeded")
           results.delete(event.id);

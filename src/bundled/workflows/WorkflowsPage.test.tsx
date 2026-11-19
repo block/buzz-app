@@ -1885,10 +1885,14 @@ function linkedVisit(
   );
   const navigator = controller.navigation;
   let page: Page | undefined;
+  let withdraw = () => {};
   void apply({
     relay,
     navigation: navigator,
     pages: { register: (next: Page) => (page = next) },
+    effect: (start: () => () => void) => {
+      withdraw = start();
+    },
   } as unknown as Parameters<typeof apply>[0]);
   if (!page) throw new Error("The Workflows page did not register");
   const registered = {
@@ -1942,7 +1946,10 @@ function linkedVisit(
     fixture,
     navigator,
     registered,
-    dispose: () => controller.dispose(),
+    dispose: () => {
+      withdraw();
+      controller.dispose();
+    },
     /** The channel list as the session next publishes it. */
     setChannels(next: ChannelList) {
       act(() => {
@@ -2003,8 +2010,7 @@ function linkedVisit(
 }
 const detailShown = () =>
   screen.queryByRole("region", { name: "Workflow details" });
-const notFound =
-  "Couldn’t find that workflow here. It may have been deleted, or its channel may not be listed on this page.";
+const notFound = "Couldn’t find this workflow. It may have been deleted.";
 /** The landing has read every channel it lists and none holds a workflow. */
 const nothingListed = () =>
   screen.findByText("Automations that keep your community moving.");
@@ -2031,7 +2037,7 @@ it("opens at the workflow a message links to, and Back returns to the message", 
     expect(
       screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByText(/Couldn’t find that workflow/)).toBeNull();
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
 
     // Passive traversal keeps the visit: Back is the message, Forward the workflow.
     act(() => visit.navigator.back());
@@ -2318,14 +2324,14 @@ it("opens the linked workflow when a reconnect has reset the filter the reader s
     expect(
       screen.getByRole("button", { name: "Status: Disabled" }),
     ).toBeVisible();
+    visit.reconnect();
     // The next connection's read carries the linked workflow.
     act(() =>
       visit.fixture.definitions.update({
-        status: "loading",
+        status: "ready",
         data: { partial: false, items: [fixtureDefinition, theirs] },
       }),
     );
-    visit.reconnect();
     // The reconnect returned the page to its defaults. The filter that
     // answered the visit is gone, so the answer is too.
     expect(
@@ -2404,9 +2410,36 @@ it("says a linked workflow was not found once a loading channel list settles wit
   }
 });
 
-it("says a linked workflow was not found on a channel list that is read but partial", async () => {
-  // A partial list may never be completed, so it does not hold the answer
-  // back; the notice already allows for a channel this page does not list.
+it("still opens a linked workflow reported missing from a partial channel list, when a later page of the roster lists its channel", async () => {
+  // A roster longer than one page is published as read, and partial, before
+  // its next page arrives. The first page's definitions are read by then.
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "ready",
+    coverage: "partial",
+    channels: [emptyChannel],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    // A partial list may never be completed, so the reader is told now.
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    expect(detailShown()).toBeNull();
+    // The delayed second page: the visit was not spent on that notice.
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("reports a linked workflow missing once when a partial channel list completes without its channel", async () => {
   const visit = linkedVisit([fixtureDefinition], undefined, {
     status: "ready",
     coverage: "partial",
@@ -2415,8 +2448,62 @@ it("says a linked workflow was not found on a channel list that is read but part
   try {
     visit.open(fixtureDefinition);
     expect(await screen.findByText(notFound)).toBeVisible();
-    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    // The list completes without the channel: that answers the visit, and
+    // the reader is not told a second time.
+    visit.setChannels({ status: "ready", channels: [emptyChannel] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    // Answered for good: a reconnect lists the channel, and nothing opens.
+    visit.reconnect();
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.settled();
     expect(detailShown()).toBeNull();
+    expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("says a linked workflow was not found once the channel list settles with no channel for this page", async () => {
+  // The landing that reports a missing workflow never mounts without a channel.
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "loading",
+    channels: [],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    expect(screen.getByRole("status")).toHaveTextContent("Reading channels…");
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    visit.setChannels({ status: "ready", channels: [] });
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(
+      screen.getByText("No channels are available in this community."),
+    ).toBeVisible();
+    // Answered for good: a channel listed afterwards opens nothing.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.settled();
+    expect(detailShown()).toBeNull();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
   } finally {
     cleanup();
     visit.dispose();
@@ -2464,7 +2551,7 @@ it("opens nothing for another community's visit or link text the page does not a
       await screen.findByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveAttribute("aria-pressed", "false");
     expect(detailShown()).toBeNull();
-    expect(screen.queryByText(/Couldn’t find that workflow/)).toBeNull();
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
   } finally {
     cleanup();
     elsewhere.dispose();
@@ -2502,7 +2589,7 @@ it("opens nothing for another community's visit or link text the page does not a
       await screen.findByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveAttribute("aria-pressed", "false");
     expect(detailShown()).toBeNull();
-    expect(screen.queryByText(/Couldn’t find that workflow/)).toBeNull();
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
   } finally {
     cleanup();
     visit.dispose();

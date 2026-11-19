@@ -182,7 +182,9 @@ export function createWorkflowFixture(
               ),
             );
           }
-          await owned.view.refresh();
+          // A test that set "loading" is holding the relay's answer: a read
+          // started meanwhile waits for the next update too.
+          if (definitionState.status !== "loading") await owned.view.refresh();
         },
       };
     },

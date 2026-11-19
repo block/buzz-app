@@ -60,8 +60,7 @@ const listed = [
   roster(relay, general, [me.pubkey]),
   metadata(relay, general, "General"),
 ];
-const notFound =
-  "Couldn’t find that workflow here. It may have been deleted, or its channel may not be listed on this page.";
+const notFound = "Couldn’t find this workflow. It may have been deleted.";
 const stalled =
   "Workflow data cleared or unavailable. Refresh to check access.";
 const isRoster = (filters: readonly ReadFilter[]) =>
@@ -83,6 +82,7 @@ async function start({
   holdRoster = false,
   failRoster = false,
 }: {
+  /** Read on every query, so a test may change what the relay holds. */
   events: readonly RelayEvent[];
   linked?: RelayEvent;
   holdRoster?: boolean;
@@ -157,7 +157,10 @@ async function start({
     session,
     viewer: me.pubkey,
   };
-  render(
+  let visits = 0;
+  /** The page for one visit: at `to`, as a message's View workflow opens it,
+   * or plainly. */
+  const page = (to?: RelayEvent) => (
     <ToastProvider>
       <WorkflowsPage
         relay={
@@ -167,9 +170,9 @@ async function start({
           } as unknown as RelayData
         }
         navigation={
-          linked &&
+          to &&
           ({
-            entryId: "visit-1",
+            entryId: `visit-${++visits}`,
             target: {
               version: 1,
               kind: "page",
@@ -177,16 +180,24 @@ async function start({
               pageId: "workflows",
               route: {
                 version: 1,
-                params: { owner: linked.pubkey, id: workflowId },
+                params: { owner: to.pubkey, id: workflowId },
               },
             },
             signal: new AbortController().signal,
           } as unknown as PageNavigation)
         }
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
+  let shown = render(page(linked));
   return {
+    /** A new visit to the page while it stays mounted, as the shell keeps it. */
+    visit: (to?: RelayEvent) => shown.rerender(page(to)),
+    /** The reader leaves the page, then comes back to it on a new visit. */
+    revisit(to?: RelayEvent) {
+      shown.unmount();
+      shown = render(page(to));
+    },
     releaseRoster,
     rosterReads: () => reads.filter(isRoster).length,
     /** The channels each workflow definition read named, in request order. */
@@ -285,4 +296,81 @@ it("loads the page's workflows on a plain visit after a start from the saved cha
   expect(page.definitionReads()).toEqual([[general, releases]]);
   expect(screen.queryByText(stalled)).toBeNull();
   expect(screen.queryByText("Reading channels…")).toBeNull();
+});
+
+// The session keeps a batch answer for a few seconds, for the list. A linked
+// visit is answered from reads made for it instead.
+it.each([
+  ["on the page it left a moment ago", "revisit"],
+  ["on the page while it is still open", "visit"],
+] as const)(
+  "opens a workflow created after the page last read its channels, %s",
+  async (_where, arrive) => {
+    const events = [...listed, definition(me, "Standup reminder")];
+    const page = await start({ events });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Standup reminder:/ }),
+      ).toBeVisible(),
+    );
+    expect(page.definitionReads()).toEqual([[general, releases]]);
+    // Another member creates a workflow, and its message links here.
+    events.push(announcer);
+    page[arrive](announcer);
+    expect(await detailTab("Release announcer")).toBeVisible();
+    expect(screen.queryByText(notFound)).toBeNull();
+    // One more batch, read for the visit.
+    expect(page.definitionReads()).toEqual([
+      [general, releases],
+      [general, releases],
+    ]);
+  },
+);
+
+it("does not open a linked workflow that was deleted after the page last read its channels", async () => {
+  const events = [...listed, announcer, definition(me, "Standup reminder")];
+  const page = await start({ events });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Standup reminder:/ }),
+    ).toBeVisible(),
+  );
+  events.splice(events.indexOf(announcer), 1);
+  const details: boolean[] = [];
+  const watch = new MutationObserver(() =>
+    details.push(!!screen.queryByRole("region", { name: "Workflow details" })),
+  );
+  watch.observe(document.body, { childList: true, subtree: true });
+  try {
+    page.revisit(announcer);
+    expect(await screen.findByText(notFound)).toBeVisible();
+  } finally {
+    watch.disconnect();
+  }
+  // Not even while the visit's read was out.
+  expect(details).not.toContain(true);
+  expect(page.definitionReads()).toEqual([
+    [general, releases],
+    [general, releases],
+  ]);
+});
+
+it("says a linked workflow was not found once the roster settles with no channel left for this page", async () => {
+  // The viewer left both channels since the list was saved, so the landing
+  // that reports a missing workflow never mounts.
+  const page = await start({
+    events: [
+      roster(relay, releases, [owner.pubkey], 1_700_000_100),
+      roster(relay, general, [owner.pubkey], 1_700_000_100),
+      ...listed.filter((event) => event.kind !== 39002),
+      announcer,
+    ],
+    linked: announcer,
+  });
+  expect(await screen.findByText(notFound)).toBeVisible();
+  expect(
+    screen.getByText("No channels are available in this community."),
+  ).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  expect(page.definitionReads()).toEqual([]);
 });

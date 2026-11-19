@@ -24,7 +24,8 @@ import {
 import type { ReadFilter } from "../features/relay/events";
 
 // The app's own Channels and Workflows plugins, with Workflows off by default
-// as src/bundled/index.ts declares it.
+// as src/bundled/index.ts declares it. With Workflows off, a workflow message
+// offers no way to its workflow and nothing reads the definition.
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -186,24 +187,11 @@ steps:
   };
 }
 
-/** The card for Workflows turned off, with its copy and actions. */
-async function workflowsTurnedOff() {
-  const card = (
-    await screen.findByRole("heading", { name: "Workflows is turned off" })
-  ).closest<HTMLElement>('[role="alert"]');
-  if (!card) throw new Error("Expected the failure alert");
-  expect(
-    within(card).getByText("Turn it on in Manage plugins to open this page."),
-  ).toBeVisible();
-  expect(
-    within(card)
-      .getAllByRole("button")
-      .map((button) => button.textContent),
-  ).toEqual(["Manage plugins", "Go to Messages"]);
-  return card;
-}
+const WORKFLOW_CARD =
+  "Workflow message" +
+  "Sent automatically by a workflow. Its owner set it up but didn’t send this message personally.";
 
-it("offers View workflow while Workflows is turned off, lands on its turned-off page, and opens the linked workflow once Workflows is enabled there", async () => {
+it("offers no View workflow and reads no definition while Workflows is turned off, then offers it and opens the workflow once Workflows is turned on", async () => {
   const { current, scope, thread, route, definitionReads } = start();
   const user = userEvent.setup();
   const workflowsPage = () =>
@@ -218,6 +206,11 @@ it("offers View workflow while Workflows is turned off, lands on its turned-off 
       }),
     );
     expect(await screen.findByText("Release announced")).toBeVisible();
+  };
+  const openCard = async () => {
+    screen.getByRole("button", { name: "Workflow message details" }).focus();
+    await user.keyboard("{Enter}");
+    return screen.findByRole("dialog", { name: "Workflow message" });
   };
 
   await onMessage();
@@ -236,59 +229,32 @@ it("offers View workflow while Workflows is turned off, lands on its turned-off 
   ]);
   expect(workflowsPage()).toBe(false);
 
-  // Whether the plugin is on is no part of the gate: the card's one lookup
-  // finds the workflow, and the action is offered.
-  screen.getByRole("button", { name: "Workflow message details" }).focus();
-  await user.keyboard("{Enter}");
-  const card = await screen.findByRole("dialog", { name: "Workflow message" });
-  await user.click(
-    await within(card).findByRole("button", { name: "View workflow" }),
+  // The message still says a workflow sent it, and its card is the card
+  // without the action: no link, no placeholder, and no definition read for
+  // a workflow this viewer could read.
+  const off = await openCard();
+  await act(async () => {});
+  expect(off.textContent).toBe(WORKFLOW_CARD);
+  expect(within(off).queryByRole("button")).toBeNull();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Workflow message" }),
+    ).toBeNull(),
   );
-  expect(definitionReads).toEqual([
-    [{ kinds: [30620], authors: [route.owner], "#d": [route.id], limit: 1 }],
-  ]);
-
-  // It lands on the turned-off page for that workflow's link, which names
-  // nothing of the workflow.
-  await workflowsTurnedOff();
-  const visit = current.navigation.snapshot().entry.id;
-  expect(visit).not.toBe(opener);
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "failed",
-    reason: "unavailable",
-    canGoBack: true,
-  });
-  expect(current.navigation.snapshot().entry.target).toEqual({
-    version: 1,
-    kind: "plugin",
-    scope,
-    pluginId: "buzz.workflows",
-    pageId: "workflows",
-    params: route,
-  });
-  expect(screen.queryByText("Release announcer")).toBeNull();
-
-  // Back returns to the message; Forward to the same turned-off visit.
-  act(() => current.navigation.back());
-  await onMessage();
+  expect(definitionReads).toEqual([]);
   expect(current.navigation.snapshot().entry.id).toBe(opener);
-  expect(
-    screen.queryByRole("heading", { name: "Workflows is turned off" }),
-  ).toBeNull();
-  act(() => current.navigation.forward());
-  const turnedOff = await workflowsTurnedOff();
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "failed",
-    reason: "unavailable",
-    entry: { id: visit },
-  });
-  // All that while, the card's lookup stayed the only read of a definition.
-  expect(definitionReads).toHaveLength(1);
 
-  // Its Manage plugins opens Workflows, and enabling it there leaves the
-  // reader on the linked workflow, in the visit the message opened.
-  await user.click(
-    within(turnedOff).getByRole("button", { name: "Manage plugins" }),
+  // Turned on from Manage plugins, with the message still behind Settings.
+  act(
+    () =>
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "plugins",
+        pluginId: "buzz.workflows",
+        scope,
+      }),
   );
   const settings = await screen.findByRole("dialog", { name: "Settings" });
   await user.click(
@@ -302,20 +268,35 @@ it("offers View workflow while Workflows is turned off, lands on its turned-off 
   await user.click(
     within(settings).getByRole("button", { name: "Close Settings" }),
   );
+  await onMessage();
+  // Turning the plugin on read nothing by itself.
+  expect(definitionReads).toEqual([]);
+
+  // Now the card's one lookup finds the workflow, and the action is offered.
+  const card = await openCard();
+  await user.click(
+    await within(card).findByRole("button", { name: "View workflow" }),
+  );
+  expect(definitionReads[0]).toEqual([
+    { kinds: [30620], authors: [route.owner], "#d": [route.id], limit: 1 },
+  ]);
+
+  // It opens the Workflows page at that workflow.
   await waitFor(() =>
     expect(current.navigation.snapshot()).toMatchObject({
       status: "opened",
-      entry: { id: visit },
+      entry: {
+        target: {
+          version: 1,
+          kind: "page",
+          scope,
+          pluginId: "buzz.workflows",
+          pageId: "workflows",
+          route: { version: 1, params: route },
+        },
+      },
     }),
   );
-  expect(current.navigation.snapshot().entry.target).toEqual({
-    version: 1,
-    kind: "page",
-    scope,
-    pluginId: "buzz.workflows",
-    pageId: "workflows",
-    route: { version: 1, params: route },
-  });
   expect(
     await within(
       await screen.findByRole("region", { name: "Workflow details" }),
@@ -325,14 +306,14 @@ it("offers View workflow while Workflows is turned off, lands on its turned-off 
   expect(
     screen.getByRole("button", { name: /^Open Release announcer:/ }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect(
-    screen.queryByRole("heading", { name: "Workflows is turned off" }),
-  ).toBeNull();
+  // The card's lookup, then the landing's batch read for this visit.
+  expect(definitionReads.slice(1)).toEqual([
+    [{ kinds: [30620], "#h": [channelId], limit: 100 }],
+  ]);
 
-  // The enabled visit keeps its way back to the message.
+  // The visit keeps its way back to the message.
   act(() => current.navigation.back());
   await onMessage();
-  expect(current.navigation.snapshot().entry.id).toBe(opener);
-  // Seven navigations, each rendering the whole app again: about a second
+  // Several navigations, each rendering the whole app again: about a second
   // apiece on a loaded runner, as in the Settings journeys in App.profile.
 }, 15_000);

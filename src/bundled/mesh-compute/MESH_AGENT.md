@@ -28,6 +28,13 @@ Chat mode, native identity/community admission and the Mesh node live in
   enters the model. Agent mode includes core-memory guidance; Chat remains tool-free.
   The retired `buzz` config flag is ignored.
 
+- **Model:** Auto by default: each turn asks Mesh for `auto`, and Mesh routes
+  it to a model the community is serving. Settings → Advanced → Model can save
+  one model ref from the community's signed inventory adverts
+  (`mesh_compute_inventory`, the Community mesh list). Every turn then asks
+  for that ref, with no fallback: it fails while no one is serving it, and the
+  picker marks a saved model that is not currently advertised.
+
 Both modes remain owner-only. Watches and non-owner mentions do not grant
 permission to trigger Mesh. No mode triggers itself. In both modes, matched
 Interest instructions apply only to the owner's watched turn; the watched message

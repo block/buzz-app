@@ -111,7 +111,10 @@ describe("Mesh agent runtime", () => {
       const input = delivery();
       await runtime.run({ ...input, agent: { ...input.agent, key: member } });
       expect(origin).toHaveBeenCalledExactlyOnceWith(member);
-      expect(prepare).toHaveBeenCalledExactlyOnceWith("https://b.example");
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(
+        "https://b.example",
+        "auto",
+      );
       expect(dm).toHaveBeenCalledWith(member, "chan");
       if (mode === "agent") {
         expect(coreMemory).toHaveBeenCalledWith(member, input.signal);
@@ -504,7 +507,44 @@ describe("Mesh agent runtime", () => {
     expect(meshAgentConfig({ buzz: false })).not.toHaveProperty("buzz");
     expect(meshAgentConfig({ mode: "chat" }).mode).toBe("chat");
     expect(meshAgentConfig({ preset: "nope" }).preset).toBeUndefined();
+    expect(meshAgentConfig({})).not.toHaveProperty("model");
+    for (const model of ["", " ", "auto", "mesh", 3])
+      expect(meshAgentConfig({ model })).not.toHaveProperty("model");
+    expect(meshAgentConfig({ model: " org/M-GGUF:Q4 " }).model).toBe(
+      "org/M-GGUF:Q4",
+    );
   });
+
+  it.each(["chat", "agent"])(
+    "asks %s inference for the agent's chosen model",
+    async (mode) => {
+      const prepare = vi.fn(async () => ({
+        baseUrl: "http://127.0.0.1/v1",
+        model: "org/M-GGUF:Q4",
+        lease: "L1",
+      }));
+      const { runtime, delivery, deps, inline } = setup({ prepare }, OWNER, {
+        mode,
+        model: "org/M-GGUF:Q4",
+      });
+      await runtime.run(delivery());
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(
+        "https://community.example",
+        "org/M-GGUF:Q4",
+      );
+      if (mode === "chat")
+        expect(deps.chat).toHaveBeenCalledWith(
+          expect.objectContaining({ model: "org/M-GGUF:Q4" }),
+          expect.anything(),
+        );
+      else
+        expect(inline.run).toHaveBeenCalledWith(
+          expect.objectContaining({
+            inference: expect.objectContaining({ model: "org/M-GGUF:Q4" }),
+          }),
+        );
+    },
+  );
 
   it("gives Buzz access automatic response delivery guidance", () => {
     const tools = instructions(meshAgentConfig({ prompt: "be brief" }));
@@ -837,11 +877,13 @@ describe("Mesh agent runtime", () => {
       const { runtime, delivery, inline, deps, publish } = setup({}, OWNER, {});
       const prepare = deps.prepare;
       if (stage === "prepare")
-        vi.spyOn(deps, "prepare").mockImplementationOnce(async (origin) => {
-          started.resolve();
-          await gate.promise;
-          return prepare(origin);
-        });
+        vi.spyOn(deps, "prepare").mockImplementationOnce(
+          async (origin, model) => {
+            started.resolve();
+            await gate.promise;
+            return prepare(origin, model);
+          },
+        );
       else
         Object.assign(deps, {
           coreMemory: vi.fn().mockImplementationOnce(async () => {

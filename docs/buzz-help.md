@@ -1911,7 +1911,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
   instructions for watched turns in both Chat and Agent mode. Watched messages
   are context for that Interest; later direct requests do not inherit it. Mesh
-  agents respond only to their owner.
+  agents respond only to their owner. By default Mesh picks a shared model for
+  each reply (Auto); the agent's Settings → Advanced → Model can fix one of the
+  models the community is sharing, and replies then fail while no one shares it.
 - **Solo workers**: where a plugin offers it, an owner can authorize one agent to
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;

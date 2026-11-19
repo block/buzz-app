@@ -9,7 +9,7 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { useIdentityNames } from "../../features/identity-names/react";
 
-type Inventory = {
+export type Inventory = {
   unavailable: string | null;
   entries: {
     deviceId: string | null;

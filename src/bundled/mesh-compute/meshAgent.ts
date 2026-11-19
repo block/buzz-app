@@ -26,6 +26,8 @@ export type MeshAgentConfig = Readonly<{
   scope: MeshScope;
   /** The preset it started from, if any; informational. */
   preset?: string;
+  /** A Mesh model ref to always ask for; absent, Mesh picks (Auto). */
+  model?: string;
 }>;
 export const DEFAULT_PROMPT =
   "You are a helpful assistant in a Buzz community. Answer the latest message directly and concisely. Use your tools when the request needs them, and never claim to have run something you did not.";
@@ -40,12 +42,20 @@ export const absoluteWorkspace = (path: string) =>
   path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());
 export const validWorkspace = (path: string) =>
   path.trim() === DEFAULT_WORKSPACE || absoluteWorkspace(path);
+/** Names Mesh treats as its own routing choice rather than one model. */
+const AUTO_MODELS = new Set(["auto", "mesh"]);
 export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
   const raw =
     value && typeof value === "object"
       ? (value as Record<string, unknown>)
       : {};
   const mode: MeshMode = raw.mode === "chat" ? "chat" : "agent";
+  const model =
+    typeof raw.model === "string" &&
+    raw.model.trim() &&
+    !AUTO_MODELS.has(raw.model.trim())
+      ? raw.model.trim()
+      : undefined;
   const preset =
     typeof raw.preset === "string" &&
     MESH_AGENT_PRESETS.some((item) => item.id === raw.preset)
@@ -60,8 +70,12 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
     mode,
     scope: raw.scope === "channel" ? "channel" : "thread",
     ...(preset ? { preset } : {}),
+    ...(model ? { model } : {}),
   };
 };
+/** The model `prepare` asks for: the chosen one, or Mesh's own routing. */
+export const requestedModel = (config: MeshAgentConfig) =>
+  config.model ?? "auto";
 
 export type PreparedInference = Readonly<{
   baseUrl: string;
@@ -90,7 +104,8 @@ export type MeshAgentDeps = Readonly<{
   /** The host's directory resolution (`host.files`): `~` expanded and the
    * directory created natively, so no `pwd` is needed (Windows has none). */
   resolveDirectory(path: string): Promise<string>;
-  prepare(origin: string): Promise<PreparedInference>;
+  /** `model` is a Mesh model ref, or `"auto"` for Mesh's own routing. */
+  prepare(origin: string, model: string): Promise<PreparedInference>;
   current(lease: string): Promise<boolean>;
   /** One chat completion on the leased route ("chat" mode). */
   chat(
@@ -352,7 +367,10 @@ export class MeshAgentRuntime {
         return;
       const origin = this.deps.origin(agent.key);
       if (!origin) throw new Error("No community is connected");
-      const inference = await untilAborted(this.deps.prepare(origin), signal);
+      const inference = await untilAborted(
+        this.deps.prepare(origin, requestedModel(config)),
+        signal,
+      );
       lease = inference.lease;
       const wholeChannel = dm || config.scope === "channel";
       const read = () =>

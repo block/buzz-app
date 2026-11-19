@@ -202,10 +202,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       spawn,
       resolveDirectory,
       origin: (agent) => agents.relay(agent)?.snapshot().origin,
-      prepare: (relay) =>
+      prepare: (relay, model) =>
         invoke<PreparedInference>("mesh_compute_prepare_inference", {
           relay,
-          model: "auto",
+          model,
         }),
       current: (lease) =>
         invoke<boolean>("mesh_compute_inference_current", { lease }),

@@ -169,6 +169,10 @@ export class PublishRejected extends Error {
 export class PublishNotSent extends PublishRejected {}
 
 export { browserOutboxStorage } from "./outbox-storage";
+/** The desktop host's answer to a retry the relay would refuse as too old,
+ * when the event cannot be read back. */
+export const OLD_EVENT_NOT_FOUND =
+  "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.";
 /** Why a held entry restored after reload cannot take a plain retry. */
 export const HELD_RETRY_REFUSED = "Retry this from the plugin that sent it.";
 const abortError = () => new DOMException("Relay session closed", "AbortError");

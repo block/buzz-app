@@ -1,13 +1,17 @@
 import { assert, expect, it, vi } from "vitest";
 import type { EventData, ReadFilter } from "./events";
 import type { LiveListener } from "./incoming";
+import { OLD_EVENT_NOT_FOUND } from "./outbox";
 import {
+  expiredPinCommand,
   LOADING_PINS,
+  PIN_KIND,
   PIN_LIST_KIND,
   pinLists,
   pinnedIds,
   readPinnedMessages,
   type PinSource,
+  UNPIN_KIND,
 } from "./pins";
 
 const relay = "a".repeat(64);
@@ -331,6 +335,29 @@ const relayPage = (corpus: readonly EventData[], filter: ReadFilter) =>
           (filter.before_id === undefined || event.id > filter.before_id)),
     )
     .slice(0, filter.limit);
+
+it("classifies a pin command refused as too old by the relay or this device", () => {
+  const command = (kind: number, error?: string) => ({
+    event: event({ kind, tags: [["h", "c"]] }),
+    error,
+  });
+  const relayRefusal = "invalid: event timestamp too far from server time";
+  expect(expiredPinCommand(command(PIN_KIND, relayRefusal))).toBe(true);
+  expect(
+    expiredPinCommand(command(UNPIN_KIND, `Retry blocked: ${relayRefusal}`)),
+  ).toBe(true);
+  expect(
+    expiredPinCommand(
+      command(PIN_KIND, `Retry blocked: ${OLD_EVENT_NOT_FOUND}`),
+    ),
+  ).toBe(true);
+  expect(expiredPinCommand(command(PIN_KIND, "blocked: not a member"))).toBe(
+    false,
+  );
+  expect(expiredPinCommand(command(PIN_KIND))).toBe(false);
+  // Other kinds keep their own retry rules.
+  expect(expiredPinCommand(command(9, relayRefusal))).toBe(false);
+});
 
 it("pages through one second holding more than a full page", async () => {
   const author = "c".repeat(64),

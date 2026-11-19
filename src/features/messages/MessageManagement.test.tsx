@@ -33,10 +33,12 @@ import { createRelaySession } from "../relay/session";
 import { followUpRecovery } from "./follow-up-storage";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import {
+  OLD_EVENT_NOT_FOUND,
   PublishRejected,
   type OutboxStorage,
   type OutgoingEvent,
 } from "../relay/outbox";
+import { EXPIRED_PIN_RECOVERY } from "../relay/pins";
 import {
   keypair,
   message,
@@ -883,50 +885,58 @@ it("pins from the message menu, and offers unpin for a pinned message", async ()
   ).toBeInTheDocument();
 });
 
-it("stops retrying a pin refused as too old and reads the list again", async () => {
-  let listReads = 0;
-  const h = await fixture(
-    false,
-    false,
-    false,
-    false,
-    false,
-    undefined,
-    false,
-    undefined,
-    "member",
-    {
-      pins: () => {
-        listReads++;
-        return [];
+it.each([
+  ["the relay", "invalid: event timestamp too far from server time"],
+  ["this device", OLD_EVENT_NOT_FOUND],
+])(
+  "resends an unanswered pin as itself, then stops when %s refuses it as too old and reads the list again",
+  async (_, refusal) => {
+    let listReads = 0;
+    const h = await fixture(
+      false,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      {
+        pins: () => {
+          listReads++;
+          return [];
+        },
       },
-    },
-  );
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Pin to channel" }),
-  );
-  await waitFor(() => expect(h.publications).toHaveLength(1));
-  const reads = listReads;
-  await act(async () =>
-    h
-      .publication(0)
-      .result.reject(
-        new PublishRejected(
-          "invalid: event timestamp too far from server time",
-        ),
-      ),
-  );
-  expect(
-    await screen.findByText(
-      "Pin or unpin it again from the message menu if still needed.",
-    ),
-  ).toBeInTheDocument();
-  await waitFor(() => expect(listReads).toBe(reads + 1));
-  expect(
-    screen.queryByRole("button", { name: "Retry message update" }),
-  ).toBeNull();
-  expect(h.publications).toHaveLength(1);
-});
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Pin to channel" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    // No answer: the outcome is unknown, and Retry sends the same event.
+    await act(async () =>
+      h.publication(0).result.reject(new Error("Connection lost")),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Retry message update" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(2));
+    expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+    const reads = listReads;
+    await act(async () =>
+      h.publication(1).result.reject(new PublishRejected(refusal)),
+    );
+    expect(await screen.findByText(EXPIRED_PIN_RECOVERY)).toBeInTheDocument();
+    // Still unknown: the refusal does not say whether the pin was applied.
+    expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("unknown");
+    await waitFor(() => expect(listReads).toBe(reads + 1));
+    expect(
+      screen.queryByRole("button", { name: "Retry message update" }),
+    ).toBeNull();
+    expect(screen.queryByText(/Retry sends/)).toBeNull();
+    expect(h.publications).toHaveLength(2);
+  },
+);
 
 it("offers no pin action when the relay does not support pins", async () => {
   await fixture(false);

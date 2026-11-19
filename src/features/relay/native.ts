@@ -51,7 +51,7 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishNotSent, PublishRejected } from "./outbox";
+import { OLD_EVENT_NOT_FOUND, PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
 import {
@@ -1104,9 +1104,7 @@ export async function connectNativeTransport(
             signal,
           );
           if (found.some((value) => value.id === event.id)) return "";
-          throw new PublishRejected(
-            "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
-          );
+          throw new PublishRejected(OLD_EVENT_NOT_FOUND);
         }
         return (await writer.publish(event, signal)) ?? "";
       },

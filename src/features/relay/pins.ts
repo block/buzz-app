@@ -2,11 +2,30 @@ import type { ChannelMessage } from "./contracts";
 import { newer, type EventData, type ReadFilter } from "./events";
 import { foldMessages } from "./fold";
 import type { LiveListener } from "./incoming";
+import { OLD_EVENT_NOT_FOUND, type OutgoingEvent } from "./outbox";
 import type { ReadOptions } from "./reader";
+import { READ_STATE_TIMESTAMP_REFUSAL } from "./read-state-host";
 
 /** Member-signed commands; the relay applies them and re-signs the list. */
 export const PIN_KIND = 40010;
 export const UNPIN_KIND = 40011;
+/** A pin command refused as too old, by the relay or by the desktop host
+ * before resending it. Its outcome is unknown and resending it is refused
+ * again, so NIP-PM has the client read the list and leave any new command to
+ * the person, since one signed by itself could undo another member's change. */
+export function expiredPinCommand(
+  item: Pick<OutgoingEvent, "event" | "error">,
+): boolean {
+  const { error } = item;
+  return (
+    (item.event.kind === PIN_KIND || item.event.kind === UNPIN_KIND) &&
+    !!error &&
+    (error.includes(READ_STATE_TIMESTAMP_REFUSAL) ||
+      error.includes(OLD_EVENT_NOT_FOUND))
+  );
+}
+export const EXPIRED_PIN_RECOVERY =
+  "Refused as too old, so it was not sent again. Pin or unpin from the message menu if the pins still need it.";
 /** The relay-signed pin list for one channel (`d`), newest pin first. */
 export const PIN_LIST_KIND = 30623;
 

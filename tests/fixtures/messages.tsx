@@ -204,6 +204,10 @@ if (nestedWindow && nestedParent && nestedChild) {
   );
   replies.splice(293, 1, child);
 }
+// A visit to the nested child itself, as a link to that reply opens it.
+const exactChild = new URLSearchParams(location.search).has("exactChild")
+  ? replies[293]?.id
+  : undefined;
 const exactReaction = signed(viewer, {
   kind: 7,
   content: "👍",
@@ -697,7 +701,8 @@ function Fixture() {
             scope={scope}
             channelId={channelId}
             channelName={channelId}
-            messageId={root.id}
+            messageId={exactChild ?? root.id}
+            revealSelected={exactChild !== undefined}
             close={() => select(0)}
             parent={threadParent}
             onOpenLink={(url) => {

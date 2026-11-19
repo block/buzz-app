@@ -1479,6 +1479,9 @@ function ThreadMessages({
       correctScrollTop(element, readingDrift(element, reading.anchor));
       if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
     }
+    // An exact target holds its own place through a page: a second anchor
+    // would correct for the same page again.
+    if (targetAnchor.current !== undefined) olderAnchor.current = undefined;
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree

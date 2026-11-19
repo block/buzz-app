@@ -789,7 +789,9 @@ export function createThreadView({
       publishStatus({
         status: "loading",
         error: undefined,
-        readKind: replace ? "refresh" : "older",
+        // A quiet retry leaves a page asked for behind it showing as that
+        // page.
+        readKind: replace && !(background && older) ? "refresh" : "older",
       });
     try {
       if (exact && replace) {
@@ -1067,9 +1069,9 @@ export function createThreadView({
           if (!replace && !sought && typeof older !== "function")
             older = through ?? true;
           publishStatus({});
-        } else if (sought) {
+        } else if (sought && !rootUnavailable) {
           // Nobody asked for this read: its failure shows only as the parent
-          // not being found.
+          // not being found. A root it found gone is the thread's failure.
           seek = null;
           publishStatus({});
         } else {

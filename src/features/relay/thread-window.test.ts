@@ -1362,8 +1362,13 @@ it("keeps a read view's rows through repeated transient failures and recovers un
     expect(view.snapshot().readKind).toBe("older");
     await vi.advanceTimersByTimeAsync(999);
     expect(attempts()).toBe(4);
-    await vi.advanceTimersByTimeAsync(1 + 7000);
+    await vi.advanceTimersByTimeAsync(1);
+    // The retry is the refresh's; the page asked for still shows as waiting.
+    expect(attempts()).toBe(5);
+    expect(view.snapshot().readKind).toBe("older");
+    await vi.advanceTimersByTimeAsync(7000);
     expect(attempts()).toBe(8);
+    expect(view.snapshot().readKind).toBe("older");
     expect(recovery.snapshot()).toMatchObject({ recovering: true, attempt: 1 });
     await vi.advanceTimersByTimeAsync(1999);
     expect(attempts()).toBe(8);
@@ -1678,7 +1683,13 @@ it("reads a page a person asks for in place of a read view's read for a missing 
   await vi.waitFor(() => expect(windows(h.requests)).toEqual([10, 50]));
   expect(view.snapshot()).toMatchObject({ status: "ready", seeking: true });
   held = false;
+  const sought = h.fetcher.mock.calls
+    .map(([, sent]) => sent)
+    .filter((sent) => String(sent?.body).includes("thread_window"))[1];
+  expect(sought?.signal?.aborted).toBe(false);
   const asked = view.loadMore();
+  // The ask ends the read for the parent and shows as its own.
+  expect(sought?.signal?.aborted).toBe(true);
   expect(view.snapshot()).toMatchObject({
     status: "loading",
     readKind: "older",
@@ -1694,12 +1705,23 @@ it("reads a page a person asks for in place of a read view's read for a missing 
   release();
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(windows(h.requests)).toEqual([10, 50, 50]);
+  const sent = h.fetcher.mock.calls
+    .map(([, sent]) => sent)
+    .filter((sent) => String(sent?.body).includes("thread_window"));
   expect(
-    h.fetcher.mock.calls
-      .filter(([, sent]) => String(sent?.body).includes("thread_window"))
-      .map(([, sent]) => new Headers(sent?.headers).get("X-Buzz-Read-Priority"))
+    sent
+      .map((sent) => new Headers(sent?.headers).get("X-Buzz-Read-Priority"))
       .slice(-2),
   ).toEqual(["background", "foreground"]);
+  // The page was read from the cursor the read for the parent had: the
+  // oldest reply of the first window.
+  const cursors = h.requests
+    .filter(([f]) => f?.thread_window)
+    .map(([f]) => [f?.until, f?.before_id]);
+  expect(cursors[1]).toEqual([24, filler(4).id]);
+  expect(cursors[2]).toEqual(cursors[1]);
+  // Each of the three runs read the root once.
+  expect(h.requests.filter(([f]) => f?.ids)).toHaveLength(3);
   view.dispose();
 });
 
@@ -1771,6 +1793,45 @@ it.each([
     vi.restoreAllMocks();
     view.dispose();
   }
+});
+
+it("reports a root that a read view's read for a missing parent finds gone, and recovers on refresh", async () => {
+  const parent = filler(0);
+  const rows = [
+    parent,
+    ...Array.from({ length: 12 }, (_, n) => filler(n + 1)),
+    nested("child", 100, parent.id),
+  ];
+  // The relay holds the root for the first window, then not for the read
+  // that follows it.
+  let roots = 0;
+  let gone = true;
+  const h = await setup((f) =>
+    f.ids && gone && ++roots > 1 ? [] : serving(rows)(f),
+  );
+  const view = h.session.thread(channel, root.id, { reading: true });
+  await view.refresh();
+  expect(view.snapshot().replies).toHaveLength(10);
+  // The thread's failure shows, with its retry, and not as a missing parent.
+  await vi.waitFor(() =>
+    expect(view.snapshot()).toMatchObject({
+      status: "error",
+      root: undefined,
+      seeking: undefined,
+    }),
+  );
+  gone = false;
+  await view.refresh();
+  await vi.waitFor(() =>
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      error: undefined,
+      canLoadMore: false,
+    }),
+  );
+  expect(view.snapshot().root?.id).toBe(root.id);
+  expect(view.snapshot().replies).toHaveLength(14);
+  view.dispose();
 });
 
 it("ends a read view's read for a missing parent quietly when the relay rejects it, and still reports a page a person asks for", async () => {

@@ -230,8 +230,10 @@ including empty pages whose raw scan cursor does not occur among delivered event
 
 Strict root admission/validation runs once before each load or refresh traversal,
 not between the pages of a retained-range repair: repairing N pages uses one root
-read plus N independently verified window reads. Each separate scrollback load
-still reads the root. Root deletion observed live and access revocation retain their
+read plus N independently verified window reads. A load given a read frontier
+pages until it reaches a reply at or before that time the same way, so the
+older paging that reaches the first unread reply reads the root once. Each separate scrollback
+load still reads the root. Root deletion observed live and access revocation retain their
 existing session paths; a later refresh/load revalidates the root. Neither the root
 lookup nor the page sequence provides an atomic snapshot.
 

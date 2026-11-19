@@ -28,27 +28,32 @@ export function useChannelList(queries: ChannelQueries) {
  * The roster without its live activity: previews and activity replace the list
  * on every message, so a ready list that changed only those fields keeps the
  * previous snapshot. `activity` keeps `lastActivityAt` and `activityKnown`
- * changes, and `preview` keeps `preview` changes, for surfaces that order or
- * filter by them. Rows read their own preview with useLiveChannelSummary.
+ * changes for all rows or for rows that match a predicate. `preview` keeps
+ * `preview` changes. Rows can read their own preview with useLiveChannelSummary.
  */
 export function useChannelRoster(
   queries: ChannelQueries,
   {
     activity = false,
     preview = false,
-  }: { activity?: boolean; preview?: boolean } = {},
+  }: {
+    activity?: boolean | ((channel: ChannelSummary) => boolean);
+    preview?: boolean;
+  } = {},
 ) {
   useEffect(() => queries.ensureList(), [queries]);
-  const ignored = activity
-    ? preview
-      ? noFields
-      : previewField
-    : preview
-      ? activityTimes
-      : activityFields;
+  const ignoredWithActivity = preview ? noFields : previewField;
+  const ignored =
+    activity === true
+      ? ignoredWithActivity
+      : preview
+        ? activityTimes
+        : activityFields;
+  const activityFilter = typeof activity === "function" ? activity : undefined;
   const last = useRef<{
     queries: ChannelQueries;
     ignored: ReadonlySet<string>;
+    activityFilter: typeof activityFilter;
     list: ChannelList;
   }>(undefined);
   const snapshot = useCallback(() => {
@@ -57,14 +62,17 @@ export function useChannelRoster(
     if (
       previous?.queries === queries &&
       previous.ignored === ignored &&
+      previous.activityFilter === activityFilter &&
       previous.list.activityStatus === next.activityStatus &&
       previous.list.error === next.error &&
-      sameRoster(previous.list, next, ignored)
+      sameRoster(previous.list, next, (channel) =>
+        activityFilter?.(channel) ? ignoredWithActivity : ignored,
+      )
     )
       return previous.list;
-    last.current = { queries, ignored, list: next };
+    last.current = { queries, ignored, activityFilter, list: next };
     return next;
-  }, [queries, ignored]);
+  }, [queries, ignored, activityFilter, ignoredWithActivity]);
   return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
 }
 const listIndexes = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
@@ -118,7 +126,7 @@ const noFields = new Set<string>();
 function sameRoster(
   a: ChannelList,
   b: ChannelList,
-  ignored: ReadonlySet<string>,
+  ignoredFields: (channel: ChannelSummary) => ReadonlySet<string>,
 ) {
   return (
     a.status === "ready" &&
@@ -127,8 +135,10 @@ function sameRoster(
     a.asOf === b.asOf &&
     a.rosterAsOf === b.rosterAsOf &&
     a.channels.length === b.channels.length &&
-    a.channels.every((channel, index) =>
-      sameRosterEntry(channel, b.channels[index], ignored),
+    a.channels.every(
+      (channel, index) =>
+        channel === b.channels[index] ||
+        sameRosterEntry(channel, b.channels[index], ignoredFields(channel)),
     )
   );
 }
@@ -137,7 +147,6 @@ function sameRosterEntry(
   b: ChannelSummary | undefined,
   ignored: ReadonlySet<string>,
 ) {
-  if (a === b) return true;
   if (!b) return false;
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys)

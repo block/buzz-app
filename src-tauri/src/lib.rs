@@ -41,6 +41,7 @@ mod enterprise_auth_build;
 mod enterprise_relay_url;
 mod host_command;
 mod host_files;
+mod host_forward;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -130,6 +131,10 @@ use host_command::plugin_host_run_command;
 use host_files::{
     plugin_host_delete_managed_file, plugin_host_read_file, plugin_host_repository_folders,
     plugin_host_resolve_directory, plugin_host_save_bytes,
+};
+use host_forward::{
+    plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
+    plugin_host_forward_open, plugin_host_forward_seal, HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -849,6 +854,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_pairing,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_forward_admission,
+        plugin_host_forward_open,
+        plugin_host_forward_associate,
+        plugin_host_forward_seal,
+        plugin_host_forward_close,
         plugin_host_read_file,
         plugin_host_resolve_directory,
         plugin_host_repository_folders,
@@ -1267,7 +1277,9 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(HostCalls::default())
         .manage(HostProcesses::default())
+        .manage(host_files::ManagedFiles::default())
         .manage(HostMcpServers::default())
+        .manage(HostForward::default())
         .manage(OAuthCallbackHost::default())
         .manage(NsecBackupHost::default().with_federated_identity(federated_identity))
         .manage(Notifications::default())
@@ -1320,6 +1332,7 @@ pub fn run() {
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<HostForward>().stop_all();
                 webview.state::<app_agents::AppAgentHost>().page_load();
                 if let Some(credentials) = webview.try_state::<credential_service::CredentialService>() {
                     credentials.page_load();
@@ -1406,6 +1419,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
+    app.state::<HostForward>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");

@@ -12,6 +12,7 @@ import {
   projectTemplateId,
   workspaceCanvas,
   workspaceDirectories,
+  shareableInstructions,
 } from "./workspace";
 
 it.each([{ folders: [] }, { folders: [" ", "\t"] }])(
@@ -151,7 +152,7 @@ it("preserves ordinary Canvas and refuses malformed or manually changed workspac
 function fixture() {
   const kit = { status: "ready", entries: [] as unknown[] };
   const session = {
-    soloPreferences: {
+    sidebarPreferences: {
       writable: true,
       refresh: vi.fn(async () => {}),
       snapshot: () => ({
@@ -320,3 +321,28 @@ it("finds an agent's folders even in a hand-edited workspace block", () => {
     [],
   );
 });
+
+it.each([
+  ["a canonical block", (block: string) => block, "Ship notes"],
+  [
+    "an introduction before the block",
+    (block: string) => `Intro\n\n${block}`,
+    "",
+  ],
+  ["a leading blank line", (block: string) => `\n${block}`, ""],
+  ["a nested block", (block: string) => `Ship notes\n\n${block}`, ""],
+  ["a malformed block", (block: string) => block.slice(0, 40), ""],
+  ["plain instructions", () => "Just notes", "Just notes"],
+])(
+  "shares only metadata-free workspace instructions: %s",
+  (_, shape, shared) => {
+    const block = workspaceCanvas({
+      folders: ["/private/project"],
+      worktree: { location: "/private/worktrees", baseBranch: "main" },
+      canvas: "Ship notes",
+    });
+    const result = shareableInstructions(shape(block));
+    expect(result).toBe(shared);
+    expect(result).not.toContain("/private");
+  },
+);

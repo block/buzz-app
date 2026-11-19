@@ -59,55 +59,9 @@ fn builderlab_apps_control_plane(
 }
 const GATEWAY_KEY: &str = "BUZZ_AGENT_GATEWAY";
 
-/// The gateway origin the `BUZZ_AGENT_GATEWAY` descriptor names, or empty
-/// when it is unset. Like the FI descriptor, it is read from the process
-/// only. This checks the version, the keys (launcher_client is optional)
-/// and the gateway origin, which is all the grant needs, and nothing more:
-/// only the frontend (Vite)
-/// build validates the whole descriptor, against
-/// `src/features/agents/gateway/descriptor-vectors.json`. Errors never echo
-/// the descriptor.
-fn descriptor_gateway(process: Option<String>) -> Result<String, &'static str> {
-    let Some(raw) = process.filter(|raw| !raw.trim().is_empty()) else {
-        return Ok(String::new());
-    };
-    let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|_| "Agent gateway descriptor isn't JSON")?;
-    let object = value
-        .as_object()
-        .ok_or("Agent gateway descriptor isn't an object")?;
-    if object.get("version").and_then(serde_json::Value::as_f64) != Some(2.0) {
-        return Err("Agent gateway descriptor must be version 2");
-    }
-    let mut keys: Vec<_> = object
-        .keys()
-        .map(String::as_str)
-        .filter(|key| *key != "launcher_client")
-        .collect();
-    keys.sort_unstable();
-    if keys
-        != [
-            "access_path",
-            "communities",
-            "gateway",
-            "headers",
-            "reserved_prefixes",
-            "upstreams",
-            "version",
-        ]
-    {
-        return Err("Agent gateway descriptor has the wrong keys");
-    }
-    let gateway = object
-        .get("gateway")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("Agent gateway descriptor needs a gateway")?;
-    let url = url::Url::parse(gateway).map_err(|_| "Invalid agent gateway")?;
-    if url.scheme() != "https" || url.origin().ascii_serialization() != gateway {
-        return Err("Agent gateway must be an https:// origin without a path or credentials");
-    }
-    Ok(gateway.into())
-}
+#[path = "src/gateway.rs"]
+#[allow(dead_code)]
+mod gateway;
 
 const MANAGED_PLUGINS_URL_KEY: &str = "BUZZ_BUILD_MANAGED_PLUGINS_URL";
 const MANAGED_PLUGINS_URL_MAX_CHARS: usize = 2048;
@@ -308,10 +262,13 @@ fn main() {
     let access = repository_access(process(REPOSITORY_ACCESS_KEY))
         .unwrap_or_else(|reason| panic!("Invalid {REPOSITORY_ACCESS_KEY}: {reason}"));
     println!("cargo:rustc-env={REPOSITORY_ACCESS_KEY}={access}");
+    // From the process only, like the FI descriptor: a private build input.
     println!("cargo:rerun-if-env-changed={GATEWAY_KEY}");
-    let gateway = descriptor_gateway(process(GATEWAY_KEY))
-        .expect("Invalid agent gateway build configuration");
-    println!("cargo:rustc-env=BUZZ_AGENT_GATEWAY_ORIGIN={gateway}");
+    let gateway = match gateway::parse(&process(GATEWAY_KEY).unwrap_or_default()) {
+        Ok(gateway) => gateway.map(|(_, canonical)| canonical).unwrap_or_default(),
+        Err(invalid) => panic!("{invalid}"),
+    };
+    println!("cargo:rustc-env={GATEWAY_KEY}={gateway}");
     let managed = packaged_managed_plugins_url(&local, process(MANAGED_PLUGINS_URL_KEY))
         .expect("Invalid packaged managed plugin policy URL");
     println!("cargo:rustc-env={MANAGED_PLUGINS_URL_KEY}={managed}");
@@ -346,70 +303,6 @@ mod tests {
             };
             let selected = federated_identity(&local, env).map(|config| config.id);
             assert_eq!(selected.as_deref(), fi, "{mode}");
-        }
-    }
-
-    #[test]
-    fn gateway_grant_is_only_the_descriptor_gateway_origin() {
-        assert_eq!(descriptor_gateway(None).unwrap(), "");
-        assert_eq!(descriptor_gateway(Some(" ".into())).unwrap(), "");
-        let descriptor = |gateway: &str| {
-            Some(format!(
-                r#"{{"version":2,"gateway":"{gateway}","communities":[],"access_path":"/a","launcher_client":"c","headers":{{}},"reserved_prefixes":[],"upstreams":{{}}}}"#
-            ))
-        };
-        assert_eq!(
-            descriptor_gateway(descriptor("https://gateway.example")).unwrap(),
-            "https://gateway.example"
-        );
-        assert_eq!(
-            descriptor_gateway(Some(
-                descriptor("https://gateway.example")
-                    .unwrap()
-                    .replace(r#""version":2"#, r#""version":2.0"#)
-            ))
-            .unwrap(),
-            "https://gateway.example"
-        );
-        assert_eq!(
-            descriptor_gateway(Some(
-                descriptor("https://gateway.example")
-                    .unwrap()
-                    .replace(r#""launcher_client":"c","#, "")
-            ))
-            .unwrap(),
-            "https://gateway.example"
-        );
-        for gateway in [
-            "http://gateway.example",
-            "https://gateway.example/",
-            "https://gateway.example/path",
-            "https://user@gateway.example",
-            "https://GATEWAY.example",
-            "gateway.example",
-        ] {
-            assert!(
-                descriptor_gateway(descriptor(gateway)).is_err(),
-                "{gateway}"
-            );
-        }
-        for raw in [
-            "not json".to_owned(),
-            "[]".to_owned(),
-            r#"{"version":1,"gateway":"https://gateway.example","communities":[{}]}"#.to_owned(),
-            descriptor("https://gateway.example")
-                .unwrap()
-                .replace(r#""version":2"#, r#""version":3"#),
-            descriptor("https://gateway.example")
-                .unwrap()
-                .replace(r#""headers":{},"#, ""),
-            descriptor("https://gateway.example")
-                .unwrap()
-                .replace(r#""launcher_client":"c","#, "")
-                .replace(r#""upstreams":{}"#, r#""upstreams":{},"token":"x""#),
-        ] {
-            let error = descriptor_gateway(Some(raw.clone())).unwrap_err();
-            assert!(!error.contains("gateway.example"), "{raw}");
         }
     }
 

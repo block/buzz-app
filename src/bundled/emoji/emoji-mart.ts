@@ -187,10 +187,9 @@ export function mountEmojiMart({
   // picker/dictionary (or lose search, focus and scroll) just to change appearance.
   const documentRoot = host.ownerDocument.documentElement;
   const syncAppearance = () => {
-    picker.setAttribute(
-      "theme",
-      resolvedTheme(colorMode ?? documentRoot.dataset.colorMode),
-    );
+    const theme = resolvedTheme(colorMode ?? documentRoot.dataset.colorMode);
+    if (picker.getAttribute("theme") !== theme)
+      picker.setAttribute("theme", theme);
     picker.toggleAttribute(
       "data-keyboard-navigation",
       documentRoot.hasAttribute("data-keyboard-navigation"),

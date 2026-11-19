@@ -448,12 +448,14 @@ Sign in, Cancel, and Sign out at narrow widths with enlarged text.
 
 Source plugins can import the shared components directly. External plugins must
 use the actual supported author contract and exposed CSS roles; source paths are
-not a published component SDK. These are composition requirements for Buzz UI,
-not a claim that arbitrary external code is automatically constrained. Do not
-introduce a private reset, theme provider, palette, body-level stylesheet, global
-control override, or parallel dialog/toast system to make one contribution fit.
-Keep plugin styles scoped to owned layout/content. Renderer exceptions do not
-exempt surrounding controls from shared appearance.
+not a published component SDK. The author contract's preview `ui` service offers a
+few of these controls to plugins with narrower props (`src/features/plugin-ui`).
+These are composition requirements for Buzz UI, not a claim that arbitrary
+external code is automatically constrained. Do not introduce a private reset,
+theme provider, palette, body-level stylesheet, global control override, or
+parallel dialog/toast system to make one contribution fit. Keep plugin styles
+scoped to owned layout/content. Renderer exceptions do not exempt surrounding
+controls from shared appearance.
 
 For a genuinely new surface, describe its task and the nearest recipe first.
 State the missing capability and smallest extension in its existing owner. Keep
@@ -476,6 +478,12 @@ An affordance is a control or action color. CSS spells these `--surface-panel`,
 Tailwind utilities include `bg-surface-panel`, `text-standard`,
 `border-prominent` and `bg-affordance-subtle-hover`. Text and border registrations
 stay in separate namespaces so they cannot accidentally share a value.
+
+Shared Markdown has a deliberate content exception: inline snippets, fenced
+code frames, and the backing behind pinned code actions use `affordance-subtle`
+to keep one code fill in both themes. Their text uses the renderer's existing
+text roles. This exception belongs to the shared Markdown renderer; other
+recessed content continues to use `surface-inset`.
 
 Enabled sidebar section headings, disclosure chevrons and quiet section actions
 use `text-subtle`, not `text-unavailable`. Disabled controls keep their shared
@@ -1806,7 +1814,7 @@ inside a group than between groups.
 - Dense data uses edge-to-edge rows and dividers where a line helps track the row.
 - Distinct swatches, type samples, and avatars often need only space between them. Avoid adding a card or divider when the content already separates itself.
 - Show samples on the surface where they will be used. Glass needs a backdrop; a white swatch on white needs a quiet boundary.
-- Cards group widgets, gallery items, or settings. They sit on `bg-panel` with spacing or a hairline and have no default fill. Use `bg-hover` only for an interactive card’s hover state. There is no `bg-card` role; `bg-inset` is for recessed content such as inputs or code blocks.
+- Cards group widgets, gallery items, or settings. They sit on `bg-panel` with spacing or a hairline and have no default fill. Use `bg-hover` only for an interactive card's hover state. There is no `bg-card` role; `bg-inset` is for recessed content such as inputs. Shared Markdown code follows the content exception in [Semantic colors](#semantic-colors).
 - Use native thin scrollbars: `scrollbar-width: thin` and `scrollbar-color: var(--scrollbar-thumb-quiet) transparent`. Use the sidebar’s subtle gray thumb in both modes. Load the shared recipe into vendor shadow roots and let the browser control scrolling and visibility.
 
 ## Motion
@@ -2242,15 +2250,18 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 ### Conversation identity icons (proposed)
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
-conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `ThreadIcon` (Tabler Message2) for thread tabs, thread links and Reply actions.
-Its text lines identify a conversation without the forward-like arrow in MessageReply.
+conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in
+navigation, headers, tabs and inline chat links.
+Use `ThreadIcon` (Tabler Message2) for message links, thread links, thread tabs,
+and Reply actions. The text lines identify links to messages and threads.
 Keep private Team channels' lock icon; privacy alone does not
-replace a Solo chat's identity icon. Accessible chat cards end with a right
-chevron. Unavailable chat cards retain a lock and unavailable accessible text;
-unknown access does not earn a chevron. Display chat cards as **Chat:**, while
-accepting legacy **Session:** and **Session ·** authored links without rewriting
-historical messages or their receipts.
+replace a Solo chat’s identity icon. A withheld link uses the lock.
+
+Chat links use the ordinary inline link treatment in the composer and messages;
+keep their authored position and label. New shares use the chat title as the label.
+Legacy **Chat:**, **Session:** and **Session ·** labels remain authored text without
+rewriting historical messages or their receipts. Rich previews use the existing
+link/preview contribution boundaries rather than chat-specific attachment chrome.
 
 
 ### Mobile-aligned onboarding

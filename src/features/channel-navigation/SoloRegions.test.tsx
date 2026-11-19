@@ -12,6 +12,7 @@ import {
 import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import {
+  memo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -93,6 +94,7 @@ function mount(
         fallback={fallback}
         sidebar={{
           list,
+          savedLocation: undefined,
           collapsed,
           contributionOrder: order,
           setContributionOrder: (next) => setOrder([...next]),
@@ -743,6 +745,86 @@ it("keeps Destination navigation, unread and local state stable across source up
   expect(custom).toHaveBeenCalledOnce();
 });
 
+it("renders a source status update without rerendering an unchanged conversation", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const renderShared = vi.fn();
+  const Shared = memo(function Shared({ ui }: Pick<SoloRegionProps, "ui">) {
+    return (
+      <ui.Conversation channelId="shared">
+        {(c) => {
+          renderShared();
+          return (
+            <c.Menu>
+              <c.Link label={c.name} />
+              <c.Actions />
+            </c.Menu>
+          );
+        }}
+      </ui.Conversation>
+    );
+  });
+  const source = await h.register({
+    component: ({ snapshot, ui }) => (
+      <>
+        <Row
+          ui={ui}
+          channelId="owned"
+          supporting={String(snapshot.model ?? "Waiting")}
+        />
+        <Shared ui={ui} />
+      </>
+    ),
+  });
+  const view = mount(h);
+  const shared = screen.getByRole("button", { name: "Shared" });
+  shared.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  const menu = await screen.findByRole("menu", { name: "Actions for Shared" });
+  renderShared.mockClear();
+
+  await act(() =>
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      model: "Working",
+    }),
+  );
+  expect(screen.getByText("Working")).toBeInTheDocument();
+  expect(renderShared).not.toHaveBeenCalled();
+  expect(menu).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(menu).not.toBeInTheDocument());
+  const owned = screen.getByRole("button", { name: "Owned Working" });
+  expect(shared).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(view.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "shared" }),
+  );
+  await act(() => view.navigate(conversationTarget(h.scope, "shared")));
+  expect(shared).toHaveAttribute("aria-current", "page");
+  expect(owned).not.toHaveAttribute("aria-current");
+
+  const roster = h.session.channels.list().channels;
+  await act(() =>
+    h.roster(roster.filter((channel) => channel.id !== "shared")),
+  );
+  expect(shared).not.toBeInTheDocument();
+  await waitFor(() => expect(owned).toHaveFocus());
+  await act(() =>
+    h.roster(
+      roster.map((channel) =>
+        channel.id === "shared" ? { ...channel, name: "Restored" } : channel,
+      ),
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Restored" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
 it("replays only this region's live reveals and ignores old incarnation subscribers", async () => {
   const h = fixture();
   const seen = vi.fn();
@@ -791,8 +873,8 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
   const snapshot = { status: "ready" as const, data };
   const assign = vi.fn(async () => {});
   Object.assign(h.session, {
-    soloPreferences: {
-      ...h.session.soloPreferences,
+    sidebarPreferences: {
+      ...h.session.sidebarPreferences,
       snapshot: () => snapshot,
       assign,
     },
@@ -1278,6 +1360,43 @@ it("keeps reconnect focus on a nested destination instead of its parent", async 
   expect(screen.getByRole("button", { name: "Shared" })).toHaveFocus();
 });
 
+it("restores focus in the latest source order when a quiet destination leaves the roster", async () => {
+  const h = fixture();
+  const roster = h.session.channels.list().channels;
+  const owned = roster.find((channel) => channel.id === "owned");
+  assert(owned);
+  const expandedRoster = [...roster, { ...owned, id: "third", name: "Third" }];
+  h.roster(expandedRoster);
+  const StableRow = memo(Row);
+  const source = await h.register({
+    component: ({ ui, snapshot }) =>
+      (snapshot.model
+        ? ["shared", "third", "owned"]
+        : ["shared", "owned", "third"]
+      ).map((channelId) => (
+        <StableRow key={channelId} ui={ui} channelId={channelId} />
+      )),
+  });
+  mount(h);
+  const shared = screen.getByRole("button", { name: "Shared" });
+  shared.focus();
+  await act(() =>
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      model: { reordered: true },
+    }),
+  );
+  expect(shared).toHaveFocus();
+  await act(() =>
+    h.roster(expandedRoster.filter((channel) => channel.id !== "shared")),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Third" })).toHaveFocus(),
+  );
+});
+
 it("moves focus to the region summary after the last row disappears and to Solo after its region disappears", async () => {
   const h = fixture();
   const source = await h.register({ component: Body });
@@ -1391,8 +1510,8 @@ it.each([
     };
     const preferences = { status: "ready" as const, data: saved };
     Object.assign(h.session, {
-      soloPreferences: {
-        ...h.session.soloPreferences,
+      sidebarPreferences: {
+        ...h.session.sidebarPreferences,
         snapshot: () => preferences,
         subscribe: () => () => {},
       },

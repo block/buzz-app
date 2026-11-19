@@ -283,10 +283,9 @@ function fixture({
     status: "reconciled" as const,
     completeness: "snapshot" as const,
   };
-  const preferences = {
-    status: "ready" as const,
-    data: { sections: [], assignments: {}, starred: [], muted: muted ?? [] },
-  };
+  const preferences = muted
+    ? { ...projects, data: { ...projects.data, muted } }
+    : projects;
   const setMute = vi.fn(async (channel: string, mute: boolean) =>
     mute
       ? [...(muted ?? []), channel]
@@ -365,27 +364,18 @@ function fixture({
           ? removal.preview
           : owner.session.channels.get?.(channelId),
     },
-    soloPreferences: {
-      ...owner.session.soloPreferences,
-      snapshot: () => projects,
+    sidebarPreferences: {
+      ...owner.session.sidebarPreferences,
+      snapshot: () => preferences,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => {
           listeners.delete(listener);
         };
       },
+      ...(muted ? { muteWritable: true, ensure: async () => {}, setMute } : {}),
     },
     messages: { ...owner.session.messages, send },
-    sidebarPreferences: muted
-      ? {
-          ...owner.session.sidebarPreferences,
-          muteWritable: true,
-          snapshot: () => preferences,
-          subscribe: () => () => {},
-          ensure: async () => {},
-          setMute,
-        }
-      : owner.session.sidebarPreferences,
     unread:
       unread === undefined
         ? owner.session.unread
@@ -504,6 +494,10 @@ function fixture({
       <ChannelsPage
         relay={relay}
         panels={{
+          ui: {
+            Workspace: () => null,
+            useSplit: vi.fn(),
+          },
           ...contribution,
           register() {},
           resolve: () => undefined,
@@ -1756,7 +1750,7 @@ it("offers the header's chat actions from the sidebar row, plus inline Rename", 
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {
   const f = fixture();
   const assign = vi.fn(async () => {});
-  Object.assign(f.session.soloPreferences, { writable: true, assign });
+  Object.assign(f.session.sidebarPreferences, { writable: true, assign });
   f.mount();
   const user = userEvent.setup();
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
@@ -1778,8 +1772,8 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
 
 it("reports a failed header move beside the header and retries it", async () => {
   const f = fixture();
-  const base = f.session.soloPreferences.snapshot();
-  let current: ReturnType<typeof f.session.soloPreferences.snapshot> = base;
+  const base = f.session.sidebarPreferences.snapshot();
+  let current: ReturnType<typeof f.session.sidebarPreferences.snapshot> = base;
   const listeners = new Set<() => void>();
   const publish = (next: typeof current) => {
     current = next;
@@ -1798,7 +1792,7 @@ it("reports a failed header move beside the header and retries it", async () => 
     ],
   } as unknown as typeof current;
   const retryMove = vi.fn(async () => {});
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     writable: true,
     snapshot: () => current,
     subscribe: (listener: () => void) => {

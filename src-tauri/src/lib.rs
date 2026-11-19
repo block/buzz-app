@@ -41,6 +41,7 @@ mod enterprise_auth_build;
 mod enterprise_relay_url;
 mod host_command;
 mod host_files;
+mod host_forward;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -61,8 +62,6 @@ mod claude_key;
 #[cfg(unix)]
 mod cli_link;
 mod clipboard;
-#[cfg(any(target_os = "macos", test))]
-mod gpu_reaper;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -78,6 +77,8 @@ mod microphone;
 mod mouse_nav;
 #[cfg(target_os = "macos")]
 mod reshow;
+#[cfg(any(target_os = "macos", test))]
+mod webkit_reaper;
 
 mod notifications;
 mod os_idle;
@@ -106,10 +107,11 @@ use relay::{
     file_download, media_copy_image, media_download, media_lift_subject, media_stream_base,
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
     relay_agent_resolve, relay_channel_publish, relay_channel_sign, relay_decode_read_state,
-    relay_decode_reminders, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
-    relay_http, relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign,
-    relay_project_git, relay_project_git_cancel, relay_publish_read_state, relay_sign,
-    relay_sign_read_state, relay_sign_reminder, relay_sign_sidebar, relay_upload,
+    relay_decode_reminders, relay_decode_sidebar, relay_decode_thread_follows,
+    relay_direct_message, relay_git_authorization, relay_http, relay_http_cancel, relay_kit_decode,
+    relay_kit_prepare, relay_kit_sign, relay_project_git, relay_project_git_cancel,
+    relay_publish_read_state, relay_publish_thread_follows, relay_sign, relay_sign_read_state,
+    relay_sign_reminder, relay_sign_sidebar, relay_sign_thread_follows, relay_upload,
     relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_verify_signatures,
     relay_workflow_runs,
 };
@@ -130,6 +132,10 @@ use host_command::plugin_host_run_command;
 use host_files::{
     plugin_host_delete_managed_file, plugin_host_read_file, plugin_host_repository_folders,
     plugin_host_resolve_directory, plugin_host_save_bytes,
+};
+use host_forward::{
+    plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
+    plugin_host_forward_open, plugin_host_forward_seal, HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -589,8 +595,19 @@ async fn plugin_import_install(
 }
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
+    let managed = manager.managed(&catalog);
+    // Every catalog read can start it, so a new or changed policy applies without a
+    // restart; each pinned version is tried once per run, and one apply runs at a time.
+    if manager.automatic_due(&managed, &catalog) {
+        let manager = manager.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = manager.apply_automatic() {
+                eprintln!("Could not apply the managed plugin policy: {error}");
+            }
+        });
+    }
     InstallationResult::Ready {
-        managed: manager.managed(&catalog),
+        managed,
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -761,6 +778,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_decode_read_state,
         relay_sign_read_state,
         relay_publish_read_state,
+        relay_decode_thread_follows,
+        relay_sign_thread_follows,
+        relay_publish_thread_follows,
         relay_http,
         relay_http_cancel,
         relay_verify_signatures,
@@ -838,6 +858,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_pairing,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_forward_admission,
+        plugin_host_forward_open,
+        plugin_host_forward_associate,
+        plugin_host_forward_seal,
+        plugin_host_forward_close,
         plugin_host_read_file,
         plugin_host_resolve_directory,
         plugin_host_repository_folders,
@@ -1051,7 +1076,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             #[cfg(target_os = "macos")]
-            gpu_reaper::install(app.handle());
+            webkit_reaper::install(app.handle());
             #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
@@ -1256,7 +1281,9 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(HostCalls::default())
         .manage(HostProcesses::default())
+        .manage(host_files::ManagedFiles::default())
         .manage(HostMcpServers::default())
+        .manage(HostForward::default())
         .manage(OAuthCallbackHost::default())
         .manage(NsecBackupHost::default().with_federated_identity(federated_identity))
         .manage(Notifications::default())
@@ -1309,6 +1336,7 @@ pub fn run() {
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<HostForward>().stop_all();
                 webview.state::<app_agents::AppAgentHost>().page_load();
                 if let Some(credentials) = webview.try_state::<credential_service::CredentialService>() {
                     credentials.page_load();
@@ -1395,6 +1423,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
+    app.state::<HostForward>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");

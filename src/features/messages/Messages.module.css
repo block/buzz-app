@@ -1,5 +1,18 @@
 @reference "../../shared/styles/globals.css";
 
+/* Match native selection while a message menu owns keyboard focus. Gate the
+   rule to its visible lifetime, as Find on screen does for its highlights. */
+:root[data-message-highlight] ::highlight(buzz-message-highlight) {
+  background-color: var(--selection-fill, var(--surface-text-selection));
+  color: var(--selection-text, var(--text-on-selection));
+}
+@media (forced-colors: active) {
+  :root[data-message-highlight] ::highlight(buzz-message-highlight) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
   position: relative;
@@ -314,6 +327,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
+  /* Reactions and reply summaries are controls, not conversation text;
+     a copy states reaction counts from the group's data-copy-text. */
+  user-select: none;
 }
 .reactions[data-populated],
 .reactionFallback {
@@ -985,6 +1001,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   font-weight: var(--type-weight-regular);
   padding: var(--space-1);
   padding-right: var(--space-1h);
+  user-select: none;
 }
 /* Compact summaries keep their 24px participants but drop the control's
    spare block padding. */
@@ -2034,9 +2051,14 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
-  html:not([data-keyboard-navigation]) .messageActions[popover]:popover-open {
+  .messageActions[popover]:popover-open {
     animation: message-actions-in calc(var(--duration-state) / 2)
       var(--easing-enter);
+  }
+  /* Keyboard reveal is immediate. Only the duration differs, so a pointer
+     press that ends keyboard navigation cannot restart an open bar's entry. */
+  html[data-keyboard-navigation] .messageActions[popover]:popover-open {
+    animation-duration: 0s;
   }
 }
 @keyframes message-actions-in {
@@ -2836,6 +2858,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 .jumpToLatest {
   align-items: flex-end;
+  user-select: none;
   position: sticky;
   z-index: 2;
   /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */
@@ -3062,7 +3085,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin: 0;
 }
 /* Links take the bubble's paired link ink; mentions keep their own tint. */
-.messageBubble .text a:not([data-solo-link]) {
+.messageBubble .text a {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -3110,9 +3133,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .messageAttachments > * {
   max-width: 100%;
   margin-block: 0;
-}
-.messageAttachments[data-solo-cards] + .messageBubble {
-  margin-top: var(--space-half);
 }
 .messageAttachments .imageUnavailable {
   border-radius: calc(var(--radius-panel) - var(--space-2));
@@ -3280,8 +3300,13 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   opacity: 0;
   pointer-events: none;
 }
+/* Standalone :focus-within: compounded with :is() or :not(), WebKit
+   restyles the whole document on every focus change. */
 :where(html[data-message-density="compact"])
-  .message:is(:hover, :focus-within, [data-actions-revealed])
+  .message:is(:hover, [data-actions-revealed])
+  .continuationTime,
+:where(html[data-message-density="compact"])
+  .message:focus-within
   .continuationTime {
   opacity: 1;
   pointer-events: auto;
@@ -3805,25 +3830,6 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSoloCards {
-  container-type: inline-size;
-  container-name: message-row;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.composerSoloCard {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-}
-.composerSoloCardContent {
-  min-width: 0;
-  max-width: calc(100% - var(--size-control));
-}
-
 html[data-keyboard-navigation] .activityExpansion {
   transition: none;
 }

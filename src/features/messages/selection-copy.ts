@@ -10,6 +10,7 @@ import { profileKey } from "../profiles/target";
 import { safeLinkUrl } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
+import { bareHostParts } from "./message-link-parts";
 
 /** `text` reads well outside the app; `markdown` keeps identity locators and
  * the block syntax the composer understands; `html` is the semantic `text/html`
@@ -44,7 +45,11 @@ export function serializeSelection(
       )
         wrapper = outer;
       // TR/TD/TBODY fragments lose their markup when parsed outside a table.
-      const root = wrapper ?? element?.closest("table") ?? ancestor;
+      const root =
+        wrapper ??
+        element?.closest("table") ??
+        wholeBlock(element, range) ??
+        ancestor;
       values.push(serializeNode(root, format, range));
     }
   }
@@ -59,9 +64,10 @@ export function serializeNode(
   node: Node,
   format: CopyFormat,
   range?: Range,
+  { includeHiddenBylines = true }: { includeHiddenBylines?: boolean } = {},
 ): string {
   if (format === "markdown") return markdown(node, range);
-  const value = serialize(node, format, range);
+  const value = serialize(node, format, range, includeHiddenBylines);
   // A byline is the first line of the paragraph it precedes, so no consumer
   // spaces the two apart; before any other block it is its own paragraph.
   return format === "html"
@@ -80,18 +86,21 @@ const bylineParagraph = new RegExp(`${bylineOpen}(.*?)</p>(<p>)?`, "gs");
 function serialize(
   node: Node,
   format: CopyFormat,
-  range?: Range,
+  range: Range | undefined,
+  includeHiddenBylines: boolean,
   inList = false,
 ): string {
   if (range && !range.intersectsNode(node)) return "";
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
-  if (!(node instanceof Element)) return children(node, format, range);
+  if (!(node instanceof Element))
+    return children(node, format, range, includeHiddenBylines);
   // A message's byline copies as one line, name then time, whether the row
   // shows it or a grouped row keeps it for assistive technology alone. A
   // selection holding only part of it copies that text.
   const author = node.getAttribute("data-copy-author");
-  if (author && whole(node, range)) {
+  const selectable = !unselectable(node);
+  if (author && (includeHiddenBylines || selectable) && whole(node, range)) {
     const seconds = Number.parseFloat(
       node.getAttribute("data-copy-time") ?? "",
     );
@@ -102,7 +111,16 @@ function serialize(
       ? `${bylineOpen}<strong>${escapeHtml(author)}</strong>${escapeHtml(time)}</p>`
       : author + time;
   }
-  if (unselectable(node)) return "";
+  // Unselectable chrome that still carries context, such as reaction counts,
+  // states its copy text.
+  const copyText = node.getAttribute("data-copy-text");
+  if (copyText !== null) {
+    if (!copyText || !holds(node, range)) return "";
+    return format === "html"
+      ? `<p>${text(copyText, format)}</p>`
+      : text(copyText, format);
+  }
+  if (!selectable) return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";
   // SVG tag names keep their case.
@@ -140,7 +158,7 @@ function serialize(
   // Element children that copy as something, so a list can tell which items
   // it keeps without serializing them again.
   const kept: Element[] = [];
-  const inner = children(node, format, range, kept);
+  const inner = children(node, format, range, includeHiddenBylines, kept);
   // A triple-click ends its range at the next block's start, often past an
   // empty reaction row, and a drag can start at a block's end. An empty layout
   // container, or a block holding none of the selection, copies as nothing,
@@ -248,6 +266,15 @@ function anchor(node: Element, inner: string, format: CopyFormat): string {
     return sourceTokenHtml(link("markdown", href, label || href));
   if (!label || label === href || label === node.getAttribute("href"))
     return format === "html" ? link(format, href, href) : href;
+  // A scheme-less host such as example.com is linked on display only; copy
+  // the authored text, which links again wherever it is sent.
+  const bare = bareHostParts(label);
+  if (
+    bare.length === 3 &&
+    bare[1]?.text === label &&
+    safeHref(bare[1].url ?? "") === href
+  )
+    return text(label, format);
   // Identity and channel locators read as their sigil-prefixed name alone.
   const buzz = parseBuzzLink(href);
   const plain =
@@ -406,6 +433,22 @@ function clip(node: Text, range?: Range): string {
     : value;
 }
 
+/** The outermost block of a row whose text a range holds entirely. A
+ * triple-click ends inside a block's own text when only unselectable chrome
+ * follows it, and the block still copies as itself, a heading as a heading. */
+function wholeBlock(element: Element | null, range: Range) {
+  let block: Element | undefined;
+  for (
+    let outer = element;
+    outer && !outer.hasAttribute("data-message-id");
+    outer = outer.parentElement
+  ) {
+    if (!whole(outer, range)) break;
+    if (blockTag.test(outer.tagName)) block = outer;
+  }
+  return block;
+}
+
 /** A chip keeps its identity only when all of its text is selected. */
 function whole(element: Element, range?: Range): boolean {
   return !range || within(element, range).toString() === element.textContent;
@@ -445,17 +488,21 @@ function within(element: Element, range: Range): Range {
 function children(
   node: Node,
   format: CopyFormat,
-  range?: Range,
+  range: Range | undefined,
+  includeHiddenBylines: boolean,
   kept?: Element[],
 ): string {
   let text = "";
   let previous: Node | undefined;
+  // A row's gap, as between a byline's name and time, reads as a space.
+  let spaced: boolean | undefined;
   for (const child of node.childNodes) {
     if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
     const value = serialize(
       child,
       format,
       range,
+      includeHiddenBylines,
       /^(UL|OL)$/.test(node.nodeName),
     );
     if (value && child instanceof Element) kept?.push(child);
@@ -467,7 +514,10 @@ function children(
         (value.match(/^\n*/)?.[0].length ?? 0);
       text += "\n".repeat(Math.max(0, 2 - existing));
     } else if (separator === "\t") text += separator;
-    else if (
+    else if (!separator && /\S$/.test(text) && /^\S/.test(value)) {
+      spaced ??= node instanceof Element && flexRow(node);
+      if (spaced) text += " ";
+    } else if (
       text &&
       value &&
       separator &&
@@ -507,6 +557,16 @@ const blockName = (node: Node) =>
       ? "PRE"
       : node.tagName
     : "";
+
+/** A flex row whose gap, not text, separates its items. */
+function flexRow(element: Element): boolean {
+  const style = getComputedStyle(element);
+  return (
+    /^(inline-)?flex$/.test(style.display) &&
+    !style.flexDirection.startsWith("column") &&
+    Number.parseFloat(style.columnGap) > 0
+  );
+}
 
 /** Whitespace between rendered blocks is formatting; blocks supply separators. */
 function formatting(node: Node): boolean {
@@ -573,16 +633,46 @@ function copyMessageSelection(event: ClipboardEvent) {
   event.preventDefault();
 }
 
+/** A selection begun in a message history stays in it: dragging past an edge
+ * selects to that edge, not into the sidebar, headers, composer or the other
+ * pane. Editors own their selections. */
+export function containMessageSelection() {
+  const selection = document.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return;
+  const { anchorNode, anchorOffset, focusNode, focusOffset } = selection;
+  const anchor = anchorNode && elementOf(anchorNode);
+  if (!anchor || !focusNode || anchor.closest(editable)) return;
+  const scope = anchor.closest("[data-message-scroller]");
+  if (!scope) return;
+  const bounds = document.createRange();
+  bounds.selectNodeContents(scope);
+  const side = bounds.comparePoint(focusNode, focusOffset);
+  if (side === 0) return;
+  selection.setBaseAndExtent(
+    anchorNode,
+    anchorOffset,
+    scope,
+    side < 0 ? 0 : scope.childNodes.length,
+  );
+}
+
 let surfaces = 0;
-/** Timeline and thread surfaces share one document listener. */
+/** Timeline and thread surfaces share one set of document listeners. */
 export function useMessageSelectionCopy() {
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (surfaces++ === 0)
+    if (surfaces++ === 0) {
       document.addEventListener("copy", copyMessageSelection, true);
+      document.addEventListener("selectionchange", containMessageSelection);
+    }
     return () => {
-      if (--surfaces === 0)
+      if (--surfaces === 0) {
         document.removeEventListener("copy", copyMessageSelection, true);
+        document.removeEventListener(
+          "selectionchange",
+          containMessageSelection,
+        );
+      }
     };
   }, []);
 }

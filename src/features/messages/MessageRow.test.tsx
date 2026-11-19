@@ -2223,11 +2223,12 @@ it("bounds reply participants and projects artwork with fallback initials", () =
     const trigger = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });
+    // The newest replier (first) renders last, on top of the stack.
     expect(
       [...trigger.querySelectorAll("[title]")].map((e) =>
         e.getAttribute("title"),
       ),
-    ).toEqual(["Alice", "Brain", "p3"]);
+    ).toEqual(["p3", "Brain", "Alice"]);
     expect(trigger.querySelector("img")).toHaveAttribute(
       "src",
       "https://proxy/avatar",
@@ -3360,10 +3361,11 @@ it.each([true, false])(
   },
 );
 
-it.each(["", "Please review this.\n\n"])(
-  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+it.each(["", "Please review "])(
+  "keeps chat links in their authored bubble with normal message interactions (caption=%s)",
   async (caption) => {
-    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
+    const suffix = caption ? " before merge." : "";
+    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)${suffix}`;
     const reply = vi.fn(),
       thread = vi.fn(),
       open = vi.fn(() => true),
@@ -3388,23 +3390,16 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Chat: PR 45 fixes",
+        name: "Session: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
-      expect(card.closest("[data-solo-cards]")).not.toBeNull();
-      expect(card.closest("[class*=messageBubble]")).toBeNull();
-      if (caption) {
-        if (!bubble) throw new Error("Caption bubble missing");
-        expect(bubble).toHaveTextContent("Please review this.");
-        expect(
-          card.compareDocumentPosition(bubble) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy();
-      } else {
-        expect(bubble).toBeNull();
-        expect(container.querySelector("[data-bubble]")).toBeNull();
-        expect(container.querySelector("[data-own]")).toBeNull();
-      }
+      expect(card.closest("[data-solo-cards]")).toBeNull();
+      expect(card.closest("[class*=messageBubble]")).toBe(bubble);
+      expect(bubble).toHaveTextContent(
+        `${caption}Session: PR 45 fixes${suffix}`,
+      );
+      expect(container.querySelector("[data-bubble]")).not.toBeNull();
+      expect(container.querySelector("[data-own]")).not.toBeNull();
       expect(container.querySelectorAll("[data-message-id=root]")).toHaveLength(
         1,
       );
@@ -3428,7 +3423,7 @@ it.each(["", "Please review this.\n\n"])(
   },
 );
 
-it("keeps the timestamp seek action beside a detached session card", () => {
+it("keeps the timestamp seek action beside an inline chat link", () => {
   const seek = vi.fn();
   try {
     renderDom(
@@ -3449,9 +3444,9 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Chat: Fix" })
+        .getByRole("link", { name: "Session: Fix" })
         .closest("[class*=messageBubble]"),
-    ).toBeNull();
+    ).not.toBeNull();
   } finally {
     cleanup();
   }
@@ -4355,8 +4350,8 @@ it.each([
   {
     claim: "shot",
     fails: false,
-    card: false,
-    listed: ["notes.txt", "shot.png"],
+    card: true,
+    listed: ["notes.txt"],
     content: "[Session: PR 45 fixes](buzz://channel/session-id)",
   },
 ])(

@@ -61,6 +61,14 @@
       "groupSlug": "biome"
     },
     {
+      "description": "Usage estimates costs only from the price data this package bundles, so each release gets its own PR, merged once checks pass, and the next build prices new models.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@pydantic/genai-prices"],
+      "groupName": "genai-prices",
+      "groupSlug": "genai-prices",
+      "automerge": true
+    },
+    {
       "description": "Update packageManager together with the Hermit pnpm pin in bin/.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["pnpm"],

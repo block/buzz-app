@@ -42,8 +42,8 @@ importers:
         specifier: 2.0.1
         version: 2.0.1
       '@pydantic/genai-prices':
-        specifier: 0.1.13
-        version: 0.1.13
+        specifier: 0.2.3
+        version: 0.2.3
       '@tabler/icons':
         specifier: 3.46.0
         version: 3.46.0
@@ -614,8 +614,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@pydantic/genai-prices@0.1.13':
-    resolution: {integrity: sha512-kKzGgPFJmKK/muihOFYDtuS8PXYliRFFYWDfzwDFy7bOgyZUnEnDXpBZpo4eT2aM8bz3bXvO50F8AhFSKvMxlw==}
+  '@pydantic/genai-prices@0.2.3':
+    resolution: {integrity: sha512-xnoMsceJA+V/RHvlYqrkpo+A3r7pARvZmtMYZfctGX8S6kYFXcBY3XvgtDGWQiUJ7g/QSVAaTYangPcxy1OZ+A==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2743,7 +2743,7 @@ snapshots:
     dependencies:
       playwright: 1.63.0
 
-  '@pydantic/genai-prices@0.1.13': {}
+  '@pydantic/genai-prices@0.2.3': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     optional: true

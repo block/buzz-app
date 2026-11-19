@@ -22757,3 +22757,105 @@ it("keeps self and sibling settings proposals out of agent state until the owner
   ).rejects.toThrow("changed harnesses after this proposal");
   expect(service.updateRequests()[0]?.id).toBe(beforeRetype.id);
 });
+
+it("retries a proposal after saving a synced settings revision and failing to rename", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const { service, native, plugin, type, ctx } = await setup({
+    binding: () => ({ settings: { mode: "synced", subject } }),
+  });
+  const kind = "example/settings";
+  plugin.agents.register({
+    ...type,
+    id: "settings",
+    settingsProposal: {},
+    syncedSettings: {
+      schema: { effort: ["low", "max"] },
+      withSynced: (config, settings) => ({ ...config, ...settings }),
+    },
+  });
+  try {
+    await service.create({ type: kind, name: "Before" });
+    const { configStore, communityConfigs } = internals(service);
+    const secret = generateSecretKey();
+    const revision = (effort: string, created_at: number) =>
+      finalizeEvent(
+        {
+          kind: 45010,
+          created_at,
+          content: JSON.stringify({
+            version: 1,
+            agentType: kind,
+            settings: { effort },
+          }),
+          tags: [["op", "create"]],
+        },
+        secret,
+      ) as RelayEvent;
+    const openedHead = revision("low", 1);
+    const savedHead = revision("max", 2);
+    configStore.applyRead(subject, configStore.capture(subject), {
+      kind: "head",
+      event: openedHead,
+    });
+    const save = vi.fn(
+      async (_agent: unknown, _config: unknown, base: unknown) => {
+        expect(base).toEqual({ settings: openedHead.id });
+        configStore.applyRead(subject, configStore.capture(subject), {
+          kind: "head",
+          event: savedHead,
+        });
+        return { settings: { status: "saved", head: savedHead } };
+      },
+    );
+    communityConfigs.set(subject.community, {
+      attach: vi.fn(),
+      dispose: vi.fn(),
+      save,
+    });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const client = appClient(handle, {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    await callTool(client, {}, "agent_update", {
+      agent: bot,
+      name: "After",
+      effort: "max",
+    });
+    const [review] = service.updateRequests();
+    const opened = service.find(bot);
+    if (!review || !opened) throw new Error("Missing settings review");
+    expect(opened.configBase?.settings).toBe(openedHead.id);
+
+    const approved = {
+      type: kind,
+      name: "After",
+      config: { reply: "ok", effort: "max" },
+    };
+    native.rename.mockRejectedValueOnce(new Error("Cannot rename right now"));
+    await expect(
+      service.approveUpdate(review.id, approved, opened),
+    ).rejects.toThrow(
+      "Saved so far: Settings. Cannot rename right now. You can retry Save.",
+    );
+    expect(service.find(bot)).toMatchObject({
+      name: "Before",
+      config: approved.config,
+      configBase: { settings: savedHead.id },
+    });
+    await service.approveUpdate(review.id, approved, opened);
+    expect(save).toHaveBeenCalledOnce();
+    expect(service.find(bot)?.name).toBe("After");
+    expect(service.updateRequests()).toEqual([]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});

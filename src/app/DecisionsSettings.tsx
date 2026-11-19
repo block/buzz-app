@@ -38,8 +38,8 @@ type CommunityState = Readonly<{
    * one that answers; `DECISIONS_OFF` when the user turned decisions off
    * there. "" when neither is on. */
   shown: string;
-  /** The provider that answers now, which differs from `shown` while a
-   * chosen default is not set up. */
+  /** The provider that answers now, or "" when none does. It is `shown`,
+   * except while decisions are off or the chosen provider is not on. */
   answering: string;
   status: Status;
   /** Provider key -> whether it can be chosen here. */
@@ -66,10 +66,11 @@ const scopeIn = (provider: DecisionProvider, community: string) => {
 /** Chooses, for each joined community, the provider that answers its
  * decisions, and shows whether that provider can answer there: Builderlab's
  * availability follows the community's sign-in server, which communities on
- * one server share, while the TypeSafe key is one for every community. Providers are plugins. Each
- * community's menu offers the providers that can be set up there; the
- * service routes a community whose choice is not set up yet to TypeSafe.
- * With no communities, it lists each provider's settings. */
+ * one server share, while the TypeSafe key is one for every community.
+ * Providers are plugins. Each community's menu offers the providers that
+ * can be set up there; a chosen provider that cannot answer says why, and
+ * no other answers in its place. With no communities, it lists each
+ * provider's settings. */
 export function DecisionsSettings({
   decisions,
   active,
@@ -150,10 +151,9 @@ export function DecisionsSettings({
   const note = (row: CommunityState) => {
     if (row.shown === DECISIONS_OFF)
       return "Decisions are off in this community";
-    if (!row.shown) return "No provider can answer here";
-    if (row.answering && row.answering !== row.shown)
-      return `${label(row.shown)} can’t answer here yet, so ${label(row.answering)} answers`;
     if (!row.answering) return "No provider can answer here";
+    if (row.offered[row.answering] === false)
+      return `${label(row.answering)} isn’t offered in this community`;
     if (row.status === "checking") return "Checking…";
     if (row.status === "needs-setup")
       return `Set up ${label(row.answering)} to use decisions here`;

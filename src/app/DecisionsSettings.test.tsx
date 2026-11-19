@@ -81,9 +81,9 @@ function setup() {
 
 /** Builderlab as the community offers it: only in Block. */
 const inBlock = (community?: string): DecisionProviderStatus =>
-  community !== undefined && new URL(community).host === "block.example"
-    ? "ready"
-    : "needs-setup";
+  offeredInBlock(community) ? "ready" : "needs-setup";
+const offeredInBlock = (community?: string) =>
+  community !== undefined && new URL(community).host === "block.example";
 
 const row = (name: string) =>
   screen
@@ -117,7 +117,8 @@ it("shows each community's provider setup, and which communities share it", asyn
   await register(TYPESAFE, () => typesafe);
   // One Builderlab account serves both Block communities; Friends has none.
   await register(BUILDERLAB, inBlock, {
-    offered: (community) => new URL(community).host.endsWith("block.example"),
+    offered: (community) =>
+      !!community && new URL(community).host.endsWith("block.example"),
     setupScope: () => "block-server",
     Settings: ({ community }) => (
       <p>Sign-in for {community && new URL(community).host}</p>
@@ -141,11 +142,19 @@ it("shows each community's provider setup, and which communities share it", asyn
   expect(screen.getByText("Same Builderlab account as Design.")).toBeVisible();
   expect(screen.getByText("Same Builderlab account as Block.")).toBeVisible();
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
-  // Design's Builderlab cannot answer yet: TypeSafe does.
+  // Design's Builderlab cannot answer yet, and the row says so: TypeSafe
+  // does not answer in its place.
+  expect(decisions.backend(DESIGN)).toBe(BUILDERLAB);
   expect(row("Design")).toHaveTextContent(
-    "builderlab can’t answer here yet, so TypeSafe answers",
+    "Set up builderlab to use decisions here",
   );
-  expect(row("Block")).not.toHaveTextContent("answers");
+  expect(row("Block")).not.toHaveTextContent("Set up");
+  // A Builderlab chosen where it is not offered says that.
+  act(() => decisions.setBackend(BUILDERLAB, FRIENDS));
+  expect(row("Pals")).toHaveTextContent(
+    "builderlab isn’t offered in this community",
+  );
+  act(() => decisions.setBackend(TYPESAFE, FRIENDS));
   typesafe = "needs-setup";
   changed();
   expect(row("Pals")).toHaveTextContent(
@@ -169,7 +178,7 @@ it("chooses a provider for each community, offering only those it can be set up 
   const { decisions, register } = setup();
   await register(TYPESAFE, () => "ready");
   await register(BUILDERLAB, inBlock, {
-    offered: (community) => new URL(community).host === "block.example",
+    offered: offeredInBlock,
   });
   render(
     <DecisionsSettings
@@ -202,6 +211,7 @@ it("turns decisions off in one community, with no setup shown there", async () =
   const { decisions, register } = setup();
   await register(TYPESAFE, () => "ready");
   await register(BUILDERLAB, inBlock, {
+    offered: offeredInBlock,
     Settings: ({ community }) => (
       <p>Sign-in for {community && new URL(community).host}</p>
     ),
@@ -311,6 +321,7 @@ async function withdrawable(typesafe = true) {
   const context = setup();
   if (typesafe) await context.register(TYPESAFE, () => "ready");
   await context.register(BUILDERLAB, inBlock, {
+    offered: offeredInBlock,
     Settings: () => (
       <button type="button" onClick={() => context.remove(BUILDERLAB)}>
         Sign out

@@ -145,8 +145,9 @@ export type DecisionProvider = Readonly<{
     options: { signal: AbortSignal },
   ): Promise<DecisionReply>;
   /** Whether the user can choose and set it up for `community` (a relay
-   * URL). Defaults to true. */
-  offered?(community: string): boolean;
+   * URL), or without one, for a request that names no community. Defaults
+   * to true. */
+  offered?(community?: string): boolean;
   /** Which setup `community` uses, such as an account. Communities with the
    * same scope share one setup; without one, every community shares it. */
   setupScope?(community: string): string | undefined;
@@ -240,6 +241,15 @@ export const statusOf = (
   }
 };
 
+/** Whether the user can use `provider` in `community`. */
+const offeredHere = (provider: DecisionProvider, community?: string) => {
+  try {
+    return provider.offered?.(community) ?? true;
+  } catch {
+    return false;
+  }
+};
+
 /** The key a community's choice is saved under: its relay host, so its
  * wss:// and https:// URLs share one choice. */
 export const communityKey = (community: string | undefined) => {
@@ -253,22 +263,21 @@ export const communityKey = (community: string | undefined) => {
 
 /** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
-/** Bundled providers that answer, in this order, while the user has not
- * chosen one or their choice is not registered. The first that can answer
- * does; see `DecisionsService.route`. */
+/** Bundled providers, in order: in a community without the user's choice,
+ * the first registered one offered there answers; see
+ * `DecisionsService.route`. */
 export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
   "block.builderlab/builderlab",
   DEFAULT_DECISION_PROVIDER,
 ];
 
 /** Each request is routed in its community: answers come from the provider
- * the user chose for that community, or the first registered default that
- * can answer there until they choose. A provider such as Builderlab answers
- * only where the community offers it; where a chosen default cannot answer,
- * the user's own TypeSafe key does. Decision text can include private
- * messages, so no other provider gets it without that choice: while a chosen
- * provider that is not a default is not registered, decisions there are
- * unavailable rather than sent somewhere else. */
+ * the user chose for that community, or until they choose, the first
+ * registered default offered there. A provider such as Builderlab is offered
+ * only where the community's sign-in server serves it. When the provider
+ * that answers a community cannot, decisions there fail: no other provider
+ * answers in its place. Decision text can include private messages, so no
+ * provider gets it without that choice or default. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
   /** The choice for communities without their own; undefined until made. */
@@ -386,55 +395,28 @@ export class DecisionsService extends Service implements Decisions {
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
   /** The provider that answers in `community` now, and its status. The
-   * community's registered choice does, except that a chosen default that
-   * cannot answer there leaves it to TypeSafe, the user's own key. Without
-   * a registered choice, the first default that can answer does; otherwise TypeSafe,
-   * whose setup the user can do, `checking` while another default is still
-   * finding out whether it can answer. */
+   * community's choice does, whether or not it can answer: no other provider
+   * answers in its place. Without a choice, the first registered default
+   * offered there does. */
   private route(community?: string):
     | Readonly<{
         provider: RegisteredProvider;
         status: DecisionProviderStatus;
       }>
     | undefined {
-    const find = (key: string) =>
-      this.sorted.find((provider) => provider.key === key);
     const key = this.chosenIn(community);
     // Off: nothing answers, not even TypeSafe.
     if (key === DECISIONS_OFF) return undefined;
-    const chosen = key === undefined ? undefined : find(key);
-    if (chosen) {
-      const status = statusOf(chosen, community);
-      const own =
-        status === "needs-setup" &&
-        chosen.key !== DEFAULT_DECISION_PROVIDER &&
-        DEFAULT_DECISION_PROVIDERS.includes(chosen.key)
-          ? find(DEFAULT_DECISION_PROVIDER)
-          : undefined;
-      return own
-        ? { provider: own, status: statusOf(own, community) }
-        : { provider: chosen, status };
-    }
-    if (key !== undefined && !DEFAULT_DECISION_PROVIDERS.includes(key))
-      return undefined;
-    const defaults = DEFAULT_DECISION_PROVIDERS.flatMap((key) => {
-      const provider = find(key);
-      return provider
-        ? [{ provider, status: statusOf(provider, community) }]
-        : [];
-    });
-    const answering = defaults.find(
-      ({ status }) => status === "ready" || status === "unconfirmed",
-    );
-    if (answering) return answering;
-    const fallback =
-      defaults.find(
-        ({ provider }) => provider.key === DEFAULT_DECISION_PROVIDER,
-      ) ?? defaults[0];
-    if (!fallback) return undefined;
-    return defaults.some(({ status }) => status === "checking")
-      ? { provider: fallback.provider, status: "checking" }
-      : fallback;
+    const provider =
+      key === undefined
+        ? DEFAULT_DECISION_PROVIDERS.flatMap((key) => {
+            const provider = this.sorted.find((each) => each.key === key);
+            return provider && offeredHere(provider, community)
+              ? [provider]
+              : [];
+          })[0]
+        : this.sorted.find((provider) => provider.key === key);
+    return provider && { provider, status: statusOf(provider, community) };
   }
   private current(community?: string): RegisteredProvider | undefined {
     return this.route(community)?.provider;

@@ -56,6 +56,8 @@ const tauri = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => tauri);
 afterEach(() => {
   cleanup();
+  // A service made without storage saves choices here.
+  localStorage.clear();
   vi.unstubAllEnvs();
   tauri.isTauri.mockReturnValue(false);
 });
@@ -398,11 +400,11 @@ it("waits for a community's sign-in server to be restored before choosing who an
   expect(decisions.backend(COMMUNITY)).toBe(BUILDERLAB);
   expect(decisions.status(COMMUNITY)).toBe("checking");
   // A community not joined has no server followed, so none is waited for,
-  // even with Builderlab chosen everywhere.
+  // even with Builderlab chosen everywhere: it says it cannot answer.
   const ELSEWHERE = "wss://elsewhere.example";
   decisions.setBackend(BUILDERLAB);
-  expect(decisions.status(ELSEWHERE)).toBe("ready");
-  expect(decisions.backend(ELSEWHERE)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(decisions.backend(ELSEWHERE)).toBe(BUILDERLAB);
+  expect(decisions.status(ELSEWHERE)).toBe("needs-setup");
   const reply = decisions.decide({ ...request, community: COMMUNITY });
   await flush();
   // Its server is known, but which session answers is not yet.
@@ -514,7 +516,10 @@ it("answers each community with its own sign-in server's account, and leaves the
   expect(offered?.offered?.(BLOCK)).toBe(true);
   expect(offered?.offered?.(OTHER)).toBe(false);
   expect(offered?.setupScope?.(BLOCK)).toBe("block.example");
-  expect(decisions.backend(BLOCK)).toBe(DEFAULT_DECISION_PROVIDER);
+  // Where it is offered it is the default, and says it cannot answer yet:
+  // TypeSafe does not answer in its place.
+  expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
+  expect(decisions.status(BLOCK)).toBe("needs-setup");
   // Settings says where to sign in, and does not sign in itself.
   const Settings = offered?.Settings;
   if (!Settings) throw new Error("Builderlab has settings");
@@ -529,12 +534,13 @@ it("answers each community with its own sign-in server's account, and leaves the
   // Signed in to Block alone, while the build's server is signed out.
   await block.signIn();
   await build.signIn();
-  for (const chosen of [undefined, BUILDERLAB]) {
-    if (chosen) decisions.setBackend(chosen);
-    expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
-    expect(decisions.backend(PUBLIC)).toBe(DEFAULT_DECISION_PROVIDER);
-    expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
-  }
+  // Until the user chooses, Builderlab is the default wherever it is
+  // offered, and answers only where that account may use decisions.
+  expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
+  expect(decisions.status(BLOCK)).toBe("ready");
+  expect(decisions.backend(PUBLIC)).toBe(BUILDERLAB);
+  expect(decisions.status(PUBLIC)).toBe("needs-setup");
+  expect(decisions.backend(OTHER)).toBe(DEFAULT_DECISION_PROVIDER);
   // Settings explains each community's own account.
   const view = render(<Settings active={() => true} community={PUBLIC} />);
   expect(
@@ -545,8 +551,9 @@ it("answers each community with its own sign-in server's account, and leaves the
   view.rerender(<Settings active={() => true} community={BLOCK} />);
   expect(screen.queryByRole("status")).toBeNull();
   view.unmount();
-  // Without a community, it cannot answer: it bills one.
+  // Without a community, it is not offered: it bills one.
   expect(decisions.providers()[0]?.status()).toBe("needs-setup");
+  expect(decisions.providers()[0]?.offered?.()).toBe(false);
   expect(decisions.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   await expect(
     decisions.decide({ ...request, community: BLOCK }),
@@ -566,7 +573,8 @@ it("answers each community with its own sign-in server's account, and leaves the
   expect(decide).toHaveBeenCalledOnce();
   block.signOut();
   build.signOut();
-  expect(decisions.backend(BLOCK)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
+  expect(decisions.status(BLOCK)).toBe("needs-setup");
   await fiber.dispose();
 });
 
@@ -641,19 +649,22 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       await session.signIn();
       await expect.poll(() => session.snapshot().status).toBe("signed-in");
       await flush();
-      // Signed in without access: listed, but defaults fall through to TypeSafe.
+      // Signed in without access: listed, and as the default it refuses
+      // rather than leaving the request to TypeSafe.
       expect(
         decisions
           .providers()
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(true);
-      const beforeBackend =
+      await expect(decisions.decide(request)).resolves.toMatchObject(
         entry === "settings-with-choice"
-          ? "example.provider/custom"
-          : "buzz.typesafe/typesafe";
-      await expect(decisions.decide(request)).resolves.toMatchObject({
-        backend: beforeBackend,
-      });
+          ? { outcome: "answered", backend: "example.provider/custom" }
+          : {
+              outcome: "failed",
+              backend: "block.builderlab/builderlab",
+              reason: "unauthorized",
+            },
+      );
       const owner = session.credential();
       expect(identity.request).toHaveBeenCalledOnce();
       // Settings lists the community; with another provider chosen
@@ -683,12 +694,9 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
         const menu = screen.getByRole("combobox", {
           name: "Decision provider for Example",
         });
-        if (entry === "settings")
-          await waitFor(() => expect(menu).toHaveTextContent("Builderlab"));
+        await waitFor(() => expect(identity.request).toHaveBeenCalledTimes(2));
+        if (entry === "settings") expect(menu).toHaveTextContent("Builderlab");
         else {
-          await waitFor(() =>
-            expect(identity.request).toHaveBeenCalledTimes(2),
-          );
           await userEvent.click(menu);
           await userEvent.click(
             await screen.findByRole("option", { name: /Builderlab/ }),
@@ -698,15 +706,12 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
           .poll(() => decisions.backend(COMMUNITY))
           .toBe("block.builderlab/builderlab");
       } else {
-        // TypeSafe can answer now, so the request that notices stale
-        // permissions does not wait for them; the re-read it starts makes
-        // Builderlab the default for the next one.
+        // The request that notices stale permissions waits for the re-read
+        // it starts, and the new grant answers it.
         await expect(decisions.decide(request)).resolves.toMatchObject({
-          backend: "buzz.typesafe/typesafe",
+          outcome: "answered",
+          backend: "block.builderlab/builderlab",
         });
-        await expect
-          .poll(() => decisions.backend())
-          .toBe("block.builderlab/builderlab");
       }
       expect(
         decisions
@@ -714,9 +719,8 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(true);
       expect(decisions.backend(COMMUNITY)).toBe("block.builderlab/builderlab");
-      expect(fallback).toHaveBeenCalledTimes(
-        { settings: 1, request: 2, "settings-with-choice": 0 }[entry],
-      );
+      // TypeSafe never answers in Builderlab's place.
+      expect(fallback).not.toHaveBeenCalled();
       if (entry === "settings-with-choice")
         expect(native).not.toHaveBeenCalled();
       expect(identity.request).toHaveBeenCalledTimes(2);

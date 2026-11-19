@@ -286,9 +286,12 @@ export function builderlabProvider(
           : { outcome, reason }
       ) as DecisionReply;
     },
-    // Only a community its sign-in server serves can use it.
+    // Only a community its sign-in server serves can use it, so a request
+    // with no community cannot.
     offered: (community) =>
-      !communities || communities.forCommunity(community) !== undefined,
+      !communities ||
+      (community !== undefined &&
+        communities.forCommunity(community) !== undefined),
     // Communities on one sign-in server share its account.
     setupScope: (community) => communities?.account(community),
     Settings: ({ active, community }) =>

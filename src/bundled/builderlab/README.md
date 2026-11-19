@@ -274,13 +274,12 @@ makes it ready in that community, and otherwise it needs setup there,
 Settings shows it is not available there, and no decision request goes to it.
 A request without a community never goes to Builderlab. The user chooses a
 provider for each community in Settings → Decisions API. Without a choice,
-the first default that can answer does, so TypeSafe answers until access is
-granted; when no default can, TypeSafe is shown, since its key
-is something the user can add. While stale permissions refuse, Builderlab's
-status is `checking` during the re-read that reading it starts. That never
-moves the selection: a request is held for it only when no other default can
-answer, and then, like Attention readiness, it waits within its deadline, so
-a new grant is used by the request that noticed it. Live development retains refreshed flags and their cache age
+Builderlab answers where it is offered. Where it answers but cannot (not
+signed in, or no access), decisions there fail, and no other provider answers
+in its place. While stale permissions refuse, Builderlab's status is
+`checking` during the re-read that reading it starts; a request waits for it
+within its deadline, like Attention readiness, so a new grant is used by the
+request that noticed it. Live development retains refreshed flags and their cache age
 across page reloads.
 The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that

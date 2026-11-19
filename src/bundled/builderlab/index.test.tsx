@@ -812,7 +812,9 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     // Decisions name the native session; its token stays in native.
     const [provider] = decisions.providers();
     if (!provider) throw new Error("Missing FI Decisions provider");
-    expect(decisions.backend()).toBe("block.builderlab/builderlab");
+    expect(decisions.backend("wss://relay.example")).toBe(
+      "block.builderlab/builderlab",
+    );
     const question = {
       timeoutMs: 30_000,
       state: "test",

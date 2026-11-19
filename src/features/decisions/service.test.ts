@@ -275,62 +275,83 @@ it("uses Builderlab while it is registered, unless the user chose another", asyn
   expect(service.backend()).toBe("block.builderlab/builderlab");
   await builderlab.dispose();
   expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  // A choice of Builderlab falls back to TypeSafe while it is missing.
+  // A chosen Builderlab that is missing leaves decisions unavailable: no
+  // other provider answers in its place.
   builderlab = await plugin("block.builderlab", { id: "builderlab" });
   service.setBackend("block.builderlab/builderlab");
   await builderlab.dispose();
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  // A choice of TypeSafe stays when Builderlab registers again, and falls
-  // back to Builderlab while TypeSafe is off.
+  expect(service.backend()).toBeUndefined();
+  expect(service.status()).toBe("unavailable");
+  // A chosen TypeSafe stays when Builderlab registers again, and is not
+  // replaced by Builderlab while TypeSafe is off.
   service.setBackend(DEFAULT_DECISION_PROVIDER);
   builderlab = await plugin("block.builderlab", { id: "builderlab" });
   expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   await typesafe.dispose();
-  expect(service.backend()).toBe("block.builderlab/builderlab");
+  expect(service.backend()).toBeUndefined();
   expect(storage.values.get(DECISION_BACKEND_KEY)).toBe(
     DEFAULT_DECISION_PROVIDER,
   );
 });
 
-it("routes to the first default that can answer, else TypeSafe", async () => {
+it("routes to the first default offered, whether or not it can answer", async () => {
   const { service, plugin } = setup();
   const builderlab = settable("needs-setup");
-  const typesafe = settable("needs-setup");
+  const typesafe = settable("ready");
+  const community = "wss://community.example";
+  let offered = true;
   await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
-  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
-  // When no default can answer, TypeSafe shows: the user can set it up.
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("needs-setup");
-  // A default still checking makes the routing checking, not the backend.
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    ...builderlab,
+    offered: () => offered,
+  });
+  // Builderlab is offered, so it is the provider even while it cannot
+  // answer: a ready TypeSafe does not answer in its place.
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("needs-setup");
   builderlab.set("checking");
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("checking");
-  typesafe.set("ready");
-  // One that can answer is not held up by one that is checking.
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("ready");
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("checking");
   builderlab.set("ready");
-  expect(service.backend()).toBe("block.builderlab/builderlab");
-  // A chosen Builderlab that cannot answer leaves it to TypeSafe.
-  builderlab.set("needs-setup");
-  service.setBackend("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("ready");
+  // Where it is not offered, and for a request with no community, TypeSafe
+  // is the default.
+  offered = false;
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
   expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("ready");
+  // A chosen provider that cannot answer stays the provider.
+  offered = true;
+  typesafe.set("needs-setup");
+  service.setBackend(DEFAULT_DECISION_PROVIDER, community);
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(community)).toBe("needs-setup");
+  builderlab.set("needs-setup");
+  typesafe.set("ready");
+  service.setBackend("block.builderlab/builderlab", community);
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("needs-setup");
 });
 
-it("routes each community's requests to the provider that can answer there", async () => {
+it("routes each community's requests to its own provider, and no other", async () => {
   const { service, plugin } = setup();
   const offered = "wss://offered.example";
   const other = "wss://other.example";
   const asked: (string | undefined)[] = [];
   const typesafe = settable("ready");
-  // Builderlab answers only where the community offers it.
+  // Builderlab is offered, and answers, only where the community offers it.
   const builderlab = {
     status: (community?: string) =>
       community === offered ? ("ready" as const) : ("needs-setup" as const),
+    offered: (community: string) => community === offered,
     decide: async (sent: DecisionRequest) => {
       asked.push(sent.community);
-      return reply;
+      return sent.community === offered
+        ? reply
+        : {
+            outcome: "failed" as const,
+            reason: "missing_credentials" as const,
+          };
     },
   };
   await plugin("buzz.typesafe", {
@@ -342,32 +363,39 @@ it("routes each community's requests to the provider that can answer there", asy
     },
   });
   await plugin("block.builderlab", { id: "builderlab", ...builderlab });
-  for (const chosen of [undefined, "block.builderlab/builderlab"]) {
-    if (chosen) service.setBackend(chosen);
-    expect(service.backend(offered)).toBe("block.builderlab/builderlab");
-    expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
-    expect(service.status(other)).toBe("ready");
-    expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-    asked.length = 0;
-    const answered = [
-      await service.decide({ ...request, community: offered }),
-      await service.decide({ ...request, community: other }),
-    ];
-    expect(answered.map(({ backend }) => backend)).toEqual([
-      "block.builderlab/builderlab",
-      DEFAULT_DECISION_PROVIDER,
-    ]);
-    expect(asked).toEqual([offered, `typesafe:${other}`]);
-  }
-  // Without TypeSafe's key, the other community has no answer, and Builderlab
-  // is never asked there.
-  typesafe.set("needs-setup");
+  expect(service.backend(offered)).toBe("block.builderlab/builderlab");
   expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(other)).toBe("ready");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  const answered = [
+    await service.decide({ ...request, community: offered }),
+    await service.decide({ ...request, community: other }),
+  ];
+  expect(answered.map(({ backend }) => backend)).toEqual([
+    "block.builderlab/builderlab",
+    DEFAULT_DECISION_PROVIDER,
+  ]);
+  expect(asked).toEqual([offered, `typesafe:${other}`]);
+  // A Builderlab chosen everywhere answers where it can and fails elsewhere:
+  // TypeSafe does not answer in its place.
+  service.setBackend("block.builderlab/builderlab");
+  asked.length = 0;
+  expect(service.backend(other)).toBe("block.builderlab/builderlab");
   expect(service.status(other)).toBe("needs-setup");
-  // A chosen TypeSafe never moves to Builderlab, and a chosen provider that
-  // is not a default never falls back.
+  await expect(
+    service.decide({ ...request, community: other }),
+  ).resolves.toMatchObject({
+    outcome: "failed",
+    backend: "block.builderlab/builderlab",
+    reason: "missing_credentials",
+  });
+  expect(asked).toEqual([other]);
+  // Without TypeSafe's key, a community that uses it has no answer.
   service.setBackend(DEFAULT_DECISION_PROVIDER);
+  typesafe.set("needs-setup");
   expect(service.backend(offered)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(other)).toBe("needs-setup");
+  // A chosen provider that is not a default never falls back either.
   await plugin("acme.other", { id: "other", status: () => "needs-setup" });
   service.setBackend("acme.other/other");
   expect(service.backend(other)).toBe("acme.other/other");
@@ -387,6 +415,8 @@ it("keeps a choice for each community, by host, across reloads", async () => {
       community?.toLowerCase().includes("buzz.block.example")
         ? "ready"
         : "needs-setup",
+    offered: (community) =>
+      !!community?.toLowerCase().includes("buzz.block.example"),
   });
   await plugin("acme.helper", { id: "p" });
   const changed = vi.fn();
@@ -503,14 +533,14 @@ it("ignores malformed saved community choices", async () => {
   }
 });
 
-it("routes a request once a checking default knows whether it can answer", async () => {
+it("holds a request for a checking provider, and never sends it elsewhere", async () => {
   const { service, plugin, timers } = setup();
   const builderlab = settable("checking");
   const fromBuilderlab = vi.fn(async () => reply);
   const fromTypesafe = vi.fn(async () => reply);
   await plugin("buzz.typesafe", {
     id: "typesafe",
-    ...settable("needs-setup"),
+    ...settable("ready"),
     decide: fromTypesafe,
   });
   await plugin("block.builderlab", {
@@ -518,47 +548,32 @@ it("routes a request once a checking default knows whether it can answer", async
     ...builderlab,
     decide: fromBuilderlab,
   });
-  const refused = service.decide(request);
+  // A ready TypeSafe does not answer while Builderlab checks.
+  const held = service.decide(request);
   await flush();
   expect(fromBuilderlab).not.toHaveBeenCalled();
-  expect(fromTypesafe).not.toHaveBeenCalled();
   builderlab.set("needs-setup");
-  await expect(refused).resolves.toMatchObject({
-    outcome: "answered",
-    backend: DEFAULT_DECISION_PROVIDER,
+  await expect(held).resolves.toMatchObject({
+    backend: "block.builderlab/builderlab",
   });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
   builderlab.set("checking");
   const granted = service.decide(request);
   await flush();
   builderlab.set("ready");
   await expect(granted).resolves.toMatchObject({
+    outcome: "answered",
     backend: "block.builderlab/builderlab",
   });
-  expect(fromBuilderlab).toHaveBeenCalledOnce();
+  expect(fromBuilderlab).toHaveBeenCalledTimes(2);
   // The wait counts against the request's deadline.
   builderlab.set("checking");
   const late = service.decide(request);
   await flush();
   timers[0]?.run();
   await expect(late).resolves.toMatchObject({ reason: "timeout" });
-  expect(fromBuilderlab).toHaveBeenCalledOnce();
-});
-
-it("does not hold a request for a checking default when another can answer", async () => {
-  const { service, plugin } = setup();
-  const fromBuilderlab = vi.fn(async () => reply);
-  const fromTypesafe = vi.fn(async () => reply);
-  await plugin("buzz.typesafe", { id: "typesafe", decide: fromTypesafe });
-  await plugin("block.builderlab", {
-    id: "builderlab",
-    ...settable("checking"),
-    decide: fromBuilderlab,
-  });
-  await expect(service.decide(request)).resolves.toMatchObject({
-    outcome: "answered",
-    backend: DEFAULT_DECISION_PROVIDER,
-  });
-  expect(fromBuilderlab).not.toHaveBeenCalled();
+  expect(fromBuilderlab).toHaveBeenCalledTimes(2);
+  expect(fromTypesafe).not.toHaveBeenCalled();
 });
 
 it("removes a provider when the plugin asks, before its scope ends", async () => {

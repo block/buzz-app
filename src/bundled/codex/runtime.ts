@@ -1197,9 +1197,13 @@ export class CodexRuntime {
             this.protectedServers.get(agent) !== server
           )
             return;
-          await server.rpc.request("thread/backgroundTerminals/clean", {
-            threadId,
-          });
+          await server.rpc
+            .request("thread/backgroundTerminals/clean", { threadId })
+            .catch((error) => {
+              // Codex closes a thread left idle, which ends its shells.
+              if (message(error) !== `thread not found: ${threadId}`)
+                throw error;
+            });
           server.threads.delete(threadId);
         }
     })();

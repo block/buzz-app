@@ -36,12 +36,16 @@
   margin-inline-end: calc(-1 * var(--sidebar-padding-end));
   padding: var(--row-ring-extent) 0 var(--row-ring-extent)
     var(--row-ring-extent);
-  overflow: hidden;
+  /* Bound the pinned region so the conversation scrollport keeps room at
+     short window heights and large interface sizes. */
+  max-block-size: 40dvh;
+  overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: var(--scrollbar-thumb-quiet) transparent;
 }
 .destinations > * {
+  flex-shrink: 0;
   width: min(100%, 100cqi);
 }
 .destinations::-webkit-scrollbar {

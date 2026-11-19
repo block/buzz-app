@@ -1032,6 +1032,7 @@ and are asked to sign in again in Buzz.
 - **App navigation**: use the left dock to switch apps. Bestie is first,
   followed by Messages and the other apps. Activity and other enabled sidebar
   pages stay at the top of the Messages sidebar while you scroll conversations.
+  Scroll the pinned area if the window is too short to show every page.
   Community and profile controls sit at the bottom of the dock. Search stays
   wide in the top bar.
   Messages shows your workspaces, Starred and unfiled conversations together.

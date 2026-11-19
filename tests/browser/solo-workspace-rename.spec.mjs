@@ -22,6 +22,7 @@ test("workspace settings rename preserves filing in ordinary and composed headin
   await page.goto(app.origin);
   await newChat(page);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).hover();
   await sidebar.getByRole("button", { name: "Actions for Alpha" }).click();
   await page.getByRole("menuitem", { name: "Move to…", exact: true }).focus();
   await page.keyboard.press("ArrowRight");

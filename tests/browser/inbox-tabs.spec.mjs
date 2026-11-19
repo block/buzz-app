@@ -564,7 +564,7 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
       };
     });
     if (width === 606) {
-      expect(geometry.width).toBe(540);
+      expect(geometry.width).toBe(546);
       expect(Math.abs(geometry.tabsY - geometry.unreadY)).toBeLessThan(3);
     } else if (width === 588) {
       expect(geometry.unreadY).toBeGreaterThan(geometry.tabsY + 20);

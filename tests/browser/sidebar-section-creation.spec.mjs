@@ -495,6 +495,19 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   const target = page.locator("[data-create-section-drop]");
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.locator("[data-create-section-trigger]").evaluate((trigger) => {
+        const starred = document.querySelector(
+          '[data-sidebar-section="starred"]',
+        );
+        return (
+          trigger.getBoundingClientRect().top -
+          starred.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeGreaterThanOrEqual(0);
   const pointer = await startDrag(page, row);
   // The preview stays where the row was grabbed, under the pointer.
   const preview = page.locator('[class*="channelDragOverlay"]');

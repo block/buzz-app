@@ -147,7 +147,8 @@ sidebar coordinates must match what the sidebar signer produces, and recipe
 coordinates must satisfy the recipe contract.
 
 Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
-list. The conversation sections default to **Starred**, personal
+list. When the pinned rows run out of vertical space, scroll their area to see
+the rest. The conversation sections default to **Starred**, personal
 workspaces, **Solo**, **Team**, **Forums**, and **Direct messages**. Reorder them
 by dragging their headings or using **Move up** and **Move down**. The saved
 order syncs with workspace placement.

@@ -75,7 +75,7 @@
   max-height: 100%;
 }
 .unifiedChatName {
-  --session-row-inset: var(--space-2);
+  --session-row-inset: calc(var(--space-2) + var(--space-half));
   --session-action-size: calc(var(--space-6) + var(--space-1));
 }
 .sidebarIcon {
@@ -212,7 +212,7 @@
 }
 .createSectionHitArea {
   position: absolute;
-  inset: calc(-1 * var(--space-4)) 0 0;
+  inset: calc(-1 * var(--sidebar-section-gap)) 0 0;
   pointer-events: none;
 }
 .createSectionReveal {

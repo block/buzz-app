@@ -621,7 +621,7 @@ test("priority dots stay aligned and use the prominent mark color in both modes"
               row.getBoundingClientRect().right -
                 Number.parseFloat(fill.right) -
                 marker.right ===
-              10,
+              12,
             separated: marker.left - label.right >= 6,
           };
         }),

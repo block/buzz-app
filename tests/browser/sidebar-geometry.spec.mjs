@@ -309,6 +309,13 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
     .poll(() => list.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   await expect.poll(positions).toEqual(before);
+
+  await page.setViewportSize({ width: 900, height: 400 });
+  await rows.last().focus();
+  await expect(rows.last()).toBeInViewport();
+  const starred = list.locator('[data-sidebar-section="starred"] summary');
+  await starred.focus();
+  await expect(starred).toBeInViewport();
 });
 
 // The case above only exercises the scrollbar gutter where the engine happens
@@ -633,16 +640,24 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
     expect(result.rows).toBeGreaterThanOrEqual(2);
     expect(result.headings).toBeGreaterThanOrEqual(6);
 
-    // The touch action must take no space in pointer and keyboard layouts.
+    // Revealing the action must keep the title at its resting width.
     const restingWidth = await titleWidth();
     await chat.hover({ position: { x: 24, y: 14 } });
     await expect.poll(titleWidth).toBe(restingWidth);
-    await expect(action).toBeHidden();
+    await expect(action).toHaveCSS("opacity", "1");
     await page.mouse.move(0, 0);
     await chat.focus();
     await expect.poll(titleWidth).toBe(restingWidth);
   }
   const menu = page.getByRole("menu", { name: "Actions for Alpha" });
+  await chat.focus();
+  await page.keyboard.press("Tab");
+  await expect(action).toBeFocused();
+  await expect(action).toHaveCSS("opacity", "1");
+  await action.press("Enter");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
   await chat.press("Shift+F10");
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");

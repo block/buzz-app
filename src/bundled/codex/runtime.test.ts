@@ -7596,6 +7596,37 @@ describe("voice seats", () => {
     f.complete(1, "DONE");
     await f.connection.close();
   });
+  it("sends a typed turn on an open seat the session-model section of the owner's current scope", async () => {
+    const f = await seated();
+    const context = (wire: Wire | undefined) =>
+      Object.values(
+        (
+          wire?.params as
+            | { additionalContext?: Record<string, { value: string }> }
+            | undefined
+        )?.additionalContext ?? {},
+      )
+        .map(({ value }) => value)
+        .join("");
+    await f.runtime.run(f.delivery("@Codex first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(context(f.starts()[0])).not.toContain("<base-section-updates>");
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    // The owner gives the agent one session per channel while the seat
+    // stays open.
+    const d = f.delivery("@Codex again");
+    await f.runtime.run({
+      ...d,
+      config: { ...(d.config as object), scope: "channel" },
+    } as Delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const updated = context(f.starts()[1]);
+    expect(updated).toContain("<base-section-updates>");
+    expect(updated).toContain("one per-channel session");
+    f.complete(1, "DONE");
+    await f.connection.close();
+  });
   it("ends a seat on a thread from before sections were kept once the owner changes one, and goes on in a fresh thread", async () => {
     const f = await seated({}, (f) =>
       f.storage.set(
@@ -7623,7 +7654,7 @@ describe("voice seats", () => {
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     expect(f.ended).toHaveBeenCalledWith(
       new Error(
-        "The base instructions changed. Join the huddle again to use them.",
+        "The base instructions changed, so voice stopped. Wait for the reply to your typed message before you leave, since a Huddle closes when its only person leaves",
       ),
     );
     expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(true);
@@ -9116,7 +9147,7 @@ describe("a thread that keeps the base sections it started with", () => {
     expect(savedPrompts(f.storage)[0]?.[1]).toHaveLength(2);
   });
 
-  it("gives a voice seat's resumed thread the sections that changed, at both starts, and shows them in its saved prompt", async () => {
+  it("gives a voice seat's resumed thread the sections that changed in its injected message, and shows them in its saved prompt", async () => {
     vi.stubGlobal("RTCPeerConnection", class {});
     const started = {
       layout: 1,
@@ -9168,9 +9199,11 @@ describe("a thread that keeps the base sections it started with", () => {
     expect(injected).toContain(
       "<base-section-updates>\nThese sections replace",
     );
-    // Realtime start adds its instructions as a later developer message, so
-    // they must not say that no sections changed.
-    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toBe(injected);
+    // Realtime start has a size limit and adds its instructions as a later
+    // developer message, so they say nothing of the sections.
+    const start = vi.mocked(openVoice).mock.calls.at(-1)?.[5];
+    expect(start).toContain("Voice work acts for owner");
+    expect(start).not.toContain("base section updates");
     const [[, parts]] = savedPrompts(f.storage) as [
       [string, [string, string][]],
     ];

@@ -63,8 +63,9 @@ export function contextText(
   memory?: string | null,
   repositories = "",
   /** Buzz's own block of the base sections that changed since the thread
-   * started; see `sectionUpdates`. */
-  updates = "",
+   * started; see `sectionUpdates`. `null` leaves out what the thread was
+   * last told about them. */
+  updates: string | null = "",
 ) {
   const core = coreMemorySection(memory);
   const text = `You are ${agent.name} (pubkey ${agent.pubkey}).\nCurrent Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}`;
@@ -79,6 +80,7 @@ export function contextText(
   const escaped = unframed(
     `${text}${community}${repositories ? `\n\n${repositories}` : ""}`,
   );
+  if (updates === null) return escaped;
   return `${escaped}\n\nCurrent base section updates replace all prior base section updates. None means your base instructions apply as written.${updates ? `\n${updates}` : ""}`;
 }
 

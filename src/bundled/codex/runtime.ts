@@ -2990,10 +2990,13 @@ export class CodexRuntime {
    * conversation gets `content`; another a community turn took in gets a
    * generic retry notice, so one conversation's details stay out of it. */
   private async publishOwed(active: Active, content: string) {
-    if (!active.reply.conversation.community)
-      return void (await this.publish(active.reply, content));
     const where = (taken: Request) =>
       `${taken.conversation.channelId}/${taken.replyRoot ?? ""}`;
+    if (
+      !active.reply.conversation.community &&
+      active.requests.every((taken) => where(taken) === where(active.reply))
+    )
+      return void (await this.publish(active.reply, content));
     const owed = new Map<string, Request>();
     for (const taken of active.requests)
       if (taken.finalDelivery !== true) owed.set(where(taken), taken);
@@ -3127,14 +3130,16 @@ export class CodexRuntime {
           }
         : {};
     const final = isFinalMessage(call.tool, args);
-    // A community turn answers each conversation with its own final send.
-    const settling = request?.conversation.community
-      ? target === null
-        ? []
-        : answering.filter(
-            (taken) => taken.activityScope === request.activityScope,
-          )
-      : answering;
+    // A turn spanning destinations answers each with its own final send.
+    const settling =
+      request?.conversation.community ||
+      new Set(answering.map((taken) => taken.activityScope)).size > 1
+        ? target === null
+          ? []
+          : answering.filter(
+              (taken) => taken.activityScope === request?.activityScope,
+            )
+        : answering;
     const reply = await callSessionTool(
       this.target
         ? {

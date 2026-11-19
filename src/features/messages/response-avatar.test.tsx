@@ -15,6 +15,7 @@ import {
   responseAvatarAnchors,
 } from "./message-grouping";
 import { agent, human, root, fixture } from "./typing-indicator-testing";
+import { stubAvatarAnimationFetch } from "../profiles/avatar-animation-testing";
 
 stubAvatarBrowserApis();
 afterEach(() => {
@@ -32,6 +33,7 @@ it.each([false, true])(
     const source = `https://community.test/media/${"9".repeat(64)}.webp`;
     const media = (url: string, size?: "small") =>
       size ? "still" : `protected:${url}`;
+    const transfer = stubAvatarAnimationFetch();
     const profile = { name: "Agent", picture: source, isAgent: true as const };
     const session = { ...owner.session, ...live.session, media };
     (session.profiles.snapshot() as Map<string, typeof profile>).set(
@@ -118,7 +120,7 @@ it.each([false, true])(
     }
     const view = render(<Conversation />);
     const animations = () => [
-      ...view.container.querySelectorAll(`img[src="protected:${source}"]`),
+      ...view.container.querySelectorAll('img[src^="blob:avatar-"]'),
     ];
     try {
       live.update([
@@ -132,7 +134,11 @@ it.each([false, true])(
           ...(thread ? { threadRootId: root } : {}),
         },
       ]);
-      expect(loads).toHaveLength(1);
+      await waitFor(() => expect(loads).toHaveLength(1));
+      expect(transfer.fetch).toHaveBeenCalledWith(`protected:${source}`, {
+        signal: expect.any(AbortSignal),
+      });
+      expect(loads[0]?.src).toBe("blob:avatar-1");
       expect(animations()).toHaveLength(0);
       act(() => loads[0]?.onload?.());
       expect(animations()).toHaveLength(1);
@@ -147,6 +153,7 @@ it.each([false, true])(
       ).toHaveClass("sr-only");
       live.update([]);
       await waitFor(() => expect(animations()).toHaveLength(0));
+      expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
       expect(
         view.container.querySelector(
           '[data-message-id="first"] img[src="still"]',

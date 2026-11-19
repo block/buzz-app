@@ -7,6 +7,7 @@ import { createRelaySession } from "../relay/session";
 import type { ChannelMessage } from "../relay/contracts";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { agent, human, fixture } from "./typing-indicator-testing";
+import { stubAvatarAnimationFetch } from "../profiles/avatar-animation-testing";
 
 stubAvatarBrowserApis();
 
@@ -41,6 +42,7 @@ afterEach(() => {
 });
 
 it("plays the visible compact retry portrait after a folded public failure", async () => {
+  const transfer = stubAvatarAnimationFetch();
   document.documentElement.dataset.messageDensity = "compact";
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
@@ -127,7 +129,7 @@ it("plays the visible compact retry portrait after a folded public failure", asy
     />,
   );
   const animations = () =>
-    view.container.querySelectorAll(`img[src="protected:${source}"]`);
+    view.container.querySelectorAll('img[src^="blob:avatar-"]');
   try {
     expect(
       screen.getByRole("button", { name: /Show activity history/ }),
@@ -149,17 +151,20 @@ it("plays the visible compact retry portrait after a folded public failure", asy
     );
     expect(loads).toHaveLength(0);
     live.update([{ pubkey: agent, channelId: "channel" }]);
-    expect(loads).toHaveLength(1);
+    await waitFor(() => expect(loads).toHaveLength(1));
+    expect(transfer.fetch).toHaveBeenCalledWith(`protected:${source}`, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(loads[0]?.src).toBe("blob:avatar-1");
     expect(animations()).toHaveLength(0);
     act(() => loads[0]?.onload?.());
     expect(animations()).toHaveLength(1);
     expect(animations()[0]?.closest("[data-message-id]")).toBe(first);
-    expect(
-      first?.querySelector(`img[src="protected:${source}"]`),
-    ).toBeVisible();
-    expect(last?.querySelector(`img[src="protected:${source}"]`)).toBeNull();
+    expect(first?.querySelector('img[src="blob:avatar-1"]')).toBeVisible();
+    expect(last?.querySelector('img[src^="blob:avatar-"]')).toBeNull();
     live.update([]);
     await waitFor(() => expect(animations()).toHaveLength(0));
+    expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
     expect(first?.querySelector('img[src="still"]')).toBeVisible();
   } finally {
     view.unmount();

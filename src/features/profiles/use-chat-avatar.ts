@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
+import { loadAvatarAnimation } from "./avatar-animation";
 
 type Media = (url: string, size?: "small") => string | undefined;
 
@@ -50,29 +51,55 @@ export function useChatAvatar(
   const still = avatarMedia(value, media);
   const source = responding ? avatarSource(value) : undefined;
   const original = responseMedia(source, media);
-  const [loaded, setLoaded] = useState<string>();
+  const [loaded, setLoaded] = useState<{ original: string; url: string }>();
 
   useEffect(() => {
     setLoaded(undefined);
     if (!original || !still || original === still || !window.matchMedia) return;
     const motion = window.matchMedia("(prefers-reduced-motion: no-preference)");
     let image: HTMLImageElement | undefined;
-    function update() {
-      if (image) image.onload = null;
+    let request: AbortController | undefined;
+    let url: string | undefined;
+    function stop() {
+      request?.abort();
+      if (image) {
+        image.onload = null;
+        image.onerror = null;
+        image.src = "";
+      }
       image = undefined;
+      if (url) URL.revokeObjectURL(url);
+      url = undefined;
+    }
+    function update() {
+      stop();
       setLoaded(undefined);
       if (!motion.matches || !original) return;
-      image = new Image();
-      image.onload = () => setLoaded(original);
-      image.src = original;
+      const controller = new AbortController();
+      request = controller;
+      void loadAvatarAnimation(original, controller.signal)
+        .then((blob) => {
+          if (controller.signal.aborted) return;
+          const src = URL.createObjectURL(blob);
+          url = src;
+          image = new Image();
+          image.onload = () => {
+            if (!controller.signal.aborted) setLoaded({ original, url: src });
+          };
+          image.onerror = stop;
+          image.src = src;
+        })
+        .catch(() => {
+          /* Optional animation falls back to the cached portrait. */
+        });
     }
     update();
     motion.addEventListener("change", update);
     return () => {
       motion.removeEventListener("change", update);
-      if (image) image.onload = null;
+      stop();
     };
   }, [original, still]);
 
-  return original && loaded === original ? original : still;
+  return original && loaded?.original === original ? loaded.url : still;
 }

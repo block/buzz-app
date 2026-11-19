@@ -208,7 +208,9 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   avatar to play it and its open profile preview. Playback stops when the response
   or preview ends. Cards, sidebar entries and idle replies use a still portrait.
   Reduce Motion keeps uploaded avatars still. The still portrait stays visible
-  while an animation loads or if it cannot load.
+  while an animation loads or if it cannot load. Avatar playback accepts loops
+  up to 16 MiB, 512 pixels per side and 128 frames, with a 64 MiB estimated
+  decoded-frame budget. Larger loops keep the still portrait.
   Saved agents show their community avatar and open their **Agents** pane when
   clicked, with **View Agent** also available in the menu. **In Agents** marks
   these available panes. **Configured** means Builderlab reports Active with a valid

@@ -11,6 +11,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { createLocalAgentActivity } from "../../features/agents/local-activity";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import { stubAvatarAnimationFetch } from "../../features/profiles/avatar-animation-testing";
 stubAvatarBrowserApis();
 import {
   act,
@@ -172,6 +173,7 @@ function uploadedAvatarFixture(
   local: ReturnType<typeof createLocalAgentActivity>,
 ) {
   const f = fixture(local);
+  const transfer = stubAvatarAnimationFetch();
   const poster = `https://community.test/media/${"7".repeat(64)}.png`;
   const original = `https://community.test/media/${"8".repeat(64)}.webp`;
   const picture = `${poster}#buzz-anim=${encodeURIComponent(original)}`;
@@ -207,17 +209,18 @@ function uploadedAvatarFixture(
     picture,
     media,
     loads,
+    transfer,
   };
 }
 
 it.each(["done", "error", "stopped"] as const)(
   "plays the message-owned portrait only after its first working step, then restores still on %s",
-  (outcome) => {
+  async (outcome) => {
     const local = createLocalAgentActivity();
     const f = uploadedAvatarFixture(local);
     const view = render(<ActivityAccessory {...f.props} />);
     const animations = () =>
-      view.container.querySelectorAll(`img[src="protected:${f.original}"]`);
+      view.container.querySelectorAll('img[src^="blob:avatar-"]');
     try {
       let work!: ReturnType<typeof local.begin>;
       act(() => {
@@ -250,8 +253,11 @@ it.each(["done", "error", "stopped"] as const)(
         }),
       ).toBeVisible();
       expect(f.media).toHaveBeenCalledWith(f.original);
-      expect(f.loads).toHaveLength(1);
-      expect(f.loads[0]?.src).toBe(`protected:${f.original}`);
+      await vi.waitFor(() => expect(f.loads).toHaveLength(1));
+      expect(f.transfer.fetch).toHaveBeenCalledWith(`protected:${f.original}`, {
+        signal: expect.any(AbortSignal),
+      });
+      expect(f.loads[0]?.src).toBe("blob:avatar-1");
       expect(animations()).toHaveLength(0);
       expect(
         view.container.querySelector(`img[src="still:${f.poster}"]`),
@@ -271,6 +277,8 @@ it.each(["done", "error", "stopped"] as const)(
       );
       expect(animations()).toHaveLength(0);
       expect(f.loads[0]?.onload).toBeNull();
+      expect(f.loads[0]?.src).toBe("");
+      expect(f.transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
       expect(f.loads).toHaveLength(1);
       if (outcome !== "done")
         expect(
@@ -300,9 +308,8 @@ it("keeps a message-owned multiagent portrait cluster still", () => {
   try {
     expect(screen.getByRole("img", { name: "Blossom, Bubbles" })).toBeVisible();
     expect(f.loads).toHaveLength(0);
-    expect(
-      view.container.querySelector(`img[src="protected:${f.original}"]`),
-    ).toBeNull();
+    expect(f.transfer.fetch).not.toHaveBeenCalled();
+    expect(view.container.querySelector('img[src^="blob:avatar-"]')).toBeNull();
   } finally {
     view.unmount();
     f.dispose();

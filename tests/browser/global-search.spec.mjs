@@ -140,7 +140,7 @@ test("changing search scope returns focus to the input without clearing the quer
   page,
   app,
 }) => {
-  const query = "primary alpha message 0";
+  const query = "primary alpha message";
   await page.goto(app.origin);
   await button(page, "Search Buzz").click();
   const hint = page

@@ -1193,7 +1193,7 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
-Agents can use `agent_update` to propose their own harness settings. **Proposed settings** compares the saved and proposed values. Review or edit the draft and select **Save** to apply it, or close the review to discard it. A Codex agent using an execution adapter can only propose the
+Agents can use `agent_update` to propose harness settings for your local agents in the same community. **Proposed settings** compares the saved and proposed values. Review or edit the draft and select **Save** to apply it, or close the review to discard it. A Codex agent using an execution adapter can only propose the
 default Huddle voice.
 
 - An optional plugin can attach context to a native session. Follow-ups and

@@ -162,7 +162,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Only propose runtime settings for yourself. Nothing changes until the owner saves it.",
+    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Supported runtime settings can be proposed for your owner’s local agents in this community. Nothing changes until the owner saves it.",
     {
       agent: str,
       name: str,

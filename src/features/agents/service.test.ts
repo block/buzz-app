@@ -22657,7 +22657,7 @@ it("does not call a consumer when protection denies its provider operation", asy
   expect(called).not.toHaveBeenCalled();
 });
 
-it("keeps a self settings proposal out of agent state until its owner approves the reviewed config", async () => {
+it("keeps self and sibling settings proposals out of agent state until the owner approves them", async () => {
   const { service, native, plugin, type } = await setup();
   plugin.agents.register({
     ...type,
@@ -22674,12 +22674,30 @@ it("keeps a self settings proposal out of agent state until its owner approves t
     read: vi.fn(),
     memories: async () => ({ entries: [], partial: false }),
   });
-  await expect(
-    callTool(client, {}, "agent_update", {
-      agent: sibling,
-      scope: "community",
-    }),
-  ).rejects.toThrow("for yourself");
+  const siblingOpened = service.find(sibling);
+  if (!siblingOpened) throw new Error("Missing sibling");
+  const proposerConfig = service.find(bot)?.config;
+  const siblingConfig = { scope: "community" };
+  await callTool(client, {}, "agent_update", {
+    agent: sibling,
+    ...siblingConfig,
+  });
+  const [siblingReview] = service.updateRequests();
+  if (!siblingReview) throw new Error("Missing sibling review");
+  expect(siblingReview).toMatchObject({
+    requester: bot,
+    agent: sibling,
+    settings: siblingConfig,
+  });
+  expect(service.find(sibling)?.config).toEqual(siblingOpened.config);
+  await service.approveUpdate(
+    siblingReview.id,
+    { type: kind, name: "Sibling", config: siblingConfig },
+    siblingOpened,
+  );
+  expect(service.find(sibling)?.config).toEqual(siblingConfig);
+  expect(service.find(bot)?.config).toEqual(proposerConfig);
+  expect(service.updateRequests()).toEqual([]);
   const settings = { scope: "community", voice: "maple", apps: false };
   const propose = () =>
     callTool(client, {}, "agent_update", { agent: bot, ...settings });

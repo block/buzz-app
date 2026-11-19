@@ -2750,8 +2750,6 @@ export class AgentsService extends Service implements Agents {
           };
           if (Object.keys(change).length === 0 && !pending)
             throw new Error("Propose at least one change");
-          if (change.settings && identity.pubkey !== agent.pubkey)
-            throw new Error("You can only propose these settings for yourself");
           this.updateKind(identity, change);
           if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");

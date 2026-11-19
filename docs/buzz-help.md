@@ -1708,8 +1708,9 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
   out. API key and keyring sign-ins can't run them.
-- **Agent gateway access**: in builds that route local agents through a gateway,
-  a refused sign-in or access check stops the turn and asks you to sign in again.
+- **Agent gateway access**: for local agents whose harness uses Buzz to forward
+  requests through a gateway, a refused sign-in or access check stops the turn
+  and asks you to sign in again.
   Later turns stay blocked while access is rechecked, even if that check stalls
   or loses its connection. A successful access check lets the agent run again.
   If access is still being checked after a few seconds, the turn stops and asks
@@ -1775,6 +1776,19 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   settings files, including a gateway app's. Claude agents running on a
   remote execution target are not attributed either; Buzz leaves their
   Claude settings alone.
+- Where a build enables it, local Codex agents add Buzz context when the
+  active provider is configured on the agent gateway's HTTPS origin. Codex
+  uses its configured provider for model discovery and inference. A new
+  message in the same Buzz thread joins a running turn and is attributed to
+  the message that started it. A message from another thread, or after the
+  agent's gateway access changed, waits and runs as its own turn. A running
+  turn is never stopped for attribution. When Codex uses another provider,
+  runs on another machine, or uses an active voice session's retained setup,
+  its turns run without that context, and Activity shows "Ran without the
+  Buzz context" with the reason.
+  When the gateway access check is pending or denied, turns and **Compact
+  session** run with Codex's own settings and Activity shows "Ran without
+  gateway attribution" with the reason.
 - **Agents → Your teams → Previous versions**, in a team's editor, lists the
   saved versions of a team that syncs to a community, the same way. Reverting
   restores its instructions and keeps its current name; members are not

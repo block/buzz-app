@@ -272,9 +272,22 @@ async function setup({
 } = {}) {
   const ctx = new Context();
   let settled = false;
+  // As the plugin runtime does, startup's end notifies status listeners.
+  const statusListeners = new Set<() => void>();
+  const settle = () => {
+    settled = true;
+    for (const listener of statusListeners) listener();
+  };
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
-    subscribe: subscribePlugin,
+    subscribe: (listener: () => void) => {
+      statusListeners.add(listener);
+      const stop = subscribePlugin(listener);
+      return () => {
+        statusListeners.delete(listener);
+        stop();
+      };
+    },
     settled: () => settled,
   });
   const fake = fakeRelay();
@@ -394,7 +407,7 @@ async function setup({
   // The Attention plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
-  settled = !starting;
+  if (!starting) settle();
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -404,9 +417,7 @@ async function setup({
     service,
     typesafe,
     /** Ends startup, as when the last plugin finishes starting. */
-    settleStartup: () => {
-      settled = true;
-    },
+    settleStartup: settle,
     type,
     native,
     storage,

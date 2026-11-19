@@ -468,6 +468,33 @@ it("ignores an invalid list set at run time, keeping the last good one", () => {
   }
 });
 
+it("waits for a plugin's setup before an Automatic agent's harness pick", async () => {
+  recommend(CODEX);
+  let give!: (setup: unknown) => void;
+  const ready = awaitRecommendation(
+    () =>
+      new Promise((resolve) => {
+        give = resolve;
+      }),
+  );
+  try {
+    // Both are ready: without the wait, the build's list would pick Codex.
+    const codex = harness("codex", true);
+    const goose = harness("goose", true);
+    const picking = pickRecommendedSurely([codex, goose]);
+    await Promise.resolve();
+    expect(codex.recommends).not.toHaveBeenCalled();
+    give({ candidates: [GOOSE] });
+    await ready;
+    expect(await picking).toMatchObject({ type: goose, candidate: GOOSE });
+    expect(codex.recommends).not.toHaveBeenCalled();
+  } finally {
+    give(undefined);
+    await ready;
+    setRuntimeRecommendation(undefined);
+  }
+});
+
 it("waits for a plugin's setup, then finds and picks with it", async () => {
   recommend(CODEX);
   try {

@@ -241,7 +241,8 @@ With it set:
   model, provider and thinking level cleared.
 - Once per app launch, the copy of Buzz that runs the agent (the one holding
   it, so two copies never both change it) finds the first candidate that is
-  ready here, checked as for a new agent. When that candidate's harness isn't
+  ready here, checked as for a new agent, once any bundled plugin has given
+  that launch's setup. When that candidate's harness isn't
   the agent's, up or down the list, the agent moves to it by the usual
   harness change and stays on Automatic: its instructions and workspace carry
   over, and its old sessions are retired, so new conversations start fresh on

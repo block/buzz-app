@@ -2477,7 +2477,13 @@ export class AgentsService extends Service implements Agents {
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
-    void awaitRecommendation((signal) => this.recommendedAnswer(signal));
+    // Agents on Automatic follow this launch's setup once it is final.
+    void awaitRecommendation((signal) => this.recommendedAnswer(signal)).then(
+      () => {
+        for (const identity of this.identities)
+          if (!identity.deleted) this.followRecommendedHarness(identity);
+      },
+    );
     // So `ready` readers hear when start-up ends and the setup is final.
     const status = ctx.pluginStatus as Context["pluginStatus"] | undefined;
     if (status) {
@@ -6186,8 +6192,10 @@ export class AgentsService extends Service implements Agents {
       this.runners.transitioning(key) ||
       this.runners.answering(key) ||
       this.retyping.has(pubkey) ||
-      // Every harness plugin is registered before the pick.
-      !(this.ctx.pluginStatus.settled?.() ?? true)
+      // Every harness plugin is registered, and a bundled one has given
+      // this launch's setup, before the pick.
+      !(this.ctx.pluginStatus.settled?.() ?? true) ||
+      !recommendationFinal()
     )
       return;
     const source = this.types().find((type) => type.key === identity.type);

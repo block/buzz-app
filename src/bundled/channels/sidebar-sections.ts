@@ -71,12 +71,19 @@ function compareName(a: ChannelSummary, b: ChannelSummary) {
       : a.id.localeCompare(b.id);
 }
 
-/** The sidebar's "recent" order: newest activity first, where a channel without
- * known activity counts from its creation, so a chat just started leads before
- * its first message lands. Channels with neither follow, then by name. */
+/** The sidebar's "recent" order: newest activity first, counting at least from
+ * creation so a chat just started leads before its first message lands and
+ * cannot step backward when that message is acknowledged. Channels with
+ * neither follow, then by name. */
+function recentAt(channel: ChannelSummary) {
+  return channel.lastActivityAt !== undefined && channel.createdAt !== undefined
+    ? Math.max(channel.lastActivityAt, channel.createdAt)
+    : (channel.lastActivityAt ?? channel.createdAt);
+}
+
 export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
-  const at = a.lastActivityAt ?? a.createdAt;
-  const bt = b.lastActivityAt ?? b.createdAt;
+  const at = recentAt(a);
+  const bt = recentAt(b);
   if (at !== undefined && bt !== undefined && at !== bt) return bt - at;
   if (at !== undefined && bt === undefined) return -1;
   if (at === undefined && bt !== undefined) return 1;

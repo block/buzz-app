@@ -218,7 +218,7 @@ it("retries a guest addition as a guest", async () => {
   );
 });
 
-it("preserves a guest batch's role and migration source on Retry", async () => {
+it("passes the saved receipt, role, and source when retrying a migration batch", async () => {
   const { add } = show({
     ...invitation,
     event: {
@@ -236,8 +236,24 @@ it("preserves a guest batch's role and migration source on Retry", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() =>
     expect(add.mock.calls).toEqual([
-      ["channel", "one", { role: "guest", migration: "slack" }],
-      ["channel", "two", { role: "guest", migration: "slack" }],
+      [
+        "channel",
+        "one",
+        {
+          role: "guest",
+          migration: "slack",
+          batchReceipt: invitation.event.id,
+        },
+      ],
+      [
+        "channel",
+        "two",
+        {
+          role: "guest",
+          migration: "slack",
+          batchReceipt: invitation.event.id,
+        },
+      ],
     ]),
   );
 });

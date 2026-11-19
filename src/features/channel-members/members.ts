@@ -1,7 +1,7 @@
 import { agentUnavailable } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import type { LocalEvents, OutgoingEvent } from "../relay/outbox";
+import type { LocalEvents, Outbox, OutgoingEvent } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import { migrationSource } from "../relay/migration";
 
@@ -154,7 +154,43 @@ export type MemberAdditionIntent = {
   /** Outbox recovery is not an explicit request to re-invite a removed member. */
   retry?: true;
   migration?: string | undefined;
+  batchReceipt?: string | undefined;
 };
+
+/** Admit a replacement while the original batch still owns the retry. */
+async function replaceMigrationBatch(
+  outbox: Outbox,
+  id: string,
+  migration: string | undefined,
+  channelId: string,
+  recipients: readonly string[],
+  start: () => string,
+): Promise<string> {
+  const batch = outbox.snapshot().find((item) => item.event.id === id);
+  if (
+    !batch?.recovery ||
+    !isBatchAddition(batch) ||
+    batch.acknowledged ||
+    batch.event.kind !== 9000 ||
+    migration === undefined ||
+    migrationSource(batch.event.tags) !== migration ||
+    !batch.event.tags.some(
+      ([tag, value]) => tag === "h" && value === channelId,
+    ) ||
+    !recipients.every((key) =>
+      batch.event.tags.some(([tag, value]) => tag === "p" && value === key),
+    ) ||
+    !outbox.withRecovery
+  )
+    throw new Error(
+      "The original migration batch is unavailable. Refresh the Outbox before retrying.",
+    );
+  let operation = "";
+  await outbox.withRecovery(id, batch.recovery, async () => {
+    operation = start();
+  });
+  return operation;
+}
 
 /** Explicit single-person intent. Membership truth and pending writes stay
  * session-owned. Whatever the outcome, settles the batches it may complete. */
@@ -391,9 +427,28 @@ async function addOneMember(
       "This addition expired. Remove its Not sent item in Outbox, then try again.",
     );
 
-  const id = pending?.event.id ?? outbox.send(invitation(), recovery);
-  if (pending?.delivery === "failed" || pending?.delivery === "unknown")
-    outbox.retry(id);
+  const send = () => {
+    check();
+    const id = pending?.event.id ?? outbox.send(invitation(), recovery);
+    if (pending?.delivery === "failed" || pending?.delivery === "unknown")
+      outbox.retry(id);
+    return id;
+  };
+  const id =
+    intent.batchReceipt === undefined
+      ? send()
+      : await replaceMigrationBatch(
+          outbox,
+          intent.batchReceipt,
+          intent.migration,
+          channelId,
+          [pubkey],
+          () => {
+            if (channel()?.members?.includes(pubkey))
+              throw new Error("Membership changed during retry. Try again.");
+            return send();
+          },
+        );
   return confirmAddition(id);
 
   function invitation() {
@@ -485,7 +540,7 @@ export async function addChannelMembersAtOnce(
   const confirmed = new Set<string>();
   const outbox = session.outbox;
   if (people.length < 2 || !outbox) return confirmed;
-  const migration = intents.values().next().value?.migration;
+  const { migration, batchReceipt } = intents.values().next().value ?? {};
   const allowed = () =>
     soloParticipant
       ? canShareSoloChat(session, channelOf(session, channelId))
@@ -589,11 +644,25 @@ export async function addChannelMembersAtOnce(
           );
           if (!recipients.length) continue;
           dispatched = true;
+          const checkRetry = () => {
+            signal.throwIfAborted();
+            const members = channelOf(session, channelId)?.members;
+            if (
+              !allowed() ||
+              recipients.some(
+                (key) =>
+                  agentUnavailable(session, key) || members?.includes(key),
+              )
+            )
+              throw new Error("Membership changed during retry. Try again.");
+          };
           const id = await attempt(async () => {
             if (migration !== undefined) {
               const saved = outbox.snapshot().find((item) => {
                 if (
                   item.event.kind !== 9000 ||
+                  (batchReceipt !== undefined &&
+                    item.event.id !== batchReceipt) ||
                   !isBatchAddition(item) ||
                   item.acknowledged ||
                   (!item.signed && item.delivery !== "sending") ||
@@ -626,18 +695,7 @@ export async function addChannelMembersAtOnce(
                       "The original migration batch cannot be retried on this host.",
                     );
                   await outbox.withRecovery(id, saved.recovery, () => {
-                    signal.throwIfAborted();
-                    if (
-                      !allowed() ||
-                      recipients.some(
-                        (key) =>
-                          agentUnavailable(session, key) ||
-                          channelOf(session, channelId)?.members?.includes(key),
-                      )
-                    )
-                      throw new Error(
-                        "Membership changed during retry. Try again.",
-                      );
+                    checkRetry();
                     outbox.retry(id);
                     return waitForAddition(outbox, id, signal);
                   });
@@ -645,19 +703,33 @@ export async function addChannelMembersAtOnce(
                 return id;
               }
             }
-            return outbox.send(
-              {
-                kind: 9000,
-                content: "",
-                tags: [
-                  ["h", channelId],
-                  ...recipients.map((key) => ["p", key]),
-                  ...(role ? [["role", role]] : []),
-                  ...(migration ? [["migration", migration]] : []),
-                ],
-              },
-              { key: `${batchPrefix}${crypto.randomUUID()}`, value: "1" },
-            );
+            const send = () =>
+              outbox.send(
+                {
+                  kind: 9000,
+                  content: "",
+                  tags: [
+                    ["h", channelId],
+                    ...recipients.map((key) => ["p", key]),
+                    ...(role ? [["role", role]] : []),
+                    ...(migration ? [["migration", migration]] : []),
+                  ],
+                },
+                { key: `${batchPrefix}${crypto.randomUUID()}`, value: "1" },
+              );
+            return batchReceipt === undefined
+              ? send()
+              : replaceMigrationBatch(
+                  outbox,
+                  batchReceipt,
+                  migration,
+                  channelId,
+                  recipients,
+                  () => {
+                    checkRetry();
+                    return send();
+                  },
+                );
           });
           if (!id) continue;
           sent = true;

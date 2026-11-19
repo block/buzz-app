@@ -1405,6 +1405,9 @@ function batchSetup(applyAll = true) {
     published,
     publish,
     records: () => records,
+    dismissInAnotherWindow(id: string) {
+      records = records.filter((item) => item.event.id !== id);
+    },
     members: () => members,
     /** Runs as the relay receives each write, e.g. another owner's admission. */
     onPublish(run: typeof onPublish) {
@@ -1564,6 +1567,49 @@ it.each([
       t.publish.mock.calls.map(([attempt]) => structuredClone(attempt)),
     ).toEqual([saved?.signed, saved?.signed]);
     expect(t.records().filter((item) => !item.acknowledged)).toHaveLength(1);
+  },
+);
+
+it.each([
+  { missing: 1, dismissed: true },
+  { missing: 2, dismissed: true },
+  { missing: 1, dismissed: false },
+  { missing: 2, dismissed: false },
+])(
+  "Retry checks batch ownership with $missing missing and dismissed=$dismissed",
+  async ({ missing, dismissed }) => {
+    const t = batchSetup();
+    await t.ready();
+    const members = people(3);
+    const add = (batchReceipt?: string) =>
+      Promise.allSettled(
+        members.map((key) =>
+          t.session.memberAdditions.add(t.id, key, {
+            migration: "slack",
+            batchReceipt,
+          }),
+        ),
+      );
+    t.onPublish(() => {
+      throw new PublishRejected("Not sent");
+    });
+    const initial = await add();
+    expect(initial.every((result) => result.status === "rejected")).toBe(true);
+    const [original] = t.records();
+    if (!original) throw new Error("Expected the saved batch");
+    for (const key of members.slice(missing)) t.admit(key);
+    if (dismissed) t.dismissInAnotherWindow(original.event.id);
+    t.onPublish(() => {});
+    await add(original.event.id);
+    if (dismissed) expect(t.publish).toHaveBeenCalledOnce();
+    else {
+      expect(t.publish).toHaveBeenCalledTimes(2);
+      expect(t.published[0]?.tags).toContainEqual(["migration", "slack"]);
+      expect(t.published[0]?.tags.filter(([kind]) => kind === "p")).toEqual(
+        members.slice(0, missing).map((key) => ["p", key]),
+      );
+    }
+    expect(t.session.outbox?.snapshot()).toEqual([]);
   },
 );
 

@@ -135,6 +135,9 @@ export function OutboxStatus({
                               ...(guest ? { role: "guest" as const } : {}),
                               ...(batch ? {} : { retry: true as const }),
                               ...(migration === undefined ? {} : { migration }),
+                              ...(batch && migration !== undefined
+                                ? { batchReceipt: item.event.id }
+                                : {}),
                             }),
                           ),
                         );

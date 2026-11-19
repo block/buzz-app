@@ -46,7 +46,11 @@ export function createMemberAdditions(
     pubkey: string,
     intent: MemberAdditionIntent,
   ) {
-    const key = JSON.stringify([channelId, intent.migration]);
+    const key = JSON.stringify([
+      channelId,
+      intent.migration,
+      intent.batchReceipt,
+    ]);
     let current = batches.get(key);
     if (!current) {
       const people = new Map<string, MemberAdditionIntent>();
@@ -95,11 +99,13 @@ export function createMemberAdditions(
         retry?: true;
         /** Source label for an imported membership write. */
         migration?: string | undefined;
+        /** Outbox receipt that owns a migration batch retry. */
+        batchReceipt?: string | undefined;
       } = {},
     ): Promise<void> {
       if (signal.aborted)
         return Promise.reject(new Error("The community connection closed."));
-      const { migration } = options;
+      const { migration, batchReceipt } = options;
       if (migration !== undefined && !isMigrationSource(migration))
         return Promise.reject(new Error("Use a nonempty migration source."));
       const key = JSON.stringify([channelId, pubkey]);
@@ -111,7 +117,8 @@ export function createMemberAdditions(
           return Promise.reject(new Error(differentRole));
         if (
           intents.get(key)?.retry !== options.retry ||
-          intents.get(key)?.migration !== migration
+          intents.get(key)?.migration !== migration ||
+          intents.get(key)?.batchReceipt !== batchReceipt
         )
           return Promise.reject(
             new Error(
@@ -130,6 +137,7 @@ export function createMemberAdditions(
       if (options.retry) intent.retry = true;
       else delete intent.retry;
       intent.migration = migration;
+      intent.batchReceipt = batchReceipt;
       let confirmed = previous?.confirmed ?? false;
       // Retry only finishes an existing receipt, so it never joins a batch.
       const shown =

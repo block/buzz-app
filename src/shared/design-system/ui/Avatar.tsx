@@ -102,7 +102,10 @@ function AvatarArtwork({
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         loading={loading ?? (previouslyLoaded ? "eager" : "lazy")}
-        decoding="async"
+        // WebKit paints a loaded async-decoded (and even `auto`) image as empty
+        // until a later frame, so remounted avatars blink in after navigation.
+        // Avatars are small enough to decode during the paint that shows them.
+        decoding="sync"
         referrerPolicy="no-referrer"
         onLoad={() => {
           rememberAvatar(src);

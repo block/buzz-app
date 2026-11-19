@@ -35,6 +35,11 @@ it("reveals completed cached artwork on mount without waiting for a load event",
     "loading",
     "lazy",
   );
+  // Async decoding paints ready artwork as empty for a frame in WebKit.
+  expect(view.container.querySelector("img")).toHaveAttribute(
+    "decoding",
+    "sync",
+  );
 });
 
 it("uses the fallback for an already completed broken image", () => {

@@ -392,9 +392,10 @@ state in namespaced `localStorage` keys.
 ### Remembering one-time experiences
 
 Add `"seen"` to the plugin's `inject` list to use `ctx.seen`. Choose a key in
-the form `<plugin-id>/<name>`, up to 96 characters. Use your plugin's ID as the
-prefix to avoid collisions. Keys belong to the signed-in identity and are
-shared across communities on this device.
+the form `<plugin-id>/<name>`, up to 96 Unicode code points. Use your plugin's
+ID as the prefix to avoid collisions. For an invalid key, `has()` returns
+`undefined` and `mark()` has no effect. Keys belong to the signed-in identity
+and are shared across communities on this device.
 
 Use `ctx.seen.has(key) === false` to decide whether to show a hint. A result
 of `true` means the experience already happened. A result of `undefined`

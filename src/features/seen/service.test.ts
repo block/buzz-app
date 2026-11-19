@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SeenService } from "./service";
 
 const key = "example.plugin/welcome";
-const storageKey = "buzz.seen.v1:alice";
+const storageKey = `buzz.seen.v1:alice:${key}`;
 const roots: Context[] = [];
 const disk = new Map<string, string>();
 const windowEvents = new EventTarget();
@@ -23,6 +23,7 @@ function windowFor(viewer?: string) {
   });
   return {
     seen: root.seen,
+    dispose: () => root.fiber.dispose(),
     identify(next?: string) {
       viewer = next;
       for (const listener of listeners) listener();
@@ -31,7 +32,9 @@ function windowFor(viewer?: string) {
 }
 
 function storageChanged(key: string | null) {
-  windowEvents.dispatchEvent(Object.assign(new Event("storage"), { key }));
+  windowEvents.dispatchEvent(
+    Object.assign(new Event("storage"), { key, storageArea: localStorage }),
+  );
 }
 
 beforeEach(() => {
@@ -58,10 +61,7 @@ it("isolates each identity and restores its marks", () => {
   seen.mark(key);
   seen.mark(key);
   expect(seen.has(key)).toBe(true);
-  expect(write).toHaveBeenCalledExactlyOnceWith(
-    storageKey,
-    JSON.stringify([key]),
-  );
+  expect(write).toHaveBeenCalledExactlyOnceWith(storageKey, "1");
 
   identify("bob");
   expect(seen.has(key)).toBe(false);
@@ -78,7 +78,7 @@ it("updates subscribers for the active identity when another window saves", () =
   const stop = seen.subscribe(changes);
   const peer = windowFor("alice").seen;
   peer.mark(key);
-  storageChanged("buzz.seen.v1:bob");
+  storageChanged(`buzz.seen.v1:bob:${key}`);
   expect(changes).not.toHaveBeenCalled();
   storageChanged(storageKey);
   expect(changes).toHaveReturnedWith(true);
@@ -90,28 +90,21 @@ it("updates subscribers for the active identity when another window saves", () =
   expect(seen.has(key)).toBe(false);
 });
 
-it("merges concurrent marks under the same window lock", async () => {
-  let tail = Promise.resolve();
-  const request = vi.fn((_key: string, run: () => void) => {
-    tail = tail.then(run);
-    return tail;
-  });
-  vi.stubGlobal("navigator", { locks: { request } });
-  const first = windowFor("alice").seen;
-  const second = windowFor("alice").seen;
-  first.mark(key);
-  second.mark("example.plugin/another");
-  expect(first.has(key)).toBe(true);
-  expect(second.has(key)).toBe(false);
-  await tail;
-  expect(request.mock.calls.map(([key]) => key)).toEqual([
-    storageKey,
-    storageKey,
-  ]);
-  expect(JSON.parse(disk.get(storageKey) ?? "null")).toEqual([
-    key,
-    "example.plugin/another",
-  ]);
+it("persists independent marks immediately even before window teardown", async () => {
+  const first = windowFor("alice");
+  const second = windowFor("alice");
+  const other = "example.plugin/another";
+  expect(first.seen.has(other)).toBe(false);
+  expect(second.seen.has(key)).toBe(false);
+  first.seen.mark(key);
+  second.seen.mark(other);
+  expect(disk.get(storageKey)).toBe("1");
+  expect(disk.get(`buzz.seen.v1:alice:${other}`)).toBe("1");
+  await first.dispose();
+  await second.dispose();
+  const reopened = windowFor("alice").seen;
+  expect(reopened.has(key)).toBe(true);
+  expect(reopened.has(other)).toBe(true);
 });
 
 it("keeps absence unknown when storage fails and retries unsaved marks", () => {
@@ -134,7 +127,12 @@ it("accepts open names up to 96 characters", () => {
   const { seen } = windowFor("alice");
   const longest = `example.plugin/${"💡".repeat(81)}`;
   const tooLong = `${longest}!`;
-  for (const invalid of ["unnamespaced", "example.plugin/", tooLong]) {
+  for (const invalid of [
+    "unnamespaced",
+    "example.plugin/",
+    "example.plugin/\ud800",
+    tooLong,
+  ]) {
     seen.mark(invalid);
     expect(seen.has(invalid)).toBeUndefined();
   }

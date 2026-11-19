@@ -884,6 +884,41 @@ const pluginWake = (root?: string, where = channel) => ({
   at: 200_000,
 });
 
+it("keeps a Pi run going until every placed destination has its final reply", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver, runtime } = setup({ wait: () => finished.promise });
+  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+  const mention = reply("2", "threaded");
+  await deliver({ type: "mention", event: mention }, { config }).run;
+  await deliver({ ...pluginWake(), topLevel: true }, { config }).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  for (const [request, entry] of [
+    [mention.id, 1],
+    [`plugin/${WAKE_ID}`, 2],
+  ] as const)
+    runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request,
+      entry,
+    });
+  const send = (args: Record<string, unknown>) =>
+    host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name: "send",
+      arguments: { audience: "everyone", final: true, ...args },
+    });
+  const thread = await send({ text: "Thread reply", reply: root.id });
+  expect(thread?.result).not.toMatchObject({ isError: true });
+  expect(thread?.result).not.toMatchObject({ final: true });
+  const top = await send({ text: "Channel reply", channel });
+  expect(top?.result).toMatchObject({ final: true });
+  finished.resolve(undefined);
+});
+
 it.each([true, false])(
   "rechecks guarded Pi input after native queue waits (current=%s)",
   async (valid) => {

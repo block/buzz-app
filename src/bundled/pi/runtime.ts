@@ -161,6 +161,8 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   settled?: Promise<void>;
   /** Records a successful final post before the native tail drains. */
   published?: () => void;
+  /** Its destination got a final reply in a run spanning destinations. */
+  answered?: boolean;
   /** A wake prompt rebuilt when the native queue is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
 };
@@ -1145,10 +1147,24 @@ export class PiRuntime {
         this.added(),
       );
       const final = isFinalMessage(call.name, call.arguments);
-      if (final) for (const receipt of receipts) receipt.published?.();
+      // A run spanning destinations ends once each has its final reply.
+      const answering =
+        final && new Set(receipts.map(({ scope }) => scope)).size > 1
+          ? receipts.filter(
+              ({ scope }) =>
+                scope === destination(call.context, call.arguments),
+            )
+          : final
+            ? receipts
+            : [];
+      for (const receipt of answering) {
+        receipt.answered = true;
+        receipt.published?.();
+      }
+      const ended = final && receipts.every(({ answered }) => answered);
       return {
         content: content(reply),
-        ...(final ? { final: true } : {}),
+        ...(ended ? { final: true } : {}),
       };
     } catch (error) {
       return {
@@ -1764,4 +1780,12 @@ function unanswered({
   if (reason === "no_model") return "Pi has no model for this agent";
   if (reason === "aborted") return "The turn was stopped";
   return `Pi did not answer (${reason ?? "unknown"})`;
+}
+
+/** The activity scope a send posts to: its thread's root, or a channel. */
+function destination(context: Context, args: Record<string, unknown>) {
+  if (typeof args.reply === "string") return args.reply;
+  if (typeof args.parent === "string") return context.root ?? args.parent;
+  if (typeof args.channel === "string") return args.channel;
+  return context.topLevel ? context.channel : (context.root ?? context.channel);
 }

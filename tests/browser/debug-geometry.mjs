@@ -38,6 +38,32 @@ export async function recordGeometry(page) {
         document.querySelector("[data-history-start]")?.dataset.historyStart,
       ].join(" ");
     };
+    const caller = () =>
+      (new Error().stack ?? "")
+        .split("\n")
+        .slice(2, 5)
+        .map((line) => line.trim().replace(/\(.*\/([^/]+:\d+):\d+\)/, "$1"))
+        .join(" < ");
+    const descriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "scrollTop",
+    );
+    Object.defineProperty(Element.prototype, "scrollTop", {
+      ...descriptor,
+      set(value) {
+        if (this.matches?.("[data-message-scroller]"))
+          push(["setTop", this.scrollTop, value, caller()]);
+        descriptor.set.call(this, value);
+      },
+    });
+    for (const name of ["scrollBy", "scrollTo"]) {
+      const original = Element.prototype[name];
+      Element.prototype[name] = function (...args) {
+        if (this.matches?.("[data-message-scroller]"))
+          push([name, this.scrollTop, JSON.stringify(args), caller()]);
+        return original.apply(this, args);
+      };
+    }
     let last;
     let hooked;
     const frame = () => {
@@ -52,7 +78,7 @@ export async function recordGeometry(page) {
             passive: true,
           });
           el.addEventListener("virtua-scroll-correction", (e) =>
-            push(["correct", e.detail.before, e.detail.after, read(el)]),
+            push(["correct", JSON.stringify(e.detail), read(el)]),
           );
         }
         const value = read(el);

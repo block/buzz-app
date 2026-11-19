@@ -1245,6 +1245,45 @@ it("lists unread top-level mentions apart from thread activity, never for a DM o
   ]);
 });
 
+it("treats an author's edit that newly mentions the viewer as new mention attention until the message is read", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([metadata(h.relay, "room", "room", 11, [["t", "stream"]])]);
+  const ask = message(h.alice, "room", "Can someone look?", 12);
+  h.emit([ask]);
+  const attention = () => h.session.unread.attention("room", ask.id);
+  await h.session.unread.markMessageRead("room", ask.id);
+  expect(attention()).toMatchObject({ unread: false });
+  expect(attention().category).toBeUndefined();
+  const edit = (key: typeof h.alice, created_at: number) =>
+    signed(key, {
+      kind: 40003,
+      created_at,
+      content: "Can someone look? @Viewer",
+      tags: [
+        ["h", "room"],
+        ["e", ask.id],
+        ["p", h.viewer.pubkey],
+      ],
+    });
+  // Only the message's author can address the viewer through it.
+  h.emit([edit(keypair(), 13)]);
+  expect(attention().category).toBeUndefined();
+  h.emit([edit(h.alice, 14)]);
+  expect(attention()).toMatchObject({
+    category: "mention",
+    mentioned: true,
+    unread: true,
+  });
+  expect(h.session.unread.activity("room").mentions).toEqual([
+    expect.objectContaining({ messageId: ask.id, createdAt: 14 }),
+  ]);
+  // Reading the message reads through the mention, not just the message.
+  await h.session.unread.markMessageRead("room", ask.id);
+  expect(attention()).toMatchObject({ category: "mention", unread: false });
+  expect(h.session.unread.activity("room").mentions).toEqual([]);
+});
+
 it("lists a top-level mention that cites or quotes a message, and keeps the snapshot through an unrelated publish", () => {
   const h = setup();
   h.grant("room");

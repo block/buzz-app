@@ -1669,7 +1669,8 @@ export const test = base.extend({
         (filter.kinds?.includes(9) || filter.kinds?.includes(7))
       ) {
         expect([...filter.kinds].sort((a, b) => a - b)).toEqual(
-          filter.kinds.includes(7) ? [7] : [9, 40002],
+          // Inbox mentions include edits that newly mention the viewer.
+          filter.kinds.includes(7) ? [7] : [9, 40002, 40003],
         );
         expect(filter["#p"]).toEqual([viewer]);
         expect(filter.limit).toBe(50);

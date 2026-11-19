@@ -1656,7 +1656,7 @@ it("keeps closing punctuation literal in code", async () => {
 });
 
 it("keeps closing punctuation after the link a typed name becomes while editing", async () => {
-  // Edits add references, never recipients.
+  // Linking yourself while editing notifies no one.
   const h = mountTypeahead(undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
@@ -10303,7 +10303,7 @@ it.each([
   expect(h.input().querySelector(".inline-chip")).toBeNull();
 });
 
-it("inserts readable literal mention links without new notification recipients during edits", () => {
+it("inserts readable literal mention links during edits and notifies only added members", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
@@ -10363,6 +10363,8 @@ it("inserts readable literal mention links without new notification recipients d
   expect(saved).toBe(h.input().value);
   expect(saved).not.toContain("\n");
   readable(saved);
+  // Only the channel member is notified; the others stay display-only links.
+  expect(h.messages.edit.mock.calls[0]?.[3]).toEqual([second.pubkey]);
   expect(h.messages.send).not.toHaveBeenCalled();
   // Reopening the saved edit keeps the same readable identity links.
   h.setRows([editableMessage({ content: saved, edited: true })]);
@@ -10445,7 +10447,7 @@ for (const channelType of ["stream", "forum"] as const)
     expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
   });
 
-it("keeps pasted identity links display-only during edits", () => {
+it("keeps pasted identity links as links during edits and notifies an added member", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
@@ -10460,6 +10462,7 @@ it("keeps pasted identity links display-only during edits", () => {
     "c".repeat(64),
     `Original message ${link} `,
     "c".repeat(64),
+    [second.pubkey],
   );
 });
 

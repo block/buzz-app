@@ -103,7 +103,52 @@ it("reads addressed history independently of the retained unread window, never a
     },
   ]);
   expect(h.query.mock.calls[0]?.[0]).toEqual([
-    { kinds: [40002, 9], "#p": [h.viewer.pubkey], limit: 50 },
+    { kinds: [40002, 40003, 9], "#p": [h.viewer.pubkey], limit: 50 },
+  ]);
+});
+it("lists a message whose author's edit newly mentions the viewer", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const original = message(h.alice, "room", "Can someone look?", 20);
+  const edit = signed(h.alice, {
+    kind: 40003,
+    content: "Can someone look? @Viewer",
+    created_at: 21,
+    tags: [
+      ["h", "room"],
+      ["e", original.id],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+  const base = h.query.getMockImplementation();
+  h.query.mockImplementation((filters) =>
+    filters[0]?.["#e"]?.includes(original.id) &&
+    filters[0].kinds?.includes(40003) &&
+    filters[0].until === undefined
+      ? Promise.resolve([edit])
+      : (base?.(filters) ?? Promise.resolve([])),
+  );
+  const work = h.session.inboxFeed.ensure();
+  (await take(h, 40003)).resolve([edit]);
+  // The message does not tag the viewer, so it is read by id.
+  const byId = await take(h, 9);
+  expect(h.calls).toEqual([]);
+  expect(h.query.mock.calls.at(-1)?.[0]).toEqual([
+    { ids: [original.id], kinds: [40002, 9], limit: 1 },
+  ]);
+  byId.resolve([original]);
+  await work;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
+  expect(h.session.unread.inbox().items).toEqual([
+    expect.objectContaining({
+      messageId: original.id,
+      mentioned: true,
+      createdAt: 21,
+      preview: "Can someone look? @Viewer",
+    }),
   ]);
 });
 it("reconciles live addressed updates and drops membership-revoked history before listeners", async () => {
@@ -627,7 +672,7 @@ it("settles a signed old addressed edit after 500 newer ordinary rows without op
     { kinds: [5, 9005], "#e": [edit.id], limit: 500 },
   ]);
   expect(filters.find((filter) => filter["#p"])).toEqual({
-    kinds: [40002, 9],
+    kinds: [40002, 40003, 9],
     "#p": [h.viewer.pubkey],
     limit: 50,
   });
@@ -1378,7 +1423,7 @@ it.each(["events", "bytes"] as const)(
       channels: h.session.channels,
       reader,
       async addressedRead(_filter, _signal, prepare) {
-        prepare([target]);
+        prepare([target], [target]);
         return [target];
       },
       retainedEvent: (id) => (id === target.id ? target : undefined),

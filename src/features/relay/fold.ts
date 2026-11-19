@@ -516,10 +516,13 @@ export function foldMessages(
             ),
           ),
         ]),
+        // An author's edit tags only the recipients it newly mentions.
         mentions: Object.freeze([
           ...new Set(
-            event.tags.flatMap(([name, value]) =>
-              name === "p" && value && HEX64.test(value) ? [value] : [],
+            [event, ...edits].flatMap(({ tags }) =>
+              tags.flatMap(([name, value]) =>
+                name === "p" && value && HEX64.test(value) ? [value] : [],
+              ),
             ),
           ),
         ]),

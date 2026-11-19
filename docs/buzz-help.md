@@ -560,8 +560,13 @@ and are asked to sign in again in Buzz.
   your agent `Claude Code` outside it, `@Claude Code` mentions Claude. Pick
   `Claude Code` from the list to mention it: in a channel, sending then asks
   whether to add it; in a Solo chat, sending adds it without asking. Typing a
-  name alone does not guarantee a notification. Selecting someone outside the
-  channel does not grant access; inviting them requires an explicit decision
+  name alone does not guarantee a notification. Picking a channel member from
+  the **@** list while editing your message can wake a newly mentioned agent.
+  In Buzz desktop, a newly mentioned person sees an unread mention in Activity
+  and can receive an alert if Buzz has already loaded the original message.
+  Existing mentions do not notify again. Other Buzz apps may not show the edit
+  as unread. Selecting someone outside the channel adds a profile link without
+  notifying them or granting access. Inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear

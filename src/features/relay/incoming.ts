@@ -3,6 +3,8 @@ import type { RelayEvent } from "./events";
 export type IncomingMessage = Readonly<{
   channelId: string;
   messageId: string;
+  /** A new mention added to an existing message. */
+  editMention?: true;
   createdAt: number;
   authorId: string;
   workflowOwnerId?: string | undefined;

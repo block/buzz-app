@@ -222,6 +222,12 @@ function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
   );
 }
 
+/** Kinds whose `p` tags notify: messages, and edits that add mentions. */
+const addressing = (kind: number) => kind === 9 || kind === 40003;
+const incomingKind = (event: RelayEvent, viewer: string | undefined) =>
+  [9, 40002, 40008].includes(event.kind) ||
+  (event.kind === 40003 && !!viewer && hasTag(event, "p", viewer));
+
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 export function createRelaySession(
   transport: ReadTransport | null,
@@ -933,7 +939,7 @@ export function createRelaySession(
         for (const event of visible) {
           const previous = recent.peek(event.id);
           // Replay can precede a fresh live copy. Keep alert receipt separate from content receipt.
-          const incoming = [9, 40002, 40008].includes(event.kind)
+          const incoming = incomingKind(event, transport?.viewer)
             ? incomingPhase === "live" || previous?.incoming === "live"
               ? "live"
               : previous?.incoming === "replay" ||
@@ -1685,7 +1691,7 @@ export function createRelaySession(
    * already published is never refused here. Admission owns the archive half
    * of the rule: bringing an agent back takes it out of its archive. */
   function validateNewRecipients(event: Pick<EventData, "kind" | "tags">) {
-    if (event.kind !== 9) return;
+    if (!addressing(event.kind)) return;
     const choices = agentChoices.snapshot();
     if (
       event.tags.some(
@@ -1697,7 +1703,7 @@ export function createRelaySession(
       );
   }
   function validateMentionEvent(event: Pick<EventData, "kind" | "tags">) {
-    if (event.kind !== 9) return;
+    if (!addressing(event.kind)) return;
     const recipients = event.tags.filter(([name]) => name === "p");
     if (!recipients.length) return;
     if (
@@ -1719,7 +1725,8 @@ export function createRelaySession(
     event: RelayEvent,
     signal: AbortSignal,
   ) {
-    if (event.kind !== 9 || !event.tags.some(([name]) => name === "p")) return;
+    if (!addressing(event.kind) || !event.tags.some(([name]) => name === "p"))
+      return;
     // A stream may have missed membership changes. Neither AUTH nor a cached
     // roster proves freshness; each attempt prepares outside the dispatch phase.
     const generation = liveGeneration;
@@ -1757,7 +1764,8 @@ export function createRelaySession(
   }
   async function preflightMentions(event: EventData, signal?: AbortSignal) {
     validateMentionEvent(event);
-    if (event.kind !== 9 || !event.tags.some(([name]) => name === "p")) return;
+    if (!addressing(event.kind) || !event.tags.some(([name]) => name === "p"))
+      return;
     if (!transport) throw new Error("Relay is unavailable");
     const channelId = event.tags.find(([name]) => name === "h")?.[1];
     if (!channelId) throw new Error("A channel is required");
@@ -3886,9 +3894,7 @@ export function createRelaySession(
                   ([name]) => name === "h",
                 );
                 return (
-                  (event.kind === 9 ||
-                    event.kind === 40002 ||
-                    event.kind === 40008) &&
+                  incomingKind(event, transport.viewer) &&
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
@@ -3995,10 +4001,30 @@ export function createRelaySession(
             event.kind === 40002 ? objectBody(event.content) : undefined;
           const content =
             typeof body?.content === "string" ? body.content : event.content;
+          let original = event;
+          if (event.kind === 40003) {
+            const target = event.tags.find(([name]) => name === "e")?.[1];
+            if (!target) return [];
+            const edited =
+              recent.peek(target)?.event ??
+              retainedEvent(target) ??
+              unread.event(target);
+            if (
+              !edited ||
+              ![9, 40002].includes(edited.kind) ||
+              messageAuthor(edited, transport.archiveAuthority) !==
+                event.pubkey ||
+              hasTag(edited, "p", transport.viewer) ||
+              agentAudience(edited)
+            )
+              return [];
+            original = edited;
+          }
           return [
             Object.freeze({
               channelId: provenance.channelId as string,
-              messageId: event.id,
+              messageId: original.id,
+              ...(event.kind === 40003 ? { editMention: true as const } : {}),
               createdAt: event.created_at,
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),

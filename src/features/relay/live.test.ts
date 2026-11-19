@@ -4924,6 +4924,65 @@ it("carries verified workflow attribution from live admission to notification ca
   }
 });
 
+it("delivers a live edit that newly mentions the viewer as a candidate for its message", async () => {
+  vi.useFakeTimers({ now: 1_700_000_100_000 });
+  const h = setup([]),
+    relay = keypair(),
+    author = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation(callbacks.state);
+      return h.owner;
+    },
+  });
+  try {
+    h.callbacks.receive([roster(relay, "room", [h.key.pubkey, author.pubkey])]);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const route = h.first
+      .requests()
+      .find((request) => scopeOf(request).includes("room"));
+    assert.exists(route);
+    await h.first.receive(["EOSE", route[1]]);
+    const incoming = vi.fn();
+    owner.session.subscribeIncoming(incoming);
+    const original = message(
+      author,
+      "room",
+      "Can someone look?",
+      1_700_000_090,
+    );
+    const edit = (tags: string[][]) =>
+      signed(author, {
+        kind: 40003,
+        content: "Can someone look? @Viewer",
+        created_at: 1_700_000_100,
+        tags: [["h", "room"], ["e", original.id], ...tags],
+      });
+    await h.first.receive(["EVENT", route[1], original]);
+    incoming.mockClear();
+    // An edit that mentions no one new is not a new message.
+    await h.first.receive(["EVENT", route[1], edit([])]);
+    expect(incoming).not.toHaveBeenCalled();
+    await h.first.receive(["EVENT", route[1], edit([["p", h.key.pubkey]])]);
+    expect(incoming).toHaveBeenCalledWith([
+      expect.objectContaining({
+        channelId: "room",
+        messageId: original.id,
+        createdAt: 1_700_000_100,
+        authorId: author.pubkey,
+        previewContent: "Can someone look? @Viewer",
+      }),
+    ]);
+  } finally {
+    owner.dispose();
+    h.owner.dispose();
+  }
+});
+
 it("keeps 10,000 joined channels live through membership changes, reconnect and restart", async () => {
   vi.useFakeTimers();
   const ids = Array.from(

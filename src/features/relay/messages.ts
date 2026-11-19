@@ -103,7 +103,7 @@ export function createMessages(
    * mention and would bypass their mute. "Agent" is the profile's `isAgent`
    * (a NIP-OA `auth` tag or a declared agent flag), the app's shared agent
    * signal. Only new messages and replies call this; edits and reactions
-   * are not new turns. */
+   * are not new turns (an edit tags only the mentions it adds). */
   const withDmAgents = (channelId: string, mentions: readonly string[]) => {
     const profileMap = profiles?.snapshot();
     return [
@@ -170,6 +170,7 @@ export function createMessages(
     content: string,
     attachmentSourceId: string,
     authorization?: AgentOwnerAuthorization,
+    mentions: readonly string[] = [],
   ) => {
     const original = find(messageId);
     if (!original || ![9, 40002].includes(original.kind))
@@ -204,18 +205,22 @@ export function createMessages(
           !attachmentSource.tags.some(([name]) => name === "imeta")))
     )
       throw new Error("Reload the message before editing its attachments.");
-    const sendEdit = (targetId: string) =>
+    // Newly mentioned recipients wake once, from the primary edit; agents
+    // route an edit to the message it changes.
+    const added = mentionTags(channelId, mentions);
+    const sendEdit = (targetId: string, recipients: string[][] = []) =>
       writer(40003, channelId, ownerEdit ? authorization : undefined).send({
         kind: 40003,
         content: text(content),
         tags: [
           ["h", channelId],
           ["e", targetId],
+          ...recipients,
           ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
           ...emojiTags(content),
         ],
       });
-    const id = sendEdit(messageId);
+    const id = sendEdit(messageId, added);
     // A sent-to-channel copy and its thread reply are one message to the author:
     // mirror the edit onto the counterpart. Best effort; the primary edit stands.
     for (const other of linkedCopies(original, channelId)) {
@@ -648,9 +653,15 @@ export function createMessages(
         ],
       });
     },
-    /** Supply the current folded attachmentSourceId, or the row ID for original media. */
-    edit: (messageId: string, content: string, attachmentSourceId: string) =>
-      edit(messageId, content, attachmentSourceId),
+    /** Supply the current folded attachmentSourceId, or the row ID for original
+     * media. `mentions` are channel members the edit newly mentions; they are
+     * `p`-tagged so they are notified once. */
+    edit: (
+      messageId: string,
+      content: string,
+      attachmentSourceId: string,
+      mentions: readonly string[] = [],
+    ) => edit(messageId, content, attachmentSourceId, undefined, mentions),
     /** Verified owner edit. Empty text removes the message, as in the composer.
      * As a guest it signs only once `profiles.owner` names the viewer; an
      * earlier call fails delivery as read-only, and `retry(id)` resends it. */

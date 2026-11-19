@@ -385,7 +385,7 @@ test("a mention whose edits or deletions are unchecked shows the Inbox placehold
           : Promise.resolve([]),
     },
     async addressedRead(_filter, _signal, prepare) {
-      prepare([event]);
+      prepare([event], [event]);
       return [event];
     },
     retainedEvent: (id) => (id === event.id ? event : undefined),

@@ -165,7 +165,9 @@ export function bindMessageNotifications(
           category,
           labels[category],
           {
-            sourceKey: message.messageId,
+            sourceKey: message.editMention
+              ? `edit-mention:${message.messageId}`
+              : message.messageId,
             target: {
               version: 1,
               kind: "conversation",

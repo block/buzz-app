@@ -2,7 +2,11 @@ import { assert, describe, expect, it } from "vitest";
 import { shareMessageRows } from "../relay/row-identity";
 import { foldMessages } from "../relay/fold";
 import { profileTarget } from "../profiles/target";
-import { messageEditText, validateMessageEdit } from "./message-edit";
+import {
+  addedEditMentions,
+  messageEditText,
+  validateMessageEdit,
+} from "./message-edit";
 import type { EventData } from "../relay/events";
 
 const author = "a".repeat(64),
@@ -143,4 +147,42 @@ it("row sharing retains latest editable source even when attachment rendering is
     "Updated ![photo](<https://example.com/photo.png>)",
   );
   expect(shareMessageRows(next, next)[0]).toBe(next[0]);
+});
+
+describe("mentions added by an edit", () => {
+  const agent = "d".repeat(64),
+    outsider = "e".repeat(64);
+  const link = (key: string, name = "Name") =>
+    `[@${name}](${profileTarget(key)})`;
+  const members = [author, person, agent];
+  it.each([
+    ["a newly linked member", "Hi", `Hi ${link(agent)}`, [], [agent]],
+    ["a typo fix", `Hi ${link(agent)}`, `Hey ${link(agent)}`, [], []],
+    ["an existing recipient", "Hi @Sam", `Hi ${link(person)}`, [person], []],
+    ["the viewer", "Hi", `Hi ${link(author)}`, [], []],
+    ["someone outside the channel", "Hi", `Hi ${link(outsider)}`, [], []],
+    ["a link in code", "Hi", `Hi \`${link(agent)}\``, [], []],
+    [
+      "a repeated link",
+      "Hi",
+      `${link(agent)} ${link(agent, "Again")}`,
+      [],
+      [agent],
+    ],
+  ] as const)("%s", (_case, initial, body, mentions, expected) => {
+    expect(
+      addedEditMentions({ mentions }, initial, body, author, members),
+    ).toEqual(expected);
+  });
+  it("notifies no one while channel membership is unknown", () => {
+    expect(
+      addedEditMentions(
+        { mentions: [] },
+        "Hi",
+        `Hi ${link(agent)}`,
+        author,
+        undefined,
+      ),
+    ).toEqual([]);
+  });
 });

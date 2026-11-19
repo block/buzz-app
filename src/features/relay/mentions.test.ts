@@ -269,6 +269,48 @@ it("raw outbox writes cannot bypass the pre-sign membership check", async () => 
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
 });
+it("an edit's added recipients get the same signing and publication membership checks", async () => {
+  const h = setup();
+  await h.members([viewer.pubkey]);
+  assert.exists(h.session.outbox);
+  const edit = {
+    kind: 40003,
+    content: "Ask @Honey",
+    tags: [
+      ["h", "c"],
+      ["e", "a".repeat(64)],
+      ["p", honey.pubkey],
+    ],
+  };
+  const rejectedId = h.session.outbox.send(edit);
+  const delivery = (id: string) =>
+    h.session.outbox?.snapshot().find((item) => item.event.id === id);
+  await vi.waitFor(() =>
+    expect(delivery(rejectedId)).toMatchObject({ delivery: "failed" }),
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  // Wait until the signer is paused, so the removal cannot fail pre-sign.
+  await h.members(undefined, 1700000001);
+  h.hold();
+  const id = h.session.outbox.send(edit);
+  try {
+    await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+    await h.members([viewer.pubkey, namesake.pubkey], 1700000002);
+  } finally {
+    h.release();
+  }
+  await vi.waitFor(() =>
+    expect(delivery(id)).toMatchObject({
+      delivery: "failed",
+      signed: expect.objectContaining({ id }),
+    }),
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  await h.members(undefined, 1700000003);
+  h.session.messages.retry(id);
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual(["p", honey.pubkey]);
+});
 it("disposal during signing fences publication to a retired session", async () => {
   const h = setup();
   await h.members();

@@ -46,7 +46,11 @@ export function createInboxFeed({
   addressedRead: (
     filter: ReadFilter,
     signal: AbortSignal,
-    prepare: (events: readonly RelayEvent[]) => void,
+    /** `raw` adds the verified events access could not place yet. */
+    prepare: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
   ) => Promise<readonly RelayEvent[]>;
   notify?: (listener: () => void) => void;
 }) {
@@ -150,26 +154,55 @@ export function createInboxFeed({
     // the old body before its stored overlays are checked again.
     work = (async () => {
       try {
+        const pending = (ids: readonly string[]) => {
+          if (closed || generation !== epoch || owned.signal.aborted) return;
+          if (ids.length)
+            publish({
+              incomplete: Object.freeze([
+                ...new Set([...snapshot.incomplete, ...ids]),
+              ]),
+            });
+        };
         // Bounded addressed chat history; nonchat and approvals belong elsewhere.
+        // An edit that newly mentions the viewer addresses its message.
         const mentionFilter: ReadFilter = {
-          kinds: mentionKinds,
+          kinds: [...mentionKinds, 40003],
           "#p": [viewer],
           limit: 50,
         };
+        let editedIds: string[] = [];
         const mentions = await addressedRead(
           mentionFilter,
           owned.signal,
-          (events) => {
-            if (closed || generation !== epoch || owned.signal.aborted) return;
-            const ids = project(events).map((event) => event.id);
-            if (ids.length)
-              publish({
-                incomplete: Object.freeze([
-                  ...new Set([...snapshot.incomplete, ...ids]),
-                ]),
-              });
+          (events, raw) => {
+            pending(project(events).map((event) => event.id));
+            // Access places an edit only beside its message, which does not
+            // tag the viewer; read that message by id.
+            editedIds = [
+              ...new Set(
+                raw.flatMap((event) => {
+                  const id =
+                    event.kind === 40003 && admitted(event)
+                      ? event.tags.find(([name]) => name === "e")?.[1]
+                      : undefined;
+                  return id && /^[0-9a-f]{64}$/.test(id) ? [id] : [];
+                }),
+              ),
+            ];
           },
         );
+        if (closed || generation !== epoch) return;
+        const messages = (events: readonly RelayEvent[]) =>
+          events
+            .filter((event) => mentionKinds.includes(event.kind))
+            .map((event) => event.id);
+        const edited = editedIds.length
+          ? await addressedRead(
+              { ids: editedIds, kinds: mentionKinds, limit: editedIds.length },
+              owned.signal,
+              (events) => pending(messages(events)),
+            )
+          : [];
         if (closed || generation !== epoch) return;
         // Retry older failed targets even when newer addressed rows pushed them
         // beyond the latest page; never clear an unchecked exact ID.
@@ -177,6 +210,7 @@ export function createInboxFeed({
           ...new Set([
             ...snapshot.incomplete,
             ...project(mentions).map((event) => event.id),
+            ...messages(edited),
           ]),
         ];
         const updates = await overlays(targets, [40003, 5, 9005], owned.signal);

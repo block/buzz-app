@@ -361,6 +361,28 @@ it("editing one of two copies also updates the reply and the sibling copy", asyn
   messages.edit(a.id, "Changed", a.id);
   expect(targets(before, 40003)).toEqual([a.id, b.id, reply.id].sort());
 });
+it("notifies a mention added by an edit once, on the edited message only", async () => {
+  const { messages, outbox, send, copies } = linkedSetup();
+  await outbox.ready();
+  send();
+  const [copy] = copies;
+  assert.exists(copy);
+  const before = outbox.snapshot().length;
+  messages.edit(copy.id, "Changed", copy.id, [other.pubkey]);
+  const recipients = Object.fromEntries(
+    outbox
+      .snapshot()
+      .slice(before)
+      .map(({ event }) => [
+        event.tags.find(([name]) => name === "e")?.[1],
+        event.tags.filter(([name]) => name === "p"),
+      ]),
+  );
+  expect(recipients).toEqual({
+    [copy.id]: [["p", other.pubkey]],
+    [reply.id]: [],
+  });
+});
 it("deleting the reply or either copy removes every linked copy", async () => {
   const { messages, outbox, send, targets, copies } = linkedSetup();
   await outbox.ready();

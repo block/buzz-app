@@ -623,6 +623,48 @@ it("classifies p-tagged DM messages as direct, not mention", async () => {
   );
 });
 
+it("alerts once for a new edit mention even after alerting for the original", async () => {
+  const h = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  const original = message(h.peer, "room", "Hello", now - 1);
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "internal-dm-id", channel_type: "dm" }),
+      tags: [
+        ["d", "room"],
+        ["name", "internal-dm-id"],
+        ["t", "dm"],
+      ],
+      created_at: now,
+    }),
+  ]);
+  h.emit([original], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+
+  const edit = signed(h.peer, {
+    kind: 40003,
+    content: "Hello @Viewer",
+    created_at: now,
+    tags: [
+      ["h", "room"],
+      ["e", original.id],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+  h.emit([edit], "live");
+  h.emit([edit], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+  expect(h.show.mock.calls.map(([item]) => item.body)).toEqual([
+    "Hello",
+    "Hello @Viewer",
+  ]);
+  h.click();
+  expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
+    messageId: original.id,
+  });
+});
+
 function deferred() {
   let release = () => {};
   const promise = new Promise<void>((resolve) => {

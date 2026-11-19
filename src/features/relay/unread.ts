@@ -619,6 +619,15 @@ export function createUnread({
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
+  // Messages whose author's edit newly mentions the viewer, by message: the
+  // first such edit's time. That mention is new attention, so the message's
+  // own read marks and unread decision use this time, not the message's.
+  const mentionedAt = new Map<string, number>();
+  /** When a message's own read marks must reach to read it. */
+  function readTime(event: RelayEvent) {
+    indexEvidence();
+    return mentionedAt.get(event.id) ?? event.created_at;
+  }
   // Ids named by an `e` tag of any retained or fetched event: a deletion, edit
   // or reply that arrived before its target. Built with the index.
   const referenced = new Set<string>();
@@ -737,7 +746,7 @@ export function createUnread({
       rootId: parentId ? rootId : undefined,
       parentId,
       threadRootId: reference?.rootId,
-      mentioned: mentionsViewer(event),
+      mentioned: mentionsViewer(event) || mentionedAt.has(event.id),
       broadcast: event.tags.some(
         ([name, value]) => name === "broadcast" && value === "1",
       ),
@@ -772,6 +781,7 @@ export function createUnread({
     byChannel.clear();
     byId.clear();
     tombstones.clear();
+    mentionedAt.clear();
     referenced.clear();
     own.clear();
     joined.clear();
@@ -789,6 +799,28 @@ export function createUnread({
         )
           tombstones.add(target.id);
       }
+    }
+    for (const edit of events.values()) {
+      if (
+        edit.kind !== 40003 ||
+        tombstones.has(edit.id) ||
+        !mentionsViewer(edit)
+      )
+        continue;
+      const target = events.get(
+        edit.tags.find(([name]) => name === "e")?.[1] ?? "",
+      );
+      if (
+        target &&
+        contentKind(target) &&
+        channelOf(target) === channelOf(edit) &&
+        !mentionsViewer(target) &&
+        messageAuthor(target, signingAuthority) === edit.pubkey
+      )
+        mentionedAt.set(
+          target.id,
+          Math.min(mentionedAt.get(target.id) ?? Infinity, edit.created_at),
+        );
     }
     for (const event of events.values())
       if (contentKind(event) && !tombstones.has(event.id)) indexContent(event);
@@ -934,7 +966,7 @@ export function createUnread({
       seen,
       reads.floor(),
     );
-    return event.created_at > caughtUp || !!forced;
+    return readTime(event) > caughtUp || !!forced;
   }
   /** Through when the channel's row has seen this entry; seeing reads nothing.
    * Ordinary messages go by the channel's `seen:` cut. Attention goes only by
@@ -1063,7 +1095,7 @@ export function createUnread({
       if (channel === undefined) return undefined;
       if (kind === "msg")
         return (
-          by(channel, entry?.event.created_at ?? value) ??
+          by(channel, entry ? readTime(entry.event) : value) ??
           (entry && caughtUp(entry, frontier)
             ? `activity:${entry.channelId}`
             : undefined)
@@ -1149,7 +1181,7 @@ export function createUnread({
           ? (state.frontiers[`activity:${channelId}`] ?? -1)
           : -1,
         reads.floor(),
-      ) >= event.created_at;
+      ) >= readTime(event);
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -1342,7 +1374,7 @@ export function createUnread({
               messageId: event.id,
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, workflowAuthority),
-              createdAt: event.created_at,
+              createdAt: readTime(event),
               preview: previewOf(event),
             }),
           );
@@ -1618,7 +1650,11 @@ export function createUnread({
               workflowOwnerId: workflowOwner(shown, workflowAuthority),
               preview: content.get(shown.id) ?? shown.content,
               previewMessageId: shown.id,
-              createdAt: shown.created_at,
+              // A mention an edit added is as new as that edit.
+              createdAt: Math.max(
+                shown.created_at,
+                ...entries.map((entry) => readTime(entry.event)),
+              ),
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(
                 entries.map(({ event, mentioned }) =>
@@ -2950,7 +2986,7 @@ export function createUnread({
             await reads.readMessages(
               shown.map((entry) => ({
                 key: `msg:${entry.event.id}`,
-                timestamp: entry.event.created_at,
+                timestamp: readTime(entry.event),
                 channelId,
                 ...(entry.rootId ? { rootId: entry.rootId } : {}),
               })),
@@ -2996,14 +3032,14 @@ export function createUnread({
                 targetKey(target),
                 channelId,
                 threadReference(event) ? root(event) : undefined,
-              ) ?? -1) >= event.created_at
+              ) ?? -1) >= readTime(event)
             ) {
               observed.add(id);
               continue;
             }
             await reads.read(
               targetKey(target),
-              event.created_at,
+              readTime(event),
               (journal) =>
                 valid(journal) && requireMessage(target, id) === event,
               false,
@@ -3027,7 +3063,7 @@ export function createUnread({
       return serialize(target.channelId, () =>
         reads.read(
           targetKey(target),
-          event.created_at,
+          target.kind === "message" ? readTime(event) : event.created_at,
           () =>
             !closed &&
             generation === epoch &&
@@ -3057,7 +3093,7 @@ export function createUnread({
           serialize(target.channelId, () =>
             reads.read(
               targetKey(target),
-              event.created_at,
+              target.kind === "message" ? readTime(event) : event.created_at,
               () =>
                 !closed &&
                 generation === epoch &&
@@ -3109,7 +3145,7 @@ export function createUnread({
           )
           .map((entry) => ({
             key: `msg:${entry.event.id}`,
-            timestamp: entry.event.created_at,
+            timestamp: readTime(entry.event),
             channelId,
           }));
         const covered =
@@ -3187,7 +3223,7 @@ export function createUnread({
             .filter((row) => row.pubkey !== viewer)
             .map((row) => ({
               key: `msg:${row.id}`,
-              timestamp: row.created_at,
+              timestamp: readTime(row),
               channelId,
               ...(threadReference(row) && root(row)
                 ? { rootId: root(row) }
@@ -3268,7 +3304,7 @@ export function createUnread({
             .filter(({ event }) => event.pubkey !== viewer)
             .map(({ id, channelId, event }) => ({
               key: `msg:${id}`,
-              timestamp: event.created_at,
+              timestamp: readTime(event),
               channelId,
               ...(threadReference(event) && root(event)
                 ? { rootId: root(event) }
@@ -3433,7 +3469,7 @@ export function createUnread({
           const result = await reads.readMessages(
             rows.map((row) => ({
               key: `msg:${row.id}`,
-              timestamp: row.created_at,
+              timestamp: readTime(row),
               channelId,
               rootId,
             })),

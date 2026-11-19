@@ -1,4 +1,8 @@
-import { messageEditText, validateMessageEdit } from "./message-edit";
+import {
+  addedEditMentions,
+  messageEditText,
+  validateMessageEdit,
+} from "./message-edit";
 import {
   useEffect,
   useEffectEvent,
@@ -158,10 +162,22 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
         return;
       }
       try {
+        const content = validateMessageEdit(target, source(target), body);
+        const mentions = addedEditMentions(
+          target,
+          initial.current ?? "",
+          content,
+          session.viewer,
+          session.channels
+            .list()
+            .channels.find((channel) => channel.id === target.channelId)
+            ?.members,
+        );
         const id = session.messages.edit(
           target.id,
-          validateMessageEdit(target, source(target), body),
+          content,
           current.attachmentSourceId ?? current.id,
+          ...(mentions.length ? [mentions] : []),
         );
         submitted.current = id;
         setOperation(id);

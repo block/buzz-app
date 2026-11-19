@@ -8,6 +8,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { literalRanges } from "./markdown-preparation";
 import type { MentionRecipient } from "./mention-draft";
 import { profileMentionParts } from "./profile-mentions";
+import { profileKey } from "../profiles/target";
 
 /** Display-only identity link: literal one-line label, exact profile target, no
  * recipient. CommonMark unescapes every ASCII punctuation mark, so escaping all
@@ -49,6 +50,29 @@ export function messageEditText(
     })
     .join("");
 }
+
+/** Identities an edit newly mentions: profile links in `body` that the text as
+ * opened for editing did not link and the message did not already notify,
+ * limited to current `members` and never the `viewer`. Anyone else stays a
+ * display-only link, and a typo fix that keeps the same links notifies nobody. */
+export function addedEditMentions(
+  row: Pick<ChannelMessage, "mentions">,
+  initial: string,
+  body: string,
+  viewer: string | undefined,
+  members: readonly string[] | undefined,
+): string[] {
+  const before = new Set([...profileLinkKeys(initial), ...row.mentions]);
+  return [...new Set(profileLinkKeys(body))].filter(
+    (key) => key !== viewer && !before.has(key) && !!members?.includes(key),
+  );
+}
+
+const profileLinkKeys = (content: string) =>
+  scanMarkdown(content).links.flatMap((node) => {
+    const key = node.type === "link" ? profileKey(node.url ?? "") : undefined;
+    return key ? [key] : [];
+  });
 
 /** Attachments are not editable in this surface; original metadata stays signed. */
 export function validateMessageEdit(

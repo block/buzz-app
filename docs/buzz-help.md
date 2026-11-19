@@ -1248,7 +1248,7 @@ available rather than silently discarding it.
   through the choices and press Enter or Space.
 - For agents running on this computer, **Identity** normally holds Harness,
   Model, Thinking, and Instructions. **Settings** holds Workspace,
-  **Sessions** (called **Conversations** for Pi), configuration history, and
+  **Session scope** (called **Conversations** for Pi), configuration history, and
   removal or deletion controls. **Memory** and **Activity** have their own tabs
   when available; plugins can add tabs such as **Attention** or **Bestie**.
   Hosted agents and agents on another device expose only the controls this

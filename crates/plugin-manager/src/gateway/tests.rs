@@ -557,11 +557,3 @@ fn selects_as_the_canonical_vectors() {
         }
     }
 }
-
-/// Open-source builds ship no packaged descriptor.
-#[test]
-fn ships_an_empty_org_gateway_list() {
-    let listed = include_str!("../../../../src/bundled/org-gateways.json");
-    assert_eq!(serde_json::from_str::<Value>(listed).unwrap(), json!([]));
-    assert_eq!(select("", listed, "wss://relay.example"), Ok(None));
-}

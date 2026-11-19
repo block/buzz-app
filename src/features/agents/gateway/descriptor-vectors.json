@@ -4539,7 +4539,7 @@
       }
     },
     {
-      "name": "the community URL is compared as a relay origin",
+      "name": "the community URL is trimmed and compared as a relay origin",
       "listed": [
         {
           "version": 2,
@@ -4588,7 +4588,7 @@
           "upstreams": {}
         }
       ],
-      "community_url": " https://Relay.Example./ ",
+      "community_url": " \uFEFF https://Relay.Example./ \uFEFF ",
       "expect": {
         "version": 2,
         "gateway": "https://gateway.example",

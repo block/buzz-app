@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   GatewayDescriptorError,
@@ -120,15 +118,4 @@ describe("selectGatewayDescriptor", () => {
       );
     },
   );
-
-  it("ships an empty list, so open-source builds route only by an explicit descriptor", () => {
-    const listed = readFileSync(
-      resolve(import.meta.dirname, "../../../bundled/org-gateways.json"),
-      "utf8",
-    );
-    expect(JSON.parse(listed)).toEqual([]);
-    expect(
-      selectGatewayDescriptor("", listed, "wss://relay.example"),
-    ).toBeNull();
-  });
 });

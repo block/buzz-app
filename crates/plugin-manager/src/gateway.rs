@@ -354,7 +354,9 @@ fn uuid(value: &str) -> bool {
 /// A community's relay as the frontend's `relayOrigin` canonicalizes it: a
 /// `wss://` or `https://` host, as its `https://` origin without a final dot.
 fn relay_origin(input: &str) -> Option<String> {
-    let value = input.trim();
+    // Match JavaScript's trim() and \s, including BOM but excluding NEL.
+    let whitespace = |c: char| c == '\u{feff}' || (c.is_whitespace() && c != '\u{0085}');
+    let value = input.trim_matches(whitespace);
     let lower = value.to_ascii_lowercase();
     let scheme = ["wss://", "https://"]
         .into_iter()
@@ -365,7 +367,7 @@ fn relay_origin(input: &str) -> Option<String> {
         || authority.is_empty()
         || authority
             .chars()
-            .any(|c| "/?#\\@".contains(c) || c.is_whitespace())
+            .any(|c| "/?#\\@".contains(c) || whitespace(c))
     {
         return None;
     }

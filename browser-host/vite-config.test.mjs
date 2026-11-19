@@ -19,7 +19,8 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
       "-e",
       `
           import assert from 'node:assert/strict';
-          import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+          import fs, { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+          import { syncBuiltinESMExports } from 'node:module';
           import { tmpdir } from 'node:os';
           import { join } from 'node:path';
           import { loadConfigFromFile, resolveConfig } from 'vite';
@@ -27,6 +28,13 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
           // Load the real config with isolated .env files, never personal settings.
           const directory = mkdtempSync(join(tmpdir(), 'buzz-vite-config-'));
           const cwd = process.cwd();
+          // Feed the build a fixture independently of the distributor's file.
+          const gatewayListPath = join(cwd, 'src/bundled/org-gateways.json');
+          const readFile = fs.readFileSync;
+          let packagedGateways = '[]';
+          fs.readFileSync = (path, ...options) =>
+            path === gatewayListPath ? packagedGateways : readFile(path, ...options);
+          syncBuiltinESMExports();
           try {
             process.chdir(directory);
             const loaded = await loadConfigFromFile(
@@ -201,20 +209,27 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               { ...defaultLauncher, launcher_client: 'buzz' },
             );
             rmSync('.env.production');
-            // Without one, the packaged org-gateways.json entry for the
-            // process's default community; this checkout ships none, so a
-            // default community alone leaves routing off and an explicit
-            // descriptor still wins.
-            process.env.BUZZ_DEFAULT_COMMUNITY_URL = 'wss://relay.example';
-            for (const [raw, expected] of [
-              [undefined, ''],
-              [gateway([{ id, origin: 'wss://relay.example' }]), gateway([{ id, origin: 'https://relay.example' }])],
+            // The build only selects a packaged entry for a process relay URL.
+            const gatewayCommunity = { id, origin: 'https://relay.example' };
+            const packagedGateway = descriptor([gatewayCommunity]);
+            const explicitGateway = descriptor([gatewayCommunity], 'https://explicit.example');
+            writeFileSync('.env.local', 'BUZZ_DEFAULT_COMMUNITY_URL=wss://relay.example');
+            for (const [listed, relay, explicit, expected] of [
+              [[], 'wss://relay.example', undefined, null],
+              [[packagedGateway], undefined, undefined, null],
+              [[packagedGateway], ' ' + String.fromCharCode(0xfeff) + 'wss://relay.example/ ', undefined, packagedGateway],
+              [[packagedGateway], 'wss://relay.example', explicitGateway, explicitGateway],
             ]) {
-              if (raw === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
-              else process.env.BUZZ_AGENT_GATEWAY = raw;
+              packagedGateways = JSON.stringify(listed);
+              if (relay === undefined) delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+              else process.env.BUZZ_DEFAULT_COMMUNITY_URL = relay;
+              if (explicit === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
+              else process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(explicit);
               const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
-              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'], JSON.stringify(expected));
+              const compiled = JSON.parse(result.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY']);
+              assert.deepEqual(compiled ? JSON.parse(compiled) : null, expected);
             }
+            packagedGateways = '[]';
             delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
             // Anything else must be a valid version 2 descriptor, and the
             // build's error never echoes it.
@@ -390,6 +405,8 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
             );
           } finally {
+            fs.readFileSync = readFile;
+            syncBuiltinESMExports();
             process.chdir(cwd);
             rmSync(directory, { recursive: true, force: true });
           }

@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { communityMedia } from "../../features/profiles/avatar-upload";
+import { stubAvatarAnimationFetch } from "../../features/profiles/avatar-animation-testing";
 import { AgentPortrait } from "./AgentCard";
 
 afterEach(() => {
@@ -21,9 +22,9 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
   const registration = new Promise<Response>((resolve) => {
     register = resolve;
   });
-  const fetcher = vi.fn(() => registration);
-  vi.stubGlobal("fetch", fetcher);
-  const loads: Array<{ onload?: (() => void) | null }> = [];
+  const transfer = stubAvatarAnimationFetch();
+  transfer.fetch.mockImplementationOnce(() => registration);
+  const loads: Array<{ src: string; onload?: (() => void) | null }> = [];
   let motion = true;
   const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", () => ({
@@ -36,6 +37,7 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
   vi.stubGlobal(
     "Image",
     class {
+      src = "";
       onload = null;
       constructor() {
         loads.push(this);
@@ -53,7 +55,7 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
   );
   expect(loads).toHaveLength(0);
   expect(container.querySelector("img")).toBeNull();
-  expect(fetcher).toHaveBeenCalledWith(
+  expect(transfer.fetch).toHaveBeenCalledWith(
     "/api/relay/register",
     expect.objectContaining({ method: "POST" }),
   );
@@ -61,14 +63,18 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
   await waitFor(() =>
     expect(container.querySelector("img")).toHaveAttribute("src", thumbnail),
   );
-  expect(loads).toHaveLength(1);
+  await waitFor(() => expect(loads).toHaveLength(1));
+  expect(transfer.fetch).toHaveBeenCalledWith(media(agent.picture), {
+    signal: expect.any(AbortSignal),
+  });
+  expect(loads[0]?.src).toBe("blob:avatar-1");
   const poster = container.querySelector("img");
   if (!poster) throw new Error("Expected still portrait");
   fireEvent.load(poster);
   act(() => loads[0]?.onload?.());
   expect(
     container.querySelector("img[data-avatar-foreground]"),
-  ).toHaveAttribute("src", media(agent.picture));
+  ).toHaveAttribute("src", "blob:avatar-1");
   expect(container.querySelector("img")).toBe(poster);
   expect(poster).toHaveAttribute("data-loaded", "true");
   act(() => {
@@ -78,8 +84,12 @@ it("plays the expanded portrait only after protected media is ready, then keeps 
   expect(container.querySelector("img")).toHaveAttribute("src", thumbnail);
   expect(container.querySelectorAll("img")).toHaveLength(1);
   expect(container.querySelector("img")).toBe(poster);
+  expect(loads[0]?.src).toBe("");
+  expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
   rerender(<AgentPortrait agent={agent} community="https://community.test" />);
   expect(container.querySelector("img")).toHaveAttribute("src", thumbnail);
+  expect(loads).toHaveLength(1);
+  expect(transfer.fetch).toHaveBeenCalledTimes(2);
   unmount();
   expect(listeners.size).toBe(0);
 });

@@ -51,7 +51,9 @@ function AvatarArtwork({
         alt=""
         referrerPolicy="no-referrer"
       />
-      {status === "loading" && !foreground && (failing || late) ? initial : null}
+      {status === "loading" && !foreground && (failing || late)
+        ? initial
+        : null}
     </>
   );
 }

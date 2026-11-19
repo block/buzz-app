@@ -16,7 +16,7 @@ export function SoloDisclosure(
       size={props.leading ? "text" : "inline"}
       data-solo-disclosure=""
       aria-label={props.label}
-      title={props.label}
+      title={props.leading?.wrapControls ? undefined : props.label}
       aria-expanded={props.expanded}
       aria-controls={props.controls}
       onClick={(event) => {

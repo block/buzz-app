@@ -231,4 +231,5 @@ the workspace or channel.
 `headerLeading.wrapControls(controls)` can attach a hover anchor around the
 shared slot. Render the supplied controls once inside a non-interactive
 inline-flex wrapper that keeps their width. The host controls keep their own
-focus and activation. Render any popup outside the controls.
+focus and activation. Providing the wrapper suppresses the host's disclosure
+tooltip. Render any popup outside the controls.

@@ -565,6 +565,7 @@ appTest.describe("Solo header accessories", () => {
   appTest(
     "shares the leading slot between a header action and disclosure",
     async ({ page, app }) => {
+      await page.clock.install();
       await page.goto(
         `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
       );
@@ -606,6 +607,12 @@ appTest.describe("Solo header accessories", () => {
         await expect(anchor.getByRole("button")).toHaveCount(2);
         await disclosure.hover();
         await expect(anchor).toHaveAttribute("data-hovered", "true");
+        await page.clock.runFor(1_000);
+        await expect(
+          page.getByRole("tooltip").filter({
+            hasText: await disclosure.getAttribute("aria-label"),
+          }),
+        ).toHaveCount(0);
         await heading.hover();
         await expect(anchor).not.toHaveAttribute("data-hovered");
         await disclosure.click();

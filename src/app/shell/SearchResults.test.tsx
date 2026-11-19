@@ -736,10 +736,12 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
     larry = keypair();
   const discovery = [
     profile(larry, { name: "Larry" }),
-    ...["muted-reply", "aside", "mixed", "two-threads"].flatMap((id) => [
-      metadata(relay, id, id),
-      roster(relay, id, [viewer.pubkey, larry.pubkey]),
-    ]),
+    ...["muted-reply", "aside", "mixed", "two-threads", "picked"].flatMap(
+      (id) => [
+        metadata(relay, id, id),
+        roster(relay, id, [viewer.pubkey, larry.pubkey]),
+      ],
+    ),
   ];
   let live: LiveCallbacks | undefined;
   let journal: ReadJournal | undefined;
@@ -789,6 +791,10 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
   // A mention in one thread, then a newer reply in another you're in.
   const mentionRoot = message(viewer, "two-threads", "my root", 10);
   const ownRoot = message(viewer, "two-threads", "my other root", 10);
+  // No mention: an older reply in your thread, then a newer broadcast in a
+  // thread you're not in, whose root you've read.
+  const pickedRoot = message(viewer, "picked", "my picked root", 10);
+  const otherRoot = message(larry, "picked", "their picked root", 11);
   const open = vi.fn();
   const rowsOf = (group: string) =>
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
@@ -805,11 +811,24 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
         openConversation={open}
       />,
     );
+    // Recents shows four conversations at most.
     await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
     assert(live);
     const callbacks = live;
+    act(() => callbacks.receive([pickedRoot, otherRoot]));
+    await act(async () => {
+      await owner.session.unread.markThrough(
+        { kind: "channel", channelId: "picked" },
+        otherRoot.id,
+      );
+    });
     act(() =>
       callbacks.receive([
+        message(larry, "picked", "in your thread", 12, [reply(pickedRoot)]),
+        message(larry, "picked", "for everyone", 18, [
+          reply(otherRoot),
+          ["broadcast", "1"],
+        ]),
         mutedRoot,
         asideRoot,
         mixedRoot,
@@ -832,16 +851,19 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
         message(larry, "two-threads", "newer, in yours", 17, [reply(ownRoot)]),
       ]),
     );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(4));
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
     const rows = rowsOf("Unread");
     const text = rows.map((row) => row.textContent ?? "");
     expect(text.slice(0, 2).sort()).toEqual([
       expect.stringMatching(/^muted-reply.*Larry: are you around.*Mentioned$/),
       expect.stringMatching(/^two-threads.*Larry: need you here.*Mentioned$/),
     ]);
-    expect(text[2]).toMatch(/^mixed.*Larry: answering you.*Thread$/);
-    expect(text[3]).toMatch(/^aside/);
-    expect(text[3]).not.toMatch(/(Mentioned|Thread)$/);
+    expect(text.slice(2, 4).sort()).toEqual([
+      expect.stringMatching(/^mixed.*Larry: answering you.*Thread$/),
+      expect.stringMatching(/^picked.*Larry: in your thread.*Thread$/),
+    ]);
+    expect(text[4]).toMatch(/^aside/);
+    expect(text[4]).not.toMatch(/(Mentioned|Thread)$/);
     // A thread-only row opens the thread its mention is in, not the newest.
     const row = (name: string) =>
       rows.find((option) => option.textContent?.startsWith(name));
@@ -850,6 +872,14 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
       "two-threads",
       mentionRoot.id,
       mentionRoot.id,
+    );
+    // With no mention, it shows and opens your thread, not a newer
+    // broadcast in one you're not in.
+    fireEvent.click(row("picked") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith(
+      "picked",
+      pickedRoot.id,
+      pickedRoot.id,
     );
     // A mixed row still opens its conversation.
     fireEvent.click(row("mixed") as HTMLElement);

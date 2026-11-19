@@ -74,10 +74,8 @@ export class AcpSession {
   /** Messages sent and not yet answered. */
   private pending = 0;
   private waiters: Waiter[] = [];
-  /** The conversation each waiter's message is in. */
-  private readonly scopes = new WeakMap<Waiter, string>();
-  /** The waiter that posts the burst's text, and its conversation's error:
-   * the latest message acknowledged, else the latest sent. */
+  /** The waiter that posts the burst's error or text: the latest message
+   * acknowledged, else the latest sent. */
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
@@ -169,7 +167,6 @@ export class AcpSession {
       waiter = resolve;
       this.waiters.push(resolve);
     });
-    this.scopes.set(waiter, activity.activityScope ?? "conversation");
     // A steer cannot change the model or level, and must not pass a queued
     // turn.
     if (
@@ -603,11 +600,9 @@ export class AcpSession {
       (waiter) => !stopped.waiters.includes(waiter),
     );
     this.pending = this.waiters.length;
-    // Each conversation the stopped work owed learns of its failure.
-    const owners = this.owners(stopped.waiters, owner);
     for (const resolve of stopped.waiters)
       resolve(
-        owners.has(resolve) && failure?.error
+        resolve === owner && failure?.error
           ? { ok: false, ...failure }
           : {
               ok: !failure?.error,
@@ -625,26 +620,14 @@ export class AcpSession {
     this.written = "";
     this.stopped = undefined;
     const owner = this.owner ?? this.waiters.at(-1);
-    const owners = this.owners(this.waiters, owner);
     this.owner = undefined;
-    const { error, code } = settled;
     for (const resolve of this.waiters.splice(0))
       resolve(
         resolve === owner
           ? settled
-          : owners.has(resolve) && error
-            ? { ok: false, error, ...(code !== undefined ? { code } : {}) }
-            : { ok: settled.ok, ...(settled.stopped ? { stopped: true } : {}) },
+          : { ok: settled.ok, ...(settled.stopped ? { stopped: true } : {}) },
       );
     this.wake();
-  }
-  /** Who posts the burst's outcome: `owner` in its conversation, and the
-   * latest message in each other conversation the burst answered. */
-  private owners(waiters: readonly Waiter[], owner: Waiter | undefined) {
-    const owners = new Map<string | undefined, Waiter>();
-    for (const waiter of waiters) owners.set(this.scopes.get(waiter), waiter);
-    if (owner) owners.set(this.scopes.get(owner), owner);
-    return new Set(owners.values());
   }
   private quiet() {
     return (

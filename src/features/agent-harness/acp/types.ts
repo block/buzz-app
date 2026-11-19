@@ -22,8 +22,7 @@ export type PlatformTools = readonly unknown[];
 
 /** How a burst of work ended: every message sent so far has been answered,
  * or the session or its process is gone. One message of the burst owns its
- * `text`, and the latest in each conversation its `error`, to post them once
- * there; the others get only `ok`. */
+ * `error` and `text`, to post them once; the others get only `ok`. */
 export type Settled = Readonly<{
   ok: boolean;
   error?: string;

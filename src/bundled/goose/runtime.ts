@@ -766,8 +766,8 @@ export class GooseRuntime {
     void done
       .then((result) => {
         if (result.undelivered) agent.restoreNotes?.(channel, notes, noteRoot);
-        // Of the messages one turn answered, one in each conversation has its
-        // error. An answer goose wrote without `send` stays in local activity.
+        // Of the messages one turn answered, only one has its error. An
+        // answer goose wrote without `send` stays in local activity.
         if (result.error !== undefined)
           return this.report(agent, channel, event, result.error, topLevel);
       })

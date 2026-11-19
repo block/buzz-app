@@ -23,7 +23,7 @@ import {
 // turn that fails; what Pi writes without `send` stays in local activity.
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
-import type { Context } from "../../buzz-mcp/client";
+import type { BuzzClient, Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -1158,15 +1158,15 @@ export class PiRuntime {
       );
       const final = isFinalMessage(call.name, call.arguments);
       // A run spanning destinations ends once each has its final reply.
-      const answering =
-        final && new Set(receipts.map(({ scope }) => scope)).size > 1
-          ? receipts.filter(
-              ({ scope }) =>
-                scope === destination(call.context, call.arguments),
-            )
-          : final
-            ? receipts
-            : [];
+      const where =
+        final &&
+        new Set(receipts.map(({ scope }) => scope)).size > 1 &&
+        (await destination(client, call.context, call.arguments));
+      const answering = where
+        ? receipts.filter(({ scope }) => scope === where)
+        : final
+          ? receipts
+          : [];
       for (const receipt of answering) {
         receipt.answered = true;
         receipt.published?.();
@@ -1794,10 +1794,22 @@ function unanswered({
   return `Pi did not answer (${reason ?? "unknown"})`;
 }
 
-/** The activity scope a send posts to: its thread's root, or a channel. */
-function destination(context: Context, args: Record<string, unknown>) {
-  if (typeof args.reply === "string") return args.reply;
-  if (typeof args.parent === "string") return context.root ?? args.parent;
+/** The activity scope a send posts to: its thread's root, or a channel. A
+ * reply to any message in a thread is in the thread, as the tools post it. */
+async function destination(
+  client: Pick<BuzzClient, "query"> | undefined,
+  context: Context,
+  args: Record<string, unknown>,
+) {
+  const id = [args.reply, args.parent]
+    .find((id): id is string => typeof id === "string")
+    ?.toLowerCase();
+  if (id && id !== context.root) {
+    const [event] =
+      (await client?.query([{ ids: [id], limit: 1 }]).catch(() => [])) ?? [];
+    return event ? (threadReference(event)?.rootId ?? event.id) : id;
+  }
+  if (id) return id;
   if (typeof args.channel === "string") return args.channel;
   return context.topLevel ? context.channel : (context.root ?? context.channel);
 }

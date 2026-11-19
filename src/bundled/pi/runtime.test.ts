@@ -934,6 +934,57 @@ it("keeps a Pi run going until every placed destination has its final reply", as
   finished.resolve(undefined);
 });
 
+it.each([
+  ["send", "reply"],
+  ["reply_in_subthread", "parent"],
+])(
+  "counts a %s under a message in the thread as the thread's final reply",
+  async (name, field) => {
+    const finished = deferred<unknown>();
+    const { host, deliver, agent, runtime } = setup({
+      wait: () => finished.promise,
+    });
+    const mention = reply("2", "threaded");
+    agent.query.mockImplementation(async (...args: unknown[]) => {
+      const [[filter] = []] = args as { ids?: string[] }[][];
+      return filter?.ids?.includes(mention.id) ? [mention] : [];
+    });
+    const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+    await deliver({ type: "mention", event: mention }, { config }).run;
+    await deliver({ ...pluginWake(), topLevel: true }, { config }).run;
+    await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+    for (const [request, entry] of [
+      [mention.id, 1],
+      [`plugin/${WAKE_ID}`, 2],
+    ] as const)
+      runtime.event({
+        agent: self,
+        conversation: CONVERSATION,
+        type: "placed",
+        request,
+        entry,
+      });
+    const call = (tool: string, args: Record<string, unknown>) =>
+      host.processes[0]?.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel },
+        name: tool,
+        arguments: { audience: "everyone", final: true, ...args },
+      });
+    const top = await call("send", { text: "Channel reply", channel });
+    expect(top?.result).not.toMatchObject({ isError: true });
+    expect(top?.result).not.toMatchObject({ final: true });
+    const thread = await call(name, {
+      text: "Thread reply",
+      [field]: mention.id,
+    });
+    expect(thread?.result).not.toMatchObject({ isError: true });
+    expect(thread?.result).toMatchObject({ final: true });
+    finished.resolve(undefined);
+  },
+);
+
 it.each([true, false])(
   "rechecks guarded Pi input after native queue waits (current=%s)",
   async (valid) => {

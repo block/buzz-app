@@ -66,7 +66,7 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
     {
       key: "conversations.emoji_size",
       description:
-        "Emoji size: medium or large shows emoji-only messages bigger; large also enlarges reactions.",
+        "Emoji size: medium or large shows emoji-only messages bigger; large and huge also enlarge reactions.",
       schema: { type: "string", enum: [...EMOJI_SIZES] },
       read: () => ({ value: now().emojiSize, unsaved: now().emojiSizeError }),
       write: (value) => appearance.setEmojiSize(value as EmojiSize),

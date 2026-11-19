@@ -16,6 +16,7 @@ const LABELS: Record<EmojiSize, string> = {
   default: "Default",
   medium: "Medium",
   large: "Large",
+  huge: "Huge",
 };
 /** Diagonal pointer travel, in pixels, that moves one size. */
 const STEP = 16;

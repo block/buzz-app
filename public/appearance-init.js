@@ -77,7 +77,8 @@
   let emojiSize = "default";
   try {
     const stored = localStorage.getItem("buzz-emoji-size.v1");
-    if (stored === "medium" || stored === "large") emojiSize = stored;
+    if (stored === "medium" || stored === "large" || stored === "huge")
+      emojiSize = stored;
   } catch {
     /* Default emoji remain usable without storage. */
   }

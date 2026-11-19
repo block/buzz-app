@@ -66,7 +66,7 @@ it("previews only this message while dragging, then saves on release", () => {
   });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 20, clientY: 20 });
   expect(frame(handle)).toHaveAttribute("data-emoji-size-preview", "medium");
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 40, clientY: 40 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 32, clientY: 32 });
   expect(frame(handle)).toHaveAttribute("data-emoji-size-preview", "large");
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
   fireEvent.pointerUp(handle, { pointerId: 1 });
@@ -89,7 +89,7 @@ it("snaps to the smallest and largest sizes", () => {
 });
 
 it("steps to the next size on a click and wraps after the largest", () => {
-  const { saved, handle } = renderEmoji(preference("large"));
+  const { saved, handle } = renderEmoji(preference("huge"));
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("default");
@@ -116,7 +116,7 @@ it("changes size with the keyboard", () => {
   fireEvent.keyDown(handle, { key: "ArrowUp" });
   expect(saved.setEmojiSize).toHaveBeenLastCalledWith("medium");
   fireEvent.keyDown(handle, { key: "End" });
-  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("large");
+  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("huge");
   fireEvent.keyDown(handle, { key: "ArrowRight" });
   expect(saved.setEmojiSize).toHaveBeenCalledTimes(2);
   fireEvent.keyDown(handle, { key: "Home" });
@@ -190,7 +190,7 @@ it("grows leftward when the handle sits at the emoji's left", () => {
     clientX: 50,
     clientY: 0,
   });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 10, clientY: 40 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 18, clientY: 32 });
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("large");
 });

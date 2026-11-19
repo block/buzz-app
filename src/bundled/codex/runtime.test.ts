@@ -908,6 +908,7 @@ it("keeps other turns alive when unsubscribe times out and confirms release befo
       status: "Needs attention",
       detail: "Codex thread/unsubscribe timed out",
     });
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
     expect(b.agent.publish).not.toHaveBeenCalled();
 
     // Codex may have processed the first request even if Buzz got no answer.
@@ -932,6 +933,51 @@ it("keeps other turns alive when unsubscribe times out and confirms release befo
   } finally {
     firstCleanup.resolve();
     nextCleanup.resolve();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it("replaces a silent app-server before resuming a queued follow-up", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const b = second(f);
+  const replacement = fixture();
+  const silent = deferred<void>();
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await f.runtime.run(b.delivery("other work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    for (const method of ["thread/unsubscribe", "account/read", "config/read"])
+      f.held.set(method, silent.promise);
+    await f.complete(0, "FIRST FINISHED");
+    const unsubscribes = () =>
+      f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(1));
+    await f.runtime.run(f.delivery("queued follow-up"));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(b.agent.publish).not.toHaveBeenCalled();
+
+    f.spawn.mockImplementationOnce(replacement.spawn);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).toHaveBeenCalledTimes(1);
+    expect(contents(b.agent.publish as never)).toEqual([
+      "Codex could not finish: Buzz closed the Codex connection after app-server responsiveness check failed.",
+    ]);
+    await vi.waitFor(() => expect(replacement.starts()).toHaveLength(1));
+    expect(servers(f)).toHaveLength(2);
+    expect(
+      replacement.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject(unsubscribes()[0]?.params as object);
+    await replacement.complete(0, "FOLLOW-UP FINISHED");
+    expect(contents(f.publish)).toEqual([
+      "FIRST FINISHED",
+      "FOLLOW-UP FINISHED",
+    ]);
+  } finally {
+    silent.resolve();
     f.runtime.dispose();
     vi.useRealTimers();
   }

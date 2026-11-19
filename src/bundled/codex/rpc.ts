@@ -34,6 +34,8 @@ export type ToolReply = {
 
 /** Codex's answer refusing a request, which it therefore did not carry out. */
 export class Refused extends Error {}
+/** No reply arrived before the RPC deadline. */
+export class RequestTimeout extends Error {}
 /** A line over the connection's frame, which closes it. */
 export class Oversized extends Error {
   constructor() {
@@ -151,6 +153,15 @@ export class AppServer {
     if (this.unconfirmedReleases.has(threadId))
       await this.releaseThread(threadId);
   }
+  /** A separate read distinguishes a silent server from a stuck unsubscribe. */
+  async closeIfUnresponsive() {
+    try {
+      await this.request("account/read");
+    } catch (error) {
+      if (error instanceof RequestTimeout)
+        await this.close("app-server responsiveness check");
+    }
+  }
   onMessage(listener: (message: Wire) => void) {
     this.listeners.add(listener);
     return () => {
@@ -257,7 +268,7 @@ export class AppServer {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Codex ${method} timed out`));
+        reject(new RequestTimeout(`Codex ${method} timed out`));
       }, 30_000);
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
@@ -275,7 +286,8 @@ export class AppServer {
     cleanup?:
       | "turn interrupt"
       | "thread unsubscribe"
-      | "background terminal cleanup",
+      | "background terminal cleanup"
+      | "app-server responsiveness check",
   ): Promise<void> {
     this.fail(
       new Error(

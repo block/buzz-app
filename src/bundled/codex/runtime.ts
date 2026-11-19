@@ -118,6 +118,7 @@ import {
   listModels,
   listVoices,
   Refused,
+  RequestTimeout,
   type Spawn,
   type ToolCall,
   type ToolReply,
@@ -3951,16 +3952,20 @@ export class CodexRuntime {
       try {
         // Loaded-thread rejoin ignores config overrides while subscribed.
         if (active.threadId && !lane.voice)
-          await server.rpc.releaseThread(active.threadId).catch((error) => {
-            if (turnMayBeRunning && !followed.sawCompletion)
-              return server.rpc.close("thread unsubscribe");
-            if (
-              !turnFailed &&
-              (this.server === server ||
-                this.protectedServers.get(agent.key) === server)
-            )
-              this.status(agent.key, key, "Needs attention", message(error));
-          });
+          await server.rpc
+            .releaseThread(active.threadId)
+            .catch(async (error) => {
+              if (turnMayBeRunning && !followed.sawCompletion)
+                return server.rpc.close("thread unsubscribe");
+              if (
+                !turnFailed &&
+                (this.server === server ||
+                  this.protectedServers.get(agent.key) === server)
+              )
+                this.status(agent.key, key, "Needs attention", message(error));
+              if (error instanceof RequestTimeout)
+                await server.rpc.closeIfUnresponsive();
+            });
       } finally {
         followed.stop();
         try {

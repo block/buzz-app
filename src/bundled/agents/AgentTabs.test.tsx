@@ -565,8 +565,8 @@ it("restores Settings on the first commit without briefly selecting Identity", (
   expect(selected).toEqual(["Settings"]);
 });
 
-function recoveryFixture() {
-  const { props } = editingFixture(false);
+function recoveryFixture(split = false) {
+  const { props } = editingFixture(split);
   const expected = {
     channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
     d: "settings",
@@ -657,27 +657,30 @@ it("focuses previous versions after discarding changes to open recovery", async 
   ).toHaveFocus();
 });
 
-it("disables the recovery link until a save finishes", async () => {
-  const user = userEvent.setup();
-  let finish!: () => void;
-  const saving = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  render(
-    <AgentTabs
-      {...recoveryFixture()}
-      settingsHost={{ pendingSave: () => saving }}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  try {
+it.each([false, true])(
+  "disables the recovery link until a save finishes (split %s)",
+  async (split) => {
+    const user = userEvent.setup();
+    let finish!: () => void;
+    const saving = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    render(
+      <AgentTabs
+        {...recoveryFixture(split)}
+        settingsHost={{ pendingSave: () => saving }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    try {
+      expect(
+        screen.getByRole("button", { name: "Previous Versions" }),
+      ).toBeDisabled();
+    } finally {
+      await act(async () => finish());
+    }
     expect(
       screen.getByRole("button", { name: "Previous Versions" }),
-    ).toBeDisabled();
-  } finally {
-    await act(async () => finish());
-  }
-  expect(
-    screen.getByRole("button", { name: "Previous Versions" }),
-  ).toBeEnabled();
-});
+    ).toBeEnabled();
+  },
+);

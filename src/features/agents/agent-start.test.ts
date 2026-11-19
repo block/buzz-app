@@ -212,9 +212,22 @@ describe("start resolution", () => {
     });
   });
 
-  it("refuses settings for another agent type, or holding workspace or an unknown value", () => {
+  it("reports the agent type mismatch without version guidance", () => {
+    const { store } = seeded();
+    install(
+      store,
+      settings,
+      revision({ agentType: "codex", settings: { model: "m" } }),
+    );
+    expect(resolveStart(input(store))).toMatchObject({
+      ok: false,
+      state: "invalid",
+      reason: "These settings are for another agent type",
+    });
+  });
+
+  it("refuses settings holding workspace or an unknown value", () => {
     for (const body of [
-      { agentType: "codex", settings: { model: "m" } },
       { agentType: "claude-code", settings: { workspace: "/elsewhere" } },
       { agentType: "claude-code", settings: { scope: "galaxy" } },
     ]) {

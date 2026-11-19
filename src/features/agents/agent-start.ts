@@ -107,7 +107,9 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
       return {
         ok: false,
         state: "invalid",
-        reason: `These agent settings aren't compatible with this version of Buzz: ${read.problem}`,
+        reason: read.typeMismatch
+          ? read.problem
+          : `These agent settings aren't compatible with this version of Buzz: ${read.problem}`,
       };
     config = settings.withSynced(config, read.settings);
     // The synced Recommended mark is the agent's on every device.

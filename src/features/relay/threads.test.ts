@@ -395,6 +395,41 @@ it("reopens a closed thread at once from its last read and repairs it in the bac
   await next;
 });
 
+it("reopens a thread at once after a route retargeted it to its root, not to a reply", async () => {
+  const h = live();
+  const first = reply("first", 10);
+  const loaded = h.view.refresh();
+  h.next().respond([root, first]);
+  await loaded;
+  // Opening a thread from the timeline routes to its root, which the shown
+  // view verifies in place.
+  const selecting = h.view.retarget(root.id, new AbortController().signal);
+  h.next().respond([root]);
+  await flush();
+  h.next().respond([]);
+  expect(await selecting).toBe("selected");
+  h.view.dispose();
+  const view = h.session.thread("a", root.id);
+  expect(view.snapshot().status).toBe("ready");
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+
+  // A view moved to a reply leaves the root's earlier resume in place.
+  const moving = view.retarget(first.id, new AbortController().signal);
+  // The session's unrelated membership read is queued ahead of the target.
+  expect(h.next().filters).toEqual([
+    expect.objectContaining({ kinds: [39002] }),
+  ]);
+  h.next().respond([first]);
+  await flush();
+  h.next().respond([]);
+  expect(await moving).toBe("selected");
+  view.dispose();
+  const reopened = h.session.thread("a", root.id);
+  expect(reopened.snapshot().status).toBe("ready");
+  expect(reopened.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+  reopened.dispose();
+});
+
 it("reopens a thread from scratch after a cache clear, a close mid-read or an exact view", async () => {
   const h = live();
   const first = reply("first", 10);

@@ -1121,9 +1121,11 @@ export function createThreadView({
     purge,
     /** What a later view of this thread may show at once: a settled ordinary
      * view of a root. `keep` leaves an earlier resume in place: a read runs,
-     * rows are still resumed, or a retarget made this view exact. */
+     * rows are still resumed, or a retarget moved this view to a reply. A
+     * retarget to the root keeps the root's rows, so they still resume. */
     resume(): ThreadResume | "keep" | undefined {
-      if (controller || shown || exact || failed) return "keep";
+      if (controller || shown || (exact && messageId !== rootId) || failed)
+        return "keep";
       const { status, root, replies, direction, canLoadMore, limited } =
         snapshot;
       if (

@@ -304,8 +304,16 @@ export function selectGatewayDescriptor(
   );
   if (!unique(origins)) fail("two entries list the same community");
   const chosen = parseGatewayDescriptor(explicit);
-  if (chosen || !communityUrl.trim()) return chosen;
-  const origin = relayOrigin(communityUrl);
+  if (chosen) return chosen;
+  // A blank or non-secure URL selects nothing rather than failing: dev builds
+  // may point at a local ws:// relay, and Vite's build check already refuses a
+  // bad URL for packaged frontends.
+  let origin: string;
+  try {
+    origin = relayOrigin(communityUrl);
+  } catch {
+    return null;
+  }
   return (
     descriptors.find(({ communities }) =>
       communities.some((community) => community.origin === origin),

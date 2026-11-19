@@ -13,7 +13,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | Shared frontend/native build: HTTPS origin of the Apps control plane for the configured login origin, for deployments the built-in public table does not list; no runtime override. |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Native build: default [repository access rules](repository-access.md#default-rules), in `repository-access.json`'s schema. Unset means none. |
-| `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Both the frontend and native builds also read it, from the process environment only, to choose a [packaged gateway descriptor](#packaged-gateway-descriptors). Unset in OSS builds. |
+| `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Both the frontend and native builds also read it, from the process environment only (not `.env` files), to choose a [packaged gateway descriptor](#packaged-gateway-descriptors). Unset in OSS builds. |
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | Native build: `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy). The desktop app fetches it and keeps the last good copy, used when no `managed-plugins.json` exists. It only recommends. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
 | `BUZZ_AGENT_GATEWAY` | Shared frontend/native build, process environment only: non-secret agent gateway deployment descriptor (version 2: gateway origin, exact community IDs/origins, access check path, context header profile and per-harness upstream bases). Unset, the release default, leaves gateway routing off unless `src/bundled/org-gateways.json` lists the build's `BUZZ_DEFAULT_COMMUNITY_URL`. See [Agent gateway](#agent-gateway) and [Packaged gateway descriptors](#packaged-gateway-descriptors). |
@@ -160,7 +160,10 @@ community.
 When `BUZZ_AGENT_GATEWAY` is blank, both builds use the entry whose
 `communities` list the build's `BUZZ_DEFAULT_COMMUNITY_URL`, compared as relay
 origins. They read that URL from the process environment only, like the
-descriptor. No URL, or no entry listing it, leaves routing off. An explicit
+descriptor, so a URL set only in `.env.local` or `.env.production` still sets
+the frontend's default community but leaves routing off. No URL, a URL that is
+not a secure relay URL (such as a local `ws://` relay), or no entry listing it,
+leaves routing off. An explicit
 `BUZZ_AGENT_GATEWAY` always wins, so a development build can still point at a
 test gateway. Every entry is validated in every build, whether or not it is
 chosen, and two entries may not list the same community. A bad file fails the

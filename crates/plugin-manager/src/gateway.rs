@@ -277,11 +277,12 @@ pub fn select(
     if let Some(chosen) = parse(explicit).map_err(|invalid| invalid.to_string())? {
         return Ok(Some(chosen));
     }
-    if community_url.trim().is_empty() {
+    // A blank or non-secure URL selects nothing rather than failing: dev builds
+    // may point at a local `ws://` relay, and Vite's `build` already refuses a
+    // bad URL for packaged frontends.
+    let Some(origin) = relay_origin(community_url) else {
         return Ok(None);
-    }
-    let origin = relay_origin(community_url)
-        .ok_or_else(|| "BUZZ_DEFAULT_COMMUNITY_URL is not a secure relay URL".to_owned())?;
+    };
     Ok(descriptors
         .into_iter()
         .find(|(_, _, origins)| origins.contains(&origin))

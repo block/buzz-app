@@ -77,6 +77,7 @@ type Select = {
   community_url: string;
   expect?: unknown;
   error?: string;
+  explicit_error?: string;
 };
 const select = (vector: Select) =>
   selectGatewayDescriptor(
@@ -87,17 +88,36 @@ const select = (vector: Select) =>
   );
 
 describe("selectGatewayDescriptor", () => {
-  it.each((VECTORS.select as Select[]).filter((v) => !v.error))(
-    "selects $name",
-    (vector) => {
-      expect(select(vector)).toEqual(vector.expect);
-    },
-  );
+  const failure = (vector: Select): unknown => {
+    try {
+      select(vector);
+    } catch (error) {
+      return error;
+    }
+    throw new Error(`${vector.name} was accepted`);
+  };
+
+  it.each(
+    (VECTORS.select as Select[]).filter((v) => !v.error && !v.explicit_error),
+  )("selects $name", (vector) => {
+    expect(select(vector)).toEqual(vector.expect);
+  });
 
   it.each((VECTORS.select as Select[]).filter((v) => v.error))(
     "refuses $name",
     (vector) => {
-      expect(() => select(vector)).toThrow(vector.error);
+      expect((failure(vector) as Error).message).toBe(vector.error);
+    },
+  );
+
+  it.each((VECTORS.select as Select[]).filter((v) => v.explicit_error))(
+    "refuses $name",
+    (vector) => {
+      const error = failure(vector);
+      expect(error).toBeInstanceOf(GatewayDescriptorError);
+      expect((error as GatewayDescriptorError).code).toBe(
+        vector.explicit_error,
+      );
     },
   );
 

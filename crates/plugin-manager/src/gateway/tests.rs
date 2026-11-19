@@ -524,6 +524,18 @@ fn selects_as_the_canonical_vectors() {
             None => case["listed"].to_string(),
         };
         let chosen = select(&explicit, &listed, case["community_url"].as_str().unwrap());
+        if let Some(code) = case.get("explicit_error") {
+            assert_eq!(
+                chosen.map(|_| ()),
+                Err(format!(
+                    "BUZZ_AGENT_GATEWAY is invalid ({})",
+                    code.as_str().unwrap()
+                )),
+                "{}",
+                case["name"]
+            );
+            continue;
+        }
         match case.get("error") {
             Some(error) => assert_eq!(
                 chosen.map(|_| ()),

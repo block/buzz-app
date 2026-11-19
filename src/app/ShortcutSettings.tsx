@@ -64,6 +64,8 @@ type Row = Readonly<{
   order: number;
   /** Native close/quit defaults are reserved, not user-rebindable. */
   readOnly: boolean;
+  /** Matched by its own field, which accepts Control alone on Apple platforms. */
+  local: boolean;
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
@@ -119,6 +121,7 @@ const editorRows = (sendWithModEnter: boolean): readonly Row[] =>
     owner: "Message formatting",
     order,
     readOnly: true,
+    local: false,
     defaults: bindings,
     override: undefined,
     effective: bindings,
@@ -176,6 +179,10 @@ const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "Tab", mod: true },
   { key: "Tab", mod: true, shift: true },
 ];
+// A field-local row and a global one never compete: the field takes the
+// chord while it has focus and the dispatcher everywhere else.
+const competes = (target: Row, other: Row) =>
+  other.key !== target.key && other.local === target.local;
 const includes = (chords: readonly KeyBinding[], binding: KeyBinding) =>
   chords.some((chord) => sameBinding(chord, binding));
 /** Every owner supplies order; identity and title make ties deterministic. */
@@ -252,7 +259,7 @@ function shortcutGroups({
   sendWithModEnter,
   desktop,
 }: {
-  host: readonly NormalizedShortcut[];
+  host: ReturnType<ShortcutsService["hostSnapshot"]>;
   contributed: ReturnType<ShortcutsService["snapshot"]>;
   overrides: ReturnType<ShortcutBindings["snapshot"]>["overrides"];
   error: ReturnType<ShortcutBindings["snapshot"]>["error"];
@@ -271,6 +278,7 @@ function shortcutGroups({
     shortcut: NormalizedShortcut,
     owner: string,
     readOnly = false,
+    local = false,
   ): Row => {
     const override = overrides[key];
     return {
@@ -279,6 +287,7 @@ function shortcutGroups({
       owner,
       order: shortcut.order,
       readOnly,
+      local,
       defaults: shortcut.binding,
       override,
       effective: override ? [override] : shortcut.binding,
@@ -300,6 +309,7 @@ function shortcutGroups({
             shortcut.binding.some((binding) =>
               includes(DESKTOP_CHORDS, binding),
             ),
+          shortcut.local,
         ),
       ),
     },
@@ -402,7 +412,7 @@ export function ShortcutSettings({
           target.key,
           rows.filter(
             (other) =>
-              other.key !== target.key &&
+              competes(target, other) &&
               other.effective.some((binding) =>
                 target.effective.some((current) =>
                   sameBinding(current, binding),
@@ -527,9 +537,22 @@ export function ShortcutSettings({
         return refuse(
           "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
         );
-      if (!binding.mod && !binding.alt)
+      // Control alone stays text editing on Apple outside field-local rows.
+      if (!binding.mod && !(binding.ctrl && target.local) && !binding.alt)
         return refuse(
-          `Include ${apple ? "Command or Option" : "Control or Alt"} so ordinary typing keeps working.`,
+          `Include ${apple ? (target.local ? "Command, Control or Option" : "Command or Option") : "Control or Alt"} so ordinary typing keeps working.`,
+        );
+      // The search field opens its first nine results with these, by physical digit.
+      if (
+        target.local &&
+        /^Digit[1-9]$/.test(code) &&
+        binding.mod &&
+        binding.shift &&
+        !binding.alt &&
+        !binding.ctrl
+      )
+        return refuse(
+          `${formatBinding({ key: "1", mod: true, shift: true }, apple).text} to 9 open search results. Try another.`,
         );
       // Apple's ⌥⇧⌘V browser paste types a layout-specific key, so match the physical V.
       const applePlainPaste =
@@ -549,7 +572,7 @@ export function ShortcutSettings({
         );
       const conflict = rows.find(
         (row) =>
-          row.key !== target.key &&
+          competes(target, row) &&
           row.effective.some((current) => sameBinding(current, binding)),
       );
       if (conflict)
@@ -564,9 +587,10 @@ export function ShortcutSettings({
       setEditing(null);
       // EditableInput handles Enter locally regardless of the held modifiers.
       setNotice(
-        binding.key === "Enter" ||
-          includes(EDITOR_CHORDS, binding) ||
-          includes(EDITOR_FORMAT_CHORDS, binding)
+        !target.local &&
+          (binding.key === "Enter" ||
+            includes(EDITOR_CHORDS, binding) ||
+            includes(EDITOR_FORMAT_CHORDS, binding))
           ? {
               key: target.key,
               tone: "warning",

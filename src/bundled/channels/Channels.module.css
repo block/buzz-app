@@ -74,6 +74,10 @@
   max-width: 100%;
   max-height: 100%;
 }
+.unifiedChatName {
+  --session-row-inset: var(--space-2);
+  --session-action-size: calc(var(--space-6) + var(--space-1));
+}
 .sidebarIcon {
   display: inline-grid;
   width: 1.125rem;
@@ -300,9 +304,6 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-}
-.scopeSectionTitle {
-  color: var(--text-standard);
 }
 /* Collapsed headings stand in for their hidden rows, using the same unread
    evidence as the sidebar edge cues. Muted destinations stay quiet. */

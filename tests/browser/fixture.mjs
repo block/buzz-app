@@ -40,6 +40,10 @@ export const test = base.extend({
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
+  // The production broker's reconnect draw (live.ts `random`). Pinned so a
+  // dropped socket returns at once; a journey can set a nonzero draw to
+  // test the spread.
+  liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
@@ -114,6 +118,8 @@ export const test = base.extend({
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
   historyRowsPerSecond: [1, { option: true }],
+  // Fixed signing keys repeat event IDs, and so where pages split a second.
+  fixedKeys: [false, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
@@ -139,6 +145,7 @@ export const test = base.extend({
       enabledPlugins,
       builderlab,
       liveSetupTimeoutMs,
+      liveDraw,
       actionProfile,
       agentMessageDeletion,
       profilePicture,
@@ -195,6 +202,7 @@ export const test = base.extend({
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
+      fixedKeys,
       channelIds,
       pluginFixtures,
       developmentReact,
@@ -205,7 +213,7 @@ export const test = base.extend({
   ) => {
     const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
-      actionProfile
+      actionProfile || fixedKeys
         ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
         : generateSecretKey();
     const relayKey = key(1);
@@ -417,6 +425,7 @@ export const test = base.extend({
                   order: 0,
                   ...(sidebarIcons ? { icon: ":stamp:" } : {}),
                 },
+                ...(Array.isArray(savedSidebar) ? savedSidebar : []),
                 ...(sidebarIcons
                   ? [
                       {
@@ -2167,6 +2176,9 @@ export const test = base.extend({
           "channel-stars",
           "channel-sort",
           "channel-filter",
+          "channel-workspaces",
+          "channel-workspace-sort",
+          "channel-workspace-filter",
         ].includes(sidebarCoordinate) ||
         (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
@@ -2219,6 +2231,7 @@ export const test = base.extend({
           searchProfiles,
           report,
           pending,
+          olderPageDelayMs,
           // The production broker advertises read-state writes for every session,
           // not only tests opting into complete snapshot reads.
           acceptPublication: acceptReadPublication,
@@ -2621,6 +2634,9 @@ export const test = base.extend({
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
                   liveSetupTimeoutMs,
+                  ...(liveDraw === undefined
+                    ? {}
+                    : { liveRandom: () => liveDraw }),
                 });
                 await broker.configureServer(server);
               } else server.middlewares.use(middleware);

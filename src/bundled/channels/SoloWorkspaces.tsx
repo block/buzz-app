@@ -644,9 +644,17 @@ export function SoloWorkspaces({
         title={project.name}
         className={styles.workspaceHeader}
         enabled={!!project.id}
-        content={
+        content={(menuAnchor) => (
           <>
             {actions}
+            {metadata != null &&
+              typeof metadata !== "boolean" &&
+              project.id &&
+              workspaceComposition?.newAction(
+                project.id,
+                project.name,
+                menuAnchor,
+              )}
             <MenuItem
               disabled={!orderWritable || groupIndex <= 0}
               onClick={() => moveProject(project.id, groupIndex - 1)}
@@ -718,7 +726,7 @@ export function SoloWorkspaces({
               Delete workspace
             </MenuItem>
           </>
-        }
+        )}
       >
         {(overflow) => (
           <NavigationSectionHeading
@@ -729,23 +737,27 @@ export function SoloWorkspaces({
               accessory != null && typeof accessory !== "boolean"
             }
             actions={
-              <>
-                {overflow}
-                {project.id &&
-                  workspaceComposition?.newAction(project.id, project.name)}
-                {trailing ??
-                  (onNew &&
-                    !workspaceComposition &&
-                    (!compose || !project.id) && (
-                      <IconButton
-                        size="compact"
-                        aria-label={`New chat in ${project.name}`}
-                        title="New chat"
-                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                        onClick={() => onNew(project.id || undefined)}
-                      />
-                    ))}
-              </>
+              metadata != null && typeof metadata !== "boolean" ? (
+                overflow
+              ) : (
+                <>
+                  {overflow}
+                  {project.id &&
+                    workspaceComposition?.newAction(project.id, project.name)}
+                  {trailing ??
+                    (onNew &&
+                      !workspaceComposition &&
+                      (!compose || !project.id) && (
+                        <IconButton
+                          size="compact"
+                          aria-label={`New chat in ${project.name}`}
+                          title="New chat"
+                          icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                          onClick={() => onNew(project.id || undefined)}
+                        />
+                      ))}
+                </>
+              )
             }
           >
             <WorkspaceDragHandle
@@ -1453,12 +1465,17 @@ function ChatActionsMenu({
   /** A function places the overflow action itself, such as in a heading's
    * actions; otherwise it follows the children. */
   children: ReactNode | ((overflow: ReactNode) => ReactNode);
-  content: ReactNode;
+  content:
+    | ReactNode
+    | ((trigger: RefObject<HTMLButtonElement | null>) => ReactNode);
   indicator?: ReactNode;
   enabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menuContent =
+    typeof content === "function" ? content(trigger) : content;
   // React bubbles events from portalled content through this trigger.
   const ownsContextTarget = ({ target, currentTarget }: SyntheticEvent) =>
     target instanceof Element &&
@@ -1483,6 +1500,7 @@ function ChatActionsMenu({
   const overflow = (
     <MenuRoot>
       <MenuTrigger
+        ref={trigger}
         render={(props) => (
           <IconButton
             {...props}
@@ -1502,7 +1520,7 @@ function ChatActionsMenu({
         align="end"
         finalFocus={restoreFocus}
       >
-        {content}
+        {menuContent}
       </MenuPopup>
     </MenuRoot>
   );
@@ -1550,7 +1568,7 @@ function ChatActionsMenu({
         anchor={anchor}
         finalFocus={restoreFocus}
       >
-        {content}
+        {menuContent}
       </MenuPopup>
     </ContextMenuRoot>
   );

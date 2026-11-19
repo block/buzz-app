@@ -91,6 +91,8 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
     typeof props.headerAccessory === "boolean"
       ? undefined
       : props.headerAccessory;
+  const hasMetadata =
+    props.headerMetadata != null && typeof props.headerMetadata !== "boolean";
   const openDetails = async () => {
     if (!eligible(current())) return;
     const opening = navigator.open(conversationTarget(scope, channel.id), {
@@ -125,7 +127,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           reserveActionSpace={accessory != null}
           actions={
             <>
-              {newTask && (
+              {!hasMetadata && newTask && (
                 <IconButton
                   size="compact"
                   data-solo-channel-new-task=""

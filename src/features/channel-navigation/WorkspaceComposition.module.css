@@ -24,3 +24,11 @@
   flex-shrink: 0;
   z-index: 1;
 }
+
+@container solo-workspace-header (max-width: 9rem) {
+  [class~="navigation-section-heading"]:has(> [data-has-metadata])
+    .heading
+    > [data-solo-workspace-id] {
+    padding-inline-end: 0;
+  }
+}

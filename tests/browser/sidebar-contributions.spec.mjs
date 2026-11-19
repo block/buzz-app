@@ -413,6 +413,16 @@ appTest.describe("Solo header accessories", () => {
           await resize.focus();
           await expect(metadata).toBeVisible();
           await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
+          const activityBox = await metadata.boundingBox();
+          const menuBox = await nativeMenu.boundingBox();
+          expect(activityBox).not.toBeNull();
+          expect(menuBox).not.toBeNull();
+          expect((await nativeMenu.locator("..").boundingBox())?.width).toBe(
+            menuBox.width,
+          );
+          expect(menuBox.x + menuBox.width).toBeGreaterThanOrEqual(
+            activityBox.x + activityBox.width,
+          );
           const restingPositions = await actionPositions();
           expect(restingPositions).toEqual([
             expect.any(Number),
@@ -470,6 +480,16 @@ appTest.describe("Solo header accessories", () => {
       await expect(sidebar.getByRole("button", { name: /^Mark / })).toHaveCount(
         2,
       );
+      await headers[0].group
+        .getByRole("button", { name: "Actions for Work" })
+        .press("Enter");
+      await expect(
+        page.getByRole("menuitem", { name: "New task" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", { name: "New chat" }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
       const channelGroup = headers[1].group;
       await page.evaluate(() => {
         document.documentElement.style.fontSize = "24px";
@@ -477,9 +497,13 @@ appTest.describe("Solo header accessories", () => {
       await channelGroup
         .getByRole("button", { name: "Alpha", exact: true })
         .hover();
+      await channelGroup
+        .getByRole("button", { name: "Actions for Alpha" })
+        .press("Enter");
       await expect(
-        channelGroup.getByRole("button", { name: "New task in Alpha" }),
+        page.getByRole("menuitem", { name: "New task" }),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
       const channelTitle = channelGroup.getByText("Alpha", { exact: true });
       await expect
         .poll(() =>

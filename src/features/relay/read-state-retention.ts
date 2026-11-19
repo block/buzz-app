@@ -11,8 +11,10 @@ export type CoveredFrontier = (
   frontier: (key: string) => number | undefined,
 ) => string | undefined;
 /** The message a mark is about. Message, thread and thread catch-up marks
- * each name one message (a thread names its root); other marks name none. */
+ * each name one message (a thread names its root), as does a row receipt
+ * (`seen:msg:`); other marks name none. */
 export function markMessage(key: string): string | undefined {
+  if (key.startsWith("seen:msg:")) return key.slice(9) || undefined;
   const separator = key.indexOf(":");
   const kind = key.slice(0, separator);
   return separator > 0 &&

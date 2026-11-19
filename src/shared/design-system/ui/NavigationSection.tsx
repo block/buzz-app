@@ -25,6 +25,11 @@ export function NavigationSection({
   );
 }
 
+export type NavigationSectionTrailing = {
+  accessory?: ReactNode;
+  metadata?: ReactNode;
+};
+
 /**
  * The label fills the available width and the actions hug the trailing edge.
  *
@@ -34,8 +39,9 @@ export function NavigationSection({
  * `data-navigation-reveal` such as a chevron, appear on hover, keyboard focus,
  * while a menu from the heading is open or one of them has focus, and always
  * on touch. A heading with an accessory keeps the action space so its controls
- * stay in place. Optional metadata sets the footprint of the trailing hover
- * target. On pointer devices, quiet actions can overlay an adjacent accessory.
+ * stay in place. A stable `trailing` config keeps the contributed controls
+ * mounted as metadata changes. Metadata sets the trailing hover target's
+ * footprint. On pointer devices, quiet actions can overlay an adjacent accessory.
  * On touch and when there is no accessory, the slot fits the full action strip.
  * Other headings give that space to the label until actions appear.
  */
@@ -43,20 +49,19 @@ export function NavigationSectionHeading({
   actions,
   disclosure = false,
   revealActions = false,
-  reserveActionSpace = false,
-  accessory,
-  metadata,
+  trailing,
   children,
 }: {
   actions?: ReactNode;
   disclosure?: boolean;
   revealActions?: boolean;
-  reserveActionSpace?: boolean;
-  accessory?: ReactNode;
-  metadata?: ReactNode;
+  trailing?: NavigationSectionTrailing | undefined;
   children?: ReactNode;
 }) {
+  const { accessory, metadata } = trailing ?? {};
   const hasMetadata = metadata != null && typeof metadata !== "boolean";
+  const reserveSpace =
+    hasMetadata || (accessory != null && typeof accessory !== "boolean");
   const swap = hasMetadata && !!actions && revealActions;
   return (
     <div
@@ -64,10 +69,18 @@ export function NavigationSectionHeading({
       data-disclosure={disclosure || undefined}
     >
       <div className="navigation-section-heading-label">{children}</div>
-      {(accessory || hasMetadata || actions) && (
+      {!trailing && actions && (
+        <div
+          className="navigation-section-heading-actions"
+          data-navigation-reveal={revealActions || undefined}
+        >
+          {actions}
+        </div>
+      )}
+      {trailing && (reserveSpace || actions) && (
         <div
           className="navigation-section-heading-trailing"
-          data-reserve-space={hasMetadata || reserveActionSpace || undefined}
+          data-reserve-space={reserveSpace || undefined}
           data-has-metadata={hasMetadata || undefined}
         >
           {accessory}
@@ -75,6 +88,9 @@ export function NavigationSectionHeading({
             <div
               className="navigation-section-heading-actions"
               data-has-metadata={hasMetadata || undefined}
+              data-navigation-reveal={
+                (!reserveSpace && revealActions) || undefined
+              }
             >
               {hasMetadata && (
                 <div
@@ -87,7 +103,9 @@ export function NavigationSectionHeading({
               {actions && (
                 <div
                   className="navigation-section-heading-buttons"
-                  data-navigation-reveal={revealActions || undefined}
+                  data-navigation-reveal={
+                    (reserveSpace && revealActions) || undefined
+                  }
                 >
                   {actions}
                 </div>

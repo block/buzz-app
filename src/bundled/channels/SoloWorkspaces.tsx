@@ -48,7 +48,10 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
-import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
+import {
+  NavigationSectionHeading,
+  type NavigationSectionTrailing,
+} from "../../shared/design-system/ui/NavigationSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -609,10 +612,9 @@ export function SoloWorkspaces({
     );
     const header = (
       primary: ReactNode,
-      trailing?: ReactNode,
+      newTask?: ReactNode,
       actions?: ReactNode,
-      accessory?: ReactNode,
-      metadata?: ReactNode,
+      trailing?: NavigationSectionTrailing,
     ) => (
       <ChatActionsMenu
         id={`project-${project.id}`}
@@ -622,8 +624,8 @@ export function SoloWorkspaces({
         content={(menuAnchor) => (
           <>
             {actions}
-            {metadata != null &&
-              typeof metadata !== "boolean" &&
+            {trailing?.metadata != null &&
+              typeof trailing.metadata !== "boolean" &&
               project.id &&
               workspaceComposition?.newAction(
                 project.id,
@@ -683,31 +685,31 @@ export function SoloWorkspaces({
           <NavigationSectionHeading
             disclosure
             revealActions
-            metadata={metadata}
-            reserveActionSpace={
-              accessory != null && typeof accessory !== "boolean"
-            }
-            accessory={
-              accessory != null &&
-              typeof accessory !== "boolean" && (
-                // Keep the accessory above the primary button's full-header hit area.
-                <div
-                  className="relative flex shrink-0 items-center"
-                  data-solo-workspace-accessory=""
-                >
-                  {accessory}
-                </div>
-              )
+            trailing={
+              trailing && {
+                ...trailing,
+                accessory: trailing.accessory != null &&
+                  typeof trailing.accessory !== "boolean" && (
+                    // Keep the accessory above the primary button's full-header hit area.
+                    <div
+                      className="relative flex shrink-0 items-center"
+                      data-solo-workspace-accessory=""
+                    >
+                      {trailing.accessory}
+                    </div>
+                  ),
+              }
             }
             actions={
               <>
-                {trailing}
+                {newTask}
                 {overflow}
-                {(metadata == null || typeof metadata === "boolean") && (
+                {(trailing?.metadata == null ||
+                  typeof trailing.metadata === "boolean") && (
                   <>
                     {project.id &&
                       workspaceComposition?.newAction(project.id, project.name)}
-                    {trailing == null &&
+                    {newTask == null &&
                       onNew &&
                       !workspaceComposition &&
                       (!compose || !project.id) && (

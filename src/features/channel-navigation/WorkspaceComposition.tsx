@@ -11,6 +11,7 @@ import {
 } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import type { NavigationSectionTrailing } from "../../shared/design-system/ui/NavigationSection";
 import {
   Cube3dSphereIcon,
   PencilSimpleIcon,
@@ -32,10 +33,9 @@ export type WorkspaceComposition = Readonly<{
     frame(children: ReactNode): ReactNode;
     header(
       primary: ReactNode,
-      trailing?: ReactNode,
+      newTask?: ReactNode,
       actions?: ReactNode,
-      accessory?: ReactNode,
-      metadata?: ReactNode,
+      trailing?: NavigationSectionTrailing,
     ): ReactNode;
     panel(before?: ReactNode): ReactNode;
   }>[];
@@ -121,8 +121,10 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
               <MenuItem onClick={props.onNewTask}>New task</MenuItem>
             )}
           </>,
-          props.headerAccessory,
-          props.headerMetadata,
+          {
+            accessory: props.headerAccessory,
+            metadata: props.headerMetadata,
+          },
         )}
       </NavigationCard>
     </div>,

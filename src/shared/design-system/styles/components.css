@@ -1658,6 +1658,7 @@
     align-items: center;
   }
 
+  .navigation-section-heading-actions:not([data-has-metadata]):empty,
   .navigation-section-heading-trailing:not([data-reserve-space]):has(
     > .navigation-section-heading-actions
       > .navigation-section-heading-buttons:empty
@@ -1839,8 +1840,7 @@
     pointer-events: none;
   }
 
-  .navigation-section-heading-trailing:not([data-reserve-space])
-    .navigation-section-heading-buttons[data-navigation-reveal] {
+  .navigation-section-heading-actions[data-navigation-reveal] {
     max-width: 0;
     overflow: hidden;
   }

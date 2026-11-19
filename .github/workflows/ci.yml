@@ -141,6 +141,14 @@ jobs:
           sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y dbus-daemon libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - name: Install isolated pinned Rust toolchain
+        # rust-cache hashes every installed toolchain. The hosted image's unused
+        # stable compiler must not split caches for our pinned compiler.
+        run: |
+          export RUSTUP_HOME="$RUNNER_TEMP/buzz-rustup"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          ./bin/rustup toolchain install
+          ./bin/rustup default "$(./bin/rustup show active-toolchain | cut -d ' ' -f1)"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native

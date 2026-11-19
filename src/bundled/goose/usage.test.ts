@@ -9,6 +9,7 @@ import { readUsage, sessionUsage } from "./usage";
 
 const agent = "c".repeat(64);
 const other = "d".repeat(64);
+const third = "e".repeat(64);
 const start = 1_800_000_000;
 const mention = {
   id: "1".repeat(64),
@@ -178,24 +179,26 @@ it("exports a workspace's sessions once while several agents with folders read i
     ],
   });
   const history = new GooseHistory(goose);
-  const read = (pubkey: string, folder: string) =>
+  const read = (pubkey: string, folders: readonly string[]) =>
     readUsage(
       history,
       pubkey,
       "~/.buzz",
       Date.parse("2026-06-01T00:00:00Z"),
       new AbortController().signal,
-      [folder],
+      folders,
     ).then((sessions) => sessions.map((session) => session.id).sort());
+  // Some of them are given the workspace itself as a folder.
   expect(
     await Promise.all([
-      read(agent, "/repos/mine"),
-      read(other, "/repos/theirs"),
+      read(agent, ["/repos/mine", "/home/test/.buzz"]),
+      read(other, ["/repos/theirs"]),
+      read(third, ["~/.buzz", "/home/test/.buzz"]),
     ]),
-  ).toEqual([
-    ["mine", "my-folder"],
-    ["their-folder", "theirs"],
-  ]);
+  ).toEqual([["mine", "my-folder"], ["their-folder", "theirs"], []]);
+  // The workspace's shared listing, and one of each other folder: none of
+  // the workspace again.
+  expect(goose.geese).toHaveLength(3);
   const exported = goose.geese.flatMap((one) =>
     one.received
       .filter((message) => message.method === "_goose/unstable/session/export")

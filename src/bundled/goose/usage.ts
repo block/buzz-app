@@ -196,13 +196,13 @@ export async function readUsage(
   signal.throwIfAborted();
   const read = (key: string, paths: readonly string[]) =>
     listing(history, key, paths, since, signal);
+  // A folder that is the workspace itself is in the shared listing already.
+  const own = await abortable(history.elsewhere(workspace, folders), signal);
   const states = await Promise.all([
     read(workspace, [workspace]),
-    ...(folders.length
-      ? [read(JSON.stringify([workspace, agent]), folders)]
-      : []),
+    ...(own.length ? [read(JSON.stringify([workspace, agent]), own)] : []),
   ]);
-  // By id: a folder may be the workspace itself.
+  // By id: a session the two listings both name is one.
   const sessions = new Map<string, SessionUsage>();
   for (const state of states)
     for (const { owner, session } of state.reads.values())

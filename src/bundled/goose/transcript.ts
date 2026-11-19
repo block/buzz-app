@@ -439,6 +439,15 @@ export class GooseHistory {
   /** The last transcript read's messages, by session. */
   private exported = new Map<string, Message[]>();
 
+  /** The `folders` other than `workspace`, as written or as goose's
+   * listing of it names it. */
+  async elsewhere(workspace: string, folders: readonly string[]) {
+    const { host } = this;
+    if (!host || !folders.length) return folders;
+    const named = await absolute(host.resolveDirectory, workspace);
+    return folders.filter((folder) => folder !== workspace && folder !== named);
+  }
+
   /** Every session in the `workspaces` used since `since`, newest first, and
    * the messages of those `wanted` picks, all from one `goose-acp`: every
    * agent in a workspace reads its sessions from one listing. */

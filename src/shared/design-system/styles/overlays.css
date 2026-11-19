@@ -595,6 +595,12 @@
   pointer-events: auto;
   touch-action: pan-y;
 }
+.buzz-toast-viewport
+  [data-sonner-toast][data-removed="true"][data-swipe-out="false"] {
+  /* Sonner removes the DOM node after 200ms. Finish the exit before then. */
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
 /* Keep every recovery reachable when expanded, including short windows. */
 @media (hover: hover) and (pointer: fine) {
   .buzz-toast-viewport[data-sonner-toaster]:has([data-expanded="true"]) {

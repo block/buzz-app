@@ -148,6 +148,7 @@ export function ToastProvider({
 }
 
 type ToastCardProps = {
+  exiting?: boolean;
   title: string;
   description?: string | undefined;
   /** Optional supporting detail between the message and its actions. */
@@ -160,6 +161,7 @@ type ToastCardProps = {
 };
 
 function ToastCard({
+  exiting,
   title,
   description,
   details,
@@ -173,6 +175,8 @@ function ToastCard({
   const descriptionId = useId();
   return (
     <div
+      inert={exiting}
+      aria-hidden={exiting}
       role="dialog"
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
@@ -206,9 +210,11 @@ function ToastCard({
         {onClose && (
           <div className="buzz-toast-dismiss">
             <IconButton
-              size="sm"
+              size="xs"
+              shape="round"
+              variant="outline-subtle"
               aria-label={closeLabel}
-              icon={<XIcon size={16} aria-hidden="true" />}
+              icon={<XIcon size={12} strokeWidth={1.5} aria-hidden="true" />}
               onClick={onClose}
             />
           </div>
@@ -224,7 +230,7 @@ function ToastCard({
 // in a small React store instead, rendered inside Sonner so swipe/focus events
 // use its tree and cannot bubble into the originating composer or menu.
 function noticeContent(initial: ToastCardProps) {
-  let content: ToastCardProps | null = initial;
+  let content: ToastCardProps = initial;
   const listeners = new Set<() => void>();
   return {
     getSnapshot: () => content,
@@ -235,7 +241,7 @@ function noticeContent(initial: ToastCardProps) {
       };
     },
     update: (next: ToastCardProps | null) => {
-      content = next;
+      content = next ?? { ...content, exiting: true };
       for (const listener of listeners) listener();
     },
   };
@@ -247,7 +253,7 @@ function NoticeContent({
   source: ReturnType<typeof noticeContent>;
 }) {
   const content = useSyncExternalStore(source.subscribe, source.getSnapshot);
-  return content && <ToastCard {...content} />;
+  return <ToastCard {...content} />;
 }
 
 /** A notice lives with its source; removing it clears its floating presentation. */

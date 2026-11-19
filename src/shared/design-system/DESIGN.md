@@ -1562,8 +1562,7 @@ no dismissal unless the source supplies onDismiss; preserve all recovery actions
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the top right with safe-area insets. The app shell registers its
 header with `useToastClearance(ref, "top")` and reserves the workspace header
-height, keeping window, update, and conversation controls reachable.
-The native Mac shell reserves this clearance too; integrated Windows/Linux
+height on non-Mac shells. Mac uses a 12px top inset and an 8px right inset. Integrated Windows/Linux
 chrome aligns the card with the room/content divider. On touch,
 notices form a bounded scrolling list. Trailing actions wrap below the message
 when their intrinsic width cannot fit beside it.

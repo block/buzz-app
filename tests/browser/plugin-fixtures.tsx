@@ -4,6 +4,7 @@ import { companionPlugins } from "./companion-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { Navigation } from "../../src/features/navigation/controller";
 import type { PageProps } from "../../src/features/pages/service";
@@ -490,7 +491,12 @@ export const fixturePlugins: readonly BundledPlugin[] = [
               <button
                 type="button"
                 onClick={() =>
-                  setRequest({ opening, signal: new AbortController().signal })
+                  flushSync(() =>
+                    setRequest({
+                      opening,
+                      signal: new AbortController().signal,
+                    }),
+                  )
                 }
               >
                 Jump retained transcript

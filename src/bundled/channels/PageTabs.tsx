@@ -41,7 +41,7 @@ import {
 import { useConversationTabs } from "./useConversationTabs";
 import { ConversationTab as ConversationReader } from "./ConversationTab";
 import { panelOpening } from "../../features/panels/service";
-import { useCoveredByDock } from "./useCoveredByDock";
+import { dockUsesOverlay, useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
 
 export type { PageTabOptions, PageTabsProps, PageTabTarget };
@@ -372,10 +372,13 @@ export function PageTabs({
   const latestRequest = primaryTarget?.messageId
     ? undefined
     : workspace?.latestRequest;
-  const { selectMain } = tabState;
+  const { selectMain, setPaneOpen } = tabState;
   useLayoutEffect(() => {
-    if (latestRequest && !latestRequest.aborted) selectMain(undefined);
-  }, [latestRequest, selectMain]);
+    if (!latestRequest || latestRequest.aborted) return;
+    selectMain(undefined);
+    // The coverage observer may still be measuring a newly mounted workspace.
+    if (dockUsesOverlay(split.ref.current)) setPaneOpen(false);
+  }, [latestRequest, selectMain, setPaneOpen, split.ref]);
   const primaryChannel =
     primaryTarget &&
     channels.find((channel) => channel.id === primaryTarget.channelId);

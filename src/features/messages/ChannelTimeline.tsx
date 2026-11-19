@@ -302,7 +302,9 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
-  const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
+  const latestOpening = useRef<{ signal: AbortSignal; intent: number }>(
+    undefined,
+  );
   // The place a reveal left: for its visit, with the exact follow state; for
   // the channel, with the 80 px rule every other place is saved with. The
   // channel's applies until a newer place replaces the reveal's.
@@ -1656,10 +1658,15 @@ function Timeline({
     }
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
+    // Keep the opening's original intent through frames cancelled by a layout
+    // change. Newer reader input can retire the request before it scrolls.
+    if (latestRequest && latestOpening.current?.signal !== latestRequest)
+      latestOpening.current = { signal: latestRequest, intent: intent.current };
+    const latest = latestOpening.current;
     const openLatest =
       latestRequest &&
       !latestRequest.aborted &&
-      positionedLatestRequest.current !== latestRequest;
+      latest?.intent === intent.current;
     const revealIndex =
       revealMessageId && revealed.current !== revealMessageId
         ? rows.findIndex(
@@ -1802,8 +1809,11 @@ function Timeline({
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
         // A request can be cancelled while the scroller is attaching.
-        if (openLatest && !latestRequest.aborted) {
-          positionedLatestRequest.current = latestRequest;
+        if (
+          openLatest &&
+          !latestRequest.aborted &&
+          latest.intent === scheduledIntent
+        ) {
           scheduledIntent = ++intent.current;
           endIndex = rows.length - 1;
           restore = null;

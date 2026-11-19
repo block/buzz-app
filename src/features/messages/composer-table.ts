@@ -576,6 +576,7 @@ function unescaped(content: Fragment) {
 function cellRange(source: string, start: number, end: number) {
   let from = start;
   let to = end;
+  while (to > from && /\s/.test(source[to - 1] ?? "")) to--;
   if (source[from] === "|") from++;
   if (to > from && source[to - 1] === "|") {
     let slashes = 0;
@@ -638,6 +639,7 @@ export function paragraphTables(
     let to = finish;
     while (from < to && source[from] === "\n") from++;
     while (to > from && source[to - 1] === "\n") to--;
+    if (/^\s*$/.test(source.slice(from, to))) return;
     const content = slice(block, from, to);
     if (!content.size) return;
     nodes.push(paragraph.create(null, content));

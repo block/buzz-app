@@ -236,6 +236,17 @@ describe("table parsing", () => {
     expect(nodes?.[0]?.textContent).toBe("intro");
     expect(nodes?.[2]?.textContent).toBe("outro");
   });
+  it("ignores spaces after the closing pipe of a row", () => {
+    const found = parse("| a | b |   \n| - | - |  \n| 1 | 2 |  ")?.[0];
+    expect(cellText(found as EditorNode)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+  it("does not leave an empty paragraph before an indented table", () => {
+    const nodes = parse("  | a |\n  | - |\n  | 1 |");
+    expect(nodes?.map((node) => node.type.name)).toEqual(["table"]);
+  });
   it("leaves text that is not a table alone", () => {
     expect(parse("a | b\njust text")).toBeUndefined();
     expect(parse("| a | b |")).toBeUndefined();

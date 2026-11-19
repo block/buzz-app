@@ -257,7 +257,10 @@ type StateData = {
   mergeStateStatus?: string;
   headRefOid?: string;
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-  latestOpinionatedReviews?: { nodes?: ({ state?: string } | null)[] };
+  latestOpinionatedReviews?: {
+    nodes?: ({ state?: string } | null)[];
+    pageInfo?: { hasNextPage?: boolean };
+  };
   commits?: {
     nodes?: ({
       commit?: {
@@ -312,7 +315,7 @@ const FAILED = new Set([
 // The panel reads the same reviews with its details, and GraphQL refuses one
 // field asked for twice with different arguments.
 const STATE = `state title isDraft mergeStateStatus headRefOid
-reviewDecision latestOpinionatedReviews(first:50){nodes{state}}
+reviewDecision latestOpinionatedReviews(first:50){nodes{state} pageInfo{hasNextPage}}
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
 ... on CheckRun{name status conclusion}
@@ -384,7 +387,12 @@ function reviewOf(pull: StateData): PullState["review"] {
       return undefined;
   }
   if (verdicts.includes("CHANGES_REQUESTED")) return "changes requested";
-  return verdicts.includes("APPROVED") ? "approved" : undefined;
+  /* A later page could hold a "changes requested" this one lacks. */
+  const everyVerdictRead =
+    !pull.latestOpinionatedReviews?.pageInfo?.hasNextPage;
+  return everyVerdictRead && verdicts.includes("APPROVED")
+    ? "approved"
+    : undefined;
 }
 
 /** The state in `pull`, an alias's answer, without its feedback or details. */

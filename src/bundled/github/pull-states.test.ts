@@ -1288,7 +1288,7 @@ it("reads how far a followed pull request is on its way to merging", async () =>
 it("reads what a pull request's reviews come to with its state, and asks the panel's reviews the panel's way", async () => {
   const approved = { state: "APPROVED" };
   const changes = { state: "CHANGES_REQUESTED" };
-  for (const [decision, reviews, review] of [
+  for (const [decision, reviews, review, hasNextPage] of [
     ["APPROVED", [approved], "approved"],
     ["CHANGES_REQUESTED", [approved, changes], "changes requested"],
     // Stamped, but a required review, such as a code owner's, is missing:
@@ -1300,6 +1300,9 @@ it("reads what a pull request's reviews come to with its state, and asks the pan
     [null, [approved], "approved"],
     [null, [approved, changes], "changes requested"],
     [null, [], undefined],
+    // More verdicts than one page holds: one not read could request changes.
+    [null, [approved], undefined, true],
+    [null, [approved, changes], "changes requested", true],
   ] as const) {
     const answer = full();
     const gh = ghFor(() => ({
@@ -1308,7 +1311,10 @@ it("reads what a pull request's reviews come to with its state, and asks the pan
         pullRequest: {
           ...answer.pullRequest,
           reviewDecision: decision,
-          latestOpinionatedReviews: { nodes: reviews },
+          latestOpinionatedReviews: {
+            nodes: reviews,
+            pageInfo: { hasNextPage: hasNextPage ?? false },
+          },
         },
       },
     }));

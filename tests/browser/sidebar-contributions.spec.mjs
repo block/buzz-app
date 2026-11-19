@@ -339,7 +339,7 @@ appTest.describe("Solo header accessories", () => {
   });
 
   // Real hit testing catches an accessory covered by the workspace selection
-  // target. Tab order and visible focus also depend on the rendered heading.
+  // target. Text truncation, the trailing swap and focus use browser layout.
   appTest(
     "keeps optional controls usable in collapsed headings",
     async ({ page, app }) => {
@@ -365,12 +365,14 @@ appTest.describe("Solo header accessories", () => {
           group: sidebar.locator('[data-solo-workspace="work"]'),
           title: "Work",
           accessory: "Mark Work workspace",
+          activity: "3m",
           task: "Workspace task",
         },
         {
           group: sidebar.locator('[data-solo-channel-group="alpha"]'),
           title: "Alpha",
           accessory: "Mark Alpha channel",
+          activity: "1d",
           task: "Channel task",
         },
       ];
@@ -385,7 +387,7 @@ appTest.describe("Solo header accessories", () => {
           "data-color-mode",
           theme,
         );
-        for (const { group, title, accessory, task } of headers) {
+        for (const { group, title, accessory, activity, task } of headers) {
           const disclosure = group.getByRole("button", { name: /tasks/i });
           const action = group.getByRole("button", { name: accessory });
           const heading = group.getByRole("button", {
@@ -396,9 +398,11 @@ appTest.describe("Solo header accessories", () => {
             name: `Actions for ${title}`,
             exact: true,
           });
+          const metadata = group.getByText(activity, { exact: true });
+          const name = heading.getByText(title, { exact: true });
           const actionPositions = async () =>
             Promise.all(
-              [action, nativeMenu].map(
+              [name, action, nativeMenu].map(
                 async (button) => (await button.boundingBox())?.x,
               ),
             );
@@ -407,17 +411,25 @@ appTest.describe("Solo header accessories", () => {
           await action.scrollIntoViewIfNeeded();
           await page.mouse.move(0, 0);
           await resize.focus();
+          await expect(metadata).toBeVisible();
           await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
           const restingPositions = await actionPositions();
           expect(restingPositions).toEqual([
             expect.any(Number),
             expect.any(Number),
+            expect.any(Number),
           ]);
+          await expect
+            .poll(() =>
+              name.evaluate((label) => label.clientWidth >= label.scrollWidth),
+            )
+            .toBe(true);
           expect((await disclosure.boundingBox())?.x).toBeLessThan(
             (await heading.boundingBox())?.x,
           );
           await heading.hover();
           await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "1");
+          await expect(metadata).toBeHidden();
           await expect.poll(actionPositions).toEqual(restingPositions);
 
           await page.mouse.move(0, 0);
@@ -427,6 +439,7 @@ appTest.describe("Solo header accessories", () => {
           await page.keyboard.press("Tab");
           await expect(action).toBeFocused();
           await expect(action).toHaveCSS("outline-style", "solid");
+          await expect(metadata).toBeHidden();
           await expect.poll(actionPositions).toEqual(restingPositions);
           await page.keyboard.press("Shift+F10");
           await expect(page.getByRole("menu")).toHaveCount(0);

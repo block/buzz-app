@@ -121,6 +121,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         <NavigationSectionHeading
           disclosure
           revealActions
+          metadata={props.headerMetadata}
           reserveActionSpace={accessory != null}
           actions={
             <>

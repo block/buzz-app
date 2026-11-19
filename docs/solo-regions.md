@@ -213,3 +213,9 @@ It can supply a compact, accessible
 control with its own activation, independent of selection, disclosure and
 native actions. The region supplies its accessible name and behavior.
 Hosts that predate this prop ignore it.
+
+Both headers also accept optional `headerMetadata: ReactNode` for compact,
+non-interactive content such as a relative activity time. The host displays
+it at the trailing edge and replaces it with native actions on hover,
+keyboard focus, or while a menu is open. Touch shows the actions directly.
+The title and accessory keep their positions when the content swaps.

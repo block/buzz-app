@@ -1657,12 +1657,35 @@
     align-items: center;
   }
 
-  .navigation-section-heading-actions:empty {
+  .navigation-section-heading-actions:not([data-has-metadata]):has(
+    > .navigation-section-heading-buttons:empty
+  ) {
     display: none;
   }
 
   .navigation-section-heading-actions[data-reserve-space] {
     margin-inline-start: auto;
+  }
+
+  .navigation-section-heading-actions[data-has-metadata] {
+    display: grid;
+    grid-template-areas: "trailing";
+  }
+
+  .navigation-section-heading-metadata,
+  .navigation-section-heading-buttons {
+    grid-area: trailing;
+  }
+
+  .navigation-section-heading-metadata {
+    justify-self: end;
+    padding-inline: var(--space-1);
+    pointer-events: none;
+  }
+
+  .navigation-section-heading-buttons {
+    display: flex;
+    justify-content: flex-end;
   }
 
   @container (max-width: 7rem) {
@@ -1768,19 +1791,30 @@
     overflow: hidden;
   }
 
+  .navigation-section-heading-buttons[data-navigation-reveal] {
+    pointer-events: none;
+  }
+
   :is(
-      .navigation-section-heading:hover,
-      html[data-keyboard-navigation] .navigation-section-heading:focus-within,
-      .navigation-section-heading:has([data-navigation-reveal]:focus-within),
-      .navigation-section-heading:has(
-        [aria-expanded="true"][aria-haspopup="menu"]
-      ),
-      [data-context-menu-present] > .navigation-section-heading
-    )
+    .navigation-section-heading:hover,
+    html[data-keyboard-navigation] .navigation-section-heading:focus-within,
+    .navigation-section-heading:has([data-navigation-reveal]:focus-within),
+    .navigation-section-heading:has(
+      [aria-expanded="true"][aria-haspopup="menu"]
+    ),
+    [data-context-menu-present] > .navigation-section-heading
+  ) {
     [data-navigation-reveal] {
-    opacity: 1;
-    max-width: none;
-    overflow: visible;
+      opacity: 1;
+      max-width: none;
+      overflow: visible;
+    }
+    .navigation-section-heading-buttons {
+      pointer-events: auto;
+    }
+    [data-navigation-reveal-rest] {
+      visibility: hidden;
+    }
   }
 
   @media (hover: none) {
@@ -1788,6 +1822,12 @@
       opacity: 1;
       max-width: none;
       overflow: visible;
+    }
+    .navigation-section-heading-buttons[data-navigation-reveal] {
+      pointer-events: auto;
+    }
+    .navigation-section-heading [data-navigation-reveal-rest] {
+      visibility: hidden;
     }
   }
 

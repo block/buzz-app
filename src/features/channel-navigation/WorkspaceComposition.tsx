@@ -35,6 +35,7 @@ export type WorkspaceComposition = Readonly<{
       trailing?: ReactNode,
       actions?: ReactNode,
       accessory?: ReactNode,
+      metadata?: ReactNode,
     ): ReactNode;
     panel(before?: ReactNode): ReactNode;
   }>[];
@@ -115,6 +116,7 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
             <MenuItem onClick={props.onNewTask}>New task</MenuItem>
           ),
           props.headerAccessory,
+          props.headerMetadata,
         )}
       </NavigationCard>
     </div>,

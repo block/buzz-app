@@ -637,6 +637,7 @@ export function SoloWorkspaces({
       trailing?: ReactNode,
       actions?: ReactNode,
       accessory?: ReactNode,
+      metadata?: ReactNode,
     ) => (
       <ChatActionsMenu
         id={`project-${project.id}`}
@@ -723,6 +724,7 @@ export function SoloWorkspaces({
           <NavigationSectionHeading
             disclosure
             revealActions
+            metadata={metadata}
             reserveActionSpace={
               accessory != null && typeof accessory !== "boolean"
             }

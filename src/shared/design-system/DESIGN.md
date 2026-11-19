@@ -538,6 +538,9 @@ one of them has focus, and always show on touch; a focused control is never
 invisible. Hidden actions take no width, so a long label keeps its words at
 large text sizes and narrow widths. A heading with an accessory keeps space
 for its quiet actions beside the accessory so all controls stay in place.
+When a heading also has passive metadata, it shares one compact trailing
+slot with those actions. Pointer hover and keyboard focus reveal the actions
+in that slot. Touch shows the actions directly.
 When a host already names a list, as
 the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
 overlaying it; any actions it still needs take a headingless heading row.

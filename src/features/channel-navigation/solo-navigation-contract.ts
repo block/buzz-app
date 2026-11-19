@@ -141,6 +141,8 @@ export type SoloChannelGroupProps = Readonly<{
   onNewTask?(): void;
   /** Independent header content that stays visible when collapsed. */
   headerAccessory?: ReactNode;
+  /** Compact, non-interactive content shown in place of quiet header actions. */
+  headerMetadata?: ReactNode;
   children?: ReactNode;
 }>;
 export type SoloWorkspaceProps = Readonly<{
@@ -150,6 +152,8 @@ export type SoloWorkspaceProps = Readonly<{
   onNewTask?(): void;
   /** Independent header content that stays visible when collapsed. */
   headerAccessory?: ReactNode;
+  /** Compact, non-interactive content shown in place of quiet header actions. */
+  headerMetadata?: ReactNode;
   /** Reveal a moved or externally opened child; selection alone does not expand. */
   reveal?: string;
   dropTarget?: boolean;

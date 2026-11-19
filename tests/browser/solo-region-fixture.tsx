@@ -82,6 +82,11 @@ export const soloRegionFixture: BundledPlugin = {
                   <HeaderAccessory label={`Mark ${workspace.name} workspace`} />
                 ) : undefined
               }
+              headerMetadata={
+                headerAccessories && workspace.id === "work" ? (
+                  <time dateTime="PT3M">3m</time>
+                ) : undefined
+              }
             >
               <button type="button">Workspace task</button>
             </ui.Workspace>
@@ -109,6 +114,9 @@ export const soloRegionFixture: BundledPlugin = {
               id === "alpha" ? (
                 <HeaderAccessory label="Mark Alpha channel" />
               ) : undefined
+            }
+            headerMetadata={
+              id === "alpha" ? <time dateTime="P1D">1d</time> : undefined
             }
           >
             <button type="button">Channel task</button>

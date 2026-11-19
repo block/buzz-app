@@ -446,6 +446,7 @@ export function createThreadView({
       pages = 0;
       again = false;
       older = false;
+      failed = undefined;
       shown = undefined;
       if (exact) targetStatus = "error";
       publish({
@@ -455,6 +456,7 @@ export function createThreadView({
         error:
           "Thread view exceeded its memory limit. Refresh to read from the beginning.",
       });
+      recover?.();
       return false;
     }
     if (commit) {

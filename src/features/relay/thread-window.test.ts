@@ -1426,3 +1426,43 @@ it("still reports a failure of a read view that a retry cannot fix", async () =>
   expect(h.session.recovery?.snapshot().recovering).toBe(false);
   view.dispose();
 });
+
+it("settles session recovery when a read view with a quiet failure passes its memory limit", async () => {
+  const rows = Array.from({ length: 12 }, (_, n) => filler(n));
+  let down = false;
+  const h = await setup((f) => {
+    if (down && f.thread_window) throw new TypeError("offline");
+    return serving(rows)(f);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  const view = h.session.thread(channel, root.id, { reading: true });
+  await view.refresh();
+  const recovery = h.session.recovery;
+  assert.exists(recovery);
+  down = true;
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  try {
+    void view.loadMore();
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(recovery.snapshot().recovering).toBe(true);
+    // Live replies alone pass the limit: no read is running to report it.
+    h.traffic.receive(Array.from({ length: 2001 }, (_, n) => filler(1000 + n)));
+    await vi.waitFor(() =>
+      expect(view.snapshot()).toMatchObject({ status: "error", limited: true }),
+    );
+    expect(recovery.snapshot().recovering).toBe(false);
+    // The limit's own error is retried by hand, not by recovery.
+    const sent = h.requests.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.requests).toHaveLength(sent);
+    expect(recovery.snapshot()).toMatchObject({
+      recovering: false,
+      shown: false,
+    });
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+});

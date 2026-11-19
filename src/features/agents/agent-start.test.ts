@@ -227,6 +227,43 @@ describe("start resolution", () => {
     }
   });
 
+  it.each([
+    [{ scope: "galaxy" }, 'Setting "scope" has an unsupported value'],
+    [{ future: "value" }, 'Unknown setting "future"'],
+    [{ model: 42 }, 'Setting "model" is not text'],
+  ])(
+    "explains incompatible settings while preserving the reason: %j",
+    (value, reason) => {
+      const { store } = seeded();
+      install(
+        store,
+        settings,
+        revision({ agentType: "claude-code", settings: value }),
+      );
+      expect(resolveStart(input(store))).toMatchObject({
+        ok: false,
+        state: "invalid",
+        reason: `These agent settings aren't compatible with this version of Buzz: ${reason}`,
+      });
+    },
+  );
+
+  it("uses the compatibility explanation for malformed settings too", () => {
+    const { store } = seeded();
+    install(
+      store,
+      settings,
+      revision({ agentType: "claude-code" }),
+      "Settings missing",
+    );
+    expect(resolveStart(input(store))).toMatchObject({
+      ok: false,
+      state: "invalid",
+      reason:
+        "These agent settings aren't compatible with this version of Buzz: Settings missing",
+    });
+  });
+
   it("keeps serving a confirmed head while the relay is unreachable, but not after lost access", () => {
     const { store, i } = seeded();
     // Offline: every read fails, which changes no state.

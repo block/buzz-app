@@ -1291,7 +1291,7 @@ default Huddle voice.
 
 ### Recover incompatible agent settings
 
-If an agent reports incompatible synced settings, choose **Open Previous Versions** to go to its Settings tab. Versions this client cannot use are marked **Incompatible**. Open an older compatible Settings version and choose **Revert to this** to restore its settings as a new version. Reverting keeps the agent’s instructions. If you cannot find a compatible version, use a newer client to change the settings.
+If an agent reports incompatible synced settings, choose the **Previous Versions** link to go to its Settings tab. Versions this client cannot use are marked **Incompatible**. Open an older compatible Settings version and choose **Revert to this** to restore its settings as a new version. Reverting keeps the agent’s instructions. If you cannot find a compatible revision, use a Buzz version that supports the saved settings.
 
 ### Builderlab accounts and remote agents
 

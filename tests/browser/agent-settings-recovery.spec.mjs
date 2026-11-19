@@ -15,12 +15,20 @@ test("reverts incompatible agent settings from Previous Versions", async ({
     { waitUntil: "domcontentloaded" },
   );
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
-  const history = page.getByRole("button", { name: "Open Previous Versions" });
+  const history = page
+    .getByRole("alert")
+    .getByRole("button", { name: "Previous Versions" });
+  await expect(page.getByRole("alert")).toContainText(
+    "Use a Buzz version that supports them, or open Previous Versions to look for a compatible revision.",
+  );
   await history.focus();
   await history.press("Enter");
   await expect(
     page.getByRole("tab", { name: "Settings", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "Previous versions", exact: true }),
+  ).toBeFocused();
   const versions = page.getByRole("list", { name: "Previous versions" });
   const incompatible = versions.getByRole("button", { name: /Incompatible/ });
   await expect(incompatible).toBeVisible();
@@ -58,5 +66,7 @@ test("reverts incompatible agent settings from Previous Versions", async ({
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
   await expect(history).toHaveCount(0);
-  await expect(page.getByText(/Settings can't be used/)).toHaveCount(0);
+  await expect(
+    page.getByText(/These agent settings aren't compatible/),
+  ).toHaveCount(0);
 });

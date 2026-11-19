@@ -456,7 +456,7 @@ it("offers a direct history link for incompatible synced settings", async () => 
       agent: {
         ...agent,
         configProblem:
-          'Settings can\'t be used: Setting "scope" has an unsupported value',
+          'These agent settings aren\'t compatible with this version of Buzz: Setting "scope" has an unsupported value',
       },
       type,
       openVersionHistory,
@@ -465,10 +465,19 @@ it("offers a direct history link for incompatible synced settings", async () => 
       .find((section) => section.value === "agent:settings")
       ?.render(),
   );
-  const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Open Previous Versions" }),
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(
+    'These agent settings aren\'t compatible with this version of Buzz: Setting "scope" has an unsupported value',
   );
+  expect(alert).toHaveTextContent(
+    "Use a Buzz version that supports them, or open Previous Versions to look for a compatible revision.",
+  );
+  const historyLink = screen.getByRole("button", { name: "Previous Versions" });
+  expect(historyLink.closest("p")).toBe(alert);
+  expect(historyLink).toHaveAttribute("data-variant", "link");
+  expect(historyLink).toHaveAttribute("data-size", "text");
+  const user = userEvent.setup();
+  await user.click(historyLink);
   expect(openVersionHistory).toHaveBeenCalledOnce();
   expect(revise).not.toHaveBeenCalled();
   expect(agents.save).not.toHaveBeenCalled();

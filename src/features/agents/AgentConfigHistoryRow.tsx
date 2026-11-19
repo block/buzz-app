@@ -137,9 +137,7 @@ export function ConfigHistoryRow({
                     head={track.head}
                     expected={track.expected}
                     settings={
-                      expanded.length && track.side === "settings"
-                        ? history.settings
-                        : undefined
+                      track.side === "settings" ? history.settings : undefined
                     }
                     onSelect={() =>
                       setSelected({ side: track.side, id: event.id })
@@ -160,6 +158,9 @@ export function ConfigHistoryRow({
                   {...(side === "settings" && history.settings
                     ? { settings: history.settings }
                     : {})}
+                  revertProblem={
+                    side === "settings" ? history.settingsProblem : undefined
+                  }
                   onRevert={(template) => history.revise(side, template)}
                   onHistoryChange={
                     side === "settings" ? settingsChanged : instructionsChanged

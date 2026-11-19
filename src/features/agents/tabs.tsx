@@ -85,10 +85,12 @@ export function agentSections({
       </SettingsGroup>
     ) : undefined;
   const details = settingsContent ?? historyContent;
+  const history =
+    agent.place === "here" ? agents.configHistory(agent.key) : undefined;
   const recoverable =
     agent.place === "here" &&
     agent.configProblem &&
-    incompatibleSettings(agents.configHistory(agent.key));
+    incompatibleSettings(history);
   // Remote harnesses own their availability-dependent execution guidance.
   const execution = type?.remote ? undefined : agentExecution(agent, type);
   const typeTabs = type?.tabs ?? [];
@@ -113,6 +115,7 @@ export function agentSections({
           agents={agents}
           agent={agent}
           openVersionHistory={recoverable ? openVersionHistory : undefined}
+          recoveryProblem={history?.settingsProblem}
         >
           {(save) => {
             const content = (
@@ -255,6 +258,7 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
  * with, so an edit made over a stale view conflicts instead of overwriting.
  * Each save moves the base to what it saved. */
 function EditorBase({
+  recoveryProblem,
   agents,
   agent,
   children,
@@ -262,6 +266,7 @@ function EditorBase({
 }: {
   agents: Pick<Agents, "save" | "snapshot">;
   agent: Agent;
+  recoveryProblem?: string | undefined;
   children(save: AgentViewProps["save"]): ReactNode;
   openVersionHistory?: (() => void) | undefined;
 }) {
@@ -279,18 +284,19 @@ function EditorBase({
   return (
     <>
       {agent.configProblem && (
-        <div className="grid gap-2">
-          <p role="alert" className="buzz-field-error">
-            {agent.configProblem}
-          </p>
+        <p role="alert" className="buzz-field-error">
+          {agent.configProblem}
+          {recoveryProblem && <>. {recoveryProblem}</>}
           {openVersionHistory && (
-            <div>
+            <>
+              {". Use a Buzz version that supports them, or open "}
               <Button variant="link" size="text" onClick={openVersionHistory}>
-                Open Previous Versions
+                Previous Versions
               </Button>
-            </div>
+              {" to look for a compatible revision."}
+            </>
           )}
-        </div>
+        </p>
       )}
       {editor}
     </>

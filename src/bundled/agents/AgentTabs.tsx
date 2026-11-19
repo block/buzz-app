@@ -2,6 +2,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -53,9 +54,15 @@ export function AgentTabs(props: {
   const split = props.type?.tabs?.some(
     (section) => section.role === "settings" && section.splitSettings,
   );
+  const historyPanel = useRef<HTMLDivElement>(null);
+  const [focusHistory, setFocusHistory] = useState(false);
+  const openVersionHistory = () => {
+    setFocusHistory(true);
+    choose("agent:management");
+  };
   const supplied = agentSections({
     ...props,
-    openVersionHistory: () => choose("agent:management"),
+    openVersionHistory,
     ...(split ? { settingsSection: "identity" as const } : {}),
   });
   const identity = supplied.find(
@@ -99,6 +106,16 @@ export function AgentTabs(props: {
   useEffect(() => {
     if (props.showSettings) requestSettings();
   }, [props.showSettings]);
+  useEffect(() => {
+    if (focusHistory && selected?.value === "agent:management") {
+      historyPanel.current
+        ?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Previous versions"]',
+        )
+        ?.focus();
+      setFocusHistory(false);
+    }
+  }, [focusHistory, selected?.value]);
   const settingsSelected =
     selected?.value === "agent:settings" ||
     selected?.value === "agent:management";
@@ -106,6 +123,7 @@ export function AgentTabs(props: {
   const settings = split
     ? agentSections({
         ...props,
+        openVersionHistory,
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
         settingsContent: props.settingsContent,
@@ -143,6 +161,9 @@ export function AgentTabs(props: {
       />
       {settings && settingsSelected && (
         <div
+          ref={
+            selected?.value === "agent:management" ? historyPanel : undefined
+          }
           key={settingsValue}
           role="tabpanel"
           id={panelId(settingsValue)}
@@ -161,6 +182,9 @@ export function AgentTabs(props: {
         )
         .map((section) => (
           <div
+            ref={
+              section.value === "agent:management" ? historyPanel : undefined
+            }
             role="tabpanel"
             id={panelId(section.value)}
             aria-labelledby={`${panelId(section.value)}-tab`}

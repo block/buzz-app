@@ -58,7 +58,12 @@ const saveFooter = new URLSearchParams(location.search).has("saveFooter");
 const instructions = new URLSearchParams(location.search).get("instructions");
 const memoryLabel = new URLSearchParams(location.search).get("memoryLabel");
 
-function Settings({ agent, save }: AgentViewProps<{ instructions?: string }>) {
+function Settings({
+  agent,
+  save,
+  settingsContent,
+  settingsSection,
+}: AgentViewProps<{ instructions?: string }>) {
   const form = useId();
   const saved = agent.config.instructions ?? "";
   const [draft, setDraft] = useState(saved);
@@ -83,6 +88,7 @@ function Settings({ agent, save }: AgentViewProps<{ instructions?: string }>) {
         )}
       </p>
       <AgentInstructions value={draft} onChange={setDraft} />
+      {settingsSection === "runtime" && settingsContent}
       <AgentSaveButton form={form} saving={saving} disabled={draft === saved} />
     </form>
   );
@@ -103,6 +109,9 @@ const type: RegisteredAgentType = {
             id: "settings",
             title: "Settings",
             role: "settings" as const,
+            splitSettings: new URLSearchParams(location.search).has(
+              "settingsRecovery",
+            ),
             component: Settings,
           },
         ],
@@ -661,7 +670,9 @@ if (new URLSearchParams(location.search).has("settingsRecovery")) {
           ...rest,
           configBase: { settings: head.id },
           ...("problem" in checked
-            ? { configProblem: `Settings can't be used: ${checked.problem}` }
+            ? {
+                configProblem: `These agent settings aren't compatible with this version of Buzz: ${checked.problem}`,
+              }
             : { config: { ...(agent.config as object), ...checked.settings } }),
         };
       }),

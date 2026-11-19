@@ -305,7 +305,8 @@ export function revisionProblem(
 export function incompatibleSettings(history: ConfigHistory | undefined) {
   const track = history?.sides.find(({ side }) => side === "settings");
   return Boolean(
-    history?.settings &&
+    !history?.settingsProblem &&
+      history?.settings &&
       track?.head &&
       artifactOp(track.head) !== "delete" &&
       revisionProblem(track.expected, track.head, history.settings),

@@ -10,7 +10,6 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   artifactOp,
-  artifactProblem,
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
@@ -67,6 +66,7 @@ export function AgentConfigHistory({
   read,
   settings,
   onRevert,
+  revertProblem,
   title = "History",
   onHistoryChange,
   selected,
@@ -85,6 +85,8 @@ export function AgentConfigHistory({
   settings?: SettingsCheck;
   /** Signs and sends the revert; resolves to what the relay said. */
   onRevert(template: ReturnType<typeof revertTemplate>): Promise<RevertOutcome>;
+  /** Why this client cannot publish a revision over the current head. */
+  revertProblem?: string | undefined;
   /** Names the section, as which side of the config it shows. */
   title?: string;
   /** Reports loaded counts without a separate history read. */
@@ -255,6 +257,7 @@ export function AgentConfigHistory({
     head &&
     !current &&
     !deleted &&
+    !revertProblem &&
     !revisionProblem(expected, event, settings);
   return (
     <section className="contents" aria-label={title}>
@@ -319,6 +322,7 @@ export function AgentConfigHistory({
         }
       >
         <div className="grid gap-2">
+          {revertProblem && <p className="text-body-sm">{revertProblem}</p>}
           {event ? (
             deleted ? (
               <p className="m-0 text-body-sm">
@@ -371,10 +375,7 @@ export function AgentConfigVersionRow({
   useClockFormat();
   const operation = artifactOp(event);
   const invalid =
-    operation !== "delete" &&
-    (settings
-      ? revisionProblem(expected, event, settings)
-      : artifactProblem(event, expected));
+    operation !== "delete" && revisionProblem(expected, event, settings);
   const nowSeconds = Date.now() / 1000;
   const timestamp =
     nowSeconds - event.created_at < 7 * 24 * 60 * 60

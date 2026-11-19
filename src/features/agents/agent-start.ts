@@ -66,7 +66,7 @@ const blocked = (
     state === "deleted"
       ? `${what} were deleted — restore from History`
       : state === "invalid"
-        ? `${what} can't be used: ${problem ?? "invalid"}`
+        ? `${what === "Settings" ? "These agent settings aren't compatible with this version of Buzz" : `${what} can't be used`}: ${problem ?? "invalid"}`
         : WAITING,
 });
 

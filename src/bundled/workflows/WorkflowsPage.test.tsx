@@ -2510,6 +2510,85 @@ it("says a linked workflow was not found once the channel list settles with no c
   }
 });
 
+/** A roster's first page that lists no channel for this page. */
+const partialEmpty: ChannelList = {
+  status: "ready",
+  coverage: "partial",
+  channels: [],
+};
+
+it("opens a linked workflow reported missing from a partial channel list with no channel for this page, and withdraws that notice, when a later page lists its channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    // The page's own notice: no landing is mounted to give one.
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    expect(detailShown()).toBeNull();
+    // The delayed second page: the visit was not spent on that notice.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("answers a linked visit once a partial channel list with no channel for this page completes without one", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // The list completes, still empty: the reader is not told a second time.
+    visit.setChannels({ status: "ready", channels: [] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    // Answered for good: a channel listed afterwards opens nothing.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.settled();
+    expect(detailShown()).toBeNull();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("reports a linked workflow missing once when a partial channel list with no channel for this page then lists channels without it", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // The landing that now mounts reports the workflow missing itself.
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    await waitFor(() => expect(screen.getByText(notFound)).toBeVisible());
+    await visit.settled();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
 it("keeps a linked workflow waiting through a reconnect while the channel list is still loading", async () => {
   const visit = linkedVisit([fixtureDefinition], undefined, {
     status: "loading",

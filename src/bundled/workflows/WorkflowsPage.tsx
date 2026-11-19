@@ -183,6 +183,10 @@ export function WorkflowCommunity({
     setNotFound(unlisted);
     if (!partial) onRevealed?.(unlisted);
   }, [unlisted, partial, onRevealed]);
+  // A partial list that then lists a channel hands the still unanswered visit
+  // to the landing, which opens the workflow or reports it missing itself.
+  if (notFound && notFound === pending?.entryId && eligible.length)
+    setNotFound(undefined);
   const visit = useRef({ navigation, navigator, reveal });
   visit.current = { navigation, navigator, reveal };
   const selectDetail = useCallback((key: string | undefined, name?: string) => {

@@ -219,6 +219,78 @@ it("drops an answer that lands after the person moved, keeping the relay order",
   expect(result.current.messages.map(({ id }) => id)).toEqual(["a", "b"]);
 });
 
+it("sends nothing once the person moves during the settle", async () => {
+  vi.useFakeTimers();
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, () => 0.5),
+  );
+  const decisions = decisionsOf(decide);
+  const messages = ["a", "b"].map(message);
+  const { rerender } = renderHook(
+    ({ held }) =>
+      useMessageRerank({
+        decisions,
+        community: undefined,
+        query: "q",
+        messages,
+        enabled: true,
+        facts,
+        held,
+      }),
+    { initialProps: { held: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(250);
+  });
+  rerender({ held: true });
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(decide).not.toHaveBeenCalled();
+});
+
+it("asks a provider still checking its setup only once it answers", async () => {
+  vi.useFakeTimers();
+  let status = "checking";
+  const listeners = new Set<() => void>();
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, (text) => (text === "b" ? 0.9 : 0.1)),
+  );
+  const decisions = {
+    decide,
+    status: () => status,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  } as unknown as Decisions;
+  const messages = ["a", "b"].map(message);
+  const { result } = renderHook(() =>
+    useMessageRerank({
+      decisions,
+      community: undefined,
+      query: "q",
+      messages,
+      enabled: true,
+      facts,
+      held: false,
+    }),
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(2_000);
+  });
+  expect(decide).not.toHaveBeenCalled();
+  await act(async () => {
+    status = "ready";
+    for (const listener of listeners) listener();
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(decide).toHaveBeenCalledOnce();
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a"]);
+});
+
 it("keeps an applied order while a later page extends the hits", async () => {
   vi.useFakeTimers();
   const decide = vi.fn(async (request: DecisionRequest) =>

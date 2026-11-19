@@ -39,17 +39,22 @@ const INSTRUCTIONS = (n: number) =>
   ].join("\n");
 
 const noStatus = () => () => {};
-/** Whether this device's decision provider may answer: a reranked search
- * reads more hits up front. */
-export function useCanRerank(decisions: Decisions | undefined) {
-  const status = useSyncExternalStore(
+const useStatus = (decisions: Decisions | undefined) =>
+  useSyncExternalStore(
     decisions?.subscribe ?? noStatus,
     () => decisions?.status() ?? "unavailable",
   );
-  return canRerank(status);
+/** Whether this device's decision provider may answer: a reranked search
+ * reads more hits up front. */
+export function useCanRerank(decisions: Decisions | undefined) {
+  return canRerank(useStatus(decisions));
 }
 const canRerank = (status: DecisionProviderStatus | "unavailable") =>
   status !== "unavailable" && status !== "needs-setup";
+/** The provider answers now. One still checking its setup would hold the
+ * request until it knows, then send it even if the search has moved on. */
+const answers = (status: DecisionProviderStatus | "unavailable") =>
+  status === "ready" || status === "unconfirmed";
 
 /** The decision calls that judge the first hits: one yes/no question per
  * candidate, numbered from 1 within each call, in calls of equal size. */
@@ -115,10 +120,11 @@ function rerankOrder(
 /**
  * Reorders the first relevance-ranked hits by how likely the decision
  * provider judges each to be what the searcher wants. The keyword order shows
- * first; a failed provider leaves it. Enable it once `useCanRerank` holds,
- * so a provider that becomes able to answer starts it. Once `held`,
- * an answer that arrives later is dropped, so rows don't move under someone
- * reading them; one already applied stays.
+ * first; a failed provider leaves it. Enable it once `useCanRerank` holds;
+ * the calls go out only once the provider answers, so one that finishes
+ * checking or becomes able to answer starts them. Once `held`, nothing more is
+ * sent and an answer that arrives later is dropped, so rows don't move under
+ * someone reading them; one already applied stays.
  */
 export function useMessageRerank({
   decisions,
@@ -139,6 +145,7 @@ export function useMessageRerank({
 }) {
   const hold = useRef(held);
   hold.current = held;
+  const answering = answers(useStatus(decisions));
   const ids = messages.slice(0, RERANK_LIMIT).map(({ id }) => id);
   const key = enabled ? JSON.stringify([query, ids]) : "";
   const [result, setResult] = useState<{
@@ -148,9 +155,12 @@ export function useMessageRerank({
   }>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the request; messages and facts are read as it starts.
   useEffect(() => {
-    if (!key || !decisions || ids.length < 2) return;
+    if (!key || !decisions || !answering || ids.length < 2) return;
     let live = true;
     const timer = setTimeout(() => {
+      // Someone who moved or chose during the settle keeps this order, so
+      // their query and hits aren't sent for an answer that would be dropped.
+      if (hold.current) return;
       const requests = rerankRequests(query, messages, facts, community);
       void Promise.all(
         requests.map((request) => decisions.decide(request)),
@@ -177,7 +187,7 @@ export function useMessageRerank({
       live = false;
       clearTimeout(timer);
     };
-  }, [key, decisions, community]);
+  }, [key, decisions, community, answering]);
   // A later page extends the hits that were ordered, or a hit leaves with
   // its conversation: that order stays, so the rows above don't move.
   const present = new Set(ids);

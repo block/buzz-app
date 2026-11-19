@@ -1501,6 +1501,120 @@ it("reranks message hits once the decision provider can answer, holding them onc
   }
 });
 
+it.each([
+  { from: "crew", to: undefined },
+  { from: undefined, to: "crew" },
+])(
+  "a move in one conversation's hits doesn't hold the rerank after the scope goes from $from to $to",
+  async ({ from, to }) => {
+    vi.useFakeTimers();
+    const relay = keypair(),
+      viewer = keypair();
+    const discovery = [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query(filters) {
+        const read = filters.find(
+          (filter) => filter.search !== undefined && filter.kinds?.includes(9),
+        );
+        if (read)
+          // Each scope finds its own hits; the provider favours the last.
+          return Promise.resolve(
+            (read["#h"]
+              ? ["one", "two", "runbook"]
+              : ["three", "four", "guide"]
+            ).map((word, index) =>
+              message(viewer, "crew", `deploy ${word}`, 1700000500 - index),
+            ),
+          );
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      },
+    });
+    const pending: (() => void)[] = [];
+    const decisions = {
+      status: () => "ready",
+      subscribe: () => () => {},
+      decide: (request: DecisionRequest) =>
+        new Promise((resolve) => {
+          const { candidates } = JSON.parse(request.state) as {
+            candidates: { n: number; text: string }[];
+          };
+          pending.push(() =>
+            resolve({
+              outcome: "answered",
+              backend: "test",
+              model: "test",
+              answers: Object.fromEntries(
+                candidates.map(({ n, text }) => [
+                  `m${n}`,
+                  {
+                    type: "yes_no",
+                    probability: /(runbook|guide)$/.test(text) ? 0.9 : 0.1,
+                  },
+                ]),
+              ),
+            }),
+          );
+        }),
+    } as unknown as Decisions;
+    const props = (channel: string | undefined) => ({
+      session: owner.session,
+      onQueryChange: () => {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      openConversation: () => {},
+      openNewMessage: () => {},
+      onScopeChange: () => {},
+      decisions,
+      query: "deploy",
+      ...(channel ? { scopedChannelId: channel } : {}),
+    });
+    const settle = async () => {
+      await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+      expect(pending).toHaveLength(1);
+    };
+    const answer = () => act(async () => pending.shift()?.());
+    const order = () =>
+      within(screen.getByRole("group", { name: "Messages" }))
+        .getAllByRole("option")
+        .map(
+          (row) =>
+            /(one|two|runbook|three|four|guide)/.exec(
+              row.textContent ?? "",
+            )?.[1],
+        );
+    const view = render(<SearchResults {...props(from)} />);
+    try {
+      await settle();
+      // The field's name follows the scope.
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+      await answer();
+      expect(order()).toEqual(
+        from ? ["one", "two", "runbook"] : ["three", "four", "guide"],
+      );
+
+      view.rerender(<SearchResults {...props(to)} />);
+      await settle();
+      await answer();
+      expect(order()).toEqual(
+        to ? ["runbook", "one", "two"] : ["guide", "three", "four"],
+      );
+      expect(screen.getByText(/Reranked/)).toBeVisible();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 // Searches several signed pages; a busy runner has taken over 5 s.
 it("sorts a conversation newest first across pages and restarts paging when the order changes", async () => {
   const relay = keypair();

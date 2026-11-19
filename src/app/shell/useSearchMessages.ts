@@ -15,6 +15,7 @@ import {
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
+import { ReadError } from "../../features/relay/errors";
 import type { Profile } from "../../features/relay/contracts";
 import { foldProfiles } from "../../features/relay/profiles";
 import { searchedProfiles } from "../../features/relay/profile-search";
@@ -480,19 +481,35 @@ export function useSearchMessages(
                 ...(newest ? { search_sort: "newest" as const } : {}),
               }
             : {}),
-          limit: PAGE_SIZE * firstPages,
+          limit: PAGE_SIZE,
           ...(channelId ? { "#h": [channelId] } : {}),
           ...(author ? { authors: [author] } : {}),
           ...(parsed.since !== null ? { since: parsed.since } : {}),
           ...(parsed.until !== null ? { until: parsed.until } : {}),
         };
-        const page = await readPage(
-          session,
-          channelId,
-          filter,
-          1,
-          controller.signal,
-        );
+        const read = (limit: number) =>
+          readPage(
+            session,
+            channelId,
+            { ...filter, limit },
+            1,
+            controller.signal,
+          );
+        let pages = firstPages;
+        let page: Awaited<ReturnType<typeof read>>;
+        try {
+          page = await read(PAGE_SIZE * pages);
+        } catch (error) {
+          // Full events can overflow the read budget across several pages
+          // when one page fits: the search still shows that page.
+          if (
+            pages === 1 ||
+            !(error instanceof ReadError && error.kind === "invalid-response")
+          )
+            throw error;
+          pages = 1;
+          page = await read(PAGE_SIZE);
+        }
         // Offsets count in the later pages' size: after n first pages, the
         // next is page n + 1.
         return {
@@ -501,7 +518,7 @@ export function useSearchMessages(
             ? {
                 next: {
                   filter: { ...filter, limit: PAGE_SIZE },
-                  page: firstPages + 1,
+                  page: pages + 1,
                 },
               }
             : {}),

@@ -728,11 +728,15 @@ export function SearchResults({
   // The chip or a single resolved `in:` limits results to one conversation.
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   const canRerank = useCanRerank(decisions);
+  // One search: its text within its conversation. Changing either reads a
+  // new set of hits.
+  const searchKey = JSON.stringify([effectiveChannelId ?? null, query]);
   // A provider that stops being able to answer, as a key found missing does,
-  // leaves this text's hits and order as they are: only new text drops them.
+  // leaves this search's hits and order as they are: only a new search drops
+  // them.
   const [rerankFor, setRerankFor] = useState<string>();
-  if (canRerank && rerankFor !== query) setRerankFor(query);
-  const rerankable = canRerank || rerankFor === query;
+  if (canRerank && rerankFor !== searchKey) setRerankFor(searchKey);
+  const rerankable = canRerank || rerankFor === searchKey;
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -1827,10 +1831,11 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  // The text whose results the person has started moving through: a rerank
-  // that lands after that is dropped.
+  // The search whose results the person has started moving through: a
+  // rerank that lands after that is dropped. Moving through one
+  // conversation's hits doesn't hold the next search's.
   const [movedFor, setMovedFor] = useState<string>();
-  if (movedFor !== undefined && movedFor !== query) setMovedFor(undefined);
+  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
   const rerank = useMessageRerank({
     decisions,
     community,
@@ -1852,7 +1857,7 @@ export function SearchResults({
         mine: message.authorId === session.viewer,
       };
     },
-    held: movedFor === query,
+    held: movedFor === searchKey,
   });
   const messages: SearchDestination[] = rerank.messages.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
@@ -2582,7 +2587,7 @@ export function SearchResults({
             !guideOpen &&
             !!query.trim() &&
             (messagesPending || directoryPending),
-          onMove: () => setMovedFor(query),
+          onMove: () => setMovedFor(searchKey),
           unsearched:
             !guideOpen && (search.tooShort || search.onlyExclusions)
               ? { Messages: messageEmpty }

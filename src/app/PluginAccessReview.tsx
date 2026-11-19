@@ -90,7 +90,10 @@ function hostDeclarations(
             In a chat this plugin manages, agents get the plugin’s text for{" "}
             {title} in place of the text Buzz gives them.
             {section?.owner &&
-              " Your own choice for this part in Settings → Agent setup still applies there."}
+              " Your own choice for this part in Settings → Agent setup still applies there."}{" "}
+            When this plugin first manages a Codex chat that an earlier Buzz
+            version started, that chat starts over once, without its earlier
+            context; on another computer, it asks for a new session.
           </p>
         ),
       };

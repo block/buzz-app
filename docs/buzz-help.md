@@ -1667,6 +1667,10 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   sections that it replaces in the chats it manages: its install review lists
   them. For example, such a plugin can set where an agent's work happens in a
   chat it manages, except for an agent that runs on another computer. Each section that such a plugin declared names the plugin.
+  When such a plugin first manages a Codex conversation that an earlier Buzz
+  version started, that conversation starts over once, without its earlier
+  context; on another computer, it asks for a new session. The install review
+  says so.
   When you choose Off or Custom for one of them, your own choice also applies
   in those chats. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it

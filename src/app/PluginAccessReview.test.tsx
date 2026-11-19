@@ -134,6 +134,11 @@ it("discloses each base instruction section a plugin can replace, by its title",
       ),
     ).toBeVisible(),
   );
+  // An older Codex chat cannot be told what changed, so the owner is told
+  // before the plugin starts it over.
+  expect(
+    screen.getByText(/Codex chat that an earlier Buzz version started/),
+  ).toHaveTextContent("starts over once, without its earlier context");
   // Only a section the owner can set has an owner's choice to keep.
   const own = /Your own choice for this part in Settings/;
   expect(screen.queryByText(own)).not.toBeInTheDocument();

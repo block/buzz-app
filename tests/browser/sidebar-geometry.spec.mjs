@@ -16,7 +16,7 @@ test.use({
 });
 
 // Real paint geometry: DOM emulators cannot detect padding or baseline drift.
-test("Team and Solo working badges share the painted row inset", async ({
+test("working badges align in their rows and clear the Solo actions button", async ({
   page,
   app,
 }) => {
@@ -44,19 +44,42 @@ test("Team and Solo working badges share the painted row inset", async ({
   for (const row of rows) {
     await expect(row.locator("[data-channel-working]")).toBeVisible();
   }
-  await page.mouse.move(0, 0);
-  for (const [mode, width, fontSize] of [
-    ["light", 1440, ""],
-    ["dark", 900, "larger"],
+  const [soloRow] = rows;
+  const chat = soloRow.locator(`button[data-channel-id="${solo}"]`);
+  const action = soloRow.locator("[data-solo-row-action]");
+  const titleWidth = () =>
+    chat
+      .locator(".navigation-item-label")
+      .evaluate((label) => label.getBoundingClientRect().width);
+  const actionClearance = () =>
+    soloRow.evaluate((row) => {
+      const badge = row
+        .querySelector("[data-channel-working]")
+        .getBoundingClientRect();
+      const action = row
+        .querySelector("[data-solo-row-action]")
+        .getBoundingClientRect();
+      return action.left - badge.right;
+    });
+  for (const [mode, width, scale] of [
+    ["light", 1440, 1],
+    ["dark", 900, 2],
   ]) {
     await page.setViewportSize({ width, height: 950 });
-    await page.evaluate(
-      ({ mode, fontSize }) => {
-        document.documentElement.dataset.colorMode = mode;
-        document.documentElement.dataset.fontSize = fontSize;
-      },
-      { mode, fontSize },
-    );
+    await setAppearance(page, mode, scale);
+    await page.mouse.move(0, 0);
+    const restingWidth = await titleWidth();
+    await chat.hover({ position: { x: 24, y: 14 } });
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
+    await expect.poll(titleWidth).toBe(restingWidth);
+    await page.mouse.move(0, 0);
+    await chat.focus();
+    await page.keyboard.press("Tab");
+    await expect(action).toBeFocused();
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
+    await expect.poll(titleWidth).toBe(restingWidth);
     for (const row of rows) {
       await expect
         .poll(() =>
@@ -64,7 +87,9 @@ test("Team and Solo working badges share the painted row inset", async ({
             const marker = element
               .querySelector("[data-channel-working]")
               .getBoundingClientRect();
-            const rect = element.getBoundingClientRect();
+            const rect = element
+              .querySelector("button[data-channel-id]")
+              .getBoundingClientRect();
             // The end token is a calc expression; resolve it through the painted pseudo-element.
             const fillEnd = parseFloat(
               getComputedStyle(element, "::before").right,

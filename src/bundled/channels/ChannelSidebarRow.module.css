@@ -40,31 +40,41 @@
     opacity: 0;
     pointer-events: none;
   }
-  /* Shared chats keep room for both controls. Otherwise overlay the menu so
-     hovering or focusing a long title never changes its layout. */
-  .row:not(:has([data-solo-shared])) [data-solo-row-action] {
-    position: absolute;
-    inset-inline-end: var(--channel-row-fill-end, 0%);
-  }
   .row:hover [data-solo-row-action],
   .row:has(:focus-visible) [data-solo-row-action],
   .row [data-solo-row-action][aria-expanded="true"] {
     opacity: 1;
     pointer-events: auto;
   }
-  .row:not(:has([data-solo-shared])):has([data-solo-row-action]):is(
-      :hover,
-      :has(:focus-visible),
-      :has([data-solo-row-action][aria-expanded="true"])
+  /* Rows with a badge or share control reserve the action's width at rest.
+     On other rows the action overlays the label without changing its width. */
+  .row:has([data-solo-row-action]):not(
+    :has(
+      [data-solo-shared],
+      [data-channel-working],
+      [data-channel-priority],
+      [data-channel-activity],
+      [data-channel-temporary]
     )
-    .select
-    [class~="navigation-item-label"] {
-    --title-fade-end: calc(var(--solo-row-action-size) - var(--space-2));
-    mask-image: linear-gradient(
-      to left,
-      transparent var(--title-fade-end),
-      black calc(var(--title-fade-end) + var(--space-2))
-    );
+  ) {
+    & [data-solo-row-action] {
+      position: absolute;
+      inset-inline-end: var(--channel-row-fill-end, 0%);
+    }
+    &:is(
+        :hover,
+        :has(:focus-visible),
+        :has([data-solo-row-action][aria-expanded="true"])
+      )
+      .select
+      [class~="navigation-item-label"] {
+      --title-fade-end: calc(var(--solo-row-action-size) - var(--space-2));
+      mask-image: linear-gradient(
+        to left,
+        transparent var(--title-fade-end),
+        black calc(var(--title-fade-end) + var(--space-2))
+      );
+    }
   }
 }
 .row:is(:hover, :has([data-context-menu-present])):not(

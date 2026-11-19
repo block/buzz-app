@@ -285,12 +285,13 @@ function addressed(
   args: Record<string, unknown>,
   answering: readonly Request[],
   strict: boolean,
+  thread: string | undefined,
 ) {
   const id =
     typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
   const named = id && answering.find((pending) => pending.event?.id === id);
   if (named) return named;
-  const { channel, reply } = args;
+  const { channel } = args;
   if (typeof channel !== "string") {
     if (id && strict)
       throw new Error(
@@ -298,7 +299,7 @@ function addressed(
       );
     return undefined;
   }
-  const scope = typeof reply === "string" ? reply : channel;
+  const scope = thread ?? channel;
   return (
     answering.find(
       (pending) =>
@@ -308,6 +309,22 @@ function addressed(
     answering.find((pending) => pending.unaddressed) ??
     null
   );
+}
+
+/** The thread a send's `reply` or `parent` posts in: a reply to any message
+ * in a thread is in the thread, as the tools post it. */
+async function threadOf(
+  agent: AgentHandle,
+  args: Record<string, unknown>,
+  answering: readonly Request[],
+) {
+  const id = [args.reply, args.parent]
+    .find((id): id is string => typeof id === "string")
+    ?.toLowerCase();
+  if (!id || answering.some(({ activityScope }) => activityScope === id))
+    return id;
+  const [event] = await agent.query([{ ids: [id], limit: 1 }]).catch(() => []);
+  return event ? (threadReference(event)?.rootId ?? event.id) : id;
 }
 
 /** The conversation's lane. A new community lane waits for every other lane. */
@@ -3083,8 +3100,15 @@ export class CodexRuntime {
       community ||
       new Set(answering.map((taken) => taken.activityScope)).size > 1;
     const target =
-      spanning && (call.tool === "send" || call.tool === "reply_in_subthread")
-        ? addressed(args, answering, community)
+      active &&
+      spanning &&
+      (call.tool === "send" || call.tool === "reply_in_subthread")
+        ? addressed(
+            args,
+            answering,
+            community,
+            await threadOf(active.reply.agent, args, answering),
+          )
         : undefined;
     const request = target ?? active?.reply;
     const owner = request ?? (once as Once);

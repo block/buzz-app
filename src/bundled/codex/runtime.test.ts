@@ -9206,6 +9206,63 @@ it("settles only the destination a final reply answers in a mixed channel turn",
   }
 });
 
+it.each([
+  ["send", "reply"],
+  ["reply_in_subthread", "parent"],
+])(
+  "settles a thread a final %s answers under one of its messages",
+  async (tool, field) => {
+    const f = fixture();
+    const first = f.delivery("Threaded work");
+    if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+    const config = { ...(first.config as object), scope: "channel" };
+    const wake = pluginWake(f);
+    if (wake.trigger.type !== "plugin")
+      throw new Error("Expected a plugin wake");
+    const pending = Symbol("pending");
+    const state = async (index: number) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Promise.race([
+        f.workingUntil.mock.calls[index]?.[0],
+        Promise.resolve(pending),
+      ]);
+    };
+    try {
+      await f.runtime.run({ ...first, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.runtime.run({
+        ...wake,
+        config,
+        trigger: { ...wake.trigger, topLevel: true },
+      });
+      await vi.waitFor(() =>
+        expect(
+          f.sent.filter((wire) => wire.method === "turn/steer"),
+        ).toHaveLength(1),
+      );
+      await f.tool(tool, {
+        channel: "channel",
+        [field]: first.trigger.event.id,
+        audience: "everyone",
+        text: "Thread reply",
+        final: true,
+      });
+      expect(await state(0)).not.toBe(pending);
+      expect(await state(1)).toBe(pending);
+      await f.tool("send", {
+        channel: "channel",
+        audience: "everyone",
+        text: "Channel reply",
+        final: true,
+      });
+      expect(await state(1)).not.toBe(pending);
+      await f.complete(0);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("keeps community sessions apart for memberships of the same identity", async () => {
   const f = fixture();
   const base = f.delivery("here");

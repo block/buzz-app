@@ -304,6 +304,11 @@ export class PiRuntime {
       signal: AbortSignal,
       channelId: string | undefined,
     ) => Promise<AgentReads | undefined>,
+    /** The community's storage scope, which a reconnecting relay keeps
+     * (`Agents.relay(key)?.snapshot().scope`); by default, while `reads` can
+     * be read. */
+    private readonly scope: (key: AgentKey) => string | undefined = (key) =>
+      this.reads(key)?.scope,
   ) {
     this.pi = new Pi(
       () => this.spawn,
@@ -407,14 +412,12 @@ export class PiRuntime {
   }
 
   /** The folder a plugin gave the conversation, if any; a one-off turn has
-   * none. */
+   * none. A turn that starts while Buzz reconnects still finds it. */
   private folder(agent: AgentKey, key: string | undefined) {
     if (!key) return undefined;
-    const reads = this.reads(agent);
-    if (!reads) throw new Error("Buzz is not connected");
-    return reads.scope
-      ? conversationFolder(this.storage, reads.scope, agent, key)
-      : undefined;
+    const scope = this.scope(agent);
+    if (!scope) throw new Error("Buzz is not connected");
+    return conversationFolder(this.storage, scope, agent, key);
   }
 
   /** The agent's Buzz conversations, most recently active first. */

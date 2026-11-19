@@ -328,14 +328,13 @@ export class GooseRuntime {
     return scope ? agentFolders(this.agentStore, scope, agent) : new Map();
   }
   /** The folder a plugin gave the conversation, if any; a one-off turn has
-   * none. */
+   * none. A reconnecting relay keeps its scope, so a turn that starts then
+   * still finds the folder. */
   private folder(agent: AgentKey, key: string | undefined) {
     if (!key) return undefined;
-    const reads = ownerReads(this.relay(agent), pubkeyOf(agent));
-    if (!reads) throw new Error("Buzz is not connected");
-    return reads.scope
-      ? conversationFolder(this.agentStore, reads.scope, agent, key)
-      : undefined;
+    const scope = this.relay(agent)?.snapshot().scope;
+    if (!scope) throw new Error("Buzz is not connected");
+    return conversationFolder(this.agentStore, scope, agent, key);
   }
 
   /** A file as the agent's sessions read one: in its saved workspace. */

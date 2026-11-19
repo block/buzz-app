@@ -56,6 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
     (agent, signal, channelId) =>
       readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
+    (key) => agents.relay(key)?.snapshot().scope,
   );
   ctx.agentProtection.registerModels({
     label: "Pi",

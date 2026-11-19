@@ -1483,6 +1483,32 @@ describe("GooseRuntime", () => {
       ]);
     });
 
+    it("starts a turn while Buzz reconnects, in the folder or the workspace", async () => {
+      const { agentStore, deliver, goose, offline, published } = setup({
+        resolveDirectory: folders(),
+      });
+      await assign(agentStore);
+      await deliver(root);
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+      offline();
+      await deliver(
+        message("2", "@Gander again", {
+          tags: [
+            ["h", channel],
+            ["e", root.id, "", "reply"],
+            ["p", self],
+          ],
+        }),
+      );
+      await deliver(message("3", "@Gander hi"));
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(3));
+      expect(goose()?.opened.map((session) => session.cwd)).toEqual([
+        "/repos/worktree",
+        "/home/test/.buzz",
+      ]);
+      expect(published).toEqual([]);
+    });
+
     it("lists a conversation whose session is opening before it says its sessions are listed", async () => {
       const held = gated("session/new");
       const { deliver, runtime } = setup({ hold: true, wrap: held.wrap });

@@ -157,6 +157,8 @@ function setup(
     undefined,
     storage,
     seam,
+    undefined,
+    () => relay.snapshot().scope,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -1749,6 +1751,20 @@ it("refuses the turn of a conversation whose folder is gone, naming the folder",
   // It never falls back to the workspace.
   expect(host.requests("deliver")).toEqual([]);
   expect(published.at(-1)?.content).toContain("/repos/worktree");
+});
+
+it("starts a turn while Buzz reconnects, in the folder or the workspace", async () => {
+  const { deliver, host, storage, published, desktop, link } = setup();
+  Object.assign(desktop, { resolveDirectory: folders() });
+  await assign(storage);
+  link.status = "connecting";
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  await deliver({ type: "mention", event: message("3", "@Pi hi") }).run;
+  expect(host.requests("deliver").map(({ params }) => params.cwd)).toEqual([
+    "/repos/worktree",
+    DEFAULT_CONFIG.workspace,
+  ]);
+  expect(published).toEqual([]);
 });
 
 it("reads a file a tool names from the conversation's folder, also while Buzz reconnects", async () => {

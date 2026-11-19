@@ -151,9 +151,9 @@ function mentionLabels(
  * and room past it for the binder to finish the longest name that can start
  * before it, with `raw`'s parsed tree when one was made. A source body is
  * projected as the conversation projects it, and the parts placed back on
- * the source. When the body was cut, a reference directly before an image or
- * link the cut may have left open stays text, since the whole body may
- * remove it and join different text to the name.
+ * the source. When the body was cut, a reference followed, past what was
+ * removed, by an image or link the cut may have left open stays text, since
+ * the whole body may remove it and join different text to the name.
  */
 function boundParts(
   raw: string,
@@ -207,11 +207,12 @@ function boundParts(
   let offset = 0;
   const shown = placed.map((part) => {
     offset += part.text.length;
-    const end = offset;
-    const open =
-      part.target &&
-      /^!?\[/.test(raw.slice(end, end + 2)) &&
-      !projected.removed.some((range) => range.start === end);
+    // What follows the reference once the images and links removed after it
+    // are gone.
+    let next = offset;
+    for (const range of projected.removed)
+      if (range.start === next) next = range.end;
+    const open = part.target && /^!?\[/.test(raw.slice(next, next + 2));
     return open ? { text: part.text } : part;
   });
   return { parts: shown, tree };
@@ -239,14 +240,15 @@ const mayName = (text: string, labels: Labels) =>
   );
 
 /** Puts each marked reference in the text node of `tree` that holds it
- * verbatim, so flattening the tree reads its marks where it reads. A
- * reference no such node holds is left unmarked, as text. */
+ * verbatim, so flattening the tree reads its marks where it reads; how many
+ * it placed. A reference no such node holds is left unmarked. */
 function markTree(
   tree: Tree,
   source: string,
   marked: readonly { at: number; length: number; text: string }[],
 ) {
   const pending = [tree];
+  let placed = 0;
   while (pending.length) {
     const node = pending.pop();
     if (!node) continue;
@@ -264,11 +266,14 @@ function markTree(
       continue;
     let value = node.value;
     for (const { at, length, text } of [...marked].reverse())
-      if (at >= start && at + length <= end)
+      if (at >= start && at + length <= end) {
         value =
           value.slice(0, at - start) + text + value.slice(at + length - start);
+        placed++;
+      }
     node.value = value;
   }
+  return placed;
 }
 
 /**
@@ -277,7 +282,8 @@ function markTree(
  * reference keeps its place only where its marks and characters come through
  * whole and in order; Markdown, code or a spoiler that changes it leaves it
  * literal. With the body's parsed `tree`, the marks go into its prose text
- * in place and the tree is flattened without parsing again. Otherwise the body is cut where flattening cuts it, marked so the Markdown
+ * in place and the tree is flattened without parsing again, when every
+ * reference can be placed there. Otherwise the body is cut where flattening cuts it, marked so the Markdown
  * around each reference parses alike, and flattened; marks cannot move the
  * cut. A reference past `end` is text.
  */
@@ -308,8 +314,13 @@ function flatParts(
     marked.push({ at, length: part.text.length, text });
   }
   let flat: string;
-  if (tree && !body.includes("||")) {
-    markTree(tree, body, marked);
+  // A reference in text the tree decoded, such as beside an entity, cannot
+  // be placed in it: flatten the marked body instead.
+  if (
+    tree &&
+    !body.includes("||") &&
+    markTree(tree, body, marked) === marked.length
+  ) {
     flat = treeText(tree, Number.POSITIVE_INFINITY);
   } else {
     let source = "";
@@ -544,14 +555,27 @@ export function PreviewText({
 // Recent previews' parts, so a row shown again does not bind again.
 const recentParts = recentResults<Part[]>(1_000_000, (key) => key.length);
 
-// One observer for every preview still waiting to come near the screen.
+// One observer per scroll pane for the previews in it still waiting to come
+// near its view, released with the last of them.
 const waiting = new Map<Element, () => void>();
-let nearObserver: IntersectionObserver | undefined;
-// Half a screen ahead, so chips are usually bound before a row shows.
+const nearObservers = new Map<
+  Element | null,
+  { observer: IntersectionObserver; previews: Set<Element> }
+>();
+// Half a pane ahead, so chips are usually bound before a row shows.
 const NEAR = 0.5;
 
-/** Whether this preview has been on or near the screen. A preview there on
- * its first layout is bound before it paints; the rest bind as they near. */
+/** The nearest ancestor that scrolls `element`, or none for the window. */
+function scrollPane(element: Element) {
+  for (let node = element.parentElement; node; node = node.parentElement)
+    if (/auto|scroll|overlay/.test(getComputedStyle(node).overflowY))
+      return node;
+  return null;
+}
+
+/** Whether this preview has been on or near its scroll pane's view. A
+ * preview there on its first layout is bound before it paints; the rest bind
+ * as they near. */
 function useNearScreen() {
   const ref = useRef<HTMLSpanElement>(null);
   const [near, setNear] = useState(
@@ -560,30 +584,47 @@ function useNearScreen() {
   useLayoutEffect(() => {
     const element = ref.current;
     if (near || !element) return;
+    const pane = scrollPane(element);
+    const view = pane?.getBoundingClientRect() ?? {
+      top: 0,
+      bottom: window.innerHeight,
+    };
     const rect = element.getBoundingClientRect();
-    const margin = window.innerHeight * NEAR;
-    if (rect.bottom >= -margin && rect.top <= window.innerHeight + margin) {
+    const margin = (view.bottom - view.top) * NEAR;
+    if (rect.bottom >= view.top - margin && rect.top <= view.bottom + margin) {
       setNear(true);
       return;
     }
-    nearObserver ??= new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const show = entry.isIntersecting && waiting.get(entry.target);
-          if (!show) continue;
-          waiting.delete(entry.target);
-          nearObserver?.unobserve(entry.target);
-          show();
-        }
-      },
-      { rootMargin: `${NEAR * 100}% 0px` },
-    );
-    waiting.set(element, () => setNear(true));
-    nearObserver.observe(element);
-    return () => {
+    let watch = nearObservers.get(pane);
+    if (!watch) {
+      watch = {
+        observer: new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries)
+              if (entry.isIntersecting) waiting.get(entry.target)?.();
+          },
+          { root: pane, rootMargin: `${NEAR * 100}% 0px` },
+        ),
+        previews: new Set(),
+      };
+      nearObservers.set(pane, watch);
+    }
+    const { observer, previews } = watch;
+    const release = () => {
+      if (!previews.delete(element)) return;
       waiting.delete(element);
-      nearObserver?.unobserve(element);
+      observer.unobserve(element);
+      if (previews.size) return;
+      observer.disconnect();
+      nearObservers.delete(pane);
     };
+    waiting.set(element, () => {
+      release();
+      setNear(true);
+    });
+    previews.add(element);
+    observer.observe(element);
+    return release;
   }, [near]);
   return { ref, near };
 }

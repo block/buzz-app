@@ -454,3 +454,64 @@ it("does not bind a preview whose shown text names no one", () => {
   expect(chips(view)).toEqual([]);
   expect(binder).not.toHaveBeenCalled();
 });
+
+it("leaves a name text before images whose removal past its bound is unknown", () => {
+  // The conversation removes both images, joining "x": it binds Ann.
+  const body = `unique @Ann Lee![a](https://example.org/a.png)![b][late]x\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/b.png`;
+  const full = plainText(body, { limit: 4000 });
+  const view = preview(
+    body,
+    { mentions: [ann, annLee], attachmentUrls: new Set() },
+    { text: full.slice(0, 200), full },
+  );
+  expect(targets(view)).not.toContain(profileTarget(annLee));
+});
+
+it("keeps chips beside text the Markdown decodes", () => {
+  const body = "R&amp;D asked @tomb";
+  expect(
+    chips(preview(body, { mentions: [tomb] }, { text: messagePreview(body) })),
+  ).toEqual(["tomb"]);
+});
+
+it("waits for a preview to near its scroll pane, not the window", () => {
+  let root: Element | null | undefined;
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(_: unknown, options: IntersectionObserverInit) {
+        root = options.root as Element | null;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: HTMLElement) {
+      // Within half a window of the screen, but far below its pane.
+      return (
+        this.dataset.pane === ""
+          ? { top: 0, bottom: 160 }
+          : { top: 700, bottom: 720 }
+      ) as DOMRect;
+    });
+  try {
+    const view = render(
+      <div data-pane="" style={{ overflowY: "auto" }}>
+        <PreviewText
+          text="ugh @tomb"
+          mentions={{ content: "ugh @tomb", mentions: [tomb] }}
+          session={session}
+          channelId="room"
+        />
+      </div>,
+    ).container;
+    expect(chips(view)).toEqual([]);
+    expect(root).toBe(view.querySelector("[data-pane]"));
+  } finally {
+    rect.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});

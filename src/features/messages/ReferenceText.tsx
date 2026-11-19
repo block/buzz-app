@@ -29,7 +29,9 @@ export function MentionLabel({
   return (
     <>
       <span className={styles.lead}>
-        <Icon aria-hidden="true" className={styles.icon} />
+        <span role="img" aria-label={agent ? "agent @" : "@"}>
+          <Icon aria-hidden="true" className={styles.icon} />
+        </span>
         {lead}
       </span>
       {label.slice(lead.length)}

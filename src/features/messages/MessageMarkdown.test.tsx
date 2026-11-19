@@ -600,7 +600,7 @@ describe("Markdown profile mentions", () => {
     const html = render("**@Mic Smith**, _@Mic_! @Other @Missing @Microscopic");
     expect(html).toContain("<strong><button");
     expect(html).toContain('aria-label="View Mic Smith profile"');
-    expect(html).toContain("</svg>M</span>ic Smith</button></strong>");
+    expect(html).toContain("</svg></span>M</span>ic Smith</button></strong>");
     // The raw helper conservatively treats trailing underscore as a name suffix.
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).toContain("<em>@Mic</em>");
@@ -617,7 +617,9 @@ describe("Markdown profile mentions", () => {
       extensions,
     });
     expect(html).toContain(`aria-label="View ${name} profile"`);
-    expect(html).toContain(`</svg>M</span>${name.slice(1)}</button></strong>`);
+    expect(html).toContain(
+      `</svg></span>M</span>${name.slice(1)}</button></strong>`,
+    );
     expect(html).not.toContain("<em>");
     expect(html).not.toContain("<img");
   });

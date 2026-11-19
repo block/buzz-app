@@ -79,4 +79,6 @@ it("shows a preview's resolved mentions as chips", () => {
     "tomb",
   );
   expect(preview).toHaveTextContent("ugh tomb now getting");
+  // Names built from the preview still say someone was mentioned.
+  expect(view.getByRole("img", { name: "@" })).toBeInTheDocument();
 });

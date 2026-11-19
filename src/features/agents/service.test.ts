@@ -2393,6 +2393,42 @@ describe("a conversation's sections", () => {
     );
   });
 
+  it("are refused for one community session, and unused once an agent has one", async () => {
+    let scope: "thread" | "community" = "thread";
+    const f = await ready({
+      sessionControls: {
+        state: () => "idle",
+        run: async () => {},
+        scope: () => scope,
+      } as never,
+    });
+    const { agents } = f.plugin;
+    await agents.setConversationSections(f.agent.key, thread, {
+      progress: "Report to the task.",
+    });
+    const agent = await handle(f);
+    // The owner gives the agent one session for its whole community, which
+    // takes in every conversation's turns.
+    scope = "community";
+    expect(agent.promptSections?.(channel, root)).toEqual({ owner: {} });
+    await expect(
+      agents.conversationSections(f.agent.key, thread),
+    ).resolves.toEqual({
+      progress: {
+        text: "Report to the task.",
+        applied: false,
+        reason: "community",
+      },
+    });
+    await expect(
+      agents.setConversationSections(f.agent.key, thread, { progress: "x" }),
+    ).rejects.toThrow("A community session has one prompt");
+    scope = "thread";
+    expect(agent.promptSections?.(channel, root)?.plugin?.sections).toEqual({
+      progress: "Report to the task.",
+    });
+  });
+
   it("follow the place rules of a conversation's instructions", async () => {
     const whole = await ready({
       sessionControls: {

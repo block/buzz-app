@@ -17,6 +17,10 @@ import {
   setUnreadFirstPreference,
   unreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import {
+  setSingleThreadPreference,
+  singleThreadPreference,
+} from "../features/messages/single-thread-preference";
 
 import {
   setThreadPlacementPreference,
@@ -788,4 +792,62 @@ it("offers a choice between usernames and full names only where the community ve
   await user.click(await screen.findByRole("option", { name: "Full name" }));
   expect(namePreference()).toBe("full-name");
   setNamePreference("username");
+});
+
+it("offers keeping one thread open, off by default, and follows storage", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Keep one thread open" });
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).not.toBeChecked();
+  await user.click(toggle());
+  expect(singleThreadPreference()).toBe(true);
+  expect(localStorage.getItem("buzz-single-thread.v1")).toBe("on");
+  cleanup();
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).toBeChecked();
+  act(() => {
+    localStorage.setItem("buzz-single-thread.v1", "off");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-single-thread.v1" }),
+    );
+  });
+  expect(toggle()).not.toBeChecked();
+  setSingleThreadPreference(false);
+});
+
+it("keeps an unsaved one-thread choice active and retries the same choice", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(
+    screen.getByRole("switch", { name: "Keep one thread open" }),
+  );
+  expect(singleThreadPreference()).toBe(true);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "One-thread preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving one-thread preference" }),
+  );
+  expect(localStorage.getItem("buzz-single-thread.v1")).toBe("on");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  setSingleThreadPreference(false);
 });

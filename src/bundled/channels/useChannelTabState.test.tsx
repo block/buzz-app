@@ -29,10 +29,63 @@ import {
   setThreadPlacementPreference,
   threadPlacementPreference,
 } from "../../features/messages/thread-preferences";
+import { setSingleThreadPreference } from "../../features/messages/single-thread-preference";
 afterEach(() => {
   cleanup();
   setThreadPlacementPreference("side");
+  setSingleThreadPreference(false);
   localStorage.clear();
+});
+
+test("keeping one thread open replaces open threads in both panes", () => {
+  setSingleThreadPreference(true);
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    h.result.current.openThreadTab("alpha", "a", "a", undefined, "side");
+  });
+  act(() => {
+    h.result.current.openThreadTab("alpha", "b", "b", undefined, "main");
+  });
+  expect(h.result.current.tabs.map((tab) => tab.id)).toEqual([
+    "thread:alpha:b",
+  ]);
+  expect(h.result.current.mainSelected).toBe("thread:alpha:b");
+  // The side pane showed only the replaced thread, so it has nothing to show.
+  expect(h.result.current.selected).toBe("");
+  expect(h.result.current.paneOpen).toBe(false);
+
+  act(() => {
+    h.result.current.openThreadTab("alpha", "c", "c", undefined, "side");
+  });
+  expect(h.result.current.tabs.map((tab) => tab.id)).toEqual([
+    "thread:alpha:c",
+  ]);
+  expect(h.result.current.selected).toBe("thread:alpha:c");
+  expect(h.result.current.paneOpen).toBe(true);
+  // The main pane returns to the channel conversation.
+  expect(h.result.current.mainSelected).toBeUndefined();
+
+  // Reopening the open thread, even at another reply, selects it and closes nothing.
+  act(() => {
+    h.result.current.openThreadTab("alpha", "c-reply", "c", "reply", "side");
+  });
+  expect(h.result.current.tabs).toHaveLength(1);
+  expect(h.result.current.tabs[0]).toMatchObject({
+    id: "thread:alpha:c",
+    messageId: "c-reply",
+    replyRequest: 1,
+  });
+});
+
+test("with the preference off, opening a thread keeps the others", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    h.result.current.openThreadTab("alpha", "a", "a", undefined, "side");
+    h.result.current.openThreadTab("alpha", "b", "b", undefined, "main");
+  });
+  expect(h.result.current.tabs).toHaveLength(2);
 });
 
 test("a detail visit retains the exact source thread in the main pane", () => {

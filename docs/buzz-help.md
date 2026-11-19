@@ -1149,6 +1149,12 @@ and are asked to sign in again in Buzz.
   touch-only devices. Switching threads moves the marker; hiding the pane or
   closing the thread clears it. The original is also identified as current for
   assistive technology.
+- **Keep one thread open**: with this on in **Settings → Appearance →
+  Conversations**, opening a thread closes the conversation's other open thread
+  tabs, in both panes, so one thread is open at a time. Opening a thread that is
+  already open selects it and closes nothing. Each conversation keeps its own
+  tabs, and Back still returns to a thread that was closed this way. Off by
+  default.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, or a huddle, stays open for
   that conversation when you go to another conversation or page and come back,

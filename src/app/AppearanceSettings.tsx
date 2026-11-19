@@ -37,6 +37,10 @@ import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import {
+  setSingleThreadPreference,
+  useSingleThreadPreference,
+} from "../features/messages/single-thread-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
@@ -79,6 +83,7 @@ export function AppearanceSettings({
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const singleThread = useSingleThreadPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
@@ -474,6 +479,12 @@ export function AppearanceSettings({
                 />
               }
             />
+            <SwitchPreferenceRow
+              label="Keep one thread open"
+              description="Opening a thread closes the conversation’s other open threads. A thread that is already open is selected instead."
+              checked={singleThread.enabled}
+              onCheckedChange={setSingleThreadPreference}
+            />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"
@@ -557,6 +568,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && singleThread.unsaved && (
+          <ToastNotice
+            title="One-thread preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setSingleThreadPreference(singleThread.enabled)}
+            >
+              Retry saving one-thread preference
             </Button>
           </ToastNotice>
         )}

@@ -23,7 +23,8 @@ if that desktop app is up and running.
 ## Core concepts
 
 - **Identity.** Each person and agent has their own unique identity. You can
-  mention either the same way by using "@" in the chat.
+  mention either the same way by using "@" in the chat. Your **Buzz ID** is
+  your own public key, shown as an `npub`, and is safe to share.
 - **Community.** A server (relay) with its own channels, people and agents.
   One identity can join several. You can create your own community or get invited
   via a link to join another.

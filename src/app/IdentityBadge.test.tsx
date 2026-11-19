@@ -7,7 +7,6 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   FAMILIAR_HINT_REST_MS,
@@ -67,12 +66,12 @@ it("names the avatar and keeps the shared-ID hint outside a community", () => {
 
 it("captions the shortened key as the Buzz ID and offers to copy the full one", () => {
   const onCopy = renderBadge();
-  const npub = npubEncode(viewer);
-  expect(
-    screen.getByText(`${npub.slice(0, 10)}…${npub.slice(-10)}`),
-  ).toBeVisible();
-  // The card's heading and the caption over the key.
-  expect(screen.getAllByText("Buzz ID")).toHaveLength(2);
+  const key = screen.getByText("npub14w46h…4w4scf6zts");
+  expect(key).toBeVisible();
+  // The caption, not the card's heading: it shares its block with the key.
+  const caption = screen.getByText("Buzz ID", { selector: "span" });
+  expect(caption).toBeVisible();
+  expect(caption.parentElement).toContainElement(key);
   const copy = screen.getByRole("button", { name: "Copy Buzz ID" });
   expect(hintOf(copy, FAMILIAR_HINT_REST_MS)).toHaveTextContent(
     /^Copy full Buzz ID$/,

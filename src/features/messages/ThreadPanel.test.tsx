@@ -1112,7 +1112,7 @@ it("keeps a shown line while a late navigation for the opening decides it again"
 
   // The route's retarget rereads the thread before the line is decided again.
   h.snapshot.status = "loading";
-  h.snapshot.direction = undefined;
+  delete h.snapshot.direction;
   h.render();
   Object.assign(h.props, { navigation: ordinaryNavigation() });
   h.rerenderProps();

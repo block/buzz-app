@@ -974,7 +974,7 @@ function ThreadMessages({
     opening?: object | undefined;
     id?: string | null;
     failed?: true;
-    shown?: string | null;
+    shown?: string | null | undefined;
   }>(() => ({ opening }));
   // A route can arrive after its opening already showed a line; keep that line
   // on screen until the new decision replaces it, rather than blinking it out.

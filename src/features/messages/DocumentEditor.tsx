@@ -27,6 +27,69 @@ import styles from "./DocumentEditor.module.css";
 
 const noDecorations = () => [];
 
+const scrollReservations = new WeakMap<
+  HTMLElement,
+  { editors: number; restore(): void }
+>();
+
+function documentScroller(editor: HTMLElement) {
+  const rootScroller = editor.ownerDocument.scrollingElement;
+  let scroller: Element | null = editor.parentElement;
+  while (
+    scroller &&
+    scroller !== rootScroller &&
+    !["auto", "scroll", "overlay"].includes(
+      getComputedStyle(scroller).overflowY,
+    )
+  ) {
+    scroller = scroller.parentElement;
+  }
+  scroller ??= rootScroller;
+  return scroller instanceof HTMLElement ? scroller : null;
+}
+
+function reserveToolbarScrollSpace(editor: HTMLElement, scroller: HTMLElement) {
+  let reservation = scrollReservations.get(scroller);
+  if (!reservation) {
+    const { style } = scroller;
+    const property = "scroll-padding-block-end";
+    const previous = style.getPropertyValue(property);
+    const priority = style.getPropertyPriority(property);
+    const padding = getComputedStyle(scroller).scrollPaddingBlockEnd;
+    const clearance = getComputedStyle(editor).getPropertyValue(
+      "--document-toolbar-space",
+    );
+    // Native caret scrolling uses the pane's padding, including any larger
+    // clearance already set by the plugin.
+    style.setProperty(
+      property,
+      `max(${padding && padding !== "auto" ? padding : "0px"}, ${clearance})`,
+      priority,
+    );
+    const applied = style.getPropertyValue(property);
+    reservation = {
+      editors: 0,
+      restore() {
+        if (
+          style.getPropertyValue(property) === applied &&
+          style.getPropertyPriority(property) === priority
+        )
+          style.setProperty(property, previous, priority);
+      },
+    };
+    scrollReservations.set(scroller, reservation);
+  }
+
+  reservation.editors++;
+  const current = reservation;
+  return () => {
+    if (--current.editors === 0) {
+      current.restore();
+      scrollReservations.delete(scroller);
+    }
+  };
+}
+
 export type DocumentEditorSelection = {
   start: number;
   end: number;
@@ -76,6 +139,9 @@ export function DocumentEditor({
   source,
   onSourceChange,
 }: DocumentEditorProps) {
+  const stack = useRef<HTMLDivElement>(null);
+  const editorScroller = useRef<HTMLElement>(null);
+  const toolbarSurface = useRef<HTMLFieldSetElement>(null);
   const input = useRef<ComposerInputElement>(null);
   const sourceInput = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(
@@ -165,9 +231,21 @@ export function DocumentEditor({
     onLinkOpenChange(true);
   };
   const showFormatting = editing && !source;
+  useLayoutEffect(() => {
+    if (!showFormatting || !stack.current) return;
+    const scroller = documentScroller(stack.current);
+    if (!scroller) return;
+    editorScroller.current = scroller;
+    const release = reserveToolbarScrollSpace(stack.current, scroller);
+    return () => {
+      editorScroller.current = null;
+      release();
+    };
+  }, [showFormatting]);
   const toolbar = showFormatting && (
     <div className={styles.toolbarAnchor}>
       <fieldset
+        ref={toolbarSurface}
         className={styles.editorToolbar}
         aria-label="Document formatting"
       >
@@ -186,6 +264,7 @@ export function DocumentEditor({
   );
   return (
     <div
+      ref={stack}
       className={`${styles.stack} ${editing && source ? styles.sourceEditor : ""}`}
       data-formatting={showFormatting || undefined}
     >
@@ -233,6 +312,13 @@ export function DocumentEditor({
                   }
                 }}
                 onFormatsChange={setFormats}
+                onScrollCaret={(bottom) => {
+                  const toolbar = toolbarSurface.current;
+                  const scroller = editorScroller.current;
+                  if (!toolbar || !scroller) return;
+                  const overlap = bottom - toolbar.getBoundingClientRect().top;
+                  if (overlap > 0) scroller.scrollTop += Math.ceil(overlap);
+                }}
                 onEditLink={editLink}
                 onKeyDown={(event) => {
                   if (disabled || !editing) return;

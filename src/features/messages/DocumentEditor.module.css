@@ -1,6 +1,11 @@
 @reference "../../shared/styles/globals.css";
 
 .stack {
+  --document-toolbar-space: calc(
+    var(--size-control-sm) +
+    var(--space-8) +
+    var(--space-2)
+  );
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -53,5 +58,5 @@
 }
 .stack[data-formatting] > .editorBody {
   /* Let the last line scroll past the bar, including at enlarged text sizes. */
-  padding-block-end: calc(var(--size-control-sm) + var(--space-8));
+  padding-block-end: var(--document-toolbar-space);
 }

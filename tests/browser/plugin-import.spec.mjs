@@ -2375,11 +2375,14 @@ test("document formatting floats over scrollable content", async ({
     ["Guide", 1280],
     ["Reference", 480],
   ]) {
-    await page.setViewportSize({ width, height: 720 });
+    await page.setViewportSize({ width, height: 600 });
     await reader.getByRole("tab", { name, exact: true }).click();
     const panel = reader.getByRole("tabpanel", { name, exact: true });
-    await panel.getByRole("button", { name: `Edit ${name}` }).click();
     const scroll = panel.getByRole("region", { name: "Document scroll area" });
+    const originalPadding = await scroll.evaluate(
+      (area) => getComputedStyle(area).scrollPaddingBlockEnd,
+    );
+    await panel.getByRole("button", { name: `Edit ${name}` }).click();
     const toolbar = panel.getByRole("group", { name: "Document formatting" });
     const overlap = async () =>
       scroll.evaluate(
@@ -2414,9 +2417,36 @@ test("document formatting floats over scrollable content", async ({
       return range.getBoundingClientRect().bottom;
     });
     expect(lastLineBottom).toBeLessThan(toolbarTop);
+
+    const editor = panel.getByRole("textbox", { name: "Document body" });
+    await editor.getByRole("heading", { name, exact: true }).click();
+    const initialScroll = await scroll.evaluate((area) => area.scrollTop);
+    const obscured = [];
+    for (let line = 0; line < 32; line++) {
+      await page.keyboard.press("Enter");
+      await page.keyboard.type("Typing line");
+      const caretBottom = await editor.evaluate(async (field) => {
+        await new Promise(requestAnimationFrame);
+        const selection = field.ownerDocument.getSelection();
+        if (!selection?.isCollapsed || !field.contains(selection.anchorNode))
+          throw new Error("Expected the typing caret in the document editor");
+        return selection.getRangeAt(0).getBoundingClientRect().bottom;
+      });
+      if (caretBottom > (await toolbar.boundingBox()).y) obscured.push(line);
+    }
+    expect(await scroll.evaluate((area) => area.scrollTop)).toBeGreaterThan(
+      initialScroll,
+    );
+    expect
+      .soft(obscured, `${name} lines behind the formatting bar`)
+      .toEqual([]);
+
     await toolbar.getByRole("button", { name: "Bold", exact: true }).focus();
     await page.keyboard.press("Tab");
     await expect(toolbar.getByRole("button", { name: "Italic" })).toBeFocused();
+    await panel.getByRole("button", { name: "Markdown source" }).click();
+    await expect(toolbar).toHaveCount(0);
+    await expect(scroll).toHaveCSS("scroll-padding-block-end", originalPadding);
   }
 });
 

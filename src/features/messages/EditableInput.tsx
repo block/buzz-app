@@ -441,6 +441,7 @@ export type EditableInputProps = Omit<
   markdownMode?: ComposerMarkdownMode;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
+  onScrollCaret?(bottom: number): void;
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
@@ -507,6 +508,7 @@ export function EditableInput({
   markdownMode = "chat",
   onDraftChange,
   onFormatsChange,
+  onScrollCaret,
   onEditLink,
   onPasteTooLong,
   onSemanticPaste,
@@ -530,6 +532,7 @@ export function EditableInput({
     serializeDraft,
     onDraftChange,
     onFormatsChange,
+    onScrollCaret,
     onEditLink,
     onPasteTooLong,
     onSemanticPaste,
@@ -547,6 +550,7 @@ export function EditableInput({
     serializeDraft,
     onDraftChange,
     onFormatsChange,
+    onScrollCaret,
     onEditLink,
     onPasteTooLong,
     onSemanticPaste,
@@ -2266,6 +2270,15 @@ export function EditableInput({
       {
         state: state(),
         editable,
+        handleScrollToSelection(view) {
+          const { onScrollCaret } = current.current;
+          const { empty, head } = view.state.selection;
+          if (onScrollCaret && empty && view.hasFocus()) {
+            // ProseMirror scrolls directly and does not use CSS scroll padding.
+            onScrollCaret(view.coordsAtPos(head).bottom);
+          }
+          return false;
+        },
         attributes: () => ({
           role: "textbox",
           "aria-multiline": "true",

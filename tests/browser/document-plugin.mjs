@@ -22,6 +22,7 @@ export function documentPlugin(ctx) {
           minHeight: 0,
           padding: "var(--space-panel-inset)",
           overflow: "auto",
+          scrollPaddingBlockEnd: "var(--space-2)",
         },
       },
       h("input", {

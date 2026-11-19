@@ -319,13 +319,13 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
         (savedRoute.root !== route?.root || savedRoute.parent !== route.parent)
       )
         throw new Error("The invocation subthread cannot change");
-      if (!placement) {
+      if (!placement && !marked) {
         await pinNativePlacement?.();
         check(input.signal);
         return;
       }
       const receipt = parse<InvocationSubthread | null>(
-        await storage.add(key, JSON.stringify(placement)),
+        await storage.add(key, JSON.stringify(placement ?? null)),
       );
       const accepted = receipt === null ? undefined : checkedRoute(receipt);
       if (

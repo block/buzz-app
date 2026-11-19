@@ -279,6 +279,35 @@ it("shares a logical community lifetime across sources and restores it without c
   expect(reset?.session.sessionKey).not.toBe(first?.session.sessionKey);
 });
 
+it("keeps a marked reply in its admitted native placement on retry", async () => {
+  const owner = keypair();
+  const event = eventDto(
+    message(owner, source.channelId, "Reply", 1700000001, [
+      ["e", source.root, "", "reply"],
+      ["p", agent],
+      ["buzz:invocation-intent", "1", agent],
+    ]),
+  );
+  const input = { ...request(event.id), owner: owner.pubkey, event };
+  const router = {
+    invocationIntent: () => true,
+    route: async () => undefined,
+  };
+  const first = await setup(router);
+  await expect(first.admissions.route(input)).resolves.toBeUndefined();
+
+  const restored = await setup(
+    {
+      ...router,
+      route: async () => ({ root: source.root, parent: "d".repeat(64) }),
+    },
+    first.storage,
+  );
+  await expect(
+    restored.admissions.route({ ...input, resumed: true }, true),
+  ).resolves.toBeUndefined();
+});
+
 it.each([
   ["unmarked", []],
   ["unknown version", [["buzz:invocation-intent", "2", agent]]],

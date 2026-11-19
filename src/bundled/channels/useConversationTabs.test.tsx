@@ -2273,3 +2273,141 @@ it("does not treat an unmarked catch-all as a native profile history reader", ()
     }),
   ).toBe(false);
 });
+
+it.each([
+  // The reported cold start: the open channel's saved membership on a
+  // connected session, before its live roster arrives.
+  {
+    name: "the open channel awaiting relay confirmation",
+    kind: "thread",
+    current: { cached: true as const, readOnly: true as const },
+    loading: "Loading thread…",
+  },
+  {
+    name: "another channel awaiting relay confirmation",
+    kind: "thread",
+    listed: { cached: true as const, readOnly: true as const },
+    loading: "Loading thread…",
+  },
+  {
+    name: "a conversation awaiting relay confirmation",
+    kind: "conversation",
+    listed: { cached: true as const, readOnly: true as const },
+    loading: "Loading conversation…",
+  },
+  {
+    name: "a channel missing from a list still being read",
+    kind: "thread",
+    list: "loading",
+    loading: "Loading thread…",
+  },
+  {
+    name: "saved membership while Buzz is not connected",
+    kind: "thread",
+    current: { cached: true as const, readOnly: true as const },
+    cachedOnly: true,
+    text: "You can open this conversation once Buzz reconnects.",
+  },
+  {
+    name: "a channel missing from a list that failed to load",
+    kind: "conversation",
+    list: "error",
+    text: "Your conversations didn’t load, so this one can’t be shown.",
+  },
+  {
+    name: "an archived channel",
+    kind: "conversation",
+    listed: { archived: true as const, readOnly: true as const },
+    text: "This conversation is archived, so it can’t be shown in a tab.",
+  },
+  {
+    name: "a Solo chat the viewer is not in",
+    kind: "conversation",
+    listed: { channelType: "solo" as const, members: ["someone"] },
+    text: "You’re not a member of this Solo chat.",
+  },
+  {
+    name: "a read-only channel",
+    kind: "thread",
+    listed: { readOnly: true as const, viewerRole: "guest" as const },
+    text: "You have read-only access to this conversation, so it can’t be shown in a tab.",
+  },
+  {
+    name: "a Solo chat whose members are unknown",
+    kind: "conversation",
+    listed: { channelType: "solo" as const },
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing from a complete list",
+    kind: "thread",
+    list: "ready",
+    text: "This conversation is no longer available.",
+  },
+] as {
+  name: string;
+  kind: "thread" | "conversation";
+  current?: object;
+  listed?: object;
+  list?: string;
+  cachedOnly?: true;
+  loading?: string;
+  text?: string;
+}[])(
+  "a $kind tab without a usable channel explains $name",
+  ({ kind, current, listed, list = "ready", cachedOnly, loading, text }) => {
+    const channel = { id: "target", name: "Target" };
+    const channels = listed ? [{ ...channel, ...listed }] : [];
+    const session = {
+      viewer: "viewer",
+      channels: {
+        list: () => ({ status: list, channels }),
+        window: () => ({ rows: [] }),
+        ...(cachedOnly && { cachedOnly }),
+      },
+    } as unknown as RelaySession;
+    const emptyPanels: RegisteredPanel[] = [];
+    const panels = {
+      snapshot: () => emptyPanels,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    const h = renderHook(() => {
+      const state = useChannelTabState(session, "target");
+      const workspace = useConversationTabs({
+        profiles: new Map(),
+        state,
+        relay,
+        session,
+        panels,
+        current: current && { ...channel, ...current },
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    });
+    act(() =>
+      kind === "thread"
+        ? h.result.current.state.openThreadTab("target", "root", "root")
+        : h.result.current.state.setTabs(() => [
+            { id: "conversation:target", kind, channelId: "target" },
+          ]),
+    );
+    const { workspace } = h.result.current;
+    // No thread is mounted, so nothing is read for an unusable channel.
+    expect(workspace.hosts).toHaveLength(0);
+    expect(workspace.items).toHaveLength(1);
+    render(workspace.items[0]?.content);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(loading ?? text ?? "");
+    // Only a wait shows the placeholder; a settled reason is plain text.
+    expect(!!status.querySelector("img")).toBe(!!loading);
+  },
+);

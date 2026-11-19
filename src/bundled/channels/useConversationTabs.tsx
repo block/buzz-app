@@ -21,6 +21,7 @@ import {
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import { ThreadLoading } from "../../features/messages/ThreadPanel";
 import {
   BrowserIcon,
   ThreadIcon,
@@ -57,6 +58,30 @@ export const historyPanel = (entry: PanelOpening) =>
   (entry.panel.addressable === true ||
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
+
+/** Why a tab cannot show its conversation, most specific first. A missing
+ * channel proves nothing while its list failed to load. */
+function unavailableReason(
+  target: ChannelSummary | undefined,
+  list: string | undefined,
+  viewer: string | undefined,
+) {
+  if (!target && list === "error")
+    return "Your conversations didn’t load, so this one can’t be shown.";
+  if (target?.cached)
+    return "You can open this conversation once Buzz reconnects.";
+  if (target?.archived)
+    return "This conversation is archived, so it can’t be shown in a tab.";
+  if (
+    target?.channelType === "solo" &&
+    target.members &&
+    !target.members.includes(viewer ?? "")
+  )
+    return "You’re not a member of this Solo chat.";
+  if (target?.readOnly)
+    return "You have read-only access to this conversation, so it can’t be shown in a tab.";
+  return "This conversation is no longer available.";
+}
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -746,6 +771,30 @@ export function useConversationTabs({
     const target = channels.find((item) => item.id === tab.channelId);
     return target && usableChannel(target) ? target : undefined;
   }
+  // What a tab without a usable channel shows: a placeholder while the relay
+  // is still expected to settle it, else the most specific reason known.
+  function unavailable(tab: Pick<Tab, "kind" | "channelId">) {
+    const target =
+      tab.kind === "thread" && current?.id === tab.channelId
+        ? current
+        : channels.find((item) => item.id === tab.channelId);
+    const list = queries.channels.list().status;
+    // Saved membership on a connected session awaits its live roster; a
+    // channel missing from a list still being read may yet be in it.
+    return (
+      target
+        ? target.cached && !queries.channels.cachedOnly
+        : list === "loading"
+    ) ? (
+      <ThreadLoading
+        {...(tab.kind !== "thread" && { label: "Loading conversation…" })}
+      />
+    ) : (
+      <p role="status" className={styles.empty}>
+        {unavailableReason(target, list, queries.viewer)}
+      </p>
+    );
+  }
   // Message rows are memoized: links read one stable opener that consults the
   // live workspace when chosen. Only current-channel threads use the main pane.
   const linkedThread = useRef<
@@ -857,9 +906,7 @@ export function useConversationTabs({
       }),
       content:
         !usable || !target ? (
-          <p role="status" className={styles.empty}>
-            This conversation is no longer available.
-          </p>
+          unavailable(tab)
         ) : tab.kind === "thread" && nodes.get(tab.id) ? (
           <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
         ) : (

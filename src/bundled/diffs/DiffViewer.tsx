@@ -38,7 +38,7 @@ export function DiffViewer({
 }) {
   if (!files) return <RawDiff content={content} />;
   if (!files.length) return <p className="text-body-sm">No diff content</p>;
-  // Pierre stores partial patches compactly: absolute line numbers do not
+  // @pierre/diffs stores partial patches compactly: absolute line numbers do not
   // measure highlighting cost. Bound the supplied content instead.
   if (
     files.some((file) => {

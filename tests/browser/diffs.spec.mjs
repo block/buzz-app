@@ -9,7 +9,7 @@ test.beforeAll(async () => {
 test.afterAll(() => fixtures?.close());
 
 // Shadow-DOM rendering, focus return, layout geometry and theme changes need a browser.
-test("Kotlin diff renders in Pierre, both themes and both layouts", async ({
+test("Kotlin diff renders in diffs, both themes and both layouts", async ({
   page,
 }, testInfo) => {
   const errors = watchPageErrors(page);

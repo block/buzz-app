@@ -98,7 +98,7 @@ it.each([
   ["new file", "/dev/null", "b/a.ts", "-0,0 +1", "+new", "insert"],
   ["deleted file", "a/a.ts", "/dev/null", "-1 +0,0", "-old", "delete"],
 ])(
-  "renders %s through Pierre instead of raw fallback",
+  "renders %s through diffs instead of raw fallback",
   async (_name, oldPath, newPath, range, line, _type) => {
     const patch = `diff --git a/a.ts b/a.ts\n--- ${oldPath}\n+++ ${newPath}\n@@ ${range} @@\n${line}\n`;
     const h = mount(diffs, patch);

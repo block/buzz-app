@@ -21,7 +21,11 @@ import type {
 } from "../../features/panels/service";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  newMessageTarget,
+  soloDraftTarget,
+} from "../../features/channel-navigation/routes";
+import { splitPartition } from "../../features/relay/partition";
 import {
   createRelaySession,
   type RelaySession,
@@ -92,6 +96,8 @@ function relayQuery(
   ];
 }
 const owners: ReturnType<typeof createRelaySession>[] = [];
+// Makes direct messages available, so member lists offer Send message.
+const openDirectMessage = vi.fn(async () => "dm");
 const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
 const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
 beforeEach(() => {
@@ -129,7 +135,8 @@ async function page(
   menuPanel = false,
 ) {
   const viewer = keypair(),
-    authority = keypair();
+    authority = keypair(),
+    teammate = keypair();
   const channelId = "alpha";
   const events = [
     roster(authority, channelId, [viewer.pubkey]),
@@ -144,7 +151,12 @@ async function page(
     ),
     roster(authority, "beta", [viewer.pubkey]),
     metadata(authority, "beta", "Beta", undefined, [["t", "stream"]]),
-    roster(authority, "gamma", [viewer.pubkey]),
+    roster(authority, "gamma", [viewer.pubkey, teammate.pubkey]),
+    signed(teammate, {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Teammate" }),
+    }),
     metadata(authority, "gamma", "Gamma", undefined, [
       ["t", "stream"],
       ["private"],
@@ -158,6 +170,7 @@ async function page(
       media: () => undefined,
       ...(uploadAttachment && { uploadAttachment }),
       query: async (filters) => relayQuery(authority, events, filters),
+      openDirectMessage,
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -322,6 +335,7 @@ async function page(
     session: snapshot.session,
     scope,
     viewer: viewer.pubkey,
+    teammate: teammate.pubkey,
     panels,
     root: root?.id,
     navigation,
@@ -1364,12 +1378,55 @@ it.each(["Share access", "Chat actions"])(
       );
     const dialog = await screen.findByRole("dialog", { name: /Share access/ });
     await h.user.click(
-      await within(dialog).findByRole("button", { name: /^Open profile for/ }),
+      await within(dialog).findByRole("button", {
+        name: /^Open profile for Teammate/,
+      }),
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByText("Profile content")).toBeVisible();
   },
 );
+
+it("sends a message from a Solo side tab's Share access", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const snapshot = { entry: { id: "visit" }, attempt: {} };
+  const h = await page("stream", {
+    open,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as Navigation);
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  await h.user.click(
+    await screen.findByRole("button", { name: "Share access" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: /Share access/ });
+  await h.user.click(
+    await within(dialog).findByRole("button", { name: "Actions for Teammate" }),
+  );
+  await h.user.click(
+    await screen.findByRole("menuitem", { name: "Send message" }),
+  );
+  // The viewer has no DM with them, so this opens a New message draft
+  // addressed to them. Only a send creates the DM.
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith(
+      newMessageTarget(
+        splitPartition(h.scope) as never,
+        h.teammate,
+        expect.any(Number),
+      ),
+    ),
+  );
+  expect(openDirectMessage).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
 
 it("keeps a side tab's failed move recoverable after switching tabs", async () => {
   const base = {

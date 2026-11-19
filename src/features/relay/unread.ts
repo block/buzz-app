@@ -1619,7 +1619,24 @@ export function createUnread({
         if (!groups.size) continue;
         const rows = folded(channel.id);
         const content = new Map(rows.map((row) => [row.id, previewText(row)]));
-        const previewRows = new Map(rows.map((row) => [row.id, row]));
+        // Only what a preview binds, so other changes to the message keep
+        // the snapshot equal.
+        const previewRows = new Map(
+          rows.map((row) => [
+            row.id,
+            {
+              content: row.content,
+              mentions: row.mentions,
+              ...(row.mentionReferences
+                ? { mentionReferences: row.mentionReferences }
+                : {}),
+              ...(row.edited ? { edited: true as const } : {}),
+              ...(row.attachmentSeams
+                ? { attachmentSeams: row.attachmentSeams }
+                : {}),
+            },
+          ]),
+        );
         // A session's top-level row shows its newest message from someone
         // else, unless that message is the root of its own thread row. This
         // mostly matches its newest evidence, but follows a relay-signed row's

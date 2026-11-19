@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { messagePreview } from "../notifications/content";
+import { messagePreview, plainText } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -34,6 +34,9 @@ const crane = "1".repeat(64);
 const wes = "2".repeat(64);
 const kalvin = "3".repeat(64);
 const starred = "4".repeat(64);
+const ann = "5".repeat(64);
+const annLee = "6".repeat(64);
+const jo = "7".repeat(64);
 const list = { channels: [] };
 const profiles = new Map<string, Profile>([
   [tomb, { name: "tomb" } as Profile],
@@ -44,6 +47,9 @@ const profiles = new Map<string, Profile>([
   [wes, { name: "Wes" } as Profile],
   [kalvin, { name: "kalvin" } as Profile],
   [starred, { name: "Mi*c*" } as Profile],
+  [ann, { name: "Ann" } as Profile],
+  [annLee, { name: "Ann Lee" } as Profile],
+  [jo, { name: "Jo  Doe" } as Profile],
   [
     riley,
     {
@@ -322,4 +328,97 @@ it("reads named identities before the optional mentioned ones, within budget", (
   expect(read.slice(0, 3)).toEqual(["a", "b", "m0"]);
   const many = Array.from({ length: 1030 }, (_, index) => `n${index}`);
   expect(withMentionedIds(many, mentioned)).toEqual(many);
+});
+
+it("binds a source body's search preview after removing its attachments, as its conversation does", () => {
+  const body = "unique @Ann Lee![x](https://example.org/a.png)x";
+  const text = plainText(body, { limit: 4000 });
+  const view = preview(
+    body,
+    { mentions: [ann, annLee], attachmentUrls: new Set() },
+    { text },
+  );
+  expect(targets(view)).toEqual([profileTarget(ann)]);
+  expect(view).toHaveTextContent("unique Ann Lee[Image]x");
+});
+
+it("binds only what a preview can show, with room to finish a name", () => {
+  const binder = vi.mocked(renderedProfileMentionParts);
+  binder.mockClear();
+  const body = `@tomb ${"**word** ".repeat(12_000)}`;
+  const view = preview(
+    body,
+    { mentions: [tomb] },
+    { text: messagePreview(body) },
+  );
+  expect(chips(view)).toEqual(["tomb"]);
+  const bound = binder.mock.calls[0]?.[0].content ?? "";
+  expect(bound.length).toBeLessThan(4096 + 100);
+  expect(body.startsWith(bound)).toBe(true);
+});
+
+it("leaves a name text before an image its bound leaves open", () => {
+  // Whole, the image goes and "x" joins the name: the conversation binds Ann.
+  const body = `${"x ".repeat(1950)}@Ann Lee![x](https://example.org/${"a".repeat(400)}.png)x`;
+  const text = plainText(body, { limit: 4000 });
+  const view = preview(
+    body,
+    { mentions: [ann, annLee], attachmentUrls: new Set() },
+    { text },
+  );
+  expect(targets(view)).toEqual([]);
+  expect(view).toHaveTextContent(text);
+});
+
+it("keeps chips beside authored mark characters and collapsed spaces", () => {
+  const marked = "odd \uE011 glyph and \uE010\uE100 then @tomb here";
+  expect(
+    chips(
+      preview(marked, { mentions: [tomb] }, { text: messagePreview(marked) }),
+    ),
+  ).toEqual(["tomb"]);
+  const spaced = "hi @Jo  Doe there";
+  const view = preview(
+    spaced,
+    { mentions: [jo] },
+    { text: messagePreview(spaced) },
+  );
+  expect(targets(view)).toEqual([profileTarget(jo)]);
+});
+
+it("binds a preview only once it comes near the screen", () => {
+  const binder = vi.mocked(renderedProfileMentionParts);
+  binder.mockClear();
+  let notify: (entries: Partial<IntersectionObserverEntry>[]) => void =
+    () => {};
+  const observed: Element[] = [];
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: typeof notify) {
+        notify = callback;
+      }
+      observe(element: Element) {
+        observed.push(element);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ top: 5000, bottom: 5020 } as DOMRect);
+  try {
+    const view = preview("ugh @tomb", { mentions: [tomb] });
+    expect(chips(view)).toEqual([]);
+    expect(view).toHaveTextContent("ugh @tomb");
+    expect(binder).not.toHaveBeenCalled();
+    act(() =>
+      notify([{ isIntersecting: true, target: observed[0] as Element }]),
+    );
+    expect(chips(view)).toEqual(["tomb"]);
+  } finally {
+    rect.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });

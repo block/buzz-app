@@ -13,6 +13,7 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import { imetaAttachmentUrls } from "../../features/relay/fold";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
@@ -71,7 +72,8 @@ export function searchText(event: { kind: number; content: string }) {
 }
 
 /** An indexed event's body and signed mentions, read from its tags as a
- * message reads them: `p` recipients and two-field `mention` references. */
+ * message reads them: `p` recipients and two-field `mention` references,
+ * with the attachments its conversation projects out of the body. */
 export function eventMentions(event: {
   kind: number;
   content: string;
@@ -88,6 +90,10 @@ export function eventMentions(event: {
     content: eventText(event),
     mentions: keys(([name]) => name === "p"),
     mentionReferences: keys((tag) => tag.length === 2 && tag[0] === "mention"),
+    // The conversation removes images and attachment links before binding.
+    ...(event.kind !== 40008
+      ? { attachmentUrls: imetaAttachmentUrls(event) }
+      : {}),
   };
 }
 type Result = {

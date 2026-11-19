@@ -349,6 +349,25 @@ it("never opens a protected agent's storage in the shared host before its handle
   expect(host.processes).toEqual([]);
 });
 
+it.each([
+  ["150000", 150000],
+  ["50000", undefined],
+  ["", undefined],
+])(
+  "gives Pi the saved compaction threshold %s when it opens and delivers",
+  async (saved, tokens) => {
+    const { host, deliver } = setup();
+    await deliver(
+      { type: "mention", event: reply("2", "@Pi can you look?") },
+      { config: { ...DEFAULT_CONFIG, compactAt: saved } },
+    ).run;
+    const [open] = host.requests("open");
+    const [delivered] = host.requests("deliver");
+    expect(open?.params.compactAt).toBe(tokens);
+    expect(delivered?.params.compactAt).toBe(tokens);
+  },
+);
+
 it("hands an owner's mention to its thread's Pi conversation", async () => {
   const { host, deliver, published } = setup();
   const mention = reply("2", "@Pi can you look?");

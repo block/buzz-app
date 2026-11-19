@@ -18,6 +18,8 @@ import {
   whenShown,
 } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
@@ -988,6 +990,11 @@ export function createTabs({
                 {...(!draft.effort ? { valueLabel: resting } : {})}
                 groups={[{ label: "", options: efforts }]}
                 onValueChange={(effort) => setDraft({ ...draft, effort })}
+              />
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
               />
             </SettingsGroup>
             <AgentInstructions

@@ -52,3 +52,27 @@ it("shows an edited message's files as its edit leaves them", async () => {
     ])}`,
   );
 });
+
+it("shows no files for an edited message whose edit cleared them", async () => {
+  const alice = keypair();
+  const earlier = message(alice, "c", "Earlier", 10, [
+    ["imeta", "url https://relay.test/media/old.png"],
+  ]);
+  const edit = signed(alice, {
+    kind: 40003,
+    content: "Cleared",
+    created_at: 15,
+    tags: [
+      ["h", "c"],
+      ["e", earlier.id],
+    ],
+  });
+  const history = await conversationHistory(
+    message(alice, "c", "Now", 20),
+    { channelId: "c", name: "c" },
+    async (filters) =>
+      filters[0]?.kinds?.includes(40003) ? [edit] : [earlier],
+  );
+  expect(history).toContain(`"content":"Cleared"}`);
+  expect(history).not.toContain("old.png");
+});

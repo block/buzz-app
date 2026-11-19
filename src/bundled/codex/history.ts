@@ -112,7 +112,7 @@ export async function conversationHistory(
             message.sourceContent ?? message.content,
             editedTags(
               raw.get(message.id)?.tags ?? [],
-              raw.get(message.attachmentSourceId ?? message.id)?.tags ?? [],
+              raw.get(message.editId ?? message.id)?.tags ?? [],
               (message.emoji ?? []).map(({ shortcode, url }) => [
                 "emoji",
                 shortcode,

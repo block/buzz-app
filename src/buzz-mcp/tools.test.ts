@@ -990,7 +990,7 @@ it("shows a message's meaningful tags in a read, but not its bookkeeping", async
   expect(line).not.toContain(auth[3]);
 });
 
-it("reads an edited message with the files and emoji its edits leave", async () => {
+it("reads an edited message with the files and emoji its latest edit leaves", async () => {
   const id = "4".repeat(64);
   const { client } = fake([
     ...community,
@@ -1014,7 +1014,7 @@ it("reads an edited message with the files and emoji its edits leave", async () 
         ["imeta", "url https://relay.test/media/new.png"],
       ],
     }),
-    // Newer, but with no files of its own, so it leaves the last edit's.
+    // Newer, with no files, so it clears them, as the relay does.
     event({
       id: "6".repeat(64),
       kind: 40003,
@@ -1032,7 +1032,6 @@ it("reads an edited message with the files and emoji its edits leave", async () 
     .find((line) => line.startsWith(id));
   expect(line).toContain(
     `tags ${JSON.stringify([
-      ["imeta", "url https://relay.test/media/new.png"],
       ["emoji", "wave", "https://relay.test/wave.png"],
     ])} at `,
   );

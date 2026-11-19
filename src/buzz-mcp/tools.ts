@@ -2571,25 +2571,23 @@ function rootOf(event: BuzzEvent) {
 }
 
 /** Messages oldest first, each showing its author's latest edit, with the
- * files and custom emoji its edits leave, as `foldMessages` does. */
+ * files it leaves (none when it clears them) and its custom emoji, as
+ * `foldMessages` does. */
 function edited(events: readonly BuzzEvent[]) {
   const messages = events.filter((event) => event.kind !== 40003);
   const byId = new Map(messages.map((event) => [event.id, event]));
-  const has = (event: BuzzEvent, name: string) =>
-    event.tags.some(([key]) => key === name);
-  const newer = (event: BuzzEvent, last?: BuzzEvent) =>
-    !last || last.created_at < event.created_at;
   const edits = new Map<string, BuzzEvent>();
-  // An edit without files leaves the last ones.
-  const files = new Map<string, BuzzEvent>();
   for (const event of events)
     if (event.kind === 40003) {
       const target = tag(event, "e");
+      const last = target && edits.get(target);
       // Authorship first, so someone else's newer edit hides none.
-      if (!target || byId.get(target)?.pubkey !== event.pubkey) continue;
-      if (newer(event, edits.get(target))) edits.set(target, event);
-      if (has(event, "imeta") && newer(event, files.get(target)))
-        files.set(target, event);
+      if (
+        target &&
+        byId.get(target)?.pubkey === event.pubkey &&
+        (!last || last.created_at < event.created_at)
+      )
+        edits.set(target, event);
     }
   return messages
     .map((event) => {
@@ -2600,8 +2598,9 @@ function edited(events: readonly BuzzEvent[]) {
             content: edit.content,
             tags: editedTags(
               event.tags,
-              (files.get(event.id) ?? event).tags,
-              (has(edit, "emoji") ? edit : event).tags,
+              edit.tags,
+              (edit.tags.some(([name]) => name === "emoji") ? edit : event)
+                .tags,
             ),
           }
         : event;

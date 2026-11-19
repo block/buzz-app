@@ -89,30 +89,29 @@ export function latestOwnMessage(
  * remember-agents preference says. Waits for complete agent choices.
  *
  * Every agent the viewer's latest top-level message in the loaded window
- * tagged that can still be tagged. Without one: the main agent if it is a
- * member; else the first member agent that runs on this computer; else all the
+ * tagged that still belongs to the chat and can be tagged. Without one: the
+ * main agent if it is a member; else the first local member agent; else all the
  * chat's usable agent members; else the main agent. */
 export function seedAgents(
   session: ComposerSession,
-  channelId: string,
+  roster: readonly string[] | undefined,
   rows: readonly ChannelMessage[],
   admits: (pubkey: string) => boolean,
   main?: string,
 ): readonly string[] {
   const choices = session.agentChoices.snapshot();
-  if (!choices.complete) return [];
+  if (!choices.complete || !roster) return [];
   const agents = knownAgentPubkeys(session.profiles.snapshot(), choices);
   const usable = (key: string) => agents.has(key) && admits(key);
+  const members = roster.filter(usable);
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
     if (!row || row.authorId !== session.viewer || row.threadRootId) continue;
-    const tagged = [...new Set(row.mentions.filter(usable))];
+    const tagged = [
+      ...new Set(row.mentions.filter((key) => members.includes(key))),
+    ];
     if (tagged.length) return tagged;
   }
-  const members = (
-    session.channels.list().channels.find((item) => item.id === channelId)
-      ?.members ?? []
-  ).filter(usable);
   const mainMember = members.find((key) => key === main);
   if (mainMember) return [mainMember];
   const local = choices.selectable.find(

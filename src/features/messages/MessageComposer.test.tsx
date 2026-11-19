@@ -82,6 +82,7 @@ import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
 import type {
+  ChannelList,
   ChannelMessage,
   ChannelSummary,
   Profile,
@@ -317,10 +318,17 @@ function mount(
     identities: [],
     definitions: [],
   };
-  const channelList = {
-    status: "ready" as const,
-    channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
+  let channelList: ChannelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        name: "General",
+        members: [first.pubkey, second.pubkey],
+      },
+    ],
   };
+  const channelListListeners = new Set<() => void>();
   const rawSession = {
     // Full-session fixture; the detached editor intentionally omits this capability.
     unread: undefined,
@@ -394,7 +402,10 @@ function mount(
         return () => rowListeners.delete(listener);
       },
       list: () => channelList,
-      subscribeList: () => () => {},
+      subscribeList(listener: () => void) {
+        channelListListeners.add(listener);
+        return () => channelListListeners.delete(listener);
+      },
     },
   } as unknown as RelaySession;
   const session = {
@@ -487,6 +498,15 @@ function mount(
     remount() {
       view.rerender(<></>);
       view.rerender(tree());
+    },
+    setChannel(next: Partial<ChannelSummary>) {
+      act(() => {
+        channelList = {
+          status: "ready",
+          channels: [{ id: "channel", name: "General", ...next }],
+        };
+        for (const listener of channelListListeners) listener();
+      });
     },
     setRows(next: readonly ChannelMessage[]) {
       act(() => {
@@ -9191,6 +9211,54 @@ it("does not seed a channel composer until its window is ready", () => {
   expect(h.input()).toHaveValue("@Honey ");
 });
 
+it.each(["channel", "thread"] as const)(
+  "checks current membership for the %s prefill and preserves a draft the viewer edited",
+  (place) => {
+    const viewer = "e".repeat(64);
+    const members = [viewer, first.pubkey, second.pubkey];
+    const h = mount(
+      place === "thread" ? { threadRootId: "root" } : {},
+      undefined,
+      viewer,
+    );
+    h.setChannel({ members, cached: true, readOnly: true });
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: "Ada", isAgent: true }],
+        [second.pubkey, { name: "Bea", isAgent: true }],
+      ]),
+    );
+    const sent = editableMessage({
+      authorId: viewer,
+      mentions: [first.pubkey, second.pubkey],
+      ...(place === "thread" ? { threadRootId: "root" } : {}),
+    });
+    if (place === "thread") h.retarget({ threadSeed: sent });
+    else h.setRows([sent]);
+    expect(h.input()).toHaveValue("");
+
+    h.setChannel({ members });
+    expect(h.input()).toHaveValue("@Ada @Bea ");
+    h.setChannel({ members: [viewer, second.pubkey] });
+    expect(h.input()).toHaveValue("@Bea ");
+    h.remount();
+    expect(h.input()).toHaveValue("@Bea ");
+
+    act(() => {
+      const editor = h.input();
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      h.commands().insertText("Please review");
+    });
+    h.setChannel({ members: [viewer] });
+    expect(h.input()).toHaveValue("@Bea Please review");
+    h.remount();
+    expect(h.input()).toHaveValue("@Bea Please review");
+    expect(h.commands().recipients.map(({ pubkey }) => pubkey)).toEqual([
+      second.pubkey,
+    ]);
+  },
+);
+
 const honeyAgent: ReadonlyMap<string, Profile> = new Map([
   [first.pubkey, { name: "Honey", isAgent: true }],
 ]);
@@ -13891,7 +13959,15 @@ it("after a Solo send the pill keeps whoever received it, and a mention-addresse
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
 });
 
-function mountSoloHistory(options: { remember?: boolean } = {}) {
+function mountSoloHistory(
+  options: {
+    remember?: boolean;
+    channelWrites?: Pick<
+      RelaySession["channelWrites"],
+      "refreshMembership" | "addAgents"
+    >;
+  } = {},
+) {
   const viewer = "e".repeat(64);
   if (options.remember === false) setRememberAgentsPreference(false);
   const h = mount({}, undefined, viewer);
@@ -13909,7 +13985,7 @@ function mountSoloHistory(options: { remember?: boolean } = {}) {
     session: {
       ...h.session,
       channels: { ...h.session.channels, list: () => soloList },
-      channelWrites: {
+      channelWrites: options.channelWrites ?? {
         refreshMembership: async () => ({
           id: "channel",
           members: [first.pubkey, second.pubkey],
@@ -14013,6 +14089,80 @@ function mountSoloChat(
 }
 const pillNamed = (names: string) =>
   screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
+
+it("updates the remembered Solo pill when an owned agent leaves and preserves a manual pick", () => {
+  const viewer = "e".repeat(64);
+  const ada = { pubkey: first.pubkey, name: "Ada" };
+  const bea = { pubkey: second.pubkey, name: "Bea" };
+  const h = mount(
+    { ownSoloConversation: true, requireMention: true },
+    undefined,
+    viewer,
+  );
+  h.setHistory("loading");
+  h.setLibrary([ada, bea]);
+  h.setProfiles(
+    new Map([
+      [ada.pubkey, { name: ada.name, isAgent: true }],
+      [bea.pubkey, { name: bea.name, isAgent: true }],
+    ]),
+  );
+  const full = {
+    channelType: "solo" as const,
+    members: [viewer, ada.pubkey, bea.pubkey],
+  };
+  const afterDeparture = { ...full, members: [viewer, bea.pubkey] };
+  h.setChannel(full);
+  h.setRows([editableMessage({ authorId: viewer, mentions: [ada.pubkey] })]);
+  h.setHistory("ready");
+  expect(pillNamed("Ada")).toBeInTheDocument();
+
+  h.setChannel(afterDeparture);
+  expect(pillNamed("Bea")).toBeInTheDocument();
+  expect(h.input()).toHaveValue("");
+
+  h.setChannel(full);
+  h.remount();
+  expect(pillNamed("Ada")).toBeInTheDocument();
+  h.fill("Please review");
+  h.retarget({ shown: false });
+  h.setChannel(afterDeparture);
+  h.retarget({ shown: true });
+  expect(pillNamed("Bea")).toBeInTheDocument();
+  expect(h.input()).toHaveValue("Please review");
+
+  h.setChannel(full);
+  act(() => h.commands().audience?.only([ada]));
+  h.setChannel(afterDeparture);
+  expect(pillNamed("Ada")).toBeInTheDocument();
+  h.remount();
+  expect(pillNamed("Ada")).toBeInTheDocument();
+});
+
+it("keeps the Solo draft when the send-time roster has lost a remembered agent", async () => {
+  const addAgents = vi.fn();
+  const h = mountSoloHistory({
+    channelWrites: {
+      refreshMembership: async () => ({
+        id: "channel",
+        name: "General",
+        channelType: "solo",
+        members: ["e".repeat(64), second.pubkey],
+      }),
+      addAgents,
+    },
+  });
+  expect(pillNamed("Ada, Bea")).toBeInTheDocument();
+  h.fill("Please review");
+  await choicesLoaded();
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "An agent left this chat.",
+  );
+  expect(h.input()).toHaveValue("Please review");
+  expect(addAgents).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
 
 it("with none of your messages loaded and no main or local agent among them, the pill takes all the chat's usable agents", () => {
   mountSoloChat([first.pubkey, second.pubkey]);

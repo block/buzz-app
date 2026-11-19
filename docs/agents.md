@@ -1216,8 +1216,9 @@ existing relay membership/send/retry validator is unchanged.
 After an accepted send, the composer keeps the exact selected agent-name mentions,
 deduplicated by key, as its next prefill. That prefill is not a draft: an empty
 composer derives it from the agents your latest message in that conversation
-notified, so a channel, the thread a message started, a DM or a Solo chat shows
-the same prefill on every device, and nothing is saved until you type there.
+notified and who still belong to the conversation. A channel, the thread a
+message started, a DM or a Solo chat derives this prefill on every device.
+Nothing is saved until you type there.
 Sending without the agent ends it. Removing the prefilled mention lasts until the
 composer is shown again or your latest message there changes; a draft you have
 typed is left as written.
@@ -1227,8 +1228,8 @@ plain typed names are not carried forward. Once typed, the draft is an ordinary 
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
-turning it back on does not restore old recipients. Solo chat auto-recipient rules are
-unchanged. An outbox rejection preserves the original draft; acceptance is not proof
+turning it back on does not restore old recipients. In an agents-only Solo chat,
+the agent picker remembers current members independently of this setting. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
 Saved teams from **Your teams**, both local and confirmed synced copies, appear

@@ -872,6 +872,9 @@ and are asked to sign in again in Buzz.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
+- With **Remember mentioned agents** on, an empty composer carries forward
+  agents you last mentioned who are still in the conversation. Editing the
+  draft keeps the recipients you chose.
 - **Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
   makes plain Up Arrow edit your most recent editable message when the channel
   or thread composer is empty, instead of selecting messages. This device-local

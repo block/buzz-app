@@ -800,34 +800,84 @@ test.describe("links to channels the reader hasn't joined", () => {
     await expect(card).toContainText("Public channel · Not joined");
   });
 
+  // Hovers the link that ends a new message's body and waits for its card.
+  const hoverLinkPreview = async (page, app, body, preview) => {
+    await open(page, app);
+    const { href, label, text } = preview(app);
+    const message = app.append("primary", "alpha", `${body}\nsee <${href}>`);
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${message.id}"]`,
+    );
+    const link = row.locator(`a[href="${href}"]`);
+    await expect(link).toBeVisible();
+    await virtuaIdle(page);
+    await link.hover();
+    const card = page.getByLabel(label, { exact: true });
+    await expect(card).toContainText(text);
+    const actions = row.getByRole("group", { name: "Message actions" });
+    await expect(actions).toBeVisible();
+    return { link, card, actions };
+  };
+  const channelPreview = (app) => ({
+    href: `buzz://channel/${app.openChannelId}`,
+    label: "Channel preview",
+    text: "Public channel · Not joined",
+  });
+  // A long target fills the message card to its tallest.
+  const messagePreview = (app) => {
+    const target = app.append(
+      "primary",
+      "alpha",
+      Array.from({ length: 30 }, (_, line) => `Target ${line + 1}`).join("\n"),
+    );
+    return {
+      href: `buzz://message?channel=alpha&id=${target.id}`,
+      label: "Message preview",
+      text: "Target 1",
+    };
+  };
+
   test("link previews open above the message's hover actions", async ({
     page,
     app,
   }) => {
-    await open(page, app);
     // A link below the first line puts its preview's default place over the
     // actions above the message.
-    const message = app.append(
-      "primary",
-      "alpha",
-      `Release notes:\nsee <buzz://channel/${app.openChannelId}>`,
+    const { actions } = await hoverLinkPreview(
+      page,
+      app,
+      "Release notes:",
+      channelPreview,
     );
-    const row = page.locator(
-      `[data-channel-timeline] [data-message-id="${message.id}"]`,
-    );
-    const channel = row.getByRole("link", { name: "#open", exact: true });
-    await expect(channel).toBeVisible();
-    await virtuaIdle(page);
-    await channel.hover();
-    const card = page.getByRole("link", {
-      name: "Channel preview",
-      exact: true,
-    });
-    await expect(card).toContainText("Public channel · Not joined");
-    const actions = row.getByRole("group", { name: "Message actions" });
-    await expect(actions).toBeVisible();
     // A trial click fails while the preview covers the action.
     for (const control of await actions.getByRole("button").all())
       await control.click({ trial: true });
   });
+
+  for (const [kind, preview] of [
+    ["channel", channelPreview],
+    ["message", messagePreview],
+  ])
+    test(`a ${kind} link low in a long message keeps its preview beside it`, async ({
+      page,
+      app,
+    }) => {
+      // The actions above the message are far from this link, so the preview
+      // stays at its default gap instead of rising to the message's top.
+      const { link, card } = await hoverLinkPreview(
+        page,
+        app,
+        Array.from({ length: 8 }, (_, line) => `Line ${line + 1}`).join("\n"),
+        preview,
+      );
+      const anchor = await link.boundingBox();
+      await expect
+        .poll(async () => {
+          const box = await card.boundingBox();
+          const gap =
+            box && anchor && Math.round(anchor.y - (box.y + box.height));
+          return gap >= 4 && gap <= 12 ? "beside the link" : gap;
+        })
+        .toBe("beside the link");
+    });
 });

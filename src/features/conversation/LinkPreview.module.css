@@ -88,6 +88,10 @@ html[data-keyboard-navigation] .soloLink:focus-visible {
   letter-spacing: var(--text-body--letter-spacing);
   font-weight: var(--text-body--font-weight);
 }
+.messagePopup {
+  /* A loaded message card fits; MessageLink clears the actions for this height. */
+  max-height: min(10rem, var(--available-height, 10rem));
+}
 .byline {
   display: flex;
   align-items: center;

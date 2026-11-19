@@ -72,18 +72,17 @@ export const resolveLink = (
 
 const previewGap = 8;
 
-/** Lift a preview above the hovered message's actions, not over them. */
-function clearMessageActions(link: HTMLElement | null) {
+/** Lift a preview above the hovered message's actions when it would reach them. */
+function clearMessageActions(link: HTMLElement | null, height: number) {
   const actions = link
     ?.closest("[data-actions-revealed]")
     ?.querySelector("[data-message-actions]");
   if (!link || !actions) return previewGap;
-  return Math.max(
-    previewGap,
-    link.getBoundingClientRect().top -
-      actions.getBoundingClientRect().top +
-      previewGap,
-  );
+  const linkTop = link.getBoundingClientRect().top;
+  const bar = actions.getBoundingClientRect();
+  // A link further down the message leaves the bar clear at the default gap.
+  if (linkTop - previewGap - height >= bar.bottom) return previewGap;
+  return Math.max(previewGap, linkTop - bar.top + previewGap);
 }
 
 export function MessageLink({
@@ -129,6 +128,7 @@ export function MessageLink({
   const offeredAction = useRef<HTMLDivElement>(null);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
+  const cardRef = useRef<HTMLAnchorElement>(null);
   // Entering the card hides the row's actions; keep its lift while it's open.
   const lift = useRef(previewGap);
   const panelTarget = !safeLinkUrl(url) && !isBuzzLink(url) && !!canOpenLink;
@@ -433,22 +433,37 @@ export function MessageLink({
         trigger={menuTrigger}
         {...(controls
           ? { actionRef: offeredAction }
-          : { link: <a href={url} {...navigation} /> })}
+          : { link: <a ref={cardRef} href={url} {...navigation} /> })}
         open={previewOpen && !!card && !menuOpen}
         onOpenChange={(next) => {
           if (next) lift.current = previewGap;
           setPreviewOpen(next);
         }}
         side="top"
-        sideOffset={({ side }) => {
+        sideOffset={({ side, positioner }) => {
           if (side !== "top") return previewGap;
           lift.current = Math.max(
             lift.current,
-            clearMessageActions(trigger.current),
+            clearMessageActions(
+              trigger.current,
+              // A message card grows as it loads, so it is measured at its
+              // cap; it then never moves from under the pointer.
+              preview && cardRef.current
+                ? Math.max(
+                    positioner.height,
+                    Number.parseFloat(
+                      getComputedStyle(cardRef.current).maxHeight,
+                    ) || 0,
+                  )
+                : positioner.height,
+            ),
           );
           return lift.current;
         }}
-        className={styles.popup ?? ""}
+        className={
+          (preview ? `${styles.popup} ${styles.messagePopup}` : styles.popup) ??
+          ""
+        }
         aria-label={root.label}
       >
         {root.body}

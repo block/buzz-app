@@ -1022,7 +1022,10 @@ export function createOutbox(
       }
       return shared;
     },
-    async withRecoveryJournal(key, run) {
+    async withRecoveryJournal<T>(
+      key: string,
+      run: (journal: RecoveryJournal) => Promise<T>,
+    ) {
       await outbox.ready();
       return locked(`recovery:${key}`, async () => {
         const previous = durable;

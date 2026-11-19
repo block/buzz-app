@@ -1692,11 +1692,18 @@ it("waits for the original batch when a different window loaded it before signin
   const t = batchSetup();
   await t.ready();
   const members = people(3);
-  const signing = Promise.withResolvers<void>();
-  const signed = Promise.withResolvers<void>();
-  const delivery = Promise.withResolvers<void>();
-  const receipt = Promise.withResolvers<void>();
-  const retryProgress = Promise.withResolvers<string>();
+  function gate<T = void>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((finish) => {
+      resolve = finish;
+    });
+    return { promise, resolve };
+  }
+  const signing = gate();
+  const signed = gate();
+  const delivery = gate();
+  const receipt = gate();
+  const retryProgress = gate<string>();
   t.onSign(() => {
     signing.resolve();
     return signed.promise;

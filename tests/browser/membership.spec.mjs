@@ -295,6 +295,100 @@ test("a restored membership anchor follows delayed group growth through resize a
     .toBeLessThan(2);
 });
 
+// Painted frames, not settled geometry, are the contract: a row that mounts
+// unmeasured renders hidden, and its estimated size moves the bottom target.
+test("a revisit without saved geometry paints measured rows while late notices land at the bottom", async ({
+  page,
+  app,
+}) => {
+  const alpha = app.histories.get("primary/alpha");
+  alpha.splice(0, alpha.length, ...alpha.filter((e) => e.kind !== 40099));
+  await openMessages(page, app);
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await settle(page);
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await settle(page);
+  // A fresh document keeps only the persisted head, which has no notices.
+  await openMessages(page, app);
+  app.membership("member_joined", 1, 0, false, false);
+  app.membership("member_joined", 0, 0, false, false);
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/query", async (route) => {
+    const body = route.request().postData() ?? "";
+    if (body.includes("40099") && body.includes('"alpha"')) await held;
+    await route.continue();
+  });
+  // Sample after each rendering update: a task posted from a frame callback.
+  await page.evaluate(() => {
+    const frames = (window.paintedFrames = []);
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      const feed = document.querySelector(
+        '[data-message-scroller][data-channel-timeline="alpha"]',
+      );
+      const box = feed?.getBoundingClientRect();
+      const items = [...(feed?.querySelector("ol")?.children ?? [])].filter(
+        (item) => {
+          const rect = item.getBoundingClientRect();
+          return rect.height && rect.bottom > box.top && rect.top < box.bottom;
+        },
+      );
+      if (items.length)
+        frames.push({
+          hidden: items.filter((item) => item.style.visibility === "hidden")
+            .length,
+          covered: Math.round(
+            items
+              .filter((item) => item.style.visibility !== "hidden")
+              .reduce((sum, item) => {
+                const rect = item.getBoundingClientRect();
+                return (
+                  sum +
+                  Math.min(rect.bottom, box.bottom) -
+                  Math.max(rect.top, box.top)
+                );
+              }, 0),
+          ),
+          gap: Math.round(
+            feed.scrollHeight - feed.scrollTop - feed.clientHeight,
+          ),
+          notices: feed.querySelectorAll("[data-membership-row]").length,
+        });
+      if (!window.stopFrames)
+        requestAnimationFrame(() => channel.port2.postMessage(0));
+    };
+    requestAnimationFrame(() => channel.port2.postMessage(0));
+  });
+  const feed = page.getByRole("region", { name: "Channel message history" });
+  try {
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(feed.locator("[data-message-id]").first()).toBeVisible();
+    await settle(page);
+  } finally {
+    release();
+  }
+  await expect(feed.locator("[data-membership-row]")).toHaveCount(1);
+  await settle(page);
+  const frames = await page.evaluate(() => {
+    window.stopFrames = true;
+    return window.paintedFrames;
+  });
+  const last = frames.at(-1);
+  expect(last.notices).toBe(1);
+  // The reader stays at the bottom with the viewport filled in every frame.
+  expect(
+    frames.filter(
+      (frame) =>
+        frame.hidden ||
+        Math.abs(frame.covered - last.covered) > 1 ||
+        Math.abs(frame.gap - last.gap) > 1,
+    ),
+  ).toEqual([]);
+});
+
 // A burst of joins newer than every message must not hold messages back:
 // pages leave notices out, and the notices follow in their own reads.
 const burstTest = test.extend({ membershipBurst: 600 });

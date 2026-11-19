@@ -1,14 +1,14 @@
-# Virtua 0.53.5 scroll correction boundaries
+# Virtua 0.54.2 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
 `src/features/messages/ChannelTimeline.tsx`. Only that entry is patched;
 CommonJS and other-framework exports are untouched. Its store and element driver
-carry the changes below. The resize and scroll observers that entry shares with
-its window and grid drivers carry the frame-deferred item sizes, whole-edge
-rounding, the 1px absolute end path and the momentum flag passed to the
-overflow callback; the grid driver keeps its momentum-only overflow policy.
-Keep the dependency pinned to 0.53.5 and review the patch plus version-coupled
-installed-bundle tests before upgrading or adding a different import.
+carry the changes below. The scroll observer that entry shares with its window
+and grid drivers carries the whole-edge rounding, the 1px absolute end path, the
+scroll-end offset read and the momentum flag passed to the overflow callback;
+the grid driver keeps its momentum-only overflow policy. Keep the dependency
+pinned to 0.54.2 and review the patch plus version-coupled installed-bundle
+tests before upgrading or adding a different import.
 
 ## Fractional end offsets
 
@@ -50,7 +50,7 @@ with no buffer below the viewport, and a row just below it did not remount
 before the test failed; the trace does not show which write left the
 correction without its event. Scroll-end now releases the held range and
 re-renders, so idle buffers both sides as above. Before that release, the
-driver's scroll-end reads the native offset, as the viewport resize path does:
+driver's scroll-end reads the native offset, as Virtua's viewport resize path does:
 a jump whose scroll event trails the 150ms timer is consumed as its own event,
 and the range is not re-rendered at the stale pre-jump offset. A correction
 flushed after scroll-end with no later scroll event still holds its range until
@@ -84,7 +84,7 @@ Instead, at each **nonzero automatic correction** on Mac WebKit:
 3. Restore the prior declaration value and priority in the next task.
 
 This extends the mechanism already used by
-[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.53.5/src/core/driver.ts#L379-L391),
+[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.54.2/src/core/driver.ts#L533-L545),
 without changing the iOS branch. Overlapping interventions cancel/restore their
 predecessor before capturing the original declaration. Disposal restores
 immediately; an observably changed later declaration is not overwritten.
@@ -209,30 +209,25 @@ appends, or for the correction itself. The installed-store regressions hold a
 correction's range across a second prepend and across such a removal, and
 require the live range that follows to lie inside it.
 
-## Viewport size is delivered in the observer callback
+## Row sizes are delivered in the observer callback
 
-Row resizes are delivered in the next animation frame, outside the native
-ResizeObserver callback. Rendering from that callback can mount rows at the
-same DOM depth and cause WebKit's "loop completed with undelivered
-notifications" cycle. The scroll viewport's own size is an exception: it is
-delivered in the callback. It can only mount rows that are deeper in the DOM,
-which the browser may observe in the same frame without that cycle. Their own
-sizes are still deferred.
-
-When the viewport size arrives, the driver also reads the native scroll offset
-first. A channel switch scrolls imperatively before its scroll event is
-dispatched; without that read, the first range is computed at the old offset
-and the correct rows render one frame later. Since 0.52.10
-([#986](https://github.com/inokawa/virtua/pull/986)) Virtua re-reads it only
-when a hidden viewport regains a size; the patch reuses that read whenever the
-native offset differs from the store's.
-
-Together these let the first rows of a warm channel switch paint one frame
-earlier (median three frames to two). On one Mac, the
-`channel-opening` warm-switch median went from 52–58 ms to 40–42 ms (24 samples
-per run, interleaved runs). Installed-driver regressions cover immediate
-viewport delivery with deferred rows, removal and remount, and the offset read
-in LTR and RTL.
+Virtua renders an unmeasured row with `visibility: hidden`. Rendering from a
+native ResizeObserver callback can mount rows the browser cannot observe in the
+same frame, which WebKit reports as "ResizeObserver loop completed with
+undelivered notifications". Since 0.54.0
+([#952](https://github.com/inokawa/virtua/pull/952)) Virtua defers only the
+`observe()` call for an element mounted during delivery outside the delivering
+targets, and applies sizes in the callback. The previous patch deferred every
+row size to the next frame instead; a newly mounted row then painted blank or at
+its estimate for a frame, so a channel entered without saved geometry painted an
+empty timeline and a row appended below a reader at the bottom overlapped the
+rows above it. That deferral, and the immediate viewport delivery and first-mount
+measurement built around it, are removed. Since 0.53.6
+([#1039](https://github.com/inokawa/virtua/pull/1039)) Virtua also reads the
+native offset before applying a viewport resize, which the patch previously
+added. `membership.spec.mjs` checks painted frames for a revisit without saved
+geometry and a late notice at the bottom, and its journeys fail on any
+observer-loop error once Messages is ready.
 
 ## Automated checks
 
@@ -241,7 +236,7 @@ bin/pnpm install --frozen-lockfile
 bin/pnpm typecheck
 bin/pnpm exec vitest run src/features/messages/virtua-compensation.test.mjs \
   src/features/messages/ChannelTimeline.test.tsx
-bin/pnpm test:browser history-loading.spec.mjs image-scroll.spec.mjs initial-position.spec.mjs \
+bin/pnpm test:browser history-loading.spec.mjs image-scroll.spec.mjs initial-position.spec.mjs membership.spec.mjs \
   --project chromium --project webkit --no-deps --workers=1
 ```
 

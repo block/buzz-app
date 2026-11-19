@@ -2123,10 +2123,19 @@ function RelayedMessageRow(props: MessageRowProps) {
   }, [open, keepMounted, row.id]);
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
-  const shown = useMemo(
-    () => ({ ...row, content: withoutRelayNotice(row.content) }),
-    [row],
-  );
+  const shown = useMemo(() => {
+    const content = withoutRelayNotice(row.content);
+    const removed = row.content.length - content.length;
+    // Attachment seams are offsets into the content, so they move with it.
+    const attachmentSeams = row.attachmentSeams?.flatMap((seam) =>
+      seam >= removed ? [seam - removed] : [],
+    );
+    return {
+      ...row,
+      content,
+      ...(attachmentSeams ? { attachmentSeams } : {}),
+    };
+  }, [row]);
   if (!source) return null;
   const name = (pubkey: string) =>
     resolveName(
@@ -2182,7 +2191,7 @@ function RelayedMessageRow(props: MessageRowProps) {
               ref={trigger}
               data-buzz-ui=""
               className={styles.audienceLine}
-              aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
+              aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${row.replyCount > 0 ? `, ${row.replyCount === 1 ? "1 reply" : `${row.replyCount} replies`}` : ""}`}
             >
               <span className={styles.audienceAvatar} title={agent.name}>
                 <AgentAvatar
@@ -2210,6 +2219,14 @@ function RelayedMessageRow(props: MessageRowProps) {
                 </span>
               )}
               {!open && row.edited && <EditedMarker />}
+              {/* Opening the line shows the thread control and its unread cue. */}
+              {!open && row.replyCount > 0 && (
+                <span className={styles.relayedSource}>
+                  {row.replyCount === 1
+                    ? "1 reply"
+                    : `${row.replyCount} replies`}
+                </span>
+              )}
               {!open && (
                 <span className={styles.relayedTime}>
                   <MessageTimestamp createdAt={row.createdAt} compact />

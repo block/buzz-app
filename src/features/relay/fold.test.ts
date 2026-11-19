@@ -1500,3 +1500,18 @@ it("honours a relayed-from claim only while the author owns the named agent", ()
   ])
     expect(fold(relayed(tags), alice.pubkey)?.relayedFrom).toBeUndefined();
 });
+
+it("replaces a shared row when only its relayed claim's verification changes", () => {
+  const event = message(alice, channel, "Notice\n\nText", 10, [
+    ["relayed-from", bob.pubkey],
+  ]);
+  const fold = (owner?: string) =>
+    foldMessages(channel, relay.pubkey, [event], {
+      agentOwner: () => owner,
+    });
+  const before = fold();
+  const after = shareMessageRows(before, fold(alice.pubkey));
+  expect(after[0]).not.toBe(before[0]);
+  expect(after[0]?.relayedFrom?.verified).toBe(true);
+  expect(shareMessageRows(after, fold(alice.pubkey))[0]).toBe(after[0]);
+});

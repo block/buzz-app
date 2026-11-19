@@ -5610,6 +5610,19 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     expect(screen.getByText("Sent as Gil · to Juno")).toBeVisible();
     expect(screen.getByText("Rebase on main")).toBeVisible();
     expect(screen.queryByText(/Nexus message/)).toBeNull();
+    // A thread on the line stays in view while it is collapsed.
+    fireEvent.click(trigger);
+    view.rerender(
+      <MessageRow
+        {...props}
+        row={{ ...relayed(true, "source"), replyCount: 2 }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Zerk from #rebase: Rebase on main, 2 replies",
+      }),
+    ).toHaveTextContent("2 replies");
     // A chat the reader is not in stays unnamed.
     view.rerender(<MessageRow {...props} row={relayed(true, "elsewhere")} />);
     expect(

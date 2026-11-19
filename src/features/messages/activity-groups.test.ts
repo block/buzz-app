@@ -489,6 +489,7 @@ it("folds two or more consecutive verified relayed messages in one conversation 
     activity("x"),
     relayed("x", { relayedFrom: { agent: "zerk", verified: false } }),
     { ...relayed("x"), audience: "agents" as const },
+    relayed("x", { replyCount: 2 }),
   ])
     expect(
       ids([relayed("a"), relayed("b"), breaker, relayed("c"), relayed("d")]),

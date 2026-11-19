@@ -36,7 +36,8 @@ export type RelayedRun = { ids: string[]; relayed: ChannelMessage[] };
 
 /** Two or more consecutive verified relayed messages in one conversation, on
  * one local day, fold together. Any other row breaks the run. Agent-only rows
- * belong to activity runs, so they break it too. */
+ * belong to activity runs, so they break it too, and a message with a thread
+ * stays its own line so its replies stay in view. */
 export function relayedRuns(rows: readonly ChannelMessage[]): RelayedRun[] {
   const runs: ChannelMessage[][] = [];
   let run: ChannelMessage[] | undefined;
@@ -44,7 +45,8 @@ export function relayedRuns(rows: readonly ChannelMessage[]): RelayedRun[] {
     if (
       !row.relayedFrom?.verified ||
       row.audience === "agents" ||
-      row.membership
+      row.membership ||
+      row.replyCount > 0
     ) {
       run = undefined;
       continue;

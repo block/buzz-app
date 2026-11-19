@@ -1097,6 +1097,37 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   ).toBeTruthy();
   expect(h.element.scrollTop).toBe(300);
 });
+it("keeps a shown line while a late navigation for the opening decides it again", () => {
+  // Opening a thread from the timeline mounts it before its route arrives.
+  const h = messagesHarness();
+  const { reply, unread } = unreadReplies(h);
+  const [read, first] = [reply("read", 2), reply("first unread", 3)];
+  unread.add(first.id);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [read, first];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.scrollTop).toBe(300);
+
+  // The route's retarget rereads the thread before the line is decided again.
+  h.snapshot.status = "loading";
+  h.snapshot.direction = undefined;
+  h.render();
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+
+  h.snapshot.status = "ready";
+  h.snapshot.direction = "older";
+  h.render();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+  expect(h.element.scrollTop).toBe(300);
+});
 it("shows a visible inactive preview and read resumed rows at once, without a line", () => {
   // A draft preview is laid out but reads nothing.
   const preview = messagesHarness();

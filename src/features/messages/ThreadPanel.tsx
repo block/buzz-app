@@ -974,11 +974,16 @@ function ThreadMessages({
     opening?: object | undefined;
     id?: string | null;
     failed?: true;
+    shown?: string | null;
   }>(() => ({ opening }));
-  if (opening && opening !== boundary.opening) setBoundary({ opening });
+  // A route can arrive after its opening already showed a line; keep that line
+  // on screen until the new decision replaces it, rather than blinking it out.
+  if (opening && opening !== boundary.opening)
+    setBoundary({ opening, shown: boundary.id ?? boundary.shown });
   const unreadBoundary = boundary.id;
+  const shownBoundary = unreadBoundary ?? boundary.shown;
   // The line stays with a reply that moved under its late parent.
-  const lineRow = tree.parents.get(unreadBoundary ?? "") ?? unreadBoundary;
+  const lineRow = tree.parents.get(shownBoundary ?? "") ?? shownBoundary;
   const placed = useRef<typeof boundary>(undefined);
   // Focus as this panel opened, and whether pointer or keyboard input has
   // come since: either way the person owns focus now.

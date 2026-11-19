@@ -473,6 +473,21 @@ it("a correction after a clamp and before the previous jump's scroll event lands
   c.driver.R();
 });
 
+it("fractional corrections on an integer scroll offset do not accumulate drift", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  openHistory(c);
+  c.prepend(40);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  c.viewport.max = 10000; // WebKit truncates each scroll write
+  for (const index of [2, 3, 4]) {
+    c.store.h(3, [[index, 100.75]]); // a row above the reader grows
+    c.driver.te();
+    c.viewport.dispatchEvent(new Event("scroll"));
+  }
+  expect(c.viewport.scrollTop).toBe(2002);
+  c.driver.R();
+});
+
 it("a deferred shift waits through unrelated and partial measurement batches", () => {
   const c = setup({ platform: "Linux x86_64", offset: 0 });
   openHistory(c);

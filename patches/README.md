@@ -241,6 +241,15 @@ twice (see [Corrections after a browser clamp](#corrections-after-a-browser-clam
 Installed-driver regressions flush a shrink above the viewport, and a shrink
 after a clamp, before the previous jump's scroll event.
 
+Per-callback sizes also split one page's measurements into several fractional
+jumps. WebKit's integer scroll offset floors each one, so a reader in Linux
+WebKit drifted about 1px per correction (4px across one page in
+`history-loading.spec.mjs` "a held pointer scrolls across the page"). While the
+native offset is still within 1px of where the last correction landed, the next
+correction continues from that exact target instead. Any other movement,
+including a clamp or reader input, uses the stored offset as above. An
+installed-driver regression applies three 0.75px jumps on an integer offset.
+
 ## Automated checks
 
 ```sh

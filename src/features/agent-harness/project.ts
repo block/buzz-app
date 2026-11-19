@@ -76,7 +76,10 @@ export function project(
   // Only the owner's own hand edit is the owner's rule for the chat.
   const ownerWrote = !canvas?.agent;
   const directories = workspaceDirectories(content);
-  const list = directories.map((folder) => `\`${folder}\``).join(", ");
+  // Its paths come from the Canvas too, so they rank nothing either.
+  const list = directories
+    .map((folder) => `\`${folder.replace(RANKED, "<\\$1$2")}\``)
+    .join(", ");
   const folders = !directories.length
     ? ""
     : elsewhere

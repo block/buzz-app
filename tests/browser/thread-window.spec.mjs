@@ -388,16 +388,13 @@ test("older-page retry reparents a visible reply under its late parent", async (
   await server.listen();
   try {
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&failOlderPages=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
     const child = history.getByText("Nested window child", { exact: true });
     await expect(replies).toHaveCount(10);
-    await page.evaluate(() => window.messagesFixture.failOlderPages(1));
-    await history.hover();
-    // The wheel may demand history at the top without moving the scroller.
-    await page.mouse.wheel(0, -4000);
+    // No gesture: the thread reads the page that holds the child's parent.
     const retry = history.getByRole("button", { name: "Try again" });
     await expect(history.getByRole("alert")).toContainText("Older page failed");
     await child.scrollIntoViewIfNeeded();
@@ -431,7 +428,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
   }
 });
 
-test("older page reparents a visible reply under its late parent", async ({
+test("a thread reads the page that holds a loaded reply's parent and opens with the reply nested", async ({
   page,
 }) => {
   const server = await createServer({
@@ -445,44 +442,38 @@ test("older page reparents a visible reply under its late parent", async ({
   await server.listen();
   try {
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&holdOlderPage=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
     const child = history.getByText("Nested window child", { exact: true });
+    const newest = history.getByText("First root reply 302", { exact: true });
+    // With no gesture the thread reads the page that holds the child's parent
+    // behind its first window, and nothing calls that parent unavailable.
     await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
-    await page.evaluate(() => window.messagesFixture.holdOlderPage());
-    await history.hover();
-    // The wheel may demand history at the top without moving the scroller, so
-    // scrollend is not its completion signal. The demand fires from the wheel
-    // event itself when the panel is already inside its top zone, or from the
-    // first scroll event that brings it there, either way possibly before the
-    // gesture has finished. Wait for the top itself before revealing the child,
-    // or a gesture Linux WebKit has paused resumes after the reveal and carries
-    // the child away again.
-    await page.mouse.wheel(0, -4000);
-    await expect
-      .poll(() => history.evaluate((el) => el.scrollTop), {
-        message: "wheel reaches the top of the thread",
-      })
-      .toBe(0);
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(2);
-    await child.scrollIntoViewIfNeeded();
-    await expect(child).toBeInViewport();
+    await expect(
+      history.getByText("Earlier reply unavailable in loaded history."),
+    ).toHaveCount(0);
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const parent = history.getByText("First root reply 292", { exact: true });
-    await expect(parent).toBeVisible();
+    // The thread opens at its newest reply with the child in its parent's
+    // branch, as any nested reply shows.
+    await expect(newest).toBeInViewport();
+    await expect(child).toHaveCount(0);
+    await history.getByRole("button", { name: /^View 1 reply/ }).click();
     await expect(child).toBeVisible();
-    await expect(child).toBeInViewport();
-    // Verify the reply moved under its real parent, not just that it remained flat.
     expect(
       await parent.evaluate((el) =>
         el.closest("li")?.textContent.includes("Nested window child"),
       ),
     ).toBe(true);
+    await expect(
+      history.getByText("Earlier reply unavailable in loaded history."),
+    ).toHaveCount(0);
   } finally {
     await page
       .evaluate(() => window.messagesFixture.releaseOlderPage())

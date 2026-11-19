@@ -670,7 +670,10 @@ and are asked to sign in again in Buzz.
 - **Losing the connection**: Buzz keeps retrying on its own and says nothing
   for the first 30 seconds. If it still can't connect, a notice at the bottom
   right says "Buzz is having trouble connecting" until it reconnects. There is
-  nothing to press.
+  nothing to press. An open thread that can't be read keeps the replies it
+  shows and retries the same way. A reply says "Earlier reply unavailable in
+  loaded history" only once Buzz has read back for the reply it answers and
+  not found it.
 - **Refused by a community**: if a community refuses your account, one
   notice at the bottom right says so on every page, with what fixes it. It
   doesn't retry on its own.

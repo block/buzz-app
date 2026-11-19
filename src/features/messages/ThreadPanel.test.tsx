@@ -347,8 +347,8 @@ it("allocates only after commit and disposes distinct owned views under StrictMo
   expect(h.thread).not.toHaveBeenCalled();
   h.render(true);
   expect(h.thread.mock.calls).toEqual([
-    ["channel", row.id],
-    ["channel", row.id],
+    ["channel", row.id, { exact: false, reading: true }],
+    ["channel", row.id, { exact: false, reading: true }],
   ]);
   expect(h.views[0]).not.toBe(h.views[1]);
   expect(h.views[0]?.dispose).toHaveBeenCalledOnce();
@@ -2096,7 +2096,10 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
       headerActions={headerAction}
     />,
   );
-  expect(h.thread).toHaveBeenCalledWith("channel", row.id, { exact: true });
+  expect(h.thread).toHaveBeenCalledWith("channel", row.id, {
+    exact: true,
+    reading: true,
+  });
   const thread = screen.getByRole("complementary", { name: "Thread" });
   expect(
     within(thread).getByRole("button", { name: "Open in channel" }),
@@ -2532,7 +2535,10 @@ it("a retained reader reveals its exact selected message, again for each new req
     revealRequest: 1,
   });
   h.render();
-  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, {
+    exact: true,
+    reading: true,
+  });
   const revealedReply = () =>
     vi
       .mocked(HTMLElement.prototype.scrollIntoView)

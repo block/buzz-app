@@ -352,11 +352,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           revealSelected ||
           (navigation?.target.kind === "conversation" &&
             navigation.target.threadRootId !== messageId);
-        const view = session.thread(
-          channelId,
-          messageId,
-          exact ? { exact: true } : undefined,
-        );
+        const view = session.thread(channelId, messageId, {
+          exact,
+          reading: true,
+        });
         prior?.view.dispose();
         const next = {
           view,
@@ -461,9 +460,10 @@ function OwnedThreadPanel({
         revealSelected ||
         (navigation?.target.kind === "conversation" &&
           navigation.target.threadRootId !== messageId);
-      const owned = exact
-        ? session.thread(channelId, messageId, { exact: true })
-        : session.thread(channelId, messageId);
+      const owned = session.thread(channelId, messageId, {
+        exact,
+        reading: true,
+      });
       const cancel = () => {
         owned.dispose();
         setView(undefined);
@@ -1867,7 +1867,10 @@ function ThreadMessages({
               </span>
             </div>
           )}
+          {/* Only settled, exhausted history shows a parent is not coming. */}
           {!parent &&
+            snapshot.status === "ready" &&
+            !snapshot.canLoadMore &&
             row.replyParentId &&
             row.replyParentId !== rootId &&
             !requestRows.has(row.replyParentId) && (

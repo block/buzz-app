@@ -254,8 +254,12 @@ let repairGate = false;
 let failRepair = false;
 const rejected = new Set<string>();
 let releaseOlderPage: (() => void) | undefined;
-let holdOlderPage = false;
-let failOlderPages = 0;
+// The thread reads the page that holds the parent of a loaded reply on its own,
+// so a journey that holds or fails that read says so before the thread opens.
+let holdOlderPage = new URLSearchParams(location.search).has("holdOlderPage");
+let failOlderPages = Number(
+  new URLSearchParams(location.search).get("failOlderPages") ?? 0,
+);
 let failLegacyContinuation = new URLSearchParams(location.search).has(
   "failLegacyContinuation",
 );

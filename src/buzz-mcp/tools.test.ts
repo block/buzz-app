@@ -4279,6 +4279,28 @@ it("refuses a new DM with an archived identity, but opens an existing one", asyn
   expect(await callTool(existing, {}, "dm", { to: [bob] })).toBe("dm-bob");
 });
 
+it("opens an existing DM with an archived identity past the first page", async () => {
+  const dm = (id: string, created_at: number, other: string) =>
+    event({
+      id: id.padStart(64, "0"),
+      kind: 39000,
+      created_at,
+      tags: [
+        ["d", `dm-${id}`],
+        ["t", "dm"],
+        ["p", me],
+        ["p", other],
+      ],
+    });
+  const newer = Array.from({ length: 600 }, (_, i) =>
+    dm(`${i + 1}`, 1000 + i, alice),
+  );
+  const client = archivedPeople(false, [...newer, dm("0", 1, bob)]);
+  const publish = vi.spyOn(client, "publish");
+  expect(await callTool(client, {}, "dm", { to: [bob] })).toBe("dm-0");
+  expect(publish).not.toHaveBeenCalled();
+});
+
 it("sends to an archived identity, with a warning, when the archive list can't be read", async () => {
   const client = archivedPeople(true);
   expect(

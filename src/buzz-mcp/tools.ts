@@ -1346,10 +1346,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const { client } = tools;
     const to = list(args.to).map(pubkey);
     if (!to.length) throw new Error("to is required.");
-    let found = await tools.findDm(to);
+    const first = await tools.findDm(to);
+    let found = first.dm;
     let warning = "";
     if (!found) {
-      warning = await tools.unarchived(to, "No DM was opened.");
+      warning = await tools.unarchived(
+        to,
+        first.complete
+          ? "No DM was opened."
+          : "You have too many DMs to tell whether one with them exists, so none was opened.",
+      );
       await client.publish({
         kind: 41010,
         content: "",
@@ -1358,7 +1364,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       // The relay creates the channel's metadata just after answering.
       for (let tries = 0; !found && tries < 5; tries++) {
         if (tries) await new Promise((resolve) => setTimeout(resolve, 400));
-        found = await tools.findDm(to);
+        found = (await tools.findDm(to)).dm;
       }
     }
     const channel = found && tag(found, "d");
@@ -2014,21 +2020,26 @@ class Tools {
     return metadata;
   }
 
-  /** Your DM with exactly `people`, if it exists; never creates one. */
+  /** Your DM with exactly `people`, if it exists; never creates one.
+   * `complete` is false when your DMs were too many to read them all. */
   async findDm(people: readonly string[]) {
     const wanted = new Set([this.client.pubkey, ...people]);
-    const dms = await this.client.query([
-      { kinds: [39000], "#p": [this.client.pubkey], "#t": ["dm"], limit: 500 },
-    ]);
-    return dms.find((event) => {
-      const members = new Set(
-        event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-      );
-      return (
-        members.size === wanted.size &&
-        [...wanted].every((key) => members.has(key))
-      );
-    });
+    let dm: BuzzEvent | undefined;
+    const complete = await this.scan(
+      { kinds: [39000], "#p": [this.client.pubkey], "#t": ["dm"] },
+      (event) => {
+        const members = new Set(
+          event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+        );
+        if (
+          members.size === wanted.size &&
+          [...wanted].every((key) => members.has(key))
+        )
+          dm = event;
+        return !dm;
+      },
+    );
+    return { dm, complete: complete || !!dm };
   }
 
   /** The channel `value` names: a Buzz link, @person for your DM with them,
@@ -2040,7 +2051,9 @@ class Tools {
     if (v.startsWith("@")) {
       const person = await this.author(v.slice(1));
       const dm =
-        person === this.client.pubkey ? undefined : await this.findDm([person]);
+        person === this.client.pubkey
+          ? undefined
+          : (await this.findDm([person])).dm;
       if (!dm) throw new Error(`You have no DM with ${v.slice(1)}.`);
       return this.placeOf(tag(dm, "d") as string);
     }

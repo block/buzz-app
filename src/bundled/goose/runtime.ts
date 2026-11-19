@@ -44,6 +44,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
+import { compactAt } from "../../features/agents/compact-at";
 import { workflowOf } from "../../features/agents/owner-attestation";
 import {
   ownerReads,
@@ -105,6 +106,9 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
+  /** The context size, in tokens, its sessions compact at, when below
+   * goose's own; unset is goose's default. This device's only. */
+  compactAt?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -1111,6 +1115,7 @@ export class GooseRuntime {
         (handler) => this.serve(handler),
         undefined,
         () => entry.handle,
+        () => compactAt(entry.config.compactAt),
       ),
       contexts: new Map(),
       policies: new Map(),
@@ -1169,12 +1174,14 @@ export class GooseRuntime {
       const context = (conversation && entry.contexts.get(conversation)) || {};
       return respond(client, context, message, this.added());
     };
-    const get = (): Promise<GooseProcess> => {
+    const get = (
+      drained?: (process: GooseProcess) => boolean,
+    ): Promise<GooseProcess> => {
       const protection = entry.handle?.protection;
       if (!protection) {
         if (entry.protected)
           throw new Error("The protected agent has no live policy binding");
-        return entry.goose.get();
+        return entry.goose.get(drained);
       }
       protection.assertAvailable();
       // Another key means a replaced provider, which is already stopping its
@@ -1192,13 +1199,16 @@ export class GooseRuntime {
         (handler) => this.serve(handler),
         protection,
         () => entry.handle,
+        () => compactAt(entry.config.compactAt),
       );
       const worker = entry.worker;
       const { stopping } = entry;
       // One replaced while this waited is never started: ask for the current.
       return stopping
-        ? stopping.then(() => (entry.worker === worker ? worker.get() : get()))
-        : worker.get();
+        ? stopping.then(() =>
+            entry.worker === worker ? worker.get(drained) : get(drained),
+          )
+        : worker.get(drained);
     };
     entry.sessions = new AgentSessions({
       resolveDirectory: (path) => this.desktop.resolveDirectory(path),
@@ -1220,7 +1230,9 @@ export class GooseRuntime {
         effort: entry.config.effort,
       }),
       // The prompt's other parts, its instructions, team, name and core
-      // memory, reach a running session in place as its next turn starts.
+      // memory, reach a running session in place as its next turn starts. A
+      // changed compaction threshold reaches only new sessions, in a goose
+      // started with it: open ones keep their history in theirs.
       fingerprint: () =>
         JSON.stringify([
           entry.config.provider.trim() ? 0 : this.defaultsRevision,

@@ -794,6 +794,26 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+it.each([
+  [undefined, undefined],
+  ["200000", 200000],
+  ["12345", undefined],
+])(
+  "starts a thread compacting at the agent's threshold %s",
+  async (compactAt, limit) => {
+    const f = fixture();
+    const delivery = f.delivery("@Codex hello");
+    await f.runtime.run({
+      ...delivery,
+      config: { ...(delivery.config as object), compactAt },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const start = f.sent.find((wire) => wire.method === "thread/start") as {
+      params: { config: Record<string, unknown> };
+    };
+    expect(start.params.config.model_auto_compact_token_limit).toBe(limit);
+  },
+);
 it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
   const f = fixture();
   const delivery = f.delivery("@Codex check my mail");

@@ -1917,6 +1917,50 @@ it("resumes an idle session at a newly saved effort", async () => {
   runtime.dispose();
 });
 
+it("resumes an idle session at a newly saved compaction threshold", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: typeof root, compactAt?: string) => {
+    const config = { ...DEFAULT_CONFIG, ...(compactAt && { compactAt }) };
+    runtime.sync([{ key: self, pubkey: self, config } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  };
+  await run(root);
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.env).not.toHaveProperty(
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  );
+  await run(reply, "400000");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(second?.options.env).toMatchObject({
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "400000",
+  });
+  runtime.dispose();
+});
+
 it("resumes an idle session with new credentials", async () => {
   const root = message("2", "@Claude hi", {
     tags: [

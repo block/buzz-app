@@ -26,6 +26,8 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import {
   candidatesFor,
   followRecommended,
@@ -1260,6 +1262,10 @@ export function createTabs({
           : config.scope === "channel"
             ? "One session per channel"
             : "One session per thread";
+      if (group === "compactAt")
+        return config.compactAt
+          ? `${Number(config.compactAt) / 1000}K tokens`
+          : "Harness default";
       return config[group];
     };
     const conflict = (group: SettingGroup) =>
@@ -1430,7 +1436,16 @@ export function createTabs({
                   {modelControl}
                 </>
               )}
+              <CompactionField
+                value={agent.protection ? "" : draft.compactAt}
+                {...(agent.protection && {
+                  description: "Protected agents never compact automatically.",
+                })}
+                disabled={saving || !!agent.protection}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
+            {conflict("compactAt")}
             <div className="grid gap-2">
               {conflict("instructions")}
               <AgentInstructions

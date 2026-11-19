@@ -7,6 +7,7 @@ const groups = {
   instructions: ["instructions"],
   workspace: ["workspace"],
   scope: ["scope"],
+  compactAt: ["compactAt"],
 } as const;
 export type SettingGroup = keyof typeof groups;
 export const settingLabels: Record<SettingGroup, string> = {
@@ -14,6 +15,7 @@ export const settingLabels: Record<SettingGroup, string> = {
   instructions: "Instructions",
   workspace: "Workspace",
   scope: "Session scope",
+  compactAt: "Auto-compact at",
 };
 const names = Object.keys(groups) as SettingGroup[];
 const same = (a: Config, b: Config, group: SettingGroup) =>

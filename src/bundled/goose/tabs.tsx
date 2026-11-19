@@ -19,6 +19,8 @@ import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import {
   candidatesFor,
   offRecommended,
@@ -1455,6 +1457,11 @@ export function createTabs({
               ) : (
                 manual
               )}
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

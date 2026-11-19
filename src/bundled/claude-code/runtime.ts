@@ -14,6 +14,7 @@ import {
   sessionSource,
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
+import { compactAt } from "../../features/agents/compact-at";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
@@ -132,6 +133,9 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
+  /** The context size, in tokens, its sessions compact at; unset is
+   * Claude's own. This device's only. */
+  compactAt?: string;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
 }>;
@@ -200,12 +204,17 @@ type Entry = {
   >;
 };
 
-/** Where an agent's processes run, and with which model and effort. */
-const where = ({ workspace, model, effort }: Config) => ({
-  cwd: workspace,
-  ...(model.trim() ? { model: model.trim() } : {}),
-  ...(effort ? { effort } : {}),
-});
+/** Where an agent's processes run, and with which model, effort and
+ * compaction. */
+const where = ({ workspace, model, effort, ...config }: Config) => {
+  const tokens = compactAt(config.compactAt);
+  return {
+    cwd: workspace,
+    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(effort ? { effort } : {}),
+    ...(tokens ? { compactAt: tokens } : {}),
+  };
+};
 
 /** How Claude lists the session tools: in full up front only those marked
  * `alwaysLoad`, and the rest by name until its tool search loads them, with
@@ -1981,6 +1990,7 @@ export class ClaudeRuntime {
           this.reads(agent) ? this.folder(agent, key) : undefined,
           entry.config.model,
           entry.config.effort,
+          entry.config.compactAt,
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,

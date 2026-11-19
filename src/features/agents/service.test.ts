@@ -17857,6 +17857,10 @@ async function relayAttentionSetup(
       synced = true;
       for (const listener of views) listener();
     },
+    /** The next sync loads again, as a new session's does until EOSE. */
+    unsync() {
+      synced = false;
+    },
     /** Changes a record without the live sync telling anyone. */
     async behind(slug: string, value: AttentionValue) {
       const d = await attentionD(home, slug);
@@ -17976,6 +17980,65 @@ it("catches up a relay agent's lost mentions while its watches wait for its set"
     expect(turns(f.run)).toEqual(["mention"]);
     expect(f.service.find(bot)?.attentionPending).toBe(true);
   } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a failed watch read's backoff while a relay agent's set is read again", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  try {
+    const f = await relayAttentionSetup();
+    f.unrouted.add(lobby);
+    await f.seed("interest/default", {
+      type: "interest",
+      instructions: "Be brief.",
+    });
+    await f.seed("watch/chat", { ...chat["watch/chat"], channels: [lobby] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const read = vi.mocked(f.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    const failures: number[] = [];
+    read.mockImplementation(async (filters, options) => {
+      if (
+        filters[0]?.["#h"]?.includes(lobby) &&
+        filters[0]?.kinds?.includes(9)
+      ) {
+        failures.push(Date.now());
+        throw new Error("down");
+      }
+      return original(filters, options);
+    });
+    await vi.advanceTimersByTimeAsync(35_000);
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    const failure = f.service.snapshot().watchReadFailures?.[0];
+    expect(failure).toMatchObject({ consecutiveFailures: 1 });
+    // A new session reads the set again before its watches run.
+    f.unsync();
+    f.connect(false);
+    f.connect(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    f.sync();
+    // Reading the set also waits on real work, such as hashing.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.attentionPending).toBeUndefined(),
+    );
+    expect(f.service.snapshot().watchReadFailures).toEqual([failure]);
+    const deadline = failure?.retryAt as number;
+    await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
+    expect(failures).toHaveLength(1);
+    // The retry runs on the service's next tick (TIMER_TICK_MS, 5 s).
+    await vi.advanceTimersByTimeAsync(5_001);
+    await vi.waitFor(() => expect(failures).toHaveLength(2));
+    expect(f.service.snapshot().watchReadFailures).toMatchObject([
+      { consecutiveFailures: 2 },
+    ]);
+  } finally {
+    random.mockRestore();
     vi.useRealTimers();
   }
 });

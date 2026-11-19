@@ -5,7 +5,10 @@ import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
@@ -1522,18 +1525,12 @@ export function createTabs({
         )}
         {settingsHost?.proposedModelOrEffort &&
           (draft.model || draft.effort) && (
-            <div>
-              <Button
-                type="button"
-                variant="subtle"
-                disabled={saving}
-                onClick={() =>
-                  setDraft(offRecommended({ ...draft, model: "", effort: "" }))
-                }
-              >
-                Clear model and thinking overrides
-              </Button>
-            </div>
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
           )}
         <AgentSaveButton
           form={form}

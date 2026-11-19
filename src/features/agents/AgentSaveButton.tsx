@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type Ref,
 } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
@@ -81,6 +82,8 @@ export const AgentSaveFooter = createContext<{
   target: HTMLElement | null;
   /** The dialog already supplies sticky action chrome. */
   dialog?: true;
+  /** Submitting from a field outside the settings form uses the same action. */
+  submitButton?: Ref<HTMLButtonElement>;
   /** Retain recovery content through exit; data-agent-access-required="false"
    * reserves space without treating a read/save failure as signed out. */
   setPanelNotice?: (content: ReactNode) => void;
@@ -217,6 +220,7 @@ export function AgentSaveButton({
   };
   const button = (
     <Button
+      ref={footer?.submitButton}
       type="submit"
       form={form}
       variant={footer?.dialog ? "primary" : "prominent"}
@@ -275,4 +279,25 @@ export function AgentSaveButton({
         footer.target,
       )
     : visible && <div>{button}</div>;
+}
+
+export function ClearModelOverrides({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick(): void;
+}) {
+  return (
+    <div>
+      <Button
+        type="button"
+        variant="subtle"
+        disabled={disabled}
+        onClick={onClick}
+      >
+        Clear model and thinking overrides
+      </Button>
+    </div>
+  );
 }

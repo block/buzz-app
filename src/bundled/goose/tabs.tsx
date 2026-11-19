@@ -16,7 +16,10 @@ import {
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
 import { CompactionField } from "../../features/agents/Compaction";
@@ -1530,18 +1533,12 @@ export function createTabs({
         )}
         {settingsHost?.proposedModelOrEffort &&
           (draft.model || draft.effort) && (
-            <div>
-              <Button
-                type="button"
-                variant="subtle"
-                disabled={saving}
-                onClick={() =>
-                  setDraft(offRecommended({ ...draft, model: "", effort: "" }))
-                }
-              >
-                Clear model and thinking overrides
-              </Button>
-            </div>
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
           )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />
         {settingsSection !== "identity" && settingsContent}

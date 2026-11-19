@@ -20,7 +20,10 @@ import {
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CompactionField } from "../../features/agents/Compaction";
 import { withCompactAt } from "../../features/agents/compact-at";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   ConversationName,
@@ -1032,16 +1035,10 @@ export function createTabs({
         )}
         {settingsHost?.proposedModelOrEffort &&
           (draft.model || draft.effort) && (
-            <div>
-              <Button
-                type="button"
-                variant="subtle"
-                disabled={saving}
-                onClick={() => setDraft({ ...draft, model: "", effort: "" })}
-              >
-                Clear model and thinking overrides
-              </Button>
-            </div>
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() => setDraft({ ...draft, model: "", effort: "" })}
+            />
           )}
         <AgentSaveButton
           form={form}

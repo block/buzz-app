@@ -4590,7 +4590,7 @@ export class AgentsService extends Service implements Agents {
           key,
           type,
           config === undefined ? undefined : { config },
-          progress?.base ?? opened?.configBase,
+          progress?.base,
           recordRevision,
         );
         if (progress) {
@@ -4618,7 +4618,6 @@ export class AgentsService extends Service implements Agents {
           name,
           ...(picture && { picture }),
           ...(!retyped && config !== undefined && { config }),
-          ...(opened?.configBase && { base: opened.configBase }),
         });
       }
       this.updateProgress.delete(id);
@@ -5374,10 +5373,10 @@ export class AgentsService extends Service implements Agents {
   save(
     key: AgentKey,
     change: AgentChange,
-    ...revision: [onRevision?: (side: Side, revision: string) => void]
+    onRevision?: (side: Side, revision: string) => void,
   ) {
     if (!change.config || typeof change.config !== "object")
-      return this.saveAs(key, change, ...revision);
+      return this.saveAs(key, change, onRevision);
     const { pluginNotes: _, ...config } = change.config as {
       pluginNotes?: unknown;
     };
@@ -5385,7 +5384,7 @@ export class AgentsService extends Service implements Agents {
     return this.saveAs(
       key,
       { ...change, config: notes ? { ...config, pluginNotes: notes } : config },
-      ...revision,
+      onRevision,
     );
   }
   private liveAgent(key: AgentKey) {

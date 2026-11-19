@@ -16,7 +16,10 @@ import {
 } from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
 // and its part of the New agent dialog.
 import {
@@ -1768,18 +1771,12 @@ export function createTabs(
         )}
         {settingsHost?.proposedModelOrEffort &&
           (draft.model || draft.effort) && (
-            <div>
-              <Button
-                type="button"
-                variant="subtle"
-                disabled={saving}
-                onClick={() =>
-                  setDraft(offRecommended({ ...draft, model: "", effort: "" }))
-                }
-              >
-                Clear model and thinking overrides
-              </Button>
-            </div>
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
           )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />
         {settingsSection !== "identity" && settingsContent}

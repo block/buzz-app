@@ -371,6 +371,7 @@ export function AgentCreateDialog({
   const nameField = useRef<HTMLInputElement>(null);
   const proposalHeading = useRef<HTMLHeadingElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
+  const settingsSaveButton = useRef<HTMLButtonElement>(null);
   const introContinue = useRef<HTMLButtonElement>(null);
   const previousIntro = useRef(false);
   useLayoutEffect(() => {
@@ -695,10 +696,16 @@ export function AgentCreateDialog({
       {/* Preserve the draft and avatar preparation while showing the introduction. */}
       <Form
         hidden={showRemoteIntro}
-        id={form}
+        id={reviewingSettings ? undefined : form}
         className={styles.form}
         data-error={error ? "" : undefined}
-        aria-label={edited ? `Edit ${edited.name}` : "New agent"}
+        aria-label={
+          reviewingSettings
+            ? undefined
+            : edited
+              ? `Edit ${edited.name}`
+              : "New agent"
+        }
         onFocusCapture={
           reviewingSettings
             ? (event) =>
@@ -768,11 +775,7 @@ export function AgentCreateDialog({
                           )
                             return;
                           event.preventDefault();
-                          settingsActions
-                            ?.querySelector<HTMLButtonElement>(
-                              'button[type="submit"][form]',
-                            )
-                            ?.click();
+                          settingsSaveButton.current?.click();
                         }
                       : undefined
                   }
@@ -877,7 +880,11 @@ export function AgentCreateDialog({
               <Checking />
             ) : Settings && settingsAgent && !edited?.configProblem ? (
               <AgentSaveFooter.Provider
-                value={{ target: settingsActions, dialog: true }}
+                value={{
+                  target: settingsActions,
+                  dialog: true,
+                  submitButton: settingsSaveButton,
+                }}
               >
                 <Settings
                   key={settingsAgent.type}

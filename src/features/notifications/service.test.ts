@@ -401,6 +401,41 @@ it.each<[string, boolean, string | null]>([
     expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
   },
 );
+it("the read after a failed explicit request sends no automatic request and spends no device record", async () => {
+  // Desktop alerts were saved off in an earlier run on this device.
+  const earlier = firstRun();
+  earlier.service.updatePreferences({ enabled: false });
+  await earlier.ctx.fiber.dispose();
+  const t = firstRun(earlier.values);
+  expect(t.service.snapshot().preferences.enabled).toBe(false);
+  t.service.setEntered(true);
+  await flush();
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  // Turned back on in Settings, which keeps the window focused: no focus read.
+  t.service.updatePreferences({ enabled: true });
+  await flush();
+  const reads = vi.mocked(t.platform.permission).mock.calls.length;
+  // One click on Allow notifications. The native request rejects, and the OS
+  // still reports not yet asked.
+  vi.mocked(t.platform.requestPermission).mockRejectedValueOnce(
+    new Error("Permission request failed"),
+  );
+  await t.service.requestPermission();
+  await flush();
+  expect(t.platform.permission).toHaveBeenCalledTimes(reads + 1);
+  expect(t.service.snapshot()).toMatchObject({
+    permission: "default",
+    requesting: false,
+    error: "Permission request failed",
+  });
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.values.has(askedKey)).toBe(false);
+  // The automatic request is unspent, and still waits for a window focus.
+  await t.service.refreshPermission();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(2);
+  expect(t.values.get(askedKey)).toBe("1");
+});
 it("an ignored automatic request is not reported, retried or repeated, and keeps a shown error", async () => {
   const t = firstRun();
   t.service.reportError(new Error("Earlier failure"));

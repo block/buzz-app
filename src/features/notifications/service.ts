@@ -218,14 +218,16 @@ export class NotificationsService extends Service implements Notifications {
   reloadPreferences() {
     this.preferences.reload();
   }
-  async refreshPermission() {
+  /** `ask` is false for a read that no entry or window focus caused: it
+   * publishes the status and never sends the automatic request. */
+  async refreshPermission({ ask = true } = {}) {
     if (this.closed || this.permissionRequest) return;
     const generation = ++this.permissionGeneration;
     try {
       const permission = await this.platform.permission();
       if (generation === this.permissionGeneration) {
         this.publish({ permission });
-        if (permission === "default") this.requestAutomatically();
+        if (ask && permission === "default") this.requestAutomatically();
         this.schedule();
       }
     } catch (error) {
@@ -273,8 +275,9 @@ export class NotificationsService extends Service implements Notifications {
           // read still in flight was sent while the prompt was up.
           void this.indicator.reread();
           // A request that failed says nothing, and macOS reports the prompt
-          // it left unanswered as denied: read what the status is now.
-          if (failed) void this.refreshPermission();
+          // it left unanswered as denied: read what the status is now. Only
+          // read: a failure is never followed by a request nobody caused.
+          if (failed) void this.refreshPermission({ ask: false });
           // Alerts held for the answer are examined once nothing is in flight.
           this.schedule();
         });

@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { SmileyIcon } from "../../shared/design-system/icons";
+import { useReadyImage } from "../../shared/design-system/useReadyImage";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
@@ -131,17 +132,33 @@ function ReactionGlyph({
 }) {
   const emoji = useReactionEmoji(reaction, session);
   const source = emoji ? session.media(emoji.url) : undefined;
-  const [failed, setFailed] = useState<string>();
-  if (source && source !== failed)
-    return (
-      <img
-        className={styles.reactionCustomEmoji}
-        src={source}
-        alt=""
-        draggable={false}
-        onError={() => setFailed(source)}
-      />
-    );
+  return source ? (
+    <ReactionImage key={source} source={source} reaction={reaction} />
+  ) : (
+    <ReactionText reaction={reaction} />
+  );
+}
+
+function ReactionImage({
+  source,
+  reaction,
+}: {
+  source: string;
+  reaction: MessageReaction;
+}) {
+  const { status, image } = useReadyImage(source, "eager");
+  if (status === "failed") return <ReactionText reaction={reaction} />;
+  return (
+    <img
+      {...image}
+      className={styles.reactionCustomEmoji}
+      alt=""
+      draggable={false}
+    />
+  );
+}
+
+function ReactionText({ reaction }: { reaction: MessageReaction }) {
   // A shortcode is never a reaction's visible content: refused, failed and
   // unknown images get a neutral glyph, and the shortcode stays in the label.
   if (isReactionShortcode(reaction.content))

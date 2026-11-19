@@ -8,6 +8,7 @@ const emoji = { shortcode: "party", url: "https://emoji.test/party.png" };
 const media = (url: string) => url;
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -57,4 +58,21 @@ it("gives a changed source its own retry budget and never requests denied media"
   expect(view.queryByRole("img")).toBeNull();
   expect(view.container).toHaveTextContent(":party:");
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("paints a remounted emoji in its first frame", () => {
+  const remounted = { ...emoji, url: "https://emoji.test/remount.png" };
+  const first = render(<CustomEmoji emoji={remounted} media={media} />);
+  expect(first.getByRole("img")).toHaveAttribute("loading", "lazy");
+  fireEvent.load(first.getByRole("img"));
+  first.unmount();
+  // WebKit re-requests a lazy custom-scheme image per element and paints a
+  // ready async-decoded one as empty for a frame.
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+  vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
+    22,
+  );
+  const second = render(<CustomEmoji emoji={remounted} media={media} />);
+  expect(second.getByRole("img")).toHaveAttribute("loading", "eager");
+  expect(second.getByRole("img")).toHaveAttribute("decoding", "sync");
 });

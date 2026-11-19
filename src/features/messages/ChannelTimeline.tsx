@@ -2,6 +2,8 @@
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
+import { RelayedRunPreview } from "./RelayedRunPreview";
+import { relayedRuns } from "./activity-groups";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -785,7 +787,11 @@ function Timeline({
     queries.agentActivity,
     agentPubkeys,
   );
-  const activity = presentation.groups;
+  // Relayed runs fold, focus and restore through the same disclosures as activity.
+  const activity = useMemo(
+    () => [...presentation.groups, ...relayedRuns(chronologicalRows)],
+    [presentation.groups, chronologicalRows],
+  );
   const stableActivity = useStableRowActivity(chronologicalRows);
   const rowsById = useMemo(
     () => new Map(chronologicalRows.map((row) => [row.id, row])),
@@ -2246,6 +2252,19 @@ function Timeline({
                 ? true
                 : calendarDay(rows[index - 1]?.createdAt ?? 0) !==
                   calendarDay(row.createdAt);
+            const toggleDisclosure = () => {
+              if (!disclosure) return;
+              intent.current++;
+              follow.current = false;
+              userScrolled.current = true;
+              restoredAnchor.current = undefined;
+              const next = new Set(expandedActivity);
+              for (const id of disclosure.ids) {
+                if (disclosure.expanded) next.delete(id);
+                else next.add(id);
+              }
+              setExpandedActivity(next);
+            };
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
@@ -2322,28 +2341,30 @@ function Timeline({
                           )
                         );
                       })()}
-                    <ActivityGroupPreview
-                      session={queries}
-                      group={disclosure}
-                      openActivity={onOpenLink}
-                      canOpenActivity={canOpenLink}
-                      renderHistory={(entry) => renderMessage(entry, true)}
-                      profiles={profiles}
-                      media={queries.media}
-                      expanded={disclosure.expanded}
-                      onToggle={() => {
-                        intent.current++;
-                        follow.current = false;
-                        userScrolled.current = true;
-                        restoredAnchor.current = undefined;
-                        const next = new Set(expandedActivity);
-                        for (const id of disclosure.ids) {
-                          if (disclosure.expanded) next.delete(id);
-                          else next.add(id);
-                        }
-                        setExpandedActivity(next);
-                      }}
-                    />
+                    {"relayed" in disclosure ? (
+                      <RelayedRunPreview
+                        session={queries}
+                        run={disclosure}
+                        renderHistory={(entry) => renderMessage(entry, true)}
+                        profiles={profiles}
+                        agentPubkeys={agentPubkeys}
+                        media={queries.media}
+                        expanded={disclosure.expanded}
+                        onToggle={toggleDisclosure}
+                      />
+                    ) : (
+                      <ActivityGroupPreview
+                        session={queries}
+                        group={disclosure}
+                        openActivity={onOpenLink}
+                        canOpenActivity={canOpenLink}
+                        renderHistory={(entry) => renderMessage(entry, true)}
+                        profiles={profiles}
+                        media={queries.media}
+                        expanded={disclosure.expanded}
+                        onToggle={toggleDisclosure}
+                      />
+                    )}
                   </div>
                 )}
                 {row.id === newMessageBoundaryId && (
@@ -2362,7 +2383,9 @@ function Timeline({
                 )}
                 <ActivityExpansion
                   open={!hidden && !containedOwners.has(row.id)}
-                  enabled={row.audience === "agents"}
+                  enabled={
+                    row.audience === "agents" || !!row.relayedFrom?.verified
+                  }
                 >
                   {row.membership ? (
                     <MembershipRow

@@ -1476,3 +1476,35 @@ it("a filled page keeps the follower at the bottom; a later page is anchored", (
     h.dispose();
   }
 });
+
+it("folds a run of relayed messages into one line that opens to each message", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const relayed = updates(3).map(({ audience: _audience, ...row }) => ({
+      ...row,
+      authorId: "owner",
+      content: `Notice\n\nRelayed ${row.id}`,
+      relayedFrom: { agent: "zerk", verified: true },
+    }));
+    render(content(relayed));
+    expect(
+      screen.queryByRole("button", { name: "Retain activity-0" }),
+    ).toBeNull();
+    const toggle = screen.getByRole("button", {
+      name: /^Show 3 messages from other chats: zerk/,
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // This file draws each row as its id; MessageRow tests own the relayed line.
+    for (const id of ["activity-0", "activity-1", "activity-2"])
+      expect(
+        screen.getByRole("button", { name: `Retain ${id}` }),
+      ).toBeVisible();
+    fireEvent.click(toggle);
+    expect(
+      screen.queryByRole("button", { name: "Retain activity-0" }),
+    ).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});

@@ -1808,6 +1808,26 @@ Packaged GUI quit/relaunch, real-relay agent ownership admission and hosted
 cross-platform checks are separate gates; consult the pull request for results
 tied to its head.
 
+## Relayed messages
+
+A plugin that relays an agent's text into another conversation as the agent's
+owner tags the kind 9 message `["relayed-from", <agent pubkey>, <source channel id>]`.
+The source channel is optional, and the plugin sends it to every audience so
+every member sees the same row. Content up to and including the first blank
+line is the relaying sender's notice for clients that do not read the tag.
+
+The app honours the tag only while the agent's cryptographically verified owner
+(`profiles.queries.owner`) is the message's author, and only for one
+well-formed tag naming someone other than the author. `relayedFrom.verified`
+records that check in the fold, which refolds when the owner verdict changes.
+`rowProfileIds` includes the claimed agent so its profile, and with it the
+verdict, loads with the row. A verified row is drawn as the agent's collapsed
+line without the notice, never right-aligned as the viewer's own and never
+grouped with the author's messages. It names the source chat only when it is
+in the viewer's joined list. Unverified, conflicting or malformed claims leave
+an ordinary message with its notice. The content is unchanged for every other
+consumer, including unread counts and agent context.
+
 ## Shared identity names
 
 Distinct agent keys with the same displayed name receive a short npub suffix,

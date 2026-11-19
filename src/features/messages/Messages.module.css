@@ -4147,7 +4147,6 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 .relayedTime {
   flex: none;
-  margin-inline-start: auto;
   color: var(--text-subtle);
 }
 .relayedFooter {

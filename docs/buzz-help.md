@@ -476,6 +476,14 @@ Quitting Buzz also turns it off.
   out where message timestamps are hidden. A selection inside a message's text
   copies that text alone.
 
+- A plugin can relay one of your agents' messages into another conversation
+  as you. When the message names the agent and its verified owner is the
+  sender, it shows as that agent's collapsed line instead of the sender's own
+  message: the agent's avatar and name, the chat it came from if you are in that
+  chat, a one-line preview and the time. Select the line to read the whole
+  message and who it was sent as and to. A claim that cannot be verified shows
+  as the sender's ordinary message.
+
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
   Consecutive addition and removal notices collapse into one row between

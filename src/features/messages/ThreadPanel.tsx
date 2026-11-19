@@ -8,7 +8,8 @@ import {
   useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
-import { activityRuns } from "./activity-groups";
+import { activityRuns, relayedRuns } from "./activity-groups";
+import { RelayedRunPreview } from "./RelayedRunPreview";
 import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
@@ -701,7 +702,10 @@ function ThreadMessages({
       return;
     activityVisit.current = request;
     const group = [...tree.children.values()]
-      .flatMap((rows) => activityRuns(rows))
+      .flatMap((rows) => [
+        ...activityRuns(rows),
+        ...relayedRuns(rows).map((run) => run.relayed),
+      ])
       .find((group) => group.some((row) => row.id === messageId));
     const first = group?.[0]?.id;
     if (first) setExpandedActivity((current) => new Set([...current, first]));
@@ -1777,7 +1781,10 @@ function ThreadMessages({
       (failure) => !tree.children.get(failure.id)?.length,
       loadedRows,
     );
-    const groups = presentation.groups.filter((group) =>
+    const groups = [
+      ...presentation.groups,
+      ...relayedRuns(chronologicalSiblings),
+    ].filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
     const siblings = chronologicalSiblings;
@@ -1879,10 +1886,26 @@ function ThreadMessages({
           />
         );
       };
+      const renderHistory = (entry: ChannelMessage) => (
+        <div ref={entry.id === messageId ? selectedBranchRef : undefined}>
+          {renderMessage(entry, true)}
+        </div>
+      );
+      const toggleGroup = () => {
+        follow.current = false;
+        targetAnchor.current = undefined;
+        setExpandedActivity((current) => {
+          const next = new Set(current);
+          const first = group?.ids[0] ?? row.id;
+          if (next.has(first)) next.delete(first);
+          else next.add(first);
+          return next;
+        });
+      };
       const message = (
         <ActivityExpansion
           open={!hidden.has(row.id) && !groupedIds.has(row.id)}
-          enabled={row.audience === "agents"}
+          enabled={row.audience === "agents" || !!row.relayedFrom?.verified}
         >
           {renderMessage(row)}
         </ActivityExpansion>
@@ -1923,34 +1946,31 @@ function ThreadMessages({
               {day && hidden.has(row.id) && (
                 <DayDivider createdAt={row.createdAt} />
               )}
-              <ActivityGroupPreview
-                session={session}
-                group={group}
-                openActivity={onOpenLink}
-                canOpenActivity={canOpenLink}
-                renderHistory={(entry) => (
-                  <div
-                    ref={entry.id === messageId ? selectedBranchRef : undefined}
-                  >
-                    {renderMessage(entry, true)}
-                  </div>
-                )}
-                profiles={profiles}
-                media={session.media}
-                layout="thread"
-                expanded={expandedActivity.has(group.ids[0] ?? "")}
-                onToggle={() => {
-                  follow.current = false;
-                  targetAnchor.current = undefined;
-                  setExpandedActivity((current) => {
-                    const next = new Set(current);
-                    const first = group.ids[0] ?? row.id;
-                    if (next.has(first)) next.delete(first);
-                    else next.add(first);
-                    return next;
-                  });
-                }}
-              />
+              {"relayed" in group ? (
+                <RelayedRunPreview
+                  session={session}
+                  run={group}
+                  renderHistory={renderHistory}
+                  profiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  media={session.media}
+                  expanded={expandedActivity.has(group.ids[0] ?? "")}
+                  onToggle={toggleGroup}
+                />
+              ) : (
+                <ActivityGroupPreview
+                  session={session}
+                  group={group}
+                  openActivity={onOpenLink}
+                  canOpenActivity={canOpenLink}
+                  renderHistory={renderHistory}
+                  profiles={profiles}
+                  media={session.media}
+                  layout="thread"
+                  expanded={expandedActivity.has(group.ids[0] ?? "")}
+                  onToggle={toggleGroup}
+                />
+              )}
             </>
           )}
           <ReplyBranch

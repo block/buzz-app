@@ -443,6 +443,8 @@ it.each([
     "type",
   ],
   [415, "unknown content type", "type"],
+  // Relays older than block/buzz#2006 answer this one with 400.
+  [400, "unknown content type", "type"],
   // A refusal the relay does not name as a type is not called one.
   [415, "unsupported", "rejected"],
   [422, "moov atom not at front of file (not fast-start)", "rejected"],

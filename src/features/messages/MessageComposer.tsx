@@ -1638,12 +1638,25 @@ function Composer({
     host ? [scope, `${draftKey}:files`] : undefined,
   );
   // The relay refuses a type only at upload, after the file's chip is shown.
-  // Its notice names those chips until dismissed; a draft that returns with
-  // one already showed it.
-  const refusedTypes = attachments.items.filter((item) => item.unsupported);
-  const [reportedTypes, setReportedTypes] = useState(refusedTypes);
-  const unsupported = refusedTypes.filter(
-    (item) => !reportedTypes.some((reported) => reported.id === item.id),
+  // Its notice names the files refused while this composer held them, until
+  // dismissed. A file that arrives already refused is left to its chip: its
+  // draft returned with it, or a failed send restored it under that send's
+  // own notice.
+  const held = useRef(attachments.items);
+  const [refusedTypes, setRefusedTypes] = useState<readonly string[]>([]);
+  useEffect(() => {
+    const before = held.current;
+    held.current = attachments.items;
+    const refused = attachments.items.filter(
+      (item) =>
+        item.unsupported &&
+        before.some((prior) => prior.id === item.id && !prior.unsupported),
+    );
+    if (refused.length)
+      setRefusedTypes((ids) => [...ids, ...refused.map((item) => item.id)]);
+  }, [attachments.items]);
+  const unsupported = attachments.items.filter((item) =>
+    refusedTypes.includes(item.id),
   );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<
@@ -4144,7 +4157,9 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        {unsupported.length > 0 && (
+        {/* A composer under a covering tab keeps uploading. This notice
+            names no conversation, so it waits until its own is shown. */}
+        {presented && unsupported.length > 0 && (
           <ToastNotice
             title={
               unsupported.length === 1
@@ -4154,7 +4169,7 @@ function Composer({
             description={unsupportedTypes(
               unsupported.map((item) => item.file.name),
             )}
-            onDismiss={() => setReportedTypes(refusedTypes)}
+            onDismiss={() => setRefusedTypes([])}
           />
         )}
         <ComposerContext key={editing.target ? "edit" : "reply"}>

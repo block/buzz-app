@@ -97,9 +97,14 @@ export function useFileDrop(
       const entries = Array.from(event.dataTransfer?.items ?? [])
         .filter((item) => item.kind === "file")
         .map((item) => item.webkitGetAsEntry?.());
+      // Entries pair with the files by position alone. Lists that do not line
+      // up name no folders, rather than call a real file one.
+      const paired = entries.length === dropped.length;
       accept(
         dropped,
-        new Set(dropped.filter((_, index) => entries[index]?.isDirectory)),
+        new Set(
+          dropped.filter((_, index) => paired && entries[index]?.isDirectory),
+        ),
       );
     };
     zone.addEventListener("dragenter", enter);

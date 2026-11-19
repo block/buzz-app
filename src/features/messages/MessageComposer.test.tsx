@@ -2464,6 +2464,132 @@ it.each([
   },
 );
 
+it("names only the newly refused file once the type notice was dismissed", async () => {
+  const h = await mountUploadComposer();
+  dropFiles(h.form(), [executable("a.exe"), executable("b.exe")]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("type"));
+  });
+  // A click event: jsdom has no pointer capture for the stack's swipe handler.
+  fireEvent.click(
+    within(
+      await screen.findByRole("dialog", { name: "Could not attach file" }),
+    ).getByRole("button", { name: "Dismiss notification" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new UploadError("type"));
+  });
+  expect(
+    await screen.findByRole("dialog", { name: "Could not attach file" }),
+  ).toHaveAccessibleDescription("b.exe isn’t a supported file type.");
+  expect(chipErrors()).toHaveLength(2);
+});
+
+it.each([
+  ["another tab is selected", true, false],
+  ["its conversation is not presented", false, true],
+])(
+  "holds the type notice of a composer that stays mounted while %s, until it is shown",
+  async (_, presented, shown) => {
+    const h = await mountUploadComposer();
+    dropFiles(h.form(), [executable("setup.exe")]);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    // The upload continues there, and the shared notice stack would show its
+    // refusal over whichever conversation is on screen.
+    h.present(presented, shown);
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("type"));
+    });
+    await waitFor(() =>
+      expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    h.present(true);
+    expect(
+      await screen.findByRole("dialog", { name: "Could not attach file" }),
+    ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
+    // Covered again before it is dismissed, it returns once more.
+    h.present(presented, shown);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    h.present(true);
+    expect(
+      await screen.findByRole("dialog", { name: "Could not attach file" }),
+    ).toBeVisible();
+  },
+);
+
+it("does not raise the type notice again for a draft that returns with a refused file", async () => {
+  const h = await mountUploadComposer();
+  dropFiles(h.form(), [executable("setup.exe")]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("type"));
+  });
+  await screen.findByRole("dialog", { name: "Could not attach file" });
+  h.unmount();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { reactStrictMode: true, wrapper: ToastProvider },
+  );
+  // The chip still says why the draft cannot send.
+  await waitFor(() =>
+    expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+  );
+  // A notice would be mounted by the render that shows the chip.
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry setup.exe" })).toBeNull();
+});
+
+it.each(["mounted", "returned to after the failure"])(
+  "leaves a type refused during a background send to that send's notice (composer %s)",
+  async (composer) => {
+    const h = await mountUploadComposer();
+    attachByPaste(h.input(), executable("setup.exe"));
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    const away = composer !== "mounted";
+    if (away) h.unmount();
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("type"));
+    });
+    if (away)
+      render(
+        <MessageComposer
+          session={h.owner.session}
+          scope={h.scope}
+          channelId="channel"
+          channelName="General"
+        />,
+        { reactStrictMode: true, wrapper: ToastProvider },
+      );
+    // The restored file's chip says why, without Retry.
+    await waitFor(() =>
+      expect(chipErrors()).toEqual([`setup.exe: ${UPLOAD_FAILURES.type}`]),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Retry setup.exe" }),
+    ).toBeNull();
+    // One notice for the one failure: the send's, which names the conversation.
+    const notice = await screen.findByRole("dialog", {
+      name: "Upload to #General failed",
+    });
+    expect(notice).toHaveAccessibleDescription(UPLOAD_FAILURES.type);
+    await act(async () => {});
+    expect(screen.getAllByRole("dialog")).toEqual([notice]);
+  },
+);
+
 it("does not focus after a picker upload fails or is later retried", async () => {
   const h = await mountUploadComposer();
   const trigger = screen.getByRole("button", { name: "Attach files" });

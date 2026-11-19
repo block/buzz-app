@@ -64,6 +64,7 @@ export function ChannelHeaderIdentity({
   return (
     <SurfaceButton
       {...props}
+      data-channel-header={channelId}
       aria-label={`${access.label(name)}${detail ? `, ${detail}` : ""}`}
       title={detail ?? access.title}
       aria-haspopup="dialog"

@@ -1,11 +1,17 @@
 // Voice jump: what someone says picks one place to go among the channels,
 // DMs, agent chats and threads this device already holds in memory. Nothing
 // is read from the relay; the decision provider (Jev) chooses among them.
-import type { DecisionFailure, Decisions } from "../decisions/service";
+import type {
+  DecisionAnswer,
+  DecisionFailure,
+  DecisionQuestion,
+  Decisions,
+} from "../decisions/service";
 import type { ChannelSummary, ChannelWindow } from "../relay/contracts";
 import type { InboxItem } from "../relay/inbox";
 import { messagePreviewText } from "../conversation/message-preview-text";
-import { nameWords, soundsLike } from "./sounds-like";
+import { nameWords } from "./sounds-like";
+import { heardAs } from "./heard-as";
 
 /** Goes to the likeliest place at or above this probability. */
 export const VOICE_JUMP_THRESHOLD = 0.5;
@@ -161,6 +167,31 @@ export function jumpPlaces(sources: JumpSources): JumpPlace[] {
   return [...detailed, ...recentThreads].slice(0, MAX_PLACES);
 }
 
+/** Apple's Speech headers ask for no more than 100 contextual strings. */
+const MAX_HINTS = 100;
+
+/** What speech recognition should expect to hear: the names of the places
+ * here and the people in their DMs, most recent first. A `#buzz-security` is
+ * also hinted as "buzz security", as it is said. Native code drops lone
+ * ordinary words, which the recognizer already knows. */
+export function voiceHints(places: readonly JumpPlace[]): string[] {
+  const hints = new Map<string, string>();
+  const add = (hint: string) => {
+    const clean = hint.replace(/\s+/g, " ").trim();
+    const key = clean.toLowerCase();
+    if (clean && !hints.has(key)) hints.set(key, clean);
+  };
+  for (const place of places) {
+    if (place.kind === "thread") continue;
+    const names = place.kind === "dm" ? place.name.split(", ") : [place.name];
+    for (const name of names) {
+      add(name);
+      add(name.replace(/[-_]+/g, " "));
+    }
+  }
+  return [...hints.values()].slice(0, MAX_HINTS);
+}
+
 /** A place Jev gave a real share of its probability, with its option label. */
 export type JumpCandidate = Readonly<{
   place: JumpPlace;
@@ -211,53 +242,51 @@ export function placeOptions(places: readonly JumpPlace[]): string[] {
   });
 }
 
-/** The place the spoken request asked for, when one is likely enough. */
-export async function pickPlace(
-  decisions: Decisions,
+export function buildPlaceQuestion(
   spoken: string,
   places: readonly JumpPlace[],
-  community: string | undefined,
-  threshold = VOICE_JUMP_THRESHOLD,
-): Promise<VoiceJump> {
-  if (!spoken.trim() || !places.length)
-    return { outcome: "none", candidates: [] };
+): {
+  labels: string[];
+  statePlaces: Record<string, unknown>[];
+  question: DecisionQuestion;
+} {
   const labels = placeOptions(places);
   const options: Record<string, string> = {};
   for (const label of labels) options[label] = "";
   options[NONE] = "None of these places is the one the person asked for.";
-  const result = await decisions.decide({
-    state: JSON.stringify({
-      spoken_request: spoken,
-      places: places.map(
-        ({ kind, name, in: where, about, first, recent }, index) => {
-          // A thread's name is its message; only real names are heard.
-          const heard = kind === "thread" ? [] : soundsLike(spoken, name);
-          return {
-            option: labels[index],
-            kind,
-            ...(heard.length ? { sounds_like: heard } : {}),
-            ...(where ? { in: where } : {}),
-            ...(about ? { about } : {}),
-            ...(first ? { first_message: first } : {}),
-            ...(recent ? { recent_messages: recent } : {}),
-          };
-        },
-      ),
-    }),
-    questions: {
-      place: {
-        type: "choice",
-        instructions:
-          "A person said `spoken_request` aloud to jump to a place in a workplace chat app. It is an automatic speech transcript, not typed text. Place names are often product names, jargon or people's names that speech recognition doesn't know, so it often writes a name as a common word or name that sounds like it, splits or joins its words, or spells it another way. Compare how the words sound when said aloud, not how they are spelled: a word or phrase that sounds like a place's name counts as saying that name. A place's `sounds_like` lists words in the transcript that sound like its name. Each option is a place they can go to: a channel (#name), a DM (named by the other people in it), a chat with an agent, or a thread (named by its first message and where it is). `places` gives each option's details, most recently active first. Which place did they ask to go to? A place whose name matches what they said, by sound, beats one whose messages only mention it. Pick a thread only when they asked for a thread or a specific discussion. Pick none when nothing they said sounds like or describes any place.",
-        options,
-      },
+  const statePlaces = places.map(
+    ({ kind, name, in: where, about, first, recent }, index) => {
+      // A thread's name is its message; only real names are heard.
+      const heard = kind === "thread" ? [] : heardAs(spoken, name);
+      return {
+        option: labels[index],
+        kind,
+        ...(heard.length ? { sounds_like: heard } : {}),
+        ...(where ? { in: where } : {}),
+        ...(about ? { about } : {}),
+        ...(first ? { first_message: first } : {}),
+        ...(recent ? { recent_messages: recent } : {}),
+      };
     },
-    timeoutMs: 8_000,
-    ...(community ? { community } : {}),
-  });
-  if (result.outcome !== "answered")
-    return { outcome: "failed", reason: result.reason };
-  const answer = result.answers.place;
+  );
+  return {
+    labels,
+    statePlaces,
+    question: {
+      type: "choice",
+      instructions:
+        "A person said `spoken_request` aloud to jump to a place in a workplace chat app. It is an automatic speech transcript, not typed text. Place names are often product names, jargon or people's names that speech recognition doesn't know, so it often writes a name as a common word or name that sounds like it, splits or joins its words, or spells it another way. Compare how the words sound when said aloud, not how they are spelled: a word or phrase that sounds like a place's name counts as saying that name. A place's `sounds_like` lists words in the transcript that sound like its name. Each option is a place they can go to: a channel (#name), a DM (named by the other people in it), a chat with an agent, or a thread (named by its first message and where it is). `places` gives each option's details, most recently active first. Which place did they ask to go to? A place whose name matches what they said, by sound, beats one whose messages only mention it. Pick a thread only when they asked for a thread or a specific discussion. Pick none when nothing they said sounds like or describes any place.",
+      options,
+    },
+  };
+}
+
+export function resolvePlaceAnswer(
+  answer: DecisionAnswer | undefined,
+  places: readonly JumpPlace[],
+  labels: readonly string[],
+  threshold = VOICE_JUMP_THRESHOLD,
+): Exclude<VoiceJump, { outcome: "failed" }> {
   if (answer?.type !== "choice") return { outcome: "none", candidates: [] };
   const candidates = labels
     .map((label, index) => ({
@@ -274,6 +303,31 @@ export async function pickPlace(
   const place = places[labels.indexOf(answer.choice)];
   if (!place || probability < threshold) return { outcome: "none", candidates };
   return { outcome: "found", place, probability, candidates };
+}
+
+/** The place the spoken request asked for, when one is likely enough. */
+export async function pickPlace(
+  decisions: Decisions,
+  spoken: string,
+  places: readonly JumpPlace[],
+  community: string | undefined,
+  threshold = VOICE_JUMP_THRESHOLD,
+): Promise<VoiceJump> {
+  if (!spoken.trim() || !places.length)
+    return { outcome: "none", candidates: [] };
+  const { labels, statePlaces, question } = buildPlaceQuestion(spoken, places);
+  const result = await decisions.decide({
+    state: JSON.stringify({
+      spoken_request: spoken,
+      places: statePlaces,
+    }),
+    questions: { place: question },
+    timeoutMs: 8_000,
+    ...(community ? { community } : {}),
+  });
+  if (result.outcome !== "answered")
+    return { outcome: "failed", reason: result.reason };
+  return resolvePlaceAnswer(result.answers.place, places, labels, threshold);
 }
 
 export type LiveLead = Readonly<{ key: string; words: number }>;

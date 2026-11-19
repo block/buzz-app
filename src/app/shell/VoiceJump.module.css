@@ -6,6 +6,51 @@
   gap: var(--space-3);
   padding-bottom: var(--space-3);
 }
+.contextBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  @apply text-body-sm text-subtle;
+}
+.contextTarget {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.confirmBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-inline: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset-subtle);
+}
+.confirmCopy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.confirmTitle {
+  margin: 0;
+  @apply text-body-sm text-standard;
+}
+.confirmHint {
+  margin: 0;
+  @apply text-caption text-subtle;
+}
+.confirmActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
 .status {
   margin: 0;
   padding-inline: var(--space-3);

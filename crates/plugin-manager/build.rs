@@ -58,6 +58,7 @@ fn builderlab_apps_control_plane(
     Ok(raw)
 }
 const GATEWAY_KEY: &str = "BUZZ_AGENT_GATEWAY";
+const DEFAULT_COMMUNITY_KEY: &str = "BUZZ_DEFAULT_COMMUNITY_URL";
 
 #[path = "src/gateway.rs"]
 #[allow(dead_code)]
@@ -263,8 +264,17 @@ fn main() {
         .unwrap_or_else(|reason| panic!("Invalid {REPOSITORY_ACCESS_KEY}: {reason}"));
     println!("cargo:rustc-env={REPOSITORY_ACCESS_KEY}={access}");
     // From the process only, like the FI descriptor: a private build input.
+    // Without one, the packaged org-gateways.json entry for the build's
+    // default community, as vite.config.ts selects it.
     println!("cargo:rerun-if-env-changed={GATEWAY_KEY}");
-    let gateway = match gateway::parse(&process(GATEWAY_KEY).unwrap_or_default()) {
+    println!("cargo:rerun-if-env-changed={DEFAULT_COMMUNITY_KEY}");
+    let org_gateways = root.join("src/bundled/org-gateways.json");
+    println!("cargo:rerun-if-changed={}", org_gateways.display());
+    let gateway = match gateway::select(
+        &process(GATEWAY_KEY).unwrap_or_default(),
+        &std::fs::read_to_string(&org_gateways).expect("src/bundled/org-gateways.json"),
+        &process(DEFAULT_COMMUNITY_KEY).unwrap_or_default(),
+    ) {
         Ok(gateway) => gateway.map(|(_, canonical)| canonical).unwrap_or_default(),
         Err(invalid) => panic!("{invalid}"),
     };

@@ -33,6 +33,7 @@ import {
 } from "../messages/composer-session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import { safeLinkUrl } from "../relay/message-content";
+import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import {
   LinkChannelKindContext,
   LinkDescriptionContext,
@@ -52,7 +53,6 @@ import {
 import { namedChannel, useChannelReference } from "./channel-reference";
 import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
-import { plainLabel } from "../messages/label-text";
 import { soloChatLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
@@ -177,23 +177,25 @@ export function MessageLink({
     ? undefined
     : (directoryLabel ?? (named ? `#${named.name}` : undefined));
   // The `#` completion writes a channel's name of the moment as its Markdown
-  // link's label, so a plain `#` label follows the channel's current name once
-  // known. `#name` prose has no children: its author wrote that name.
+  // link's text. Text that is only `#` and a channel name, which may hold
+  // spaces, therefore follows the channel's current name once known, as a
+  // profile link follows its person's. `#name` prose has no children: its
+  // author wrote that name.
+  const written =
+    typeof children === "string" && children.startsWith("#")
+      ? children.slice(1)
+      : "";
   const current =
     !chatName &&
-    children !== undefined &&
-    plainLabel(children) &&
-    label?.startsWith("#") &&
+    written &&
+    written === canonicalDetailsName(written) &&
     channelName?.startsWith("#")
       ? channelName
       : undefined;
   // Any other authored label is message text, so it stays; the lock marks it.
   // A raw destination has no name to show.
-  const shown = current
-    ? undefined
-    : withheld && label === undefined
-      ? "Private channel"
-      : children;
+  const shown =
+    withheld && label === undefined ? "Private channel" : (current ?? children);
   // A raw message destination names its author once read; a draft never reads.
   const byline = useLinkedMessageByline(
     interactive && label === undefined && children === undefined

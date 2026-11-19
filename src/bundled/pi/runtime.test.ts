@@ -140,8 +140,9 @@ function setup(
   /** Whether `Agents.handle` gives the agent outside a run. */
   const connection = { live: true };
   const desktop = { spawn: host.spawn };
-  /** Agent storage: the one a test stubbed, or else its own. */
-  const storage = localStore(globalThis.localStorage ?? memoryStorage());
+  /** Agent storage: the one a test stubbed, or else its own. A copy, as
+   * `localStore` freezes its own, so a test can spy on its methods. */
+  const storage = { ...localStore(globalThis.localStorage ?? memoryStorage()) };
   const runtime = new PiRuntime(
     desktop,
     (key) => ownerReads(relay, pubkeyOf(key)),

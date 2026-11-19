@@ -45,6 +45,20 @@ if (outbox?.supports(9)) {
 }
 ```
 
+When work keyed by the new event's ID must finish before the event publishes,
+use `outbox.sendHeld(input, hold, recovery?, active?)`. Each delivery attempt in
+this window calls `hold(id)` after signing and publishes only after it resolves.
+Only that event waits, and it takes no delivery slot while it waits. In a chat
+this device is starting, local agents also get the message only after the hold.
+The hold counts toward the attempt's delivery deadline (10 seconds by default).
+A rejected hold, or one still pending at the deadline, fails the delivery
+without publishing; Retry calls the hold again. The entry is saved as `held`.
+After a reload its hold is gone, so a plain `retry(id)` throws and the app's
+Retry controls say to retry from the plugin that sent it. The plugin retries
+with `outbox.retry(id, active, hold)`, which publishes only after the new hold
+resolves. Older hosts omit the method: check `outbox.sendHeld` before calling
+it.
+
 `session.read(filters, { signal })` is a finite read merged with matching local
 operations at completion. `session.observe(filters)` additionally subscribes to
 outbox changes, exposing immutable `{ status, events, error }` snapshots. Own the
@@ -98,8 +112,8 @@ against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable
 rosters still fail closed. Standalone recipe saves use writer-backed exact-ID
 confirmation; recipe head and catalog reads remain replica-eligible. For
-writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
-the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
+writer-backed Canvas editor reads and replica-eligible template copies, see
+the [Canvas/outbox contract](plugin-architecture.md#canvas-saves).
 
 ## Managed-agent registration (kind 30177)
 
@@ -216,8 +230,10 @@ including empty pages whose raw scan cursor does not occur among delivered event
 
 Strict root admission/validation runs once before each load or refresh traversal,
 not between the pages of a retained-range repair: repairing N pages uses one root
-read plus N independently verified window reads. Each separate scrollback load
-still reads the root. Root deletion observed live and access revocation retain their
+read plus N independently verified window reads. A load given a read frontier
+pages until it reaches a reply at or before that time the same way, so the
+older paging that reaches the first unread reply reads the root once. Each separate scrollback
+load still reads the root. Root deletion observed live and access revocation retain their
 existing session paths; a later refresh/load revalidates the root. Neither the root
 lookup nor the page sequence provides an atomic snapshot.
 
@@ -358,12 +374,12 @@ which it is true when it arrived, kept while the event waits, so watches do not
 change who a mention wakes; they still hear the rest. A channel leaves the
 agents-only set once a lookup of the viewer's own succeeds, not when it starts:
 an exact lookup marked `viewerLookup` (a name search, a label lookup, a mounted
-link, a search read, or any `session.channels.resolve` call, which only the
-viewer's own surfaces make) reports through `resolved`, and so does a mounted link
+link, a search read, or a `session.channels.resolve` call with its default viewer lookup) reports through `resolved`, and so does a mounted link
 to a channel already known, which needs no lookup: links hold their demand
 even when readable. Rechecks, such as preview
 revalidation after an access-revoked CLOSED or a member-added confirmation,
-leave it as it was.
+leave it as it was. Watch admission calls `session.channels.resolve` with
+`viewerLookup: false`, preserving agent-only provenance instead of promoting the channel into viewer mention traffic.
 Shared composers and reactions remain unavailable for nonmembers; message helpers
 and workflows do not acquire write eligibility from public metadata. The relay
 remains the final write authority, including low-level outbox intent.
@@ -409,7 +425,8 @@ If the directory fails, an in-flight provisional lookup can still supply rows
 before the error; a stalled lookup then waits for its existing transport timeout.
 Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
-word runs, then letters in order), so `buzz community` finds `buzz-community`.
+word runs, then every typed word in any order), so `buzz community` finds
+`buzz-community`.
 The best eight are resolved through the same exact `resolve` path as message
 hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
@@ -489,6 +506,10 @@ A channel-only link (`buzz://channel/<id>`) shows what the reader may see about
 that channel. `channels.describe(id)` answers from local evidence and never
 reads: `found` with the name and flags, `withheld`, or `unknown`. `joined`
 comes from the viewer in the roster, so a channel restored from cache counts.
+An unreadable `found` reference has `answered: true` only when a completed
+lookup admitted no readable channel. Missing `looking` alone does not establish
+an answer: it also occurs before demand and during an initial failure's backoff.
+The answer resets with access/cache state and is retained during rechecks.
 A public channel the viewer left is `found` from its signed open metadata; that
 names it but does not restore member reads. `channels.refer(id)` demands a
 background lookup once the list is ready, until the returned release; a
@@ -1223,11 +1244,14 @@ outcomes retain their exact signed event and are never transparently re-signed.
 The relay WebSocket keeps retrying transient disconnects and authentication
 timeouts while its session is active. Its exponential delay starts at 250–500ms
 and caps at 15–30s, with jitter on each attempt. A full minute authenticated
-resets that backoff; a brief successful authentication does not. After a close with
-code 1012 (Service Restart) or 1001 (Going Away), as a rolling deploy sends to every
-client at once, the first attempt instead waits a uniform random time up to 10 s
-(more once repeated bounces have grown the backoff past that), so a fleet the relay
-closed at once does not return at once. Authentication rejection
+resets that backoff; a brief successful authentication does not. When a socket that
+had authenticated drops, whether through a deploy's 1012 (Service Restart) or 1001
+(Going Away) close or an abnormal drop, the first attempt instead waits a uniform
+random time up to 10 s (more once repeated bounces have grown the backoff past that),
+so a fleet the relay dropped at once does not return at once. A socket that never
+opened keeps the fast backoff. While that reconnect is scheduled, the background
+recovery retry leaves it alone and retries only failed reads; wake, network, focus,
+sign-in and the Retry button reconnect right away. Authentication rejection
 or signing failure keeps its error visible and reconnects on a slow timer, 60 s
 doubling to 10 minutes, because access or a locked signer can change later; a
 signer that does not match the viewer stays terminal. A route the relay CLOSED

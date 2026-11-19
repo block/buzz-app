@@ -5,6 +5,7 @@ import { isMessageTool } from "../../buzz-mcp/session-tools";
 import { readEventBody } from "../../features/agent-harness/turn-records";
 import { readFile } from "../../buzz-mcp/app-client";
 import {
+  postedAs,
   promptMessage,
   promptSections,
   STEER,
@@ -40,6 +41,7 @@ export type Conversation = Readonly<{
   /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   sessionId?: string;
+  community?: true;
   channelId: string;
   root?: string;
 }>;
@@ -112,7 +114,10 @@ export function claudeTurns(
   /** Messages sent with send, until their result says whether they were posted. */
   const sends = new Map<
     string,
-    { turn: TranscriptTurn; message: { posted?: boolean } }
+    {
+      turn: TranscriptTurn;
+      message: { posted?: boolean; messageId?: string };
+    }
   >();
   let last = 0;
   const turn = (id: string, at: number, partial: boolean) => {
@@ -165,7 +170,8 @@ export function claudeTurns(
     last = at;
     for (const result of results) {
       const sent = sends.get(str(result.tool_use_id));
-      if (sent && !result.is_error) sent.message.posted = true;
+      if (sent && !result.is_error)
+        Object.assign(sent.message, postedAs(text(result.content)));
       else if (sent) {
         sent.turn.items.push({
           id: `${id}:${str(result.tool_use_id)}`,
@@ -268,11 +274,15 @@ export function startedFor(file: string, conversation: Conversation) {
     const agent = field("Agent");
     return (
       (agent === undefined || agent === conversation.agent) &&
-      !!field("Channel")?.endsWith(`(#${conversation.channelId})`) &&
-      (conversation.root
-        ? field("Session scope") === "thread" &&
-          field("Thread root") === conversation.root
-        : field("Session scope") !== "thread")
+      (conversation.community
+        ? field("Session scope") === "community"
+        : field("Session scope") !== "community" &&
+          !!field("Channel")?.endsWith(`(#${conversation.channelId})`)) &&
+      (conversation.community ||
+        (conversation.root
+          ? field("Session scope") === "thread" &&
+            field("Thread root") === conversation.root
+          : field("Session scope") !== "thread"))
     );
   }
   return false;
@@ -283,10 +293,13 @@ export function startedFor(file: string, conversation: Conversation) {
  * the first prompt once the file is read. */
 const indexedFor = (start: Start, conversation: Conversation) =>
   (start.agent === undefined || start.agent === conversation.agent) &&
-  start.channelId === conversation.channelId &&
-  (conversation.root
-    ? start.scope === "thread" && start.root === conversation.root
-    : start.scope !== "thread");
+  (conversation.community
+    ? start.scope === "community"
+    : start.scope !== "community" &&
+      start.channelId === conversation.channelId &&
+      (conversation.root
+        ? start.scope === "thread" && start.root === conversation.root
+        : start.scope !== "thread"));
 
 /** How long finding the agent's workspace may take. */
 const WORKSPACE_TIMEOUT_MS = 10_000;

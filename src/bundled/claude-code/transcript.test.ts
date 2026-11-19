@@ -164,7 +164,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       ]),
       result("r", "3 messages"),
       send("s1", "Looks good."),
-      result("s1", "sent"),
+      result("s1", `sent ${"a".repeat(64)}`),
       send("n1", "Nested.", "reply_in_subthread"),
       result("n1", "sent"),
       send("s2", "One more thing."),
@@ -182,6 +182,7 @@ it("shows what the agent posted as its reply once sent, and names Buzz tools as 
       type: "message",
       text: "Looks good.",
       posted: true,
+      messageId: "a".repeat(64),
     }),
     expect.objectContaining({ type: "message", text: "Nested.", posted: true }),
     expect.not.objectContaining({ posted: true }),
@@ -984,4 +985,52 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
   expect(
     shown(await latest([earlier("other"), ...(first ? [first] : [])])),
   ).toEqual([{ prompts: 1, continued: false }]);
+});
+
+it("discovers a community transcript from a different source channel", async () => {
+  clock = 0;
+  const { spawn } = host({
+    "./-Users-me--buzz/community.jsonl": [
+      line(
+        "user",
+        turnPrompt({
+          agent,
+          event: message("e", "remember"),
+          channel: { id: "channel", name: "dev" },
+          scope: "community",
+          context: [],
+          total: 1,
+        }),
+      ),
+      line("assistant", [{ type: "text", text: "Remembered." }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "other", community: true },
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((turn) => turn.sessionId)).toEqual(["community"]);
+});
+
+it("discovers a community session whose first turn was an unaddressed wake", async () => {
+  const { spawn } = host({
+    "./-Users-me--buzz/wake.jsonl": [
+      line(
+        "user",
+        `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent}\n</context>\n\ncheck`,
+      ),
+      line("assistant", [{ type: "text", text: "checked" }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "other", community: true },
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((t) => t.sessionId)).toEqual(["wake"]);
 });

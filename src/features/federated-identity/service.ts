@@ -37,6 +37,10 @@ export type SessionSnapshot = Readonly<{
   /** Signing in again waits on the browser while this session stays
    * signed in; `cancelSignIn` ends only that wait. */
   renewing?: boolean;
+  /** The latest issuer or relay refusal's response `Date` minus this
+   * computer's clock, in seconds, when far enough off to suggest the clock
+   * is wrong. The refusal keeps its own meaning; this only adds a hint. */
+  clockOffset?: number | null;
 }>;
 /** First run's sign-in choices (`FirstRunIdentity`); plugins see `signIn()`. */
 export type SignInOptions = Readonly<{
@@ -63,6 +67,10 @@ export type AuthenticatedRequest = Readonly<{
     name: string;
     contentType: string;
   }>;
+  /** With the session of this community's sign-in server (`forCommunity`)
+   * instead of the build's Builderlab; native allows only the bundled
+   * Builderlab plugin, and never with `apps`. */
+  relay?: string;
 }>;
 export interface FederatedIdentity {
   /** Granted routes are forwarded natively with the session as a Bearer token. */
@@ -254,7 +262,9 @@ export class FederatedIdentityService
         "Authenticated requests require an active desktop plugin",
       );
     // The account this call started under; native refuses another's token.
-    const session = this.shared.snapshot.revision;
+    const session = (
+      request.relay ? this.forCommunity(request.relay) : this
+    ).snapshot().revision;
     for (let attempt = 0; ; attempt++) {
       const registration = this.registration(owner);
       try {

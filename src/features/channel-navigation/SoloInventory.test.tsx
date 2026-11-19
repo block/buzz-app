@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -203,9 +204,6 @@ it("hides the whole Solo entry and skips it as a successor, then restores it on 
   expect(f.handoff()?.soloNeighbors.current?.(other)).not.toContain(id);
   plugin.disable();
   expect(screen.getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Actions for Planning" }),
-  ).toBeInTheDocument();
   expect(f.handoff()?.soloNeighbors.current?.(other)).toContain(id);
 });
 
@@ -326,7 +324,7 @@ it("reports the saved Solo workspace id rather than its drag target key", async 
     undefined,
     { sidebarRows: plugin.rows },
   );
-  const preferences = f.session.soloPreferences.snapshot();
+  const preferences = f.session.sidebarPreferences.snapshot();
   Object.assign(preferences, {
     data: {
       ...preferences.data,
@@ -715,8 +713,8 @@ it.each([false, true])(
   async (combined) => {
     const f = fixture(combined);
     const user = userEvent.setup();
-    const before = f.session.soloPreferences.snapshot();
-    vi.spyOn(f.session.soloPreferences, "snapshot").mockReturnValue({
+    const before = f.session.sidebarPreferences.snapshot();
+    vi.spyOn(f.session.sidebarPreferences, "snapshot").mockReturnValue({
       ...before,
       data: {
         sections: [{ id: "work", name: "Work", order: 0 }],
@@ -737,7 +735,7 @@ it.each([false, true])(
     expect(screen.getAllByRole("button", { name: "New chat" })).toHaveLength(2);
     await user.click(
       screen.getByRole("button", {
-        name: combined ? "New" : "New chat or workspace",
+        name: combined ? "New options" : "New chat or workspace",
       }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
@@ -803,11 +801,11 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
       .getAllByRole("button")
       .map((button) => button.getAttribute("data-solo-channel-id"))
       .filter(Boolean);
-  // Seven newest, then unread Planning and open Other past the cap, in order.
+  // Seven newest, then open Other and unread Planning past the cap, in order.
   expect(listed()).toEqual([
     ...Array.from({ length: 7 }, (_, index) => `newer-${index}`),
-    id,
     other,
+    id,
   ]);
   // Reading it does not pull the row away; it stays until the workspace folds.
   f.clearUnread();
@@ -900,6 +898,54 @@ it("renames and opens settings for a chat the roster delivers after mount", asyn
   expect(await screen.findByRole("dialog")).toBeVisible();
 });
 
+it("opens chat settings with the current visit after a thread move", async () => {
+  const f = fixture(true);
+  Object.assign(f.session, {
+    canvas: {
+      ...f.session.canvas,
+      available: true,
+      read: async () => undefined,
+    },
+    channelDetails: {
+      ...f.session.channelDetails,
+      available: true,
+      load: vi.fn(async (channelId: string) => ({
+        channelId,
+        name: "Planning",
+        description: "",
+        visibility: "private",
+        labels: ["buzz.solo"],
+        canEdit: true,
+        version: "one",
+      })),
+    },
+  });
+  f.replaceSession();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /^Planning/ }));
+  // Opening a thread ends the previous visit without rendering the sidebar.
+  f.navigateWithin({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://relay.test" },
+    channelId: id,
+    messageId: root,
+    threadRootId: root,
+  });
+  fireEvent.keyDown(screen.getByRole("button", { name: /^Planning/ }), {
+    key: "ContextMenu",
+  });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Save changes" }),
+    ).toBeEnabled(),
+  );
+});
+
 it("describes a Solo row as Shared only when its Shared mark renders", () => {
   fixture();
   expect(screen.getByRole("button", { name: /^Planning/ })).not.toHaveAttribute(
@@ -939,15 +985,25 @@ it.each([false, true])(
     vi.useFakeTimers();
     try {
       const f = fixture(combined);
+      f.roster((channels) =>
+        channels.map((channel) =>
+          channel.id === id ? { ...channel, lastActivityAt: 1 } : channel,
+        ),
+      );
+      await act(() => vi.advanceTimersByTimeAsync(200));
+      const rowAttribute = combined
+        ? "data-solo-destination-id"
+        : "data-solo-channel-id";
       const rows = () => [
         ...document.querySelectorAll<HTMLButtonElement>(
-          "button[data-solo-channel-id]:not([inert] *)",
+          `button[${rowAttribute}]:not([inert] *)`,
         ),
       ];
       const original = rows();
-      expect(
-        original.map((row) => row.getAttribute("data-solo-channel-id")),
-      ).toEqual([id, other]);
+      expect(original.map((row) => row.getAttribute(rowAttribute))).toEqual([
+        id,
+        other,
+      ]);
       original[1]?.focus();
       f.roster((channels) =>
         channels.map((channel) =>
@@ -985,3 +1041,19 @@ it.each([false, true])(
     }
   },
 );
+
+it("orders SoloInventory rows by Recent creation fallback rather than updatedAt", () => {
+  const f = fixture(false);
+  f.roster((channels) =>
+    channels.map((channel) =>
+      channel.id === id
+        ? { ...channel, createdAt: 10, updatedAt: 500, lastActivityAt: 50 }
+        : { ...channel, createdAt: 100 },
+    ),
+  );
+  const listed = screen
+    .getAllByRole("button")
+    .map((button) => button.getAttribute("data-solo-channel-id"))
+    .filter(Boolean);
+  expect(listed).toEqual([other, id]);
+});

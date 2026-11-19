@@ -1,3 +1,4 @@
+import { sessionScope } from "../../features/agent-harness/session-scope";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -8,6 +9,7 @@ import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
+  Fragment,
   type ReactNode,
   useEffect,
   useRef,
@@ -24,6 +26,8 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import {
   candidatesFor,
   followRecommended,
@@ -75,8 +79,10 @@ import {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+const label = ({ channelId, name, root, community }: SavedConversation) =>
+  community
+    ? "Community session"
+    : `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
 
 const options = (choices: readonly (readonly [string, string])[]) => [
@@ -177,6 +183,7 @@ const thinkingOptions = (
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
+  ["community", "One session per community"],
 ]);
 
 /** A model field's stand-in while Claude cannot run. `inline` asks for
@@ -221,7 +228,6 @@ function ClaudeSignIn({
       <Dialog
         open={open}
         title={missing || outdated ? "Claude integration" : "Set up Claude"}
-        headerGap={missing || outdated ? "default" : "compact"}
         onOpenChange={(next) => {
           setOpen(next);
           if (!next) void setup.cancel();
@@ -490,15 +496,20 @@ export function createTabs({
         {...props}
         models={modelChoices(state.models)}
         value={current.model}
-        defaultModel={providerDefaultModel(
-          providerDefaults.model,
-          state.models,
-        )}
+        defaultModel={
+          providerDefaults.model
+            ? providerDefaultModel(providerDefaults.model, state.models)
+            : undefined
+        }
         defaultLabel={providerDefaultLabel(
           providerDefaults.model,
           state.models,
         )}
-        defaultDescription="Following the provider's model default"
+        defaultDescription={
+          providerDefaults.model
+            ? `Currently ${providerDefaultLabel(providerDefaults.model, state.models)}`
+            : "Follows Claude Code settings"
+        }
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
@@ -658,7 +669,6 @@ export function createTabs({
         <Dialog
           open={open && signedOut}
           title="Set up Claude"
-          headerGap="compact"
           actions={
             signingIn && (
               <Button variant="ghost" onClick={() => void setup.cancel()}>
@@ -700,11 +710,13 @@ export function createTabs({
    * setup beside Harness, and so does the agent. */
   function CreateConfiguration({
     harnessControl,
+    rowsOnly,
     onReadyChange,
     agent,
     ...props
   }: AgentCreateProps<Config> & {
     harnessControl: ReactNode;
+    rowsOnly?: boolean;
     onReadyChange?: (ready: boolean) => void;
   }) {
     const { state, resolving, signedOut } = useCredentials(agent);
@@ -712,8 +724,9 @@ export function createTabs({
     // installed waits for the download, as it did with the Model row alone.
     const ready = !!state.status && !signedOut && !resolving;
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+    const Group = rowsOnly ? Fragment : SettingsGroup;
     return (
-      <SettingsGroup>
+      <Group>
         {harnessControl}
         <PreferenceRow
           title="Model"
@@ -736,7 +749,7 @@ export function createTabs({
           title="Thinking"
           trailing={<CreateThinking {...(agent && { agent })} {...props} />}
         />
-      </SettingsGroup>
+      </Group>
     );
   }
 
@@ -801,8 +814,8 @@ export function createTabs({
                   saved.model)
                 : ""
             }
-            defaultModel={providerDefaultModel("", state.models)}
             defaultLabel={providerDefaultLabel("", state.models)}
+            defaultDescription="Follows Claude Code settings"
             onConfigure={onConfigure}
             onChange={(model) => {
               defaults.save({ model }).then(
@@ -846,6 +859,19 @@ export function createTabs({
           : status?.state === "signed-out" && setup.auth.signIn
             ? ({ step: "sign-in", label: "Sign in" } as const)
             : undefined;
+    // Looks again for a setup made with the Claude CLI meanwhile.
+    const refreshing =
+      keyEntry && status?.state === "signed-out" && !state.running;
+    const done = useRef<HTMLButtonElement>(null);
+    const refreshFocused = useRef(false);
+    // Finding a setup removes Refresh, which WebKit leaves focus outside the
+    // dialog for: hand it to Done, unless the person has moved it themselves.
+    useEffect(() => {
+      if (refreshing || !refreshFocused.current) return;
+      refreshFocused.current = false;
+      const active = document.activeElement;
+      if (!active || active === document.body) done.current?.focus();
+    }, [refreshing]);
     const latestOutputLine = state.output
       .replaceAll("\r", "\n")
       .split("\n")
@@ -915,7 +941,25 @@ export function createTabs({
           <SignedIn setup={setup} onSaved={onClose} />
         )}
         <ProviderDialogActions>
+          {refreshing && (
+            <Button
+              disabled={state.checking}
+              // Natively disabled, it would blur out of the open dialog.
+              focusableWhenDisabled
+              onFocus={() => {
+                refreshFocused.current = true;
+              }}
+              onBlur={(event) => {
+                // Removal blurs with nowhere to go; moving on has somewhere.
+                if (event.relatedTarget) refreshFocused.current = false;
+              }}
+              onClick={() => void setup.check()}
+            >
+              Refresh
+            </Button>
+          )}
           <Button
+            ref={done}
             onClick={() =>
               state.running && !ready ? void setup.cancel() : onClose()
             }
@@ -1021,8 +1065,16 @@ export function createTabs({
     } = useOpenedSession(
       conversations,
       conversation,
-      (place, signal) => runtime.find(agent.key, place, workspace, signal),
+      (place, signal) =>
+        runtime.find(
+          agent.key,
+          place,
+          workspace,
+          signal,
+          readConfig(agent.config).scope === "community",
+        ),
       (channelId) => runtime.channelLabel(agent.key, channelId),
+      readConfig(agent.config).scope,
     );
     // Newest first, the opened conversation's channel above the rest.
     const recent = conversations
@@ -1205,9 +1257,15 @@ export function createTabs({
         return `${model} · ${config.effort ? effortLabel(config.effort) : "Automatic"} thinking`;
       }
       if (group === "scope")
-        return config.scope === "channel"
-          ? "One session per channel"
-          : "One session per thread";
+        return config.scope === "community"
+          ? "One session per community"
+          : config.scope === "channel"
+            ? "One session per channel"
+            : "One session per thread";
+      if (group === "compactAt")
+        return config.compactAt
+          ? `${Number(config.compactAt) / 1000}K tokens`
+          : "Harness default";
       return config[group];
     };
     const conflict = (group: SettingGroup) =>
@@ -1263,9 +1321,9 @@ export function createTabs({
           models={modelChoices(setupState.models)}
           value={draft.model}
           defaultModel={
-            remote
-              ? undefined
-              : providerDefaultModel(providerDefaults.model, setupState.models)
+            !remote && providerDefaults.model
+              ? providerDefaultModel(providerDefaults.model, setupState.models)
+              : undefined
           }
           defaultLabel={
             remote
@@ -1274,8 +1332,10 @@ export function createTabs({
           }
           defaultDescription={
             remote
-              ? "Use the model configured on the target"
-              : "Following the provider's model default"
+              ? "Follows the target computer's settings"
+              : providerDefaults.model
+                ? `Currently ${providerDefaultLabel(providerDefaults.model, setupState.models)}`
+                : "Follows Claude Code settings"
           }
           loading={setupState.modelsChecking}
           onChange={(model) => {
@@ -1376,7 +1436,16 @@ export function createTabs({
                   {modelControl}
                 </>
               )}
+              <CompactionField
+                value={agent.protection ? "" : draft.compactAt}
+                {...(agent.protection && {
+                  description: "Protected agents never compact automatically.",
+                })}
+                disabled={saving || !!agent.protection}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
+            {conflict("compactAt")}
             <div className="grid gap-2">
               {conflict("instructions")}
               <AgentInstructions
@@ -1420,7 +1489,7 @@ export function createTabs({
                 onValueChange={(value) =>
                   setDraft({
                     ...draft,
-                    scope: value === "channel" ? "channel" : "thread",
+                    scope: sessionScope(value),
                   })
                 }
               />

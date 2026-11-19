@@ -4,6 +4,7 @@
 import { isMessageTool } from "../../buzz-mcp/session-tools";
 import { readEventBody } from "../../features/agent-harness/turn-records";
 import {
+  postedAs,
   promptMessage,
   promptSections,
   STEER,
@@ -38,7 +39,11 @@ export type Message = {
   };
 };
 /** A place the agent talks in: a channel, or a thread in one. */
-export type Place = Readonly<{ channelId: string; root?: string }>;
+export type Place = Readonly<{
+  channelId: string;
+  root?: string;
+  community?: true;
+}>;
 /** A goose session the agent ran, as goose lists it. */
 export type GooseSessionRow = Readonly<{
   sessionId: string;
@@ -119,7 +124,10 @@ export function gooseTurns(
   /** Messages sent with send, until their result says whether they posted. */
   const sends = new Map<
     string,
-    { turn: TranscriptTurn; message: { posted?: boolean } }
+    {
+      turn: TranscriptTurn;
+      message: { posted?: boolean; messageId?: string };
+    }
   >();
   let last = 0;
   const turn = (id: string, at: number, partial: boolean) => {
@@ -161,7 +169,7 @@ export function gooseTurns(
       const callId = str(response.id);
       const { failed, text } = result(response.toolResult);
       const sent = sends.get(callId);
-      if (sent && !failed) sent.message.posted = true;
+      if (sent && !failed) Object.assign(sent.message, postedAs(text));
       else if (sent)
         sent.turn.items.push({
           id: `${id}:${callId}`,
@@ -292,7 +300,11 @@ export const sessionTags = (agent: string, conversation?: string) => ({
   ...(conversation ? { "buzz.conversation": conversation } : {}),
 });
 const conversationOf = (place: Place) =>
-  place.root ? `${place.channelId}/${place.root}` : place.channelId;
+  place.community
+    ? "@community"
+    : place.root
+      ? `${place.channelId}/${place.root}`
+      : place.channelId;
 
 type Listed = {
   sessionId: string;

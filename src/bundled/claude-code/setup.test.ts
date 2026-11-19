@@ -8,6 +8,7 @@ import { fakeSpawn, MODELS, sessionState } from "./claude-testing";
 import script from "./claude.sh?raw";
 import manifest from "./manifest.json";
 import { PROTECTED_CLAUDE_ROOT, PROTECTED_CLAUDE_VERSION } from "./security";
+import { PROCESS_LIMIT } from "./sessions";
 import { ClaudeAuth, type Step } from "./auth";
 import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
 
@@ -251,7 +252,13 @@ function scripted(
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     const args = options.args ?? [];
     calls.push({ id, args });
-    const result = output[`${id} ${args.join(" ")}`.trim()];
+    const command = `${id} ${args.join(" ")}`.trim();
+    // No setup of the person's own unless the script says otherwise.
+    const result =
+      output[command] ??
+      (command === "claude auth status --json"
+        ? { stdout: '{"loggedIn": false}', code: 1 }
+        : undefined);
     if (result instanceof Error) throw result;
     queueMicrotask(() => {
       if (result?.stdout) options.onStdout?.(result.stdout);
@@ -414,8 +421,8 @@ it("caches failed model discovery until retry and closes a late probe on disposa
   await setup.loadModels();
   expect(setup.snapshot().modelsError).toBe("probe failed");
   await setup.loadModels();
-  // The version and the failed probe.
-  expect(spawn).toHaveBeenCalledTimes(2);
+  // The version, the setup check and the failed probe.
+  expect(spawn).toHaveBeenCalledTimes(3);
   spawn.mockImplementationOnce(() => late);
   const pending = setup.loadModels(true);
   expect(setup.snapshot().modelsChecking).toBe(true);
@@ -625,6 +632,8 @@ function releases(
       code: 0,
     };
     if (id === "platform") result = { stdout: "Darwin arm64\n", code: 0 };
+    else if (args[0] === "auth")
+      result = { stdout: '{"loggedIn": false}', code: 1 };
     else if (id === "install") {
       state.fetched.push(args.join(" "));
       if (state.offline) result = { code: 1 };
@@ -771,6 +780,8 @@ function pinnedRelease(state: {
   installed: boolean;
   broken?: boolean;
   failed?: boolean;
+  /** Times the host refuses the copy as it runs all it allows. */
+  full?: number;
 }) {
   const calls: string[] = [];
   const pinned: { protection?: unknown; killed: boolean }[] = [];
@@ -781,6 +792,10 @@ function pinnedRelease(state: {
     if (id === "install") state.installed = !state.broken && !state.failed;
     const protectedCopy = id === "claude-protected-arm64";
     const started = { protection: options.protection, killed: false };
+    if (protectedCopy && state.full) {
+      state.full--;
+      throw PROCESS_LIMIT;
+    }
     if (protectedCopy) pinned.push(started);
     if (protectedCopy && !state.installed)
       throw new Error("Artifact is unreadable");
@@ -827,6 +842,57 @@ it("installs the pinned protected release only when the host refuses its copy", 
     `install ${PROTECTED_CLAUDE_VERSION} darwin-arm64 ${CHECKSUM}`,
     "claude-protected-arm64 --version",
   ]);
+});
+
+it("makes room for the protected check when the host runs all it allows", async () => {
+  const { spawn, request, calls } = pinnedRelease({ installed: true, full: 1 });
+  const room = vi.fn(async () => true);
+  await new ClaudeSetup(spawn, request).protectedInstalled(
+    new AbortController().signal,
+    room,
+  );
+  expect(room).toHaveBeenCalledTimes(1);
+  expect(calls).toEqual([
+    "platform",
+    "claude-protected-arm64 --version",
+    "claude-protected-arm64 --version",
+  ]);
+});
+
+it("reclaims capacity before the protected check's platform probe", async () => {
+  const fake = pinnedRelease({ installed: true });
+  let full = true;
+  const calls: string[] = [];
+  const spawn: typeof fake.spawn = async (id, options) => {
+    calls.push(id);
+    // The native cap applies to every declared process, including uname.
+    if (full) throw PROCESS_LIMIT;
+    return fake.spawn(id, options);
+  };
+  const room = vi.fn(async () => {
+    full = false;
+    return true;
+  });
+  await expect(
+    new ClaudeSetup(spawn, fake.request).protectedInstalled(
+      new AbortController().signal,
+      room,
+    ),
+  ).resolves.toBeUndefined();
+  expect(room).toHaveBeenCalledTimes(1);
+  expect(calls).toEqual(["platform", "platform", "claude-protected-arm64"]);
+});
+
+it("fails a protected check the full host refuses, without installing", async () => {
+  const { spawn, request, calls } = pinnedRelease({ installed: true, full: 2 });
+  const room = vi.fn(async () => false);
+  await expect(
+    new ClaudeSetup(spawn, request).protectedInstalled(
+      new AbortController().signal,
+      room,
+    ),
+  ).rejects.toBe(PROCESS_LIMIT);
+  expect(calls).toEqual(["platform", "claude-protected-arm64 --version"]);
 });
 
 it("checks the pinned copy contained, never the download folder's file", async () => {

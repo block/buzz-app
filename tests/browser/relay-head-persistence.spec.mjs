@@ -120,6 +120,42 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
       await stores[1].write(replacement);
       saving = false;
       const refilled = await snapshot();
+      const legacyOverwrite = {
+        ...head(65),
+        events: [{ content: "saved by version 2" }],
+      };
+      let legacyVisible;
+      await writeV2("heads", (tx) => {
+        const heads = tx.objectStore("heads");
+        const rows = heads.getAll();
+        rows.onsuccess = () => {
+          // A v2 reader restores recent rows. Its next write prunes expired
+          // rows, including any metadata the current build added.
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          legacyVisible = scopes.map((scope) =>
+            rows.result
+              .filter((row) => row.scope === scope && row.savedAt > cutoff)
+              .sort((a, b) => b.savedAt - a.savedAt)
+              .slice(0, 64),
+          );
+          heads.put({
+            ...legacyOverwrite,
+            key: `${scopes[0]}:channel-65`,
+            scope: scopes[0],
+            bytes: JSON.stringify(legacyOverwrite).length,
+          });
+          for (const row of rows.result)
+            if (row.savedAt <= cutoff) heads.delete(row.key);
+        };
+      });
+      const ordinaryReads = fullHeadReads;
+      saving = true;
+      await stores[1].write(replacement);
+      const rebuildReads = fullHeadReads - ordinaryReads;
+      fullHeadReads = ordinaryReads;
+      await stores[1].write(replacement);
+      saving = false;
+      const rebuilt = await snapshot();
       await Promise.all(
         stores.map((store) => store.writeProfiles(["profile"])),
       );
@@ -154,6 +190,12 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
         tx.onabort = () => reject(tx.error);
       });
       inspection.close();
+      const content = "x".repeat(3 * 1024 * 1024);
+      for (const i of [67, 68, 69])
+        await stores[i % 2].write({ ...head(i), events: [{ content }] });
+      const underByteLimit = (await snapshot()).map((rows) =>
+        rows.map((row) => row.channelId),
+      );
       return {
         initialized,
         rolledBack,
@@ -161,9 +203,13 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
         fullHeadReads,
         reopened,
         refilled,
+        legacyVisible,
+        rebuilt,
+        rebuildReads,
         afterLegacyClear,
         profiles,
         remaining,
+        underByteLimit,
       };
     } finally {
       for (const [i, method] of methods.entries()) prototype[method] = read[i];
@@ -189,6 +235,13 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
   expect(result.refilled[1].slice(1)).toEqual(
     result.reopened[1].filter((row) => row.channelId !== "channel-59"),
   );
+  expect(result.legacyVisible).toEqual(result.refilled);
+  expect(result.rebuildReads).toBe(1);
+  expect(result.rebuilt[0][0].events).toEqual([
+    { content: "saved by version 2" },
+  ]);
+  expect(result.rebuilt[0].slice(1)).toEqual(result.refilled[0].slice(1));
+  expect(result.rebuilt[1]).toEqual(result.refilled[1]);
   expect(result.fullHeadReads).toBe(0);
   expect(result.afterLegacyClear).toEqual([
     [],
@@ -196,4 +249,5 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
   ]);
   expect(result.profiles).toEqual([[], ["profile"]]);
   expect(result.remaining).toBe(0);
+  expect(result.underByteLimit).toEqual([["channel-68"], ["channel-69"]]);
 });

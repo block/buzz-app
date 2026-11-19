@@ -256,6 +256,9 @@ describe("composeBase", () => {
     expect(model({ scope: "thread", place: "thread" })).toContain(
       "This session is one thread",
     );
+    // A thread-scoped Claude Code, Goose or Pi huddle has a session per
+    // root, so a thread session claims nothing about huddles.
+    expect(model({ scope: "thread", place: "thread" })).not.toMatch(/huddle/i);
     expect(model({ scope: "thread", place: "conversation" })).toContain(
       "This session is one whole conversation: a DM, a personal chat, a huddle",
     );

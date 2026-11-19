@@ -1,4 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
+import { animationsSettled } from "./animations.mjs";
 import { openPage, settlePanelMotion } from "./navigation.mjs";
 import { frames } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -857,6 +858,11 @@ test.describe("remote archive focus", () => {
             exact: true,
           });
           await expect(success).toBeVisible();
+          const successToast = page
+            .locator("[data-sonner-toast]")
+            .filter({ has: success });
+          await expect(successToast).toHaveAttribute("data-mounted", "true");
+          await animationsSettled(successToast, { subtree: true });
           await success.hover();
           await success
             .getByRole("button", { name: "Dismiss notification", exact: true })

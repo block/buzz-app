@@ -180,16 +180,19 @@ export function MessageLink({
   // link's text. Text that is only `#` and a channel name, which may hold
   // spaces, therefore follows the channel's current name once known, as a
   // profile link follows its person's. `#name` prose has no children: its
-  // author wrote that name.
+  // author wrote that name. The length is checked first: it keeps the
+  // canonical-name scan, quadratic in whitespace, off an arbitrary label.
   const written =
-    typeof children === "string" && children.startsWith("#")
+    !chatName &&
+    channelName?.startsWith("#") &&
+    typeof children === "string" &&
+    children.startsWith("#")
       ? children.slice(1)
       : "";
   const current =
-    !chatName &&
     written &&
-    written === canonicalDetailsName(written) &&
-    channelName?.startsWith("#")
+    [...written].length <= 120 &&
+    written === canonicalDetailsName(written)
       ? channelName
       : undefined;
   // Any other authored label is message text, so it stays; the lock marks it.

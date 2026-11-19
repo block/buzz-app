@@ -3069,7 +3069,8 @@ the full destination remains on the anchor. A channel link whose label is only `
 writes it, shows the channel's current name once known, so it follows a rename, and selection copy takes that
 name; until then, and for a withheld channel, DM or Solo chat, the written label shows. A channel name may hold
 spaces, so `[#weekly sync](buzz://channel/<id>)` is such a label whoever typed it. Any other label, such as text
-without the `#` or with formatting or an image, and `#name` prose stay as written. A raw message or thread link in a listed
+without the `#`, longer than a channel name's 120 characters or with formatting, and `#name` prose stay as written. A
+message shows an image written in a link's text as an attachment, so the text beside it is judged alone. A raw message or thread link in a listed
 channel reads as “<author> in #<channel>” once its author has a name, and a workflow’s
 as “Workflow in #<channel>”; DMs, Solo chats, authored labels and drafts keep the channel
 name. So does a message the lookup cannot find or read, whether deleted or not yet

@@ -829,10 +829,6 @@ function Timeline({
       : undefined);
   const rows = chronologicalRows;
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
-  const responseAvatars = responseAvatarAnchors(
-    rows,
-    responding.includes(liveAgents[0] ?? "") ? liveAgents[0] : undefined,
-  );
   const intent = useRef(0);
   // Keep expansion pending with scroll restoration until the saved row arrives.
   // Any newer reader intent cancels both, even before the next history update.
@@ -889,6 +885,13 @@ function Timeline({
     [...hiddenActivity].filter(
       (id) => id !== focusedMessageId && !pinnedIds.has(id),
     ),
+  );
+  const responseAvatars = responseAvatarAnchors(
+    rows,
+    responding.includes(liveAgents[0] ?? "") ? liveAgents[0] : undefined,
+    (previous, current) =>
+      !foldedActivity.has(previous.id) &&
+      continuesMessageGroup(previous, current),
   );
   useLayoutEffect(() => {
     const element = scroller.current;

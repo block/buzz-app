@@ -26,6 +26,7 @@ import type { RelayEvent } from "./events";
 import { newer } from "./events";
 import { foldProfiles } from "./profiles";
 import type { Priority, RelayReader } from "./reader";
+import { archiveHides, type IdentityArchives } from "./identity-archives";
 
 /** Shared profile reads for any feature, independent of channel history. */
 export interface ProfileQueries {
@@ -102,6 +103,7 @@ export function createProfileDirectory(
       sink: VerifiedProfileSink,
     ): (() => void) | undefined;
   },
+  archives?: Pick<IdentityArchives, "snapshot" | "subscribe">,
 ) {
   let limit = PROFILE_CACHE_BASE;
   // DM partners: eviction takes them last, so a large roster cannot turn a
@@ -292,29 +294,42 @@ export function createProfileDirectory(
     // Qualify all namesakes in the shared directory, including self-declared
     // names that imitate a verified name. This carries through string consumers.
     // Counted once per publish: a pairwise scan is quadratic in a large roster.
+    // An archived identity is no namesake of an active one, but keeps its own
+    // suffix beside any namesake, since it can still post.
+    const archived = (id: string) => archiveHides(archives, id, undefined);
     const verifiedNames = new Map<string, number>();
     const verifiedUsernames = new Map<string | undefined, number>();
-    for (const [, { verified, username }] of next)
+    const activeNames = new Map<string, number>();
+    const activeUsernames = new Map<string | undefined, number>();
+    const count = (
+      names: Map<string, number>,
+      usernames: Map<string | undefined, number>,
+      name: string,
+      username: string | undefined,
+    ) => {
+      names.set(name, (names.get(name) ?? 0) + 1);
+      usernames.set(username, (usernames.get(username) ?? 0) + 1);
+    };
+    for (const [id, { verified, username }] of next)
       if (verified) {
         const name = collisionName(verifiedLabel(verified, preference));
-        verifiedNames.set(name, (verifiedNames.get(name) ?? 0) + 1);
-        verifiedUsernames.set(
-          username,
-          (verifiedUsernames.get(username) ?? 0) + 1,
-        );
+        count(verifiedNames, verifiedUsernames, name, username);
+        if (!archived(id)) count(activeNames, activeUsernames, name, username);
       }
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
+      const [names, usernames] = archived(id)
+        ? [verifiedNames, verifiedUsernames]
+        : [activeNames, activeUsernames];
       const duplicate =
-        (verifiedNames.get(
+        (names.get(
           collisionName(
             profile.verified
               ? verifiedLabel(profile.verified, preference)
               : profile.name,
           ),
         ) ?? 0) > own ||
-        (!!profile.verified &&
-          (verifiedUsernames.get(profile.username) ?? 0) > own);
+        (!!profile.verified && (usernames.get(profile.username) ?? 0) > own);
       if (duplicate)
         next.set(
           id,
@@ -616,6 +631,10 @@ export function createProfileDirectory(
     localProfiles = signature;
     publish();
   });
+  // Archiving or unarchiving refolds namesake labels.
+  const unsubscribeArchives = archives?.subscribe(() => {
+    if (!closed) publish();
+  });
   // Each reader's own choice of name for verified people refolds every label.
   const unsubscribePreference = subscribeNamePreference(() => {
     if (closed) return;
@@ -675,6 +694,7 @@ export function createProfileDirectory(
       verified?.dispose();
       unsubscribeLocal?.();
       unsubscribePreference();
+      unsubscribeArchives?.();
       clear();
       // After clear(): disposing the verified directory schedules a flush.
       clearTimeout(verifiedFlush);

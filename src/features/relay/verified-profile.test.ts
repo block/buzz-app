@@ -538,6 +538,84 @@ it("qualifies verified namesakes and shared usernames, but not a unique verified
   }
 });
 
+it("does not count an archived identity as a namesake of an active one", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  const carol = keypair();
+  const verifiedAs = (subject: string, displayName: string, username: string) =>
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 10,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["display_name", displayName],
+          ["username", username],
+          ["issuer_label", "Example"],
+          ["verified_at", "10"],
+        ],
+      }),
+    );
+  let archived: readonly string[] = [];
+  const listeners = new Set<() => void>();
+  const archives = {
+    snapshot: () => ({ status: "ready" as const, archived }),
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const setArchived = (ids: readonly string[]) => {
+    archived = ids;
+    for (const listener of listeners) listener();
+  };
+  let sink: VerifiedProfileSink | undefined;
+  const directory = createProfileDirectory(
+    { read: async () => [] },
+    undefined,
+    undefined,
+    {
+      authority: { ...authority, multipleIssuers: false },
+      subscribe(_filter, next) {
+        sink = next;
+        return () => {};
+      },
+    },
+    archives,
+  );
+  try {
+    const people = [alice, bob, carol];
+    directory.accept(
+      people.map((key) =>
+        eventDto(signed(key, { kind: 0, tags: [], content: "{}" })),
+      ),
+    );
+    await directory.ensure(people.map((key) => key.pubkey));
+    assert(sink);
+    sink.event(verifiedAs(alice.pubkey, "Sam", "sam"));
+    sink.event(verifiedAs(bob.pubkey, "Sam", "sam"));
+    sink.event(verifiedAs(carol.pubkey, "Sam", "sam"));
+    sink.eose();
+    await tick(); // Verified changes publish on the next macrotask.
+    const name = (key: { pubkey: string }) =>
+      directory.queries.snapshot().get(key.pubkey)?.name;
+    const suffixed = (key: { pubkey: string }) =>
+      `Sam (${key.pubkey.slice(0, 10)})`;
+    setArchived([bob.pubkey, carol.pubkey]);
+    expect(name(alice)).toBe("Sam");
+    expect(name(bob)).toBe(suffixed(bob));
+    expect(name(carol)).toBe(suffixed(carol));
+    setArchived([carol.pubkey]);
+    expect(name(alice)).toBe(suffixed(alice));
+    expect(name(bob)).toBe(suffixed(bob));
+    expect(name(carol)).toBe(suffixed(carol));
+  } finally {
+    directory.dispose();
+  }
+});
+
 it("coalesces a burst of verified changes into one directory notification", async () => {
   const { createProfileDirectory } = await import("./profile-directory");
   let sink: VerifiedProfileSink | undefined;

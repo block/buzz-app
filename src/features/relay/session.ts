@@ -1028,6 +1028,12 @@ export function createRelaySession(
       traffic?.publishPresence?.(status, signal) ?? Promise.resolve(false),
     notify,
   );
+  const archives = createIdentityArchives(
+    requests.reader,
+    transport?.archiveAuthority,
+    notify,
+    { writer: transport?.identityArchive, viewer: transport?.viewer },
+  );
   const profiles = createProfileDirectory(
     verified,
     localViews,
@@ -1041,6 +1047,7 @@ export function createRelaySession(
             traffic?.syncVerifiedProfiles?.(filter, sink),
         }
       : undefined,
+    archives.queries,
   );
   const presence = withHostedAgents(
     observedPresence,
@@ -1106,12 +1113,6 @@ export function createRelaySession(
         )
       : undefined,
     notify,
-  );
-  const archives = createIdentityArchives(
-    requests.reader,
-    transport?.archiveAuthority,
-    notify,
-    { writer: transport?.identityArchive, viewer: transport?.viewer },
   );
   const agentChoices = createAgentChoices({
     // Offline sessions keep their historical, never-matching agent scope.

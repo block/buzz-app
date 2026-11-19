@@ -72,25 +72,30 @@ type IndexedEvent = {
   tags: readonly (readonly string[])[];
 };
 
-/** An indexed event's body as its conversation shows it, with its images
+/** An indexed event's body as its conversation binds it, with its images
  * and attachment links projected out the same way. */
 function eventBody(event: IndexedEvent) {
   const content = eventText(event);
   const urls = imetaAttachmentUrls(event);
-  return event.kind !== 40008 && (content.includes("![") || urls.size)
+  return content.includes("![") || urls.size
     ? projectMarkdownAttachments(content, urls)
     : { content, seams: [] };
 }
 
 /** An indexed event's text as it reads, without Markdown syntax and with
- * spoilers hidden, for snippets and previews. */
-export function searchText(event: IndexedEvent) {
-  return plainText(eventBody(event).content, { limit: 4000 });
+ * spoilers hidden, for snippets and previews. It keeps the raw body, with
+ * attachment names and image markers, so a search for a file name shows it;
+ * only chips bind the projected body (`eventMentions`), and past an
+ * attachment the preview's text check leaves names as text. */
+export function searchText(event: { kind: number; content: string }) {
+  return plainText(eventText(event), { limit: 4000 });
 }
 
 /** An indexed event's body and signed mentions, read from its tags as a
- * message reads them: `p` recipients and two-field `mention` references. */
+ * message reads them: `p` recipients and two-field `mention` references. A
+ * patch shows as raw text, so it binds no one. */
 export function eventMentions(event: IndexedEvent): PreviewMentions {
+  if (event.kind === 40008) return { content: eventText(event), mentions: [] };
   const keys = (pick: (tag: readonly string[]) => boolean) => [
     ...new Set(
       event.tags.flatMap((tag) =>
@@ -98,11 +103,17 @@ export function eventMentions(event: IndexedEvent): PreviewMentions {
       ),
     ),
   ];
+  const mentions = keys(([name]) => name === "p");
+  const mentionReferences = keys(
+    (tag) => tag.length === 2 && tag[0] === "mention",
+  );
+  if (!mentions.length && !mentionReferences.length)
+    return { content: eventText(event), mentions };
   const { content, seams } = eventBody(event);
   return {
     content,
-    mentions: keys(([name]) => name === "p"),
-    mentionReferences: keys((tag) => tag.length === 2 && tag[0] === "mention"),
+    mentions,
+    mentionReferences,
     ...(seams.length ? { attachmentSeams: seams } : {}),
   };
 }

@@ -404,21 +404,17 @@ it("shares its conversation's preparation and flattens the bound body once", () 
   expect(parse).toHaveBeenCalledTimes(1);
 });
 
-it("flattens a long body only to the blank line past what its preview shows", () => {
-  const first = `@tomb ${"**word** ".repeat(100)}\n\n`;
-  const body = `${first}${"**word** ".repeat(1_500)}`;
+it.each([
+  `[Dashboard](https://app.example.com/dash?${"q=1&".repeat(150)})\n\n@tomb can you check this?`,
+  `[docs] ping @tomb ${"word ".repeat(740)}\n\n[docs]: https://example.org`,
+  `<!-- @tomb ${"word ".repeat(150)}\n\nmore -->\n\nthen @tomb`,
+  `[Dashboard](https://app.example.com/dash?${"q=1&".repeat(150)})\r\n\r\n@tomb can you check this?`,
+])("chips a name whose source runs far longer than its preview: %#", (body) => {
   const text = messagePreview(body);
-  preparedMarkdown(body);
-  const parse = vi.mocked(fromMarkdown);
-  parse.mockClear();
-  const view = preview(body, { mentions: [tomb] }, { text });
-  expect(chips(view)).toEqual(["tomb"]);
-  expect(parse).toHaveBeenCalledTimes(1);
-  expect(String(parse.mock.calls[0]?.[0]).length).toBeLessThan(
-    first.length + 50,
-  );
+  expect(chips(preview(body, { mentions: [tomb] }, { text }))).toEqual([
+    "tomb",
+  ]);
 });
-
 it("leaves a preview text when its body is longer than previews bind", () => {
   const body = `@tomb ${"**word** ".repeat(2_000)}`;
   const text = messagePreview(body);
@@ -464,6 +460,20 @@ it("binds a body with attachments and a repaired link past the preview as its co
     />,
   ).container;
   expect(chips(view)).toEqual([]);
+});
+
+it("keeps a search hit's attachments in its text, and binds no one in a patch", () => {
+  const url = "https://example.org/a.png";
+  const image = `Architecture ![diagram](${url}) see @tomb`;
+  const tags = [
+    ["p", tomb],
+    ["imeta", `url ${url}`],
+  ];
+  expect(searchText({ kind: 9, content: image })).toBe(
+    "Architecture [Image] see @tomb",
+  );
+  const patch = { kind: 40008, content: "+ ping @tomb", tags };
+  expect(eventMentions(patch).mentions).toEqual([]);
 });
 
 /** A search hit's preview of `body`, read as search reads the event. */

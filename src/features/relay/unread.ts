@@ -1626,8 +1626,9 @@ export function createUnread({
             row.id,
             {
               content: row.content,
-              mentions: row.mentions,
-              ...(row.mentionReferences
+              // A patch shows as raw text, so it binds no one.
+              mentions: row.diff ? [] : row.mentions,
+              ...(row.mentionReferences && !row.diff
                 ? { mentionReferences: row.mentionReferences }
                 : {}),
               ...(row.edited ? { edited: true as const } : {}),

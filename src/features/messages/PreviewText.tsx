@@ -78,30 +78,28 @@ const mayName = (text: string, labels: Labels) =>
     names.some((name) => text.includes(flatChip(`@${name}`))),
   );
 
-// The longest body a preview binds: binding reads it whole, as its
-// conversation does.
+// The longest body a preview binds; longer ones show as plain text.
+//
+// Design decision: a preview binds and flattens its WHOLE body with the
+// conversation's own pipeline, never a prefix. Every earlier attempt to bound
+// the input for speed (prefix cuts, blank-line cuts, guessing how far a name
+// or link can run) disagreed with the conversation somewhere: a long link,
+// a late definition, a comment, nesting or seams past the cut. Bounding is
+// therefore off the table; this size cap is the one perf trade-off, and past
+// it a preview loses chips rather than risking wrong ones. The cost is about
+// one extra parse of the body, cached per preview and shared with the
+// conversation's prepared Markdown.
 const LONGEST_BODY = 16_384;
-
-/** `content` up to the first blank line at or past `end`, or whole. */
-function beforeBlankLine(content: string, end: number) {
-  const blank = /(?:\r\n|\n|\r(?!\n))[ \t]*(?:\r\n|\n|\r)/g;
-  blank.lastIndex = end;
-  const match = blank.exec(content);
-  return match ? content.slice(0, match.index + match[0].length) : content;
-}
 
 /**
  * The body bound as its conversation binds it, flattened as preview text
- * is, up to about `end`: the conversation's protected body, with each
- * mention, emoji and literal held in a placeholder, flattened once, and each
- * placeholder read back as its text. Inline Markdown never crosses a blank
- * line, so up to the first one past `end` the protected body flattens as it
- * does whole. Undefined when the conversation renders the body as plain text
- * or it binds no one.
+ * is: the conversation's protected body, with each mention, emoji and
+ * literal held in a placeholder, flattened once, and each placeholder read
+ * back as its text. Undefined when the conversation renders the body as
+ * plain text or it binds no one.
  */
 function flatParts(
   content: string,
-  end: number,
   seams: readonly number[] | undefined,
   labels: Labels,
 ): Part[] | undefined {
@@ -122,7 +120,7 @@ function flatParts(
   );
   if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const flat = spoilerText(
-    beforeBlankLine(protectedContent.content, end),
+    protectedContent.content,
     `<${protectedContent.prefix}spoiler\uE002>`,
     { limit: Number.POSITIVE_INFINITY },
   );
@@ -231,10 +229,7 @@ export function PreviewText({
     if (!mayName(text, parsed)) return [{ text }];
     const key = JSON.stringify([labels, seams, content, full, text, start]);
     return recentParts(key, () => {
-      // Flattening reads from the body's start: flatten about twice what
-      // the preview shows.
-      const end = 2 * (start + text.length) + 256;
-      const flat = flatParts(content, end, seams, parsed);
+      const flat = flatParts(content, seams, parsed);
       return (flat && previewParts(flat, full, text, start)) ?? [{ text }];
     });
   }, [shown.near, edited, labels, content, seams, full, text, start]);

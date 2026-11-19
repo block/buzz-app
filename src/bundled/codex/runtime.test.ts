@@ -9314,7 +9314,7 @@ it("settles a community DM whose final send replies to its message", async () =>
   base.trigger.event.tags = [["h", "channel"]];
   const pending = Symbol("pending");
   try {
-    await f.runtime.run({ ...base, ...scoped(base) });
+    await f.runtime.run({ ...base, config: scoped(base).config });
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     await f.tool("send", {
       reply: base.trigger.event.id,

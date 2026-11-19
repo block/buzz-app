@@ -105,6 +105,7 @@
     "allow-media-lift-subject",
     "allow-media-lift-subject-supported",
     "allow-clipboard-write-text",
+    "allow-clipboard-read-pasted-image",
     "allow-draft-diagnostics-save",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",

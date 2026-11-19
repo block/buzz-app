@@ -904,6 +904,8 @@ and are asked to sign in again in Buzz.
   members. If some of the files you pick, paste or drop can't be attached, such
   as an empty file or any past 10 per message, the rest still attach and a
   notice says how many were left out and why, naming the first few.
+  On macOS desktop, clipboard screenshots in HEIC or TIFF can also paste as
+  PNG attachments.
   If an upload fails, its attachment shows the reason, **Retry**, and
   **Remove**. Follow the error's guidance before retrying, or remove the attachment
   to unblock Send; your typed message stays in the composer. In the main window,

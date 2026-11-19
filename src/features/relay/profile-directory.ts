@@ -325,9 +325,11 @@ export function createProfileDirectory(
       void archives.ensure();
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
-      const [names, usernames] = archived(id)
-        ? [verifiedNames, verifiedUsernames]
-        : [activeNames, activeUsernames];
+      // Only an active verified profile discounts archived namesakes.
+      const [names, usernames] =
+        profile.verified && !archived(id)
+          ? [activeNames, activeUsernames]
+          : [verifiedNames, verifiedUsernames];
       const duplicate =
         (names.get(
           collisionName(

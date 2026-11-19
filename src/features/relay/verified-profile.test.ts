@@ -625,6 +625,44 @@ it("does not count an archived identity as a namesake of an active one", async (
   }
 });
 
+it("keeps a self-declared name suffixed beside an archived verified namesake", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  let sink: VerifiedProfileSink | undefined;
+  const directory = createProfileDirectory(
+    { read: async () => [] },
+    undefined,
+    undefined,
+    {
+      authority: { ...authority, multipleIssuers: false },
+      subscribe(_filter, next) {
+        sink = next;
+        return () => {};
+      },
+    },
+    {
+      snapshot: () => ({ status: "ready", archived: [alice.pubkey] }),
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+  );
+  try {
+    directory.accept([
+      eventDto(signed(alice, { kind: 0, tags: [], content: "{}" })),
+      eventDto(signed(bob, { kind: 0, tags: [], content: '{"name":"Sam"}' })),
+    ]);
+    await directory.ensure([alice.pubkey, bob.pubkey]);
+    assert(sink);
+    sink.event(projection(10, alice.pubkey, [], "Sam"));
+    sink.eose();
+    await tick(); // Verified changes publish on the next macrotask.
+    expect(directory.queries.snapshot().get(bob.pubkey)?.name).toBe(
+      `Sam (${bob.pubkey.slice(0, 10)})`,
+    );
+  } finally {
+    directory.dispose();
+  }
+});
+
 it("reads no archives for a directory without verified namesakes", async () => {
   const { createProfileDirectory } = await import("./profile-directory");
   const ensure = vi.fn(async () => {});

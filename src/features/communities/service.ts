@@ -555,6 +555,16 @@ export function createCommunities(
       if (id) acquire(id);
       update({ selected: id });
     },
+    /** Moves a joined community to the place another holds. The saved
+     * membership order is the switcher's order and its numbered shortcuts'. */
+    reorder(id: string, over: string) {
+      const memberships = [...state.memberships];
+      const from = memberships.findIndex((m) => m.id === id);
+      const to = memberships.findIndex((m) => m.id === over);
+      if (from === -1 || to === -1 || from === to) return;
+      memberships.splice(to, 0, ...memberships.splice(from, 1));
+      update({ memberships });
+    },
     retained({ viewer, communityOrigin }: NavigationScope) {
       const { id } = communityDestination(communityOrigin);
       return viewer === state.viewer &&

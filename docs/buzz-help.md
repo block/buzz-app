@@ -261,6 +261,10 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   means nothing is unread, or its unread isn't known yet, for example because that
   community isn't connected or was closed to make room for one you opened. Only
   the first 24 communities get badges at startup; others show one once opened.
+- To reorder communities, drag one in the switcher, or use **Move up** and
+  **Move down** in its right-click menu. The order is saved on this device and
+  sets the numbered shortcuts: ⌘1 is Personal space and ⌘2–9 follow the
+  communities in order. A newly joined community goes last.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.

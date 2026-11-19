@@ -98,6 +98,7 @@ mod relay;
 mod relay_admin;
 mod sign_out;
 mod system_clock;
+mod voice_search;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
@@ -908,6 +909,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,
+        voice_search::voice_search_available,
+        voice_search::voice_search_prepare,
+        voice_search::voice_search_connect,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]

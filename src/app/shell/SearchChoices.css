@@ -266,29 +266,32 @@
   /* Each kind of result keeps one hue, from the palette's soft fill and its
      readable ink, so a group reads at a glance. Pages and messages stay
      neutral. */
-  .search-palette[data-search-peek] [data-tone] {
+  :is(
+    .search-palette[data-search-peek] [data-tone],
+    .search-peek-tile[data-tone]
+  ) {
     --peek-fill: var(--affordance-subtle);
     --peek-ink: var(--text-secondary);
-  }
-  .search-palette[data-search-peek] [data-tone="channel"] {
-    --peek-fill: var(--surface-categorical-blue);
-    --peek-ink: var(--icon-categorical-blue);
-  }
-  .search-palette[data-search-peek] [data-tone="person"] {
-    --peek-fill: var(--surface-categorical-green);
-    --peek-ink: var(--icon-categorical-green);
-  }
-  .search-palette[data-search-peek] [data-tone="chat"] {
-    --peek-fill: var(--surface-categorical-purple);
-    --peek-ink: var(--icon-categorical-purple);
-  }
-  .search-palette[data-search-peek] [data-tone="agent"] {
-    --peek-fill: var(--surface-categorical-amber);
-    --peek-ink: var(--icon-categorical-amber);
-  }
-  .search-palette[data-search-peek] [data-tone="plugin"] {
-    --peek-fill: var(--surface-categorical-orange);
-    --peek-ink: var(--icon-categorical-orange);
+    &[data-tone="channel"] {
+      --peek-fill: var(--surface-categorical-blue);
+      --peek-ink: var(--icon-categorical-blue);
+    }
+    &[data-tone="person"] {
+      --peek-fill: var(--surface-categorical-green);
+      --peek-ink: var(--icon-categorical-green);
+    }
+    &[data-tone="chat"] {
+      --peek-fill: var(--surface-categorical-purple);
+      --peek-ink: var(--icon-categorical-purple);
+    }
+    &[data-tone="agent"] {
+      --peek-fill: var(--surface-categorical-amber);
+      --peek-ink: var(--icon-categorical-amber);
+    }
+    &[data-tone="plugin"] {
+      --peek-fill: var(--surface-categorical-orange);
+      --peek-ink: var(--icon-categorical-orange);
+    }
   }
   .search-peek-tile {
     display: inline-grid;

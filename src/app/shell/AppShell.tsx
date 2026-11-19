@@ -1,3 +1,4 @@
+import { VoiceJump } from "./VoiceJump";
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import {
@@ -352,6 +353,7 @@ function AppShellContent({
             onSelect={onSelect}
             services={searchServices}
           />
+          <VoiceJump services={searchServices} />
           <FindInPage shortcuts={searchServices?.shortcuts} />
         </div>
         <div

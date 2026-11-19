@@ -690,6 +690,14 @@ and are asked to sign in again in Buzz.
   **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
+- **Jumping by voice**: where the build offers it, ⇧⌘K (Shift+Ctrl+K
+  elsewhere) or the microphone beside Search opens a box with the microphone
+  already on, and what you say appears in it as you speak. Buzz picks among
+  the channels, DMs, agent chats and threads it already has loaded, by name
+  and recent messages, and lists the likeliest as you talk. It opens a match
+  as soon as it is sure, or when you pause. If nothing is a likely match after
+  a longer pause, it says so and keeps the closest places to choose from. You
+  can also type, then press Enter.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to five of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead

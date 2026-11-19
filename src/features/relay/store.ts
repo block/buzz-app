@@ -139,8 +139,14 @@ export type ChannelStoreOptions = {
   cachedOnly?: boolean;
   /** Prioritize the previous conversation; other saved heads restore in background. */
   initialChannelId?: string | undefined;
-  /** Warm every roster channel's head in the background before it is opened. */
-  warm?: boolean;
+  /** Warm roster heads in the background before they are opened: every
+   * channel, or only the starred ones. */
+  warm?: boolean | "starred";
+  /** Background warming waits this long (jittered up to half again) after the
+   * roster first settles, then this gap between reads, so startup and demand
+   * reads go first. Defaults to none. */
+  warmDelay?: number;
+  warmGap?: number;
   /** A reload: skips the saved startup roster, so nothing saved authorizes
    * a channel before the relay does. */
   revalidate?: boolean;
@@ -309,8 +315,10 @@ export function createChannelStore(
     unavailableReason,
     prepared = false,
     persistence,
-    maxHeadBytes = 4 * 1024 * 1024,
-    maxHeads = 64,
+    maxHeadBytes = 32 * 1024 * 1024,
+    maxHeads = 512,
+    warmDelay = 0,
+    warmGap = 0,
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
     maxPublicDirectory = PUBLIC_CHANNEL_DIRECTORY,
@@ -3447,11 +3455,29 @@ export function createChannelStore(
     }
     return best;
   }
+  // Paced so warming never crowds startup: the first read waits for the
+  // jittered delay, and each later one for the gap.
+  let warmNextAt: number | undefined;
+  let warmWake:
+    | { timer: ReturnType<typeof setTimeout>; wake(): void }
+    | undefined;
+  const warmPause = (ms: number) =>
+    ms > 0
+      ? new Promise<void>((wake) => {
+          warmWake = { timer: setTimeout(wake, ms), wake };
+        }).finally(() => {
+          warmWake = undefined;
+        })
+      : undefined;
   async function drainWarm() {
     if (warming || saveData()) return;
     warming = true;
     try {
+      warmNextAt ??= now() + warmDelay * (1 + Math.random() / 2);
       while (warmCandidates.size) {
+        const paused = warmPause(warmNextAt - now());
+        if (paused) await paused;
+        if (disposed || saveData()) return;
         const generation = epoch;
         const channelId = nextWarmId();
         if (!channelId) break;
@@ -3466,6 +3492,7 @@ export function createChannelStore(
         const head = heads.peek(channelId);
         if (head && !head.cached && now() - head.savedAt < FRESH_FOR) continue;
         await requestHead(channelId, "background").catch(() => {});
+        warmNextAt = now() + warmGap;
       }
     } finally {
       warming = false;
@@ -3762,14 +3789,19 @@ export function createChannelStore(
       else void restore().then(() => discover(true, strong));
     },
     /** Background roster warm. The caller supplies preferred ids (e.g. starred);
-     * the rest follow by recency of their retained head, never-fetched last. */
-    warm(preferred: readonly string[]) {
+     * the rest follow by recency of their retained head, never-fetched last.
+     * With `only`, nothing outside the preferred ids is warmed. */
+    warm(preferred: readonly string[], only = false) {
       if (disposed || !transport || list.status !== "ready") return;
       const starred = new Set(preferred);
       warmPreferred = preferred;
       const eligible = new Set(
         list.channels
-          .filter((channel) => !channel.archived || starred.has(channel.id))
+          .filter((channel) =>
+            only
+              ? starred.has(channel.id)
+              : !channel.archived || starred.has(channel.id),
+          )
           .map((channel) => channel.id),
       );
       for (const id of warmCandidates)
@@ -4357,6 +4389,10 @@ export function createChannelStore(
   }
   function dispose() {
     disposed = true;
+    if (warmWake) {
+      clearTimeout(warmWake.timer);
+      warmWake.wake(); // Its loop sees the disposal and stops.
+    }
     clearTimeout(discoverySave);
     clearTimeout(profileSave);
     if (referenceWake) clearTimeout(referenceWake.timer);
@@ -4501,9 +4537,10 @@ export function createChannelStore(
     },
     /** A disconnected stream invalidates a head's freshness lease, not its content.
      * Inactive cached heads will revalidate when demanded, without an all-roster read.
-     * The session drops its queued catch-ups with the stream, so an empty window
-     * that only a queued catch-up marked loading becomes idle: the next ensure()
-     * reads it again. Running reads settle their own windows when cancelled.
+     * The session drops its queued catch-ups and cancels finite reads with the
+     * stream. An empty window someone is reading re-reads its head over HTTP at
+     * once, rather than waiting for its route to replay on a new stream; others
+     * become idle and the next ensure() reads them again.
      * The rows held now are what the catch-up must reach; a second drop before
      * one completes keeps that snapshot, and a window reading its head before
      * the stream is back takes one from that read. */
@@ -4523,13 +4560,26 @@ export function createChannelStore(
             state.snapshot.freshness === "verified" &&
             now() - (state.readAt ?? -Infinity) <= RESUME_READ_AGE;
         }
+        const waiting =
+          state.snapshot.status === "loading" && !state.snapshot.rows.length;
+        if (
+          waiting &&
+          state.ceiling === undefined &&
+          transport &&
+          canReadRemote(state.channelId) &&
+          windowListeners.get(state.channelId)?.size
+        ) {
+          // Its head read, or the catch-up it waited on, was just cancelled.
+          // A seek keeps its own recovery.
+          state.controller?.abort();
+          state.controller = undefined;
+          setWindow(state, { freshness: "cached" });
+          void loadPage(state, null);
+          continue;
+        }
         setWindow(state, {
           freshness: "cached",
-          ...(state.snapshot.status === "loading" &&
-          !state.snapshot.rows.length &&
-          !state.controller
-            ? { status: "idle" }
-            : {}),
+          ...(waiting && !state.controller ? { status: "idle" } : {}),
         });
       }
     },

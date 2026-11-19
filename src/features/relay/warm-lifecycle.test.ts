@@ -116,20 +116,81 @@ it.each([
   },
 );
 
-it("finishes a 65-channel populated roster with the production cache limits", async () => {
+it("finishes a 513-channel populated roster with the production cache limits", async () => {
   const ids = Array.from(
-    { length: 65 },
-    (_, index) => `channel-${String(index).padStart(2, "0")}`,
+    { length: 513 },
+    (_, index) => `channel-${String(index).padStart(3, "0")}`,
   );
-  const h = await setup(ids);
+  const h = await setup(ids, { warmDelay: 1 });
+  // A roster past one 500-entry page reads the next, which is empty; it
+  // settles before the paced warm starts.
+  const page = h.next();
+  expect(page.filters[0]?.kinds).toEqual([39002]);
+  page.respond([]);
+  await flush();
   for (const id of ids) {
+    await vi.waitFor(() => expect(h.pending).toHaveLength(1), {
+      interval: 1,
+    });
+    const request = h.next();
+    expect(request.filters[0]?.["#h"]).toEqual([id]);
+    request.respond(head(id));
+    await flush();
+  }
+  expect(h.store.diagnostics().heads.entries).toBe(512);
+  expect(h.pending).toHaveLength(0);
+}, 30_000);
+
+it("starred-only warming reads starred channels and nothing else", async () => {
+  const h = await setup(["a", "b", "c", "d"], { warm: "starred" });
+  expect(h.pending).toHaveLength(0); // Nothing starred yet.
+  await h.setStars(["c", "a"]);
+  await flush();
+  for (const id of ["c", "a"]) {
     expect(h.pending).toHaveLength(1);
     const request = h.next();
     expect(request.filters[0]?.["#h"]).toEqual([id]);
     request.respond(head(id));
     await flush();
   }
-  expect(h.store.diagnostics().heads.entries).toBe(64);
+  expect(h.pending).toHaveLength(0);
+  await h.setStars(["c", "a", "d"]);
+  await flush();
+  expect(h.next().filters[0]?.["#h"]).toEqual(["d"]);
+  await flush();
+  expect(h.pending).toHaveLength(0);
+});
+
+it("paced warming waits out its start delay and the gap between reads", async () => {
+  const h = await setup(["a", "b"], {
+    warm: "starred",
+    warmDelay: 80,
+    warmGap: 60,
+  });
+  const started = performance.now();
+  await h.setStars(["a", "b"]);
+  await flush();
+  expect(h.pending).toHaveLength(0);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  expect(performance.now() - started).toBeGreaterThanOrEqual(75);
+  h.next().respond(head("a"));
+  const answered = performance.now();
+  await flush();
+  expect(h.pending).toHaveLength(0);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  expect(performance.now() - answered).toBeGreaterThanOrEqual(55);
+  expect(h.next().filters[0]?.["#h"]).toEqual(["b"]);
+});
+
+it("a demand read never waits behind paced warming", async () => {
+  const h = await setup(["a", "b"], {
+    warm: "starred",
+    warmDelay: 10_000,
+  });
+  await h.setStars(["a"]);
+  await flush();
+  h.queries.ensure("b");
+  expect(h.next().filters[0]?.["#h"]).toEqual(["b"]);
   expect(h.pending).toHaveLength(0);
 });
 

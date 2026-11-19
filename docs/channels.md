@@ -1274,7 +1274,7 @@ remain separate delivery gates.
 
 The port retains the prepared-store implementation and its behavior tests:
 
-- 64 prepared heads / 4 MiB serialized memory budget, separate from history.
+- 512 prepared heads / 32 MiB serialized memory budget, separate from history.
 - Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
   are not evicted by speculative preparation. A budget cap is distinct from EOF.
 - Three read slots, at most one background request, with foreground promotion and
@@ -1283,7 +1283,10 @@ The port retains the prepared-store implementation and its behavior tests:
   priority so selection cannot inherit a host-side background wait. Discovery
   restores reverified disk heads against saved, display-only membership before
   network authorization, without waiting for optional channel names, and does not
-  fetch heads across the roster.
+  fetch heads across the roster. The live session prefetches starred channels'
+  heads only: at most one background read at a time, starting 5–7.5 seconds after
+  the roster and starred set settle, 750 ms apart, skipping open channels, heads
+  inside their freshness lease and Save-Data sessions.
   Verified heads save before optional profile enrichment; changed profiles can
   enrich the disk record afterward. Network reads belong to intent, selection and
   retained-window live catch-up. Optional profile enrichment stays background.
@@ -1306,10 +1309,12 @@ The port retains the prepared-store implementation and its behavior tests:
   menu reads a whole large roster. Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
-- Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
-  expiry. Signed cached events are reverified before display. The same database
-  stores account/relay-scoped startup discovery and sidebar organization (a separate
-  8 MiB global budget); old version-1 head records survive the version-2 upgrade.
+- Account/relay-scoped IndexedDB: 512 records / 32 MiB global disk budget, 24-hour
+  expiry. Each save enforces the budget over a `(savedAt, bytes)` key index, never
+  reading the saved heads. Signed cached events are reverified before display. The
+  same database stores account/relay-scoped startup discovery and sidebar
+  organization (a separate 8 MiB global budget); old head records survive the
+  version-2 and version-3 upgrades.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
   Partial discovery never treats an omitted channel as a membership revocation.
   Explicit denial or signed membership removal invalidates private cached views.

@@ -24,6 +24,11 @@ const REFUSAL_ERRORS: Record<CommunityRefusal, string> = {
 };
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
+/** Starred channels prefetch after the sidebar and the opened channel settle,
+ * one head read at a time with this gap, so a long starred list never crowds
+ * demand reads. */
+const STARRED_WARM_DELAY = 5_000;
+const STARRED_WARM_GAP = 750;
 
 export type RelaySnapshot = Readonly<{
   status: "disconnected" | "connecting" | "ready" | "error";
@@ -408,8 +413,11 @@ export function provideRelay(
             localAgents,
             ...(presenceActivity ? { presenceActivity } : {}),
             prepared: true,
-            // Keep intent preparation, but do not fetch every unopened channel.
-            warm: false,
+            // Keep intent preparation and prefetch starred channels, one at a
+            // time and well after startup; never every unopened channel.
+            warm: "starred",
+            warmDelay: STARRED_WARM_DELAY,
+            warmGap: STARRED_WARM_GAP,
             ...(reloading ? { revalidate: true } : {}),
             initialChannelId: readView<string | undefined>(
               transportPartition(transport),

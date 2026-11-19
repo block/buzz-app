@@ -5470,7 +5470,12 @@ it.each(["different", "same"])(
     );
     const { mountChat } = soloModelPreferenceHarness(agents);
     const one = mountChat();
-    const two = mountChat();
+    // Composers on one draft address the same agents, so a reset from either
+    // covers both. Different agents need the second composer's own draft.
+    const two =
+      target === "same"
+        ? mountChat()
+        : mountChat("channel", { threadRootId: "root" });
     const choose = async (
       h: ReturnType<typeof mount>,
       recipient: string,
@@ -13008,6 +13013,7 @@ it("empties for a draft cleared elsewhere, and a stale composer never restores i
   act(() => clearDraft({ scope: "scope" }, "draft:channel"));
   expect(h.input()).toHaveValue("");
 
+  // Typed and saved here: nothing local is left to protect.
   h.fill("Edited here");
   act(() => h.input().blur());
   act(() => clearDraft({ scope: "scope" }, "draft:channel"));
@@ -13025,6 +13031,47 @@ it("empties for a draft cleared elsewhere, and a stale composer never restores i
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
   expect(viewRevision("scope", "draft:channel")).toBeNull();
 });
+
+it.each(["edit", "send", "clear"] as const)(
+  "follows a %s from another composer on the same draft without a conflict",
+  async (change) => {
+    const a = mount();
+    const b = mount({ session: a.session });
+    const save = (h: typeof a) => act(() => h.input().blur());
+    a.fill("first half");
+    save(a);
+    expect(b.input()).toHaveValue("first half");
+    if (change === "edit") {
+      b.fill("first half, second half");
+      save(b);
+    } else if (change === "clear") {
+      b.fill("");
+      save(b);
+    } else {
+      b.fill("Finished in the other composer");
+      await b.user.click(
+        within(b.container).getByRole("button", { name: "Send message" }),
+      );
+      expect(a.messages.send).toHaveBeenCalledOnce();
+      expect(b.input()).toHaveValue("");
+    }
+    expect(a.input()).toHaveValue(
+      change === "edit" ? "first half, second half" : "",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(a.container).queryByRole("button", { name: "Load saved draft" }),
+    ).not.toBeInTheDocument();
+    // Neither composer is left stale: the next edit saves and is followed.
+    a.fill("Typed next");
+    save(a);
+    expect(readView("scope", "draft:channel", null)).toMatchObject({
+      text: "Typed next",
+    });
+    expect(b.input()).toHaveValue("Typed next");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  },
+);
 
 it("compares before local edits and Send even if the storage event has not arrived", async () => {
   const h = mount();
@@ -13137,6 +13184,47 @@ it("leaves active message-edit content alone and reconciles the draft on return"
   fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
   expect(h.input()).toHaveValue("Draft saved elsewhere");
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("loads a draft changed elsewhere when leaving a message edit begun over a typed, saved draft", () => {
+  const { session } = mount({}, undefined, first.pubkey);
+  cleanup();
+  const row = editableMessage();
+  let scope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    scope = useMessageEditScope();
+    return null;
+  }
+  render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={session}
+        scope="scope"
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  const input = screen.getByRole<ComposerInputElement>("textbox");
+  act(() => {
+    input.focus();
+    input.value = "Typed and saved";
+  });
+  fireEvent.input(input);
+  act(() => input.blur());
+  expect(readView("scope", "draft:channel", null)).toMatchObject({
+    text: "Typed and saved",
+  });
+  act(() => scope?.current?.(row));
+  expect(input).toHaveAccessibleName("Edit message");
+  act(() => writeView("scope", "draft:channel", "Draft saved elsewhere"));
+  expect(input).toHaveValue("Original message");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  expect(input).toHaveValue("Draft saved elsewhere");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it.each([

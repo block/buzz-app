@@ -1417,6 +1417,9 @@ function Composer({
       draftAtRevision.current = next;
       savedCursor.current = draftRetirementCursor(scope, draftKey);
       forgetConflict();
+      // Saved text has no edits left to protect: a later change made elsewhere
+      // is loaded, not reported as a conflict.
+      dirty.current = false;
     }
     if (result === "changed" && next === valueRef.current && dirty.current)
       reportConflict(next);

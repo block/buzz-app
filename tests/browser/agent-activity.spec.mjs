@@ -68,7 +68,10 @@ const expectProfile = async (page, agent) => {
     name: "Profile details",
     exact: true,
   });
-  await expect(profile.locator("code").first()).toHaveText(npubEncode(agent));
+  await expect(profile.locator("code").first()).toHaveAttribute(
+    "title",
+    npubEncode(agent),
+  );
   return profile;
 };
 const activity = (kind, channelId, turnId, payload) => ({

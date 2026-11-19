@@ -1351,3 +1351,69 @@ it("opens another conversation's tab in its channel, but not the current channel
     }),
   );
 });
+
+it("retains a pushed profile tab when navigation applies its visit and returns on close", async () => {
+  const host = createNavigationController(createMemoryHistory());
+  const h = await page("stream", host.navigation, true);
+  const initial = h.navigation;
+  if (!initial) throw new Error("Missing navigation");
+  const panel = h.panels.snapshot()[1];
+  if (!panel) throw new Error("Missing profile panel");
+  Object.assign(panel, {
+    keepOpen: false,
+    addressable: true,
+    matches: (target: string) => target.startsWith("person:"),
+    component: Object.assign(
+      ({
+        target,
+        context,
+      }: import("../../features/panels/service").PanelProps) => (
+        <button type="button" onClick={() => context?.push?.("person:lead")}>
+          {target === "person:parent" ? "Open lead" : "Lead profile"}
+        </button>
+      ),
+      { profileHistory: true },
+    ),
+  });
+  const present = () => {
+    const { attempt } = host.navigation.snapshot();
+    h.present({
+      ...initial,
+      entryId: attempt.entry.id,
+      target: attempt.entry.target,
+      signal: attempt.signal,
+      ...(attempt.traversal && { traversal: attempt.traversal }),
+      complete: (result) => host.complete(attempt, result),
+      resolve: (target) => host.resolve(attempt, target),
+    });
+  };
+  act(
+    () =>
+      void host.navigation.open({
+        version: 1,
+        kind: "conversation",
+        scope: { viewer: h.viewer, communityOrigin: "https://relay.test" },
+        channelId: "alpha",
+        detail: { target: "person:parent" },
+      }),
+  );
+  present();
+  await h.user.click(await screen.findByRole("button", { name: "Open lead" }));
+  present();
+  const state = renderHook(() => useChannelTabState(h.session, "alpha"));
+  expect(state.result.current.entries.map((entry) => entry.target)).toEqual([
+    "person:parent",
+    "person:lead",
+  ]);
+  const closes = screen.getAllByRole("button", { name: "Close App tab" });
+  const close = closes[1];
+  if (!close) throw new Error("Missing second tab close button");
+  await h.user.click(close);
+  present();
+  expect(state.result.current.entries.map((entry) => entry.target)).toEqual([
+    "person:parent",
+  ]);
+  expect(
+    await screen.findByRole("button", { name: "Open lead" }),
+  ).toBeVisible();
+});

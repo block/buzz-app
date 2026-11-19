@@ -51,6 +51,9 @@ import { emptySync } from "../../src/features/communities/known-communities";
 import type { ClientSnapshot } from "../../src/features/communities/service";
 
 createAppearance();
+const managedProbe = new URLSearchParams(location.search).has(
+  "managed-profile",
+);
 const soloProbe = new URLSearchParams(location.search).has("solo");
 
 const viewer = keypair(),
@@ -105,8 +108,58 @@ let failMissing = true;
 let replyGate: Promise<void> | undefined;
 let releaseReply = () => {};
 let replyPending = false;
+const directoryData = {
+  version: 1 as const,
+  source_label: "Community directory",
+  source_url: "https://example.org/people/viewer",
+  city: "London, United Kingdom",
+  timezone: "Europe/London",
+  coordinates: { latitude: 51.5074, longitude: -0.1278 },
+  fields: [
+    {
+      key: "email",
+      section: "personal" as const,
+      label: "Email",
+      value: "viewer@example.org",
+    },
+    {
+      key: "team",
+      section: "team" as const,
+      label: "Team",
+      value: "Product design",
+    },
+    {
+      key: "lead",
+      section: "team" as const,
+      label: "Led by",
+      value: "Mic",
+      username: "mic",
+    },
+    {
+      key: "tenure",
+      section: "team" as const,
+      label: "Tenure",
+      value: "3 years, 2 months",
+    },
+    {
+      key: "office",
+      section: "location" as const,
+      label: "Office location",
+      value: "London, United Kingdom",
+    },
+  ],
+};
+
 let data = [
-  profile(viewer, { name: "Viewer", about: "Human profile", picture }),
+  signed(viewer, {
+    kind: 0,
+    tags: [],
+    content: JSON.stringify({
+      name: "Viewer",
+      about: "Human profile",
+      picture,
+    }),
+  }),
   profile(mic, {
     name: new URLSearchParams(location.search).has("name-collision")
       ? "Viewer "
@@ -147,7 +200,7 @@ function session() {
   return createRelaySession(
     {
       viewer: viewer.pubkey,
-      ...(localAgentProbe ? { scope: fixtureOrigin } : {}),
+      ...(localAgentProbe || managedProbe ? { scope: fixtureOrigin } : {}),
       ...(memberMessageProbe
         ? {
             openDirectMessage: async (keys: readonly string[]) => {
@@ -165,7 +218,8 @@ function session() {
             },
           }
         : {}),
-      ...(new URLSearchParams(location.search).has("verified-name")
+      ...(managedProbe ||
+      new URLSearchParams(location.search).has("verified-name")
         ? {
             verifiedProfiles: {
               pubkey: authority.pubkey,
@@ -431,7 +485,8 @@ const manager = createPluginManager(context, {
         ...bundledPlugins.filter(
           ({ manifest }) => manifest.id === "buzz.profiles",
         ),
-        ...(new URLSearchParams(location.search).has("specialized-profile")
+        ...(managedProbe ||
+        new URLSearchParams(location.search).has("specialized-profile")
           ? [
               {
                 manifest: {
@@ -464,11 +519,19 @@ const manager = createPluginManager(context, {
                           return Native ? (
                             <Native
                               {...props}
+                              managedProfile={
+                                managedProbe &&
+                                profilePanelKey(props.target) === viewer.pubkey
+                                  ? directoryData
+                                  : undefined
+                              }
                               renderPersonInfo={(content) => (
                                 <>
-                                  <button type="button">
-                                    Extra profile action
-                                  </button>
+                                  {!managedProbe && (
+                                    <button type="button">
+                                      Extra profile action
+                                    </button>
+                                  )}
                                   {content}
                                 </>
                               )}

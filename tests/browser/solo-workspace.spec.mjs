@@ -227,7 +227,8 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
   await preview.getByRole("button", { name: /^View .+ activity$/ }).click();
   const panel = agentProfile(page);
   await expect(panel).toBeVisible();
-  await expect(panel.locator("code").first()).toHaveText(
+  await expect(panel.locator("code").first()).toHaveAttribute(
+    "title",
     npubEncode(getPublicKey(key)),
   );
   await expect(preview).toBeHidden();
@@ -406,7 +407,8 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await popup.getByRole("button", { name: /Open conversation for/ }).hover();
   await popup.getByRole("button", { name: /View .+ activity/ }).click();
   const panel = agentProfile(page);
-  await expect(panel.locator("code").first()).toHaveText(
+  await expect(panel.locator("code").first()).toHaveAttribute(
+    "title",
     npubEncode(getPublicKey(key)),
   );
   await expect(sidebar).toBeVisible();

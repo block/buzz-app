@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   clockHourCycle,
   useClockPreference,
@@ -10,9 +10,18 @@ import { localTimeLabel, profileTimeZone } from "./local-time";
 export function ProfileLocalTime({
   timeZone,
   className,
+  clockOnly = false,
+  city,
+  inlineDetails = false,
+  visual,
 }: {
   timeZone: string | undefined;
   className: string;
+  clockOnly?: boolean;
+  city?: string | undefined;
+  /** Full profile row: clock and relative offset, without a repeated zone. */
+  inlineDetails?: boolean;
+  visual?: (now: Date, zone: string) => ReactNode;
 }) {
   const { localTimeDetails } = useClockPreference();
   const zone = profileTimeZone(timeZone);
@@ -43,9 +52,37 @@ export function ProfileLocalTime({
     zone,
     now,
     new Intl.DateTimeFormat().resolvedOptions().timeZone,
-    { hourCycle: clockHourCycle(), difference: localTimeDetails },
+    {
+      ...(clockOnly || inlineDetails ? { locale: "en-US" } : {}),
+      hourCycle: clockOnly || inlineDetails ? "h12" : clockHourCycle(),
+      difference: inlineDetails || (!clockOnly && localTimeDetails),
+    },
   );
   if (!label) return null;
+  if (inlineDetails) {
+    return (
+      <>
+        {zone && visual?.(now, zone)}
+        <span className={className}>{label.replace(" local time", "")}</span>
+      </>
+    );
+  }
+  if (clockOnly) {
+    return (
+      <>
+        {zone && visual?.(now, zone)}
+        <span className={className}>
+          {city ? `${city} · ` : ""}
+          {new Intl.DateTimeFormat("en-US", {
+            timeZone: zone,
+            hour: "numeric",
+            minute: "2-digit",
+            hourCycle: "h12",
+          }).format(now)}
+        </span>
+      </>
+    );
+  }
   return (
     <>
       <p className={className}>{label}</p>

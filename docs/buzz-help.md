@@ -283,7 +283,7 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   opening one whose profile has never had a time zone, publishes this device's
   time zone name, such as `America/Los_Angeles`. Each device does this at most
   once per community. To stop, open Settings → **Profile** in that community,
-  uncheck **Show my local time on my profile** and save. That opt-out is kept in
+  uncheck **Show on profile** and save. That opt-out is kept in
   your profile; if another app rewrites your profile without it, a device that
   has never shared there can share once more. Check it again to pick a time
   zone. People who share a time zone show their local time on their profile and
@@ -2081,3 +2081,13 @@ not clear saved drafts or bypass conflict checks.
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
+
+## Profile presentation
+
+Full and hover profiles share header styling, status bubbles and local-time display.
+Full profiles support grouped Personal, Team and Location display data supplied by
+a caller. Location cards render a daylight map when supplied city coordinates;
+without coordinates, a location remains an Apple Maps link. The UI does not fetch
+directory data, resolve coordinates or save profile metadata. Expanded photos stay
+inside the profile pane and restore its scroll position when closed. Linked people
+open in a separate tab while preserving the original profile.

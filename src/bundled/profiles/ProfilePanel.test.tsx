@@ -109,8 +109,9 @@ it("updates a mounted profile from the shared name view without replacing its id
       />,
     );
     expect(await screen.findByRole("heading", { name })).toBeTruthy();
+    expect(screen.queryByText(`@${name}`)).toBeNull();
     expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
-    expect(screen.getByText("Online", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Online", { exact: true })).toBeNull();
     expect(
       screen.getAllByRole("img", { name: `${name} avatar, online` }),
     ).toHaveLength(1);
@@ -124,10 +125,10 @@ it("updates a mounted profile from the shared name view without replacing its id
       screen.getByRole("img", { name: `${name} avatar, online` }),
     ).toBeTruthy();
     expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
-    expect(screen.getByText("Online", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Online", { exact: true })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
-    expect(screen.getByText("Online", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Online", { exact: true })).toBeNull();
     expect(
       screen.getAllByRole("img", { name: `${name} avatar, online` }),
     ).toHaveLength(1);
@@ -145,7 +146,7 @@ it("updates a mounted profile from the shared name view without replacing its id
         name = `${label} name`;
         notify();
       });
-      expect(screen.getByText(label, { exact: true })).toBeVisible();
+      expect(screen.queryByText(label, { exact: true })).toBeNull();
       expect(
         screen.getByRole("img", { name: `${name} avatar, ${status}` }),
       ).toBeTruthy();
@@ -358,7 +359,7 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
     expect(
       screen.getByRole("img", { name: "Thinking agent avatar, thinking" }),
     ).toBeVisible();
-    expect(screen.getByText("Online", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Online", { exact: true })).toBeNull();
     await userEvent
       .setup()
       .click(screen.getByRole("tab", { name: "Channels" }));
@@ -368,7 +369,7 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
     expect(
       screen.getByRole("img", { name: "Thinking agent avatar, thinking" }),
     ).toBeVisible();
-    expect(screen.getByText("Online", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Online", { exact: true })).toBeNull();
     act(() => {
       activity = { ...activity, turns: [] };
       for (const listener of listeners) listener();
@@ -1183,12 +1184,22 @@ it("shows historical verification time and issuer, discloses cache, and hides di
       );
       sink?.eose();
     });
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
-    expect(screen.getByText(/Name verified by Example.*@alice/)).toBeVisible();
-    expect(screen.getByText("Alice Example")).toBeVisible();
     expect(
-      screen.getByText("Alice Example").closest("p")?.querySelector("svg"),
-    ).not.toBeNull();
+      await screen.findByRole("heading", { name: "Alice Example" }),
+    ).toBeVisible();
+    expect(screen.getByText("@alice")).toBeTruthy();
+    expect(screen.queryByText(/Name verified by Example.*@alice/)).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Personal info" }),
+    ).toHaveTextContent("Username@alice");
+    expect(
+      screen.getAllByRole("heading", { name: "Alice Example" }),
+    ).toHaveLength(1);
+    expect(
+      screen
+        .getByRole("heading", { name: "Alice Example" })
+        .querySelector("svg"),
+    ).toBeNull();
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -1219,19 +1230,16 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(
       screen.getByRole("region", { name: "Profile details" }),
     ).toHaveFocus();
-    expect(screen.getByText("Name verified by Example")).toBeVisible();
-    expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
-    expect(screen.getByText(/current issuer endorsement/)).toBeVisible();
-    act(() => live.state({ status: "connecting", routes: [] }));
-    expect(await screen.findByText(/Cached verification/)).toBeVisible();
+    expect(screen.queryByText(/Name verified by/)).toBeNull();
+    await act(async () => live.state({ status: "connecting", routes: [] }));
+    expect(screen.queryByText(/Cached verification/)).toBeNull();
     expect(
-      screen.getByText("Alice Example").closest("p")?.querySelector("svg"),
+      screen
+        .getByRole("heading", { name: "Alice Example" })
+        .querySelector("svg"),
     ).toBeNull();
-    expect(screen.getByText(/Cached evidence/)).toBeVisible();
     await act(async () => live.state({ status: "connected", routes: [] }));
-    await waitFor(() =>
-      expect(screen.queryByText("Name verified by Example")).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByText("Alice Example")).toBeNull());
     expect(screen.queryByText("Alice Example")).toBeNull();
     expect(screen.queryByText(/Cached verification/)).toBeNull();
   } finally {
@@ -1321,6 +1329,165 @@ it("leaves an agent-hinted profile outside person Info composition", () => {
     );
     expect(screen.getByRole("button", { name: "Copy npub" })).toBeTruthy();
     expect(renderPersonInfo).not.toHaveBeenCalled();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("expands inside the visible profile pane, locks its scroll, and restores it on dismissal", async () => {
+  const person = keypair();
+  const event = profile(person, {
+    name: "Photo person",
+    picture: "https://example.org/photo.png",
+  });
+  const owner = createRelaySession({
+    viewer: person.pubkey,
+    relayAuthor: keypair().pubkey,
+    scope: "wss://relay.example.test",
+    query: async (filters) =>
+      filters.some((filter) => filter.kinds?.includes(0)) ? [event] : [],
+    media: (url) => url,
+    subscribe() {
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    tryAgain() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  try {
+    render(
+      <div data-testid="profile-pane">
+        <div data-testid="profile-scroll" style={{ overflowY: "auto" }}>
+          <ProfilePanel
+            relay={relay}
+            target={profileTarget(person.pubkey) ?? ""}
+            close={() => {}}
+          />
+        </div>
+      </div>,
+    );
+    const pane = screen.getByTestId("profile-pane");
+    const scroller = screen.getByTestId("profile-scroll");
+    scroller.scrollTop = 240;
+    Object.defineProperties(scroller, {
+      clientWidth: { configurable: true, value: 360 },
+      clientHeight: { configurable: true, value: 520 },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      top: 80,
+      left: 900,
+      width: 360,
+      height: 520,
+      right: 1260,
+      bottom: 600,
+      x: 900,
+      y: 80,
+      toJSON: () => ({}),
+    });
+    const trigger = await screen.findByRole("button", {
+      name: "Enlarge profile photo",
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    const user = userEvent.setup();
+    await user.click(trigger);
+    await waitFor(() =>
+      expect(screen.getByAltText("Photo person")).toBeVisible(),
+    );
+    const viewer = screen.getByLabelText("Expanded profile photo");
+    expect(viewer.parentElement).toBe(pane);
+    expect(scroller).not.toContainElement(viewer);
+    expect(viewer).toHaveStyle({
+      top: "80px",
+      left: "900px",
+      width: "360px",
+      height: "520px",
+    });
+    expect(scroller.style.overflowY).toBe("hidden");
+    expect(scroller.scrollTop).toBe(240);
+    expect(screen.getByRole("button", { name: "Close photo" })).toHaveFocus();
+    await user.click(screen.getByAltText("Photo person"));
+    expect(trigger.closest("[inert]")).not.toBeNull();
+    await user.click(document.body);
+    await waitFor(() => expect(trigger.closest("[inert]")).toBeNull());
+    expect(scroller.style.overflowY).toBe("auto");
+    expect(scroller.scrollTop).toBe(240);
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger.closest("[inert]")).toBeNull();
+    expect(scroller.style.overflowY).toBe("auto");
+    expect(scroller.scrollTop).toBe(240);
+    expect(screen.getByRole("heading", { name: "Photo person" })).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("renders provider location with the shared row inside Location without requiring a time zone", () => {
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    tryAgain() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  const renderLocation = vi.fn(({ renderRow, section }) =>
+    section === "location"
+      ? renderRow("Office location", "Example City")
+      : section === "team"
+        ? renderRow("Team", "Example Team")
+        : null,
+  );
+  try {
+    const { rerender } = render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(key) ?? ""}
+        close={() => {}}
+        renderPersonFields={renderLocation}
+      />,
+    );
+    const location = screen.getByRole("region", { name: "Location" });
+    expect(within(location).getByText("Example City")).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: "Team" })).getByText(
+        "Example Team",
+      ),
+    ).toBeTruthy();
+    expect(renderLocation.mock.calls[0]?.[0]).toMatchObject({
+      pubkey: key,
+      verifiedUsername: undefined,
+      communityOrigin: undefined,
+    });
+    renderLocation.mockClear();
+    rerender(
+      <ProfilePanel
+        relay={relay}
+        target={`buzz:agent-profile:${key}`}
+        close={() => {}}
+        renderPersonFields={renderLocation}
+      />,
+    );
+    expect(renderLocation).not.toHaveBeenCalled();
+    expect(screen.queryByText("Example City")).toBeNull();
   } finally {
     owner.dispose();
   }

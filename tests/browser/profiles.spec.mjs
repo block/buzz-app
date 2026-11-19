@@ -32,7 +32,7 @@ test("qualifies a whitespace namesake in Members and opens its exact profile", a
     exact: true,
   });
   await expect(panel.getByRole("heading", { name, exact: true })).toBeVisible();
-  await expect(panel.locator("code")).toHaveText(npub);
+  await expect(panel.locator("code")).toHaveAttribute("title", npub);
   await expect(panel.getByText("Mic biography", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
@@ -438,7 +438,7 @@ test("a Profile reopened before its close returns stays open with a fresh visit"
     await openReturnFixture(page);
   for (const activation of ["click", "Space"]) {
     await mention.click();
-    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    await expect(panel.locator("code")).toHaveAttribute("title", npubs.mic);
     const closed = (await read()).id;
     const release = await holdCloseReturn(page);
     let held;
@@ -451,7 +451,7 @@ test("a Profile reopened before its close returns stays open with a fresh visit"
       await expect(closing).toHaveCount(1);
       if (activation === "click") await mention.click();
       else await mention.press(activation);
-      await expect(panel.locator("code")).toHaveText(npubs.mic);
+      await expect(panel.locator("code")).toHaveAttribute("title", npubs.mic);
       expect((await read()).id).toBe(closed);
     } finally {
       held = await release();
@@ -464,7 +464,7 @@ test("a Profile reopened before its close returns stays open with a fresh visit"
         return entry.id !== closed && entry.target.detail?.target;
       })
       .toBe(targets.mic);
-    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    await expect(panel.locator("code")).toHaveAttribute("title", npubs.mic);
     await page.goBack();
     await expect.poll(async () => (await read()).id).toBe(channel);
     await expect(panel).toHaveCount(0);
@@ -484,7 +484,7 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
   await page
     .getByRole("button", { name: "View Pinky profile", exact: true })
     .click();
-  await expect(panel.locator("code")).toHaveText(npubs.pinky);
+  await expect(panel.locator("code")).toHaveAttribute("title", npubs.pinky);
   const closed = (await read()).id;
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
   const release = await holdCloseReturn(page);
@@ -498,7 +498,7 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
     await tabs.getByRole("button", { name: /^Close .* tab$/ }).click();
     await expect(closing).toHaveCount(1);
     await mention.click();
-    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    await expect(panel.locator("code")).toHaveAttribute("title", npubs.mic);
     expect((await read()).id).toBe(closed);
   } finally {
     held = await release();
@@ -510,7 +510,7 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
       return entry.id !== closed && entry.target.detail?.target;
     })
     .toBe(targets.mic);
-  await expect(panel.locator("code")).toHaveText(npubs.mic);
+  await expect(panel.locator("code")).toHaveAttribute("title", npubs.mic);
   await page.goBack();
   await expect.poll(async () => (await read()).id).toBe(channel);
   await expect(panel).toHaveCount(0);
@@ -542,7 +542,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await avatar.focus();
   await avatar.press("Enter");
-  await expect(key).toHaveText(npubs.viewer);
+  await expect(key).toHaveAttribute("title", npubs.viewer);
   const viewerTab = page
     .getByRole("tablist", { name: "Panel tabs" })
     .getByRole("tab", { name: "Viewer", exact: true });
@@ -595,7 +595,9 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     });
   });
   await panel.getByRole("button", { name: "Copy npub" }).click();
-  await expect(panel.getByRole("status")).toHaveText("Public key copied.");
+  await expect(panel.getByRole("button", { name: "Copy npub" })).toHaveText(
+    "Copied",
+  );
   expect(await page.evaluate(() => window.profileCopies)).toEqual([
     npubs.viewer,
   ]);
@@ -605,10 +607,12 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     };
   });
   await panel.getByRole("button", { name: "Copy npub" }).click();
-  await expect(panel.getByRole("status")).toHaveText(
-    "Could not copy. Select the public key above to copy it.",
-  );
-  await expect(key).toHaveText(npubs.viewer);
+  await expect(
+    page.getByText("Could not copy the public key. Try again.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(key).toHaveAttribute("title", npubs.viewer);
   await page.clock.install();
   await page.getByRole("region", { name: "Profile details" }).press("Escape");
   await expect(panel).toHaveCount(0);
@@ -626,7 +630,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     await page.clock.runFor(600);
     await expect(preview).toBeVisible();
     await avatar.click();
-    await expect(key).toHaveText(npubs.viewer);
+    await expect(key).toHaveAttribute("title", npubs.viewer);
     if (pointerVisit !== "stationary") await page.mouse.move(0, 0);
     if (pointerVisit === "back") {
       // Profile pushes the avatar aside. Hover waits for it to settle, so the
@@ -662,7 +666,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     exact: true,
   });
   await mention.click();
-  await expect(key).toHaveText(npubs.mic);
+  await expect(key).toHaveAttribute("title", npubs.mic);
   await expect(panel.getByText("📅 In a meeting")).toBeVisible();
   await expect(panel.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
@@ -675,7 +679,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     .click();
   await expect(mention).toBeFocused();
   await mention.press("Space");
-  await expect(key).toHaveText(npubs.mic);
+  await expect(key).toHaveAttribute("title", npubs.mic);
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "buzz.profiles"),
   );
@@ -700,7 +704,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   });
   await expect(threadMention).toBeVisible();
   await threadMention.click();
-  await expect(key).toHaveText(npubs.pinky);
+  await expect(key).toHaveAttribute("title", npubs.pinky);
   await expect(panel.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
     "squircle",
@@ -772,7 +776,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     "squircle",
   );
   await unknownAvatar.click();
-  await expect(key).toHaveText(npubs.missing);
+  await expect(key).toHaveAttribute("title", npubs.missing);
   await expect(panel.getByText("Could not load this profile.")).toBeVisible();
   await expect(
     panel.getByRole("heading", { name: "Unknown agent", exact: true }),
@@ -1461,9 +1465,12 @@ test("profile preview fits enlarged text and stops its status with reduced motio
     exact: true,
   });
   await avatar.press("Tab");
-  await page.keyboard.press("Tab");
   await expect(profileAction).toBeFocused();
-  await expect(profileAction).toBeInViewport({ ratio: 1 });
+  // The entire identity is now the action, and can exceed the scrollport
+  // with enlarged, reduced-motion status text. Its label stays reachable.
+  const profileName = profileAction.getByText("Viewer", { exact: true });
+  await profileName.scrollIntoViewIfNeeded();
+  await expect(profileName).toBeInViewport({ ratio: 1 });
   await profileAction.click();
   const panel = page.getByRole("complementary", {
     name: "Profile",

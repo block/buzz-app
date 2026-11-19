@@ -1,0 +1,162 @@
+.card {
+  background: var(--surface-panel);
+  border: 1px solid color-mix(in srgb, var(--surface-inverse) 7%, transparent);
+  border-radius: var(--radius-container);
+  overflow: hidden;
+  min-width: 0;
+}
+.card > * + * {
+  position: relative;
+}
+.card > * + *::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-4);
+  border-block-start: 1px solid var(--border-standard);
+  pointer-events: none;
+}
+.destination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-panel-inset);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.destination:hover {
+  background: var(--affordance-subtle-hover);
+}
+.icon {
+  background: var(--surface-inset);
+  border-radius: var(--radius-container);
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--text-secondary);
+}
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  flex: 1;
+  min-width: 0;
+}
+.label {
+  color: var(--text-primary);
+}
+.value {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.time {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  column-gap: var(--space-4);
+  padding: var(--space-panel-inset);
+}
+.time > .icon {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+.timeLabel {
+  grid-column: 2;
+  grid-row: 1;
+}
+.clock {
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: var(--space-half);
+}
+.worldMap {
+  position: relative;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin-inline: calc(-1 * var(--space-panel-inset));
+  margin-top: var(--space-4);
+  min-width: 0;
+}
+.worldMap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.time > .worldMap {
+  margin-bottom: calc(-1 * var(--space-panel-inset));
+}
+.nightLand {
+  fill: var(--text-primary);
+  opacity: 0.08;
+}
+.dayLand {
+  fill: var(--text-primary);
+  opacity: 0.22;
+}
+.nightShade {
+  fill: var(--bg-scrim);
+  opacity: 0.5;
+}
+.daylightBoundary {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 0.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+.dayMarker {
+  color: var(--text-primary);
+}
+.nightMarker {
+  color: var(--text-secondary);
+}
+.card > .worldMap {
+  margin-inline: 0;
+}
+.mapLink {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  display: block;
+}
+.mapLink:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: -2px;
+}
+.mapFallback {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  padding: var(--space-3);
+}
+
+.photoPin {
+  width: 56px;
+  height: 64px;
+  transform: translate(-50%, -100%);
+}
+.photoPin .pinShape {
+  position: absolute;
+  inset: 0;
+  width: 56px;
+  height: 64px;
+  fill: var(--surface-panel);
+  filter: drop-shadow(
+    0 2px 4px color-mix(in srgb, var(--surface-inverse) 15%, transparent)
+  );
+}
+.photoPin img {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+}

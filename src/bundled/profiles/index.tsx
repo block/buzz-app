@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import {
@@ -24,6 +25,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       (props: PanelProps & PersonProfileInfoContent) => (
         <ProfilePanel
           {...props}
+          renderPersonFields={(context) =>
+            context.managed
+              ? renderManagedFields(context)
+              : props.renderPersonFields?.(context)
+          }
           relay={ctx.relay}
           navigation={ctx.navigation}
           agents={ctx.agents}
@@ -31,7 +37,31 @@ export const apply: PluginModule["apply"] = (ctx) => {
           linkRenderers={ctx.conversation.links}
         />
       ),
-      { supportsPersonInfoContent: true },
+      { supportsPersonInfoContent: true, supportsPersonFields: true },
     ),
   });
 };
+
+function renderManagedFields({
+  managed: data,
+  section,
+  renderRow,
+}: Parameters<NonNullable<PersonProfileInfoContent["renderPersonFields"]>>[0]) {
+  if (!data) return null;
+  const rows = data.fields.filter(
+    (field) =>
+      field.section === section &&
+      field.key !== "username" &&
+      field.key !== "timezone",
+  );
+  if (!rows.length) return null;
+  return (
+    <>
+      {rows.map(({ key, label, value, username: target }) => (
+        <Fragment key={key}>
+          {renderRow(label, value || "Not set", value ? target : undefined)}
+        </Fragment>
+      ))}
+    </>
+  );
+}

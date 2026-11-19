@@ -607,6 +607,8 @@ guard reports exact accepted light-mode role/color/surface pairs; other pairs
 remain enforced. This exception is not an accessibility pass. Dark Away meets
 3:1 on these opaque surfaces. Offline stays unoutlined. Keep badge footprints, Bézier
 artwork cutouts, presence behavior, and accessible names with the shared Avatar owner.
+Large hover-profile portraits use `statusBadgeSize="compact"`: 16px badges on 88px portraits,
+with proportionally smaller clearance and curved joins.
 
 For a separate trailing action attached to a row, use `IconButton shape="row-end"`
 in a stretched flex slot. It keeps the size-selected width, fills the row height,

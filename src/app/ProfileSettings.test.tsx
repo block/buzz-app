@@ -200,7 +200,8 @@ it("shows the verified name read-only and keeps the signed name when saving", as
   const name = await screen.findByLabelText("Display name");
   await waitFor(() => expect(name).toHaveValue("Verified Name"));
   expect(name).toHaveAttribute("readonly");
-  expect(screen.getByText("Name verified by Block · @verified")).toBeVisible();
+  expect(screen.getByLabelText("Username")).toHaveValue("@verified");
+  expect(screen.getByLabelText("Username")).toBeDisabled();
   expect(ensure).toHaveBeenCalledWith([viewer]);
   await user.type(
     screen.getByLabelText("Profile description (optional)"),
@@ -231,9 +232,8 @@ it("keeps the signed name when verification arrives after a name edit", async ()
 
   expect(name).toHaveValue("Verified Name");
   expect(name).toHaveAttribute("readonly");
-  expect(
-    screen.getByText("Cached verification from Block · @verified"),
-  ).toBeVisible();
+  expect(screen.getByLabelText("Username")).toHaveValue("@verified");
+  expect(screen.getByLabelText("Username")).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(publish).toHaveBeenCalledWith(
@@ -1037,7 +1037,7 @@ it("shows a profile without a time zone as sharing this device's, and records un
     { wrapper: ToastProvider },
   );
   const share = await screen.findByRole("checkbox", {
-    name: "Show my local time on my profile",
+    name: "Show on profile",
   });
   // No `tz` key yet: sharing by default will publish this device's zone.
   await waitFor(() => expect(share).toBeChecked());
@@ -1138,7 +1138,7 @@ it("records clearing a shared time zone as an opt-out", async () => {
     { wrapper: ToastProvider },
   );
   const share = await screen.findByRole("checkbox", {
-    name: "Show my local time on my profile",
+    name: "Show on profile",
   });
   await waitFor(() => expect(share).toBeChecked());
   expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
@@ -1179,7 +1179,7 @@ it("saves after a background write already handed to the writer, from what it pu
     { wrapper: ToastProvider },
   );
   const share = await screen.findByRole("checkbox", {
-    name: "Show my local time on my profile",
+    name: "Show on profile",
   });
   await waitFor(() => expect(share).toBeChecked());
   // Sharing by default has dispatched its write; the writer has not signed it.
@@ -1235,7 +1235,7 @@ it("a time zone only save keeps fields another client changed since Settings ope
     { wrapper: ToastProvider },
   );
   const share = await screen.findByRole("checkbox", {
-    name: "Show my local time on my profile",
+    name: "Show on profile",
   });
   await waitFor(() => expect(share).toBeChecked());
   // Another device edits the profile while Settings is open.
@@ -1280,7 +1280,7 @@ it("unchecking then checking a saved zone offers the saved zone again", async ()
     { wrapper: ToastProvider },
   );
   const share = await screen.findByRole("checkbox", {
-    name: "Show my local time on my profile",
+    name: "Show on profile",
   });
   await waitFor(() => expect(share).toBeChecked());
   await user.click(share);

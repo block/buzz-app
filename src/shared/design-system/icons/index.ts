@@ -362,6 +362,8 @@ import TablerTrashIcon from "@tabler/icons-react/dist/esm/icons/IconTrash.mjs";
 export const TrashIcon = defineIcon("tabler", TablerTrashIcon);
 import TablerUserIcon from "@tabler/icons-react/dist/esm/icons/IconUser.mjs";
 export const UserIcon = defineIcon("tabler", TablerUserIcon);
+import TablerUserCircleIcon from "@tabler/icons-react/dist/esm/icons/IconUserCircle.mjs";
+export const UserCircleIcon = defineIcon("tabler", TablerUserCircleIcon);
 import TablerShareIcon from "@tabler/icons-react/dist/esm/icons/IconShare2.mjs";
 export const ShareIcon = defineIcon("tabler", TablerShareIcon);
 import TablerForwardIcon from "@tabler/icons-react/dist/esm/icons/IconArrowForwardUp.mjs";

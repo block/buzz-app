@@ -1049,6 +1049,10 @@ export function useChannelTabState(
       update((s) => (s.sideDrawer === sideDrawer ? s : { ...s, sideDrawer })),
     [update],
   );
+  const getEntries = useCallback(
+    () => snapshot()[key]?.entries ?? empty.entries,
+    [key, snapshot],
+  );
   // Selection reads stay synchronous and stable for navigation handoff effects.
   const getSelected = useCallback(
     () => snapshot()[key]?.selected ?? empty.selected,
@@ -1064,6 +1068,7 @@ export function useChannelTabState(
     () => ({
       ...state,
       // Synchronous actions need the selection before React rerenders.
+      getEntries,
       getSelected,
       getMainSelected,
       threadVisits,
@@ -1089,6 +1094,7 @@ export function useChannelTabState(
     }),
     [
       state,
+      getEntries,
       getSelected,
       getMainSelected,
       threadVisits,

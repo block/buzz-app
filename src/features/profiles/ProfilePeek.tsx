@@ -1,9 +1,5 @@
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  UserIcon,
-  ChatCircleIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
+import { ChatCircleIcon, RobotIcon } from "../../shared/design-system/icons";
 import { useProfileMessage } from "./useProfileMessage";
 import {
   useState,
@@ -20,16 +16,10 @@ import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import { useMessageDensity } from "../../shared/theme/message-density";
 import type { RelaySession } from "../relay/session";
-import { UserStatusDisplay } from "../user-status/StatusDisplay";
+import { ProfileStatusBubble } from "./ProfileStatusBubble";
 import { ProfileBackdrop } from "./ProfileBackdrop";
-import { ProfileLocalTime } from "./ProfileLocalTime";
+import { ProfileHeaderTime } from "./ProfileHeaderTime";
 import styles from "./ProfilePeek.module.css";
-import {
-  otherVerifiedName,
-  useNamePreference,
-  verifiedLabel,
-} from "./name-preference";
-
 type ProfilePeekProps = {
   trigger: ReactElement;
   name: string;
@@ -44,45 +34,21 @@ type ProfilePeekProps = {
   onFocusChange?(focused: boolean): void;
 };
 
-/** The verified name this reader does not go by. Mounted only in an open
- * preview, so closed rows never subscribe to the directory. */
-function OtherName({
+/** The full name, read only while the preview is open. */
+function ActualName({
   session,
   pubkey,
+  fallback,
 }: {
   session: RelaySession;
   pubkey: string;
+  fallback: string;
 }) {
-  const verified = useSyncExternalStore(
-    session.profiles.subscribe,
-    () => session.profiles.snapshot().get(pubkey)?.verified,
-  );
-  const preference = useNamePreference();
-  const otherName =
-    verified &&
-    otherVerifiedName(verifiedLabel(verified, preference), verified);
-  return otherName ? (
-    <div className="text-caption text-secondary">{otherName}</div>
-  ) : null;
-}
-
-/** Their shared local time, read only while the preview is open. */
-function LocalTime({
-  session,
-  pubkey,
-}: {
-  session: RelaySession;
-  pubkey: string;
-}) {
-  const timeZone = useSyncExternalStore(
-    session.profiles.subscribe,
-    () => session.profiles.snapshot().get(pubkey)?.tz,
+  const profile = useSyncExternalStore(session.profiles.subscribe, () =>
+    session.profiles.snapshot().get(pubkey),
   );
   return (
-    <ProfileLocalTime
-      timeZone={timeZone}
-      className="text-caption text-secondary"
-    />
+    profile?.verified?.fullName ?? profile?.verified?.displayName ?? fallback
   );
 }
 
@@ -102,7 +68,6 @@ export function ProfilePeek({
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
   const compact = useMessageDensity() === "compact";
-  const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
   const returningFromProfile = useRef<"pending" | "returned" | null>(null);
   const [watchReturnPointer, setWatchReturnPointer] = useState(false);
@@ -234,7 +199,6 @@ export function ProfilePeek({
           details.cancel();
           return;
         }
-        if (next) setHoveredAction(undefined);
         setOpen(next);
       }}
       side="right"
@@ -244,88 +208,72 @@ export function ProfilePeek({
     >
       <div className={styles.content} {...focusRegion}>
         <div className={styles.lockup} data-no-picture={!picture || undefined}>
-          <div className={styles.backdrop}>
-            <ProfileBackdrop src={picture} />
-          </div>
-          <div className={styles.artwork}>
-            <div className={styles.portrait}>
-              <AgentAvatar
-                session={session}
-                agentPubkey={pubkey}
-                channelId={channelId}
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={agent ? "squircle" : "circle"}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-            </div>
-          </div>
-          <div className={styles.identity}>
-            <div className={`${styles.name} text-label-sm`}>
-              {agent && <RobotIcon aria-label="Agent" size={14} />}
-              {name}
-            </div>
-            {session && <OtherName session={session} pubkey={pubkey} />}
-            {session && <LocalTime session={session} pubkey={pubkey} />}
-            {session && (
-              <UserStatusDisplay
-                session={session}
-                userId={pubkey}
-                size="caption"
-              />
-            )}
-          </div>
-        </div>
-        <div
-          className={styles.actions}
-          data-hovered-action={hoveredAction}
-          onPointerLeave={() => setHoveredAction(undefined)}
-        >
-          <IconButton
+          <button
             ref={profileButton}
-            data-profile-action="profile"
-            onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") setHoveredAction("profile");
-            }}
-            size="sm"
-            shape="round"
-            variant="subtle"
+            type="button"
+            className={styles.openProfile}
             aria-label="View profile"
             onClick={openProfile}
-            icon={
-              <span className={styles.actionContent}>
-                {agent ? <RobotIcon size={16} /> : <UserIcon size={16} />}
-                <span className={styles.actionText} aria-hidden="true">
-                  Profile
-                </span>
-              </span>
-            }
-          />
-          {message.available && (
-            <IconButton
+          >
+            <div className={styles.backdrop}>
+              <ProfileBackdrop src={picture} />
+            </div>
+            <div className={styles.artwork}>
+              {session && (
+                <ProfileStatusBubble
+                  session={session}
+                  pubkey={pubkey}
+                  compact
+                />
+              )}
+              <div className={styles.portrait}>
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={pubkey}
+                  channelId={channelId}
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={agent ? "squircle" : "circle"}
+                  statusBadgeSize="compact"
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+              </div>
+            </div>
+            <div className={styles.identity}>
+              <div className={`${styles.name} text-label-sm`}>
+                {agent && <RobotIcon aria-label="Agent" size={14} />}
+                {session ? (
+                  <ActualName
+                    session={session}
+                    pubkey={pubkey}
+                    fallback={name}
+                  />
+                ) : (
+                  name
+                )}
+              </div>
+              {session && (
+                <ProfileHeaderTime session={session} pubkey={pubkey} />
+              )}
+            </div>
+          </button>
+        </div>
+        {message.available && (
+          <div className={styles.actions}>
+            <Button
               size="sm"
-              shape="round"
               variant="subtle"
-              data-profile-action="message"
-              onPointerEnter={(event) => {
-                if (event.pointerType !== "touch") setHoveredAction("message");
-              }}
               aria-label="Message"
               loading={message.opening}
               onClick={() => void message.open()}
-              icon={
-                <span className={styles.actionContent}>
-                  <ChatCircleIcon size={16} />
-                  <span className={styles.actionText} aria-hidden="true">
-                    Message
-                  </span>
-                </span>
-              }
-            />
-          )}
-        </div>
+            >
+              <ChatCircleIcon size={16} />
+              Message
+            </Button>
+          </div>
+        )}
         {message.error && (
           <p role="alert" className="text-body-sm text-danger">
             {message.error}

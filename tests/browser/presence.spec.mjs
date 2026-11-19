@@ -72,10 +72,15 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     ).toBe(true);
     // One locator serves both checks, so a renamed label cannot leave the
     // held-state check matching nothing while the released check still passes.
-    const presenceLine = profile.getByText(/^(Online|Away|Offline)$/);
+    const presenceLine = profile.getByRole("img", {
+      name: /^Alice Fixture avatar, (online|away|offline)$/,
+    });
     await expect(presenceLine).toHaveCount(0);
     app.relay.releasePresence();
-    await expect(presenceLine).toHaveText("Online");
+    await expect(presenceLine).toHaveAttribute(
+      "aria-label",
+      "Alice Fixture avatar, online",
+    );
     await expect(presenceLine).toBeVisible();
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
@@ -273,9 +278,7 @@ test.describe("human message bylines omit presence", () => {
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toBeVisible();
-    await expect(profile.getByText("Online", { exact: true })).toBeVisible();
     app.presence("away");
-    await expect(profile.getByText("Away", { exact: true })).toBeVisible();
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, away" }),
     ).toBeVisible();

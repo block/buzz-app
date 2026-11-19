@@ -1,4 +1,5 @@
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -12,35 +13,28 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
   /* A centred column fits its content; the unwrapped status would overflow. */
   max-width: 100%;
   text-align: center;
   overflow-wrap: anywhere;
 }
-.ownActions {
-  flex-direction: column;
-}
-.verifiedName {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  max-width: 100%;
-}
-.verifiedName > span {
-  min-width: 0;
-}
-.verificationIcon {
-  flex-shrink: 0;
-  width: 1em;
-  height: 1em;
-}
 .portrait {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
+  cursor: default;
   flex: 0 0 auto;
   width: 5rem;
   height: 5rem;
   overflow: visible;
+}
+.portrait:not(:disabled) {
+  cursor: pointer;
 }
 .identity h2 {
   margin: 0;
@@ -70,20 +64,20 @@
   gap: var(--space-2);
   min-width: 0;
 }
+/* This short value and compact action fit side by side in the profile panel. */
+.publicKey [class~="buzz-preference-row-trailing"] {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+}
 .keyValue {
   display: block;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   user-select: text;
   font-family: var(--font-mono);
-  font-size: var(--text-mono);
-  line-height: var(--text-mono--line-height);
-  letter-spacing: var(--text-mono--letter-spacing);
-}
-.feedback {
-  color: var(--text-subtle);
-}
-.feedback:empty {
-  display: none;
 }
 
 .tabContent {
@@ -123,7 +117,64 @@
   gap: var(--space-4);
   min-width: 0;
 }
-.profileContents[inert] {
+/* The returning shared-layout portrait must also clear the body below the hero. */
+.profileContents > [data-profile-hero] {
+  z-index: 1;
+}
+.profileContents > :not([data-profile-hero]),
+.profileContents > [data-profile-hero] > :not([aria-hidden], .portrait) {
+  transform-origin: center top;
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+}
+.profileContents[data-photo-open] > :not([data-profile-hero]),
+.profileContents[data-photo-open]
+  > [data-profile-hero]
+  > :not([aria-hidden], .portrait) {
+  opacity: 0;
+  transform: translateY(8px) scale(0.94);
+  pointer-events: none;
+}
+/* Motion owns the portrait's transform along the shared photo path. */
+.profileContents[data-photo-open] .portrait {
+  /* Shared-layout Motion writes inline opacity; visibility keeps the source hidden. */
   visibility: hidden;
   opacity: 0;
+  pointer-events: none;
+}
+.profileContents[data-photo-instant] > *,
+.profileContents[data-photo-instant] > [data-profile-hero] > * {
+  transition: none;
+}
+.photoViewer {
+  position: fixed;
+  z-index: var(--layer-dialog);
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: transparent;
+}
+.expandedPhoto {
+  width: 100%;
+  max-width: 65vh;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.photoClose {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .profileContents > *,
+  .profileContents > [data-profile-hero] > * {
+    transition: none;
+  }
 }

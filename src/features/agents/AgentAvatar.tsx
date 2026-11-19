@@ -82,7 +82,12 @@ function ActiveAgentAvatar({
         }
         aria-hidden={!props.alt || undefined}
       >
-        <ThinkingBadge avatarSize={size} thinking={thinking} enabled={visible}>
+        <ThinkingBadge
+          avatarSize={size}
+          thinking={thinking}
+          enabled={visible}
+          badgeScale={props.statusBadgeSize === "compact" ? 16 / 22 : 1}
+        >
           <Avatar
             {...props}
             alt=""

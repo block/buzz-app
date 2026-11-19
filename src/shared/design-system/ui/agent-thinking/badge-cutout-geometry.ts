@@ -32,7 +32,15 @@ export function badgeCutoutPath(
   gap: number,
   progress = 0,
   outerJoinRounding = 1,
+  shape: "circle" | "squircle" = "squircle",
 ) {
+  const outlinePoint = (t: number): Point =>
+    shape === "circle"
+      ? {
+          x: 44 + 44 * Math.sin((t * Math.PI) / 2),
+          y: 44 - 44 * Math.cos((t * Math.PI) / 2),
+        }
+      : avatarPoint(t);
   const radius = height / 2 + gap;
   const straight = (width - height) / 2;
   const power = 5 - 3 * progress;
@@ -45,11 +53,11 @@ export function badgeCutoutPath(
   for (let i = 0; i < 64; i++) {
     let a = 1 + i / 32;
     let b = a + 1 / 32;
-    const startsInside = inside(avatarPoint(a));
-    if (startsInside === inside(avatarPoint(b))) continue;
+    const startsInside = inside(outlinePoint(a));
+    if (startsInside === inside(outlinePoint(b))) continue;
     for (let step = 0; step < 16; step++) {
       const middle = (a + b) / 2;
-      if (inside(avatarPoint(middle)) === startsInside) a = middle;
+      if (inside(outlinePoint(middle)) === startsInside) a = middle;
       else b = middle;
     }
     crossings.push((a + b) / 2);
@@ -57,9 +65,9 @@ export function badgeCutoutPath(
   const enter = crossings[0];
   const leave = crossings[1];
   if (enter === undefined || leave === undefined)
-    return `M ${Array.from({ length: 257 }, (_, i) => xy(avatarPoint(i / 64))).join(" L ")} Z`;
-  const a = avatarPoint(enter);
-  const b = avatarPoint(leave);
+    return `M ${Array.from({ length: 257 }, (_, i) => xy(outlinePoint(i / 64))).join(" L ")} Z`;
+  const a = outlinePoint(enter);
+  const b = outlinePoint(leave);
   const angle = (p: Point) => {
     const dx =
       (Math.sign(p.x - x) * Math.max(0, Math.abs(p.x - x) - straight)) / radius;
@@ -111,7 +119,7 @@ export function badgeCutoutPath(
   };
   const notch = trimArc(holePoint, a, b, 128);
   const rim = trimArc(
-    (t) => avatarPoint(leave + (4 + enter - leave) * t),
+    (t) => outlinePoint(leave + (4 + enter - leave) * t),
     b,
     a,
     256,

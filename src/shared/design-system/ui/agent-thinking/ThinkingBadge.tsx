@@ -9,19 +9,22 @@ export function ThinkingBadge({
   enabled = true,
   children,
   avatarSize = 88,
+  badgeScale = 1,
 }: {
   thinking: boolean;
   enabled?: boolean;
   children: ReactNode;
   avatarSize?: number;
+  badgeScale?: number;
 }) {
   const id = useId();
   const pixels = Math.max(1, avatarSize);
   const cappedScale = Math.min(1, 88 / pixels);
-  const gap = Math.min(6.6, (3 * 88) / pixels);
+  const gap = Math.min(6.6, (3 * 88) / pixels) * badgeScale;
   // Keep the available badge at its established 25% size and 85% anchor.
   // Large thinking pills grow gently with the portrait instead of hitting a hard cap.
-  const scale = Math.sqrt(cappedScale);
+  const scale = Math.sqrt(cappedScale) * badgeScale;
+  const badgeSize = 22 * badgeScale;
   // Chat pills use 25% less clearance; blend back to the full gap at 80px.
   const thinkingGap =
     gap * (0.75 + 0.25 * Math.max(0, Math.min(1, (avatarSize - 40) / 40)));
@@ -61,8 +64,8 @@ export function ThinkingBadge({
           dots.current.style.opacity = String(dotsProgress.current);
         const x = corner + (44 - corner) * p;
         const y = corner + (88 - corner) * p;
-        const w = 22 + (width - 22) * p;
-        const h = 22 + (height - 22) * p;
+        const w = badgeSize + (width - badgeSize) * p;
+        const h = badgeSize + (height - badgeSize) * p;
         movingNotch.current?.setAttribute(
           "d",
           badgeCutoutPath(
@@ -81,7 +84,7 @@ export function ThinkingBadge({
             top: `${y}px`,
             width: `${w}px`,
             height: `${h}px`,
-            borderRadius: `${7 + (height / 2 - 7) * p}px`,
+            borderRadius: `${7 * badgeScale + (height / 2 - 7 * badgeScale) * p}px`,
           });
         }
         root.current?.setAttribute(
@@ -100,7 +103,7 @@ export function ThinkingBadge({
       media.removeEventListener("change", start);
       document.removeEventListener("visibilitychange", start);
     };
-  }, [thinking, scale, gap, thinkingGap]);
+  }, [thinking, scale, gap, thinkingGap, badgeSize, badgeScale]);
   return (
     <span
       ref={root}
@@ -121,7 +124,7 @@ export function ThinkingBadge({
               ref={movingNotch}
               className="badge-pill-notch"
               transform={`scale(${1 / 88})`}
-              d={badgeCutoutPath(corner, corner, 22, 22, gap)}
+              d={badgeCutoutPath(corner, corner, badgeSize, badgeSize, gap)}
             />
           </clipPath>
         </defs>

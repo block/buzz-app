@@ -1,0 +1,14 @@
+.row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.visibility {
+  flex: none;
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules references the shared choice recipe. */
+.visibility :global(.buzz-choice) {
+  flex-direction: row-reverse;
+  gap: var(--space-3);
+}

@@ -1,8 +1,8 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// SVG/text line placement requires a layout engine; jsdom cannot observe it.
+// Verify the simplified identity remains readable across themes and text sizes.
 for (const fullName of [true, false]) {
-  test(`profile verification checkmark follows the verified ${fullName ? "full name" : "username"}`, async ({
+  test(`profile presents the verified ${fullName ? "full name" : "username"}`, async ({
     page,
   }, info) => {
     await page.goto(
@@ -12,19 +12,14 @@ for (const fullName of [true, false]) {
       .getByRole("button", { name: "View Viewer profile", exact: true })
       .click();
     const panel = page.getByRole("region", { name: "Profile details" });
-    const name = panel.getByText(fullName ? "Viewer Example" : "@viewer", {
+    const name = panel.getByRole("heading", {
+      name: fullName ? "Viewer Example" : "Viewer",
       exact: true,
     });
-    const label = name.locator("..");
-    const issuer = panel.getByText(
-      fullName
-        ? "Name verified by Example · @viewer"
-        : "Name verified by Example",
-      { exact: true },
-    );
     await expect(name).toBeVisible();
-    await expect(label.locator("svg")).toHaveCount(1);
-    await expect(issuer.locator("svg")).toHaveCount(0);
+    await expect(name.locator("svg")).toHaveCount(0);
+    await expect(panel.getByText("@viewer", { exact: true })).toBeVisible();
+    await expect(panel.getByText(/Name verified by/)).toHaveCount(0);
     for (const theme of ["light", "dark"]) {
       await page.emulateMedia({ colorScheme: theme });
       for (const width of [480, 1440]) {
@@ -33,26 +28,31 @@ for (const fullName of [true, false]) {
           await page.evaluate((size) => {
             document.documentElement.style.fontSize = size;
           }, fontSize);
-          await expect
-            .poll(() =>
-              label.evaluate((element) => {
-                const icon = element
-                  .querySelector("svg")
-                  .getBoundingClientRect();
-                const text = element
-                  .querySelector("span")
-                  .getBoundingClientRect();
-                return (
-                  icon.left >= text.right &&
-                  icon.top < text.bottom &&
-                  icon.bottom > text.top
-                );
-              }),
-            )
-            .toBe(true);
+          await expect(name).toBeInViewport({ ratio: 1 });
         }
       }
       await panel.screenshot({ path: info.outputPath(`${theme}.png`) });
     }
   });
 }
+
+// Display-only supplied data exercises the real profile layout without a provider service.
+test("renders supplied profile fields and city map without a profile provider", async ({
+  page,
+}, info) => {
+  await page.goto("/tests/fixtures/profiles.html?managed-profile");
+  await page
+    .getByRole("button", { name: "View Viewer profile", exact: true })
+    .click();
+  const panel = page.getByRole("region", { name: "Profile details" });
+  await expect(
+    panel.getByRole("img", { name: /Map highlighting London/ }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText("Product design", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText("viewer@example.org", { exact: true }),
+  ).toBeVisible();
+  await panel.screenshot({ path: info.outputPath("supplied-profile.png") });
+});

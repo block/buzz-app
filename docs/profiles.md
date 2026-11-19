@@ -199,3 +199,13 @@ alongside a transient list error; loading/error/partial discovery is not an
 empty membership claim; retry uses `refreshList`. Rows navigate using the existing
 scoped conversation destination when a valid community scope and navigation
 capability exist, otherwise remain plain text.
+
+## Profile presentation
+
+Full and hover profiles share header styling, status bubbles and local-time display.
+Full profiles support grouped Personal, Team and Location display data supplied by
+a caller. Location cards render a daylight map when supplied city coordinates;
+without coordinates, a location remains an Apple Maps link. The UI does not fetch
+directory data, resolve coordinates or save profile metadata. Expanded photos stay
+inside the profile pane and restore its scroll position when closed. Linked people
+open in a separate tab while preserving the original profile.

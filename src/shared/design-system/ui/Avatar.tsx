@@ -11,6 +11,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { badgeCutoutPath } from "./agent-thinking/badge-cutout-geometry";
+import { Tooltip } from "./Tooltip";
+
 /** The host may supply artwork for recognized sources; unknown images keep normal loading. */
 export const AvatarArtworkContext = createContext<
   ((src: string) => ReactNode) | null
@@ -131,6 +134,8 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  statusTooltip,
+  statusBadgeSize = "default",
   loading,
 }: {
   src?: string | null | undefined;
@@ -142,6 +147,10 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  /** Optional hint anchored to the presence dot. */
+  statusTooltip?: string;
+  /** Smaller presence badge and matching joins for large hover portraits. */
+  statusBadgeSize?: "default" | "compact";
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
@@ -155,8 +164,16 @@ export function Avatar({
       data-size={size}
       data-shape={shape}
       data-status={statusBadge}
+      data-status-size={statusBadgeSize}
     >
       <BaseAvatar.Root
+        style={
+          statusBadge && statusBadgeSize === "compact"
+            ? {
+                maskImage: `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88"><path fill="white" d="${badgeCutoutPath(74.8, 74.8, 16, 16, 4.8, shape === "circle" ? 1 : 0, 1, shape)}"/></svg>`)}")`,
+              }
+            : undefined
+        }
         data-buzz-ui=""
         className="buzz-avatar"
         data-size={size}
@@ -183,9 +200,18 @@ export function Avatar({
             </span>
           ))}
       </BaseAvatar.Root>
-      {statusBadge && (
-        <span className="buzz-avatar-status-dot" aria-hidden="true" />
-      )}
+      {statusBadge &&
+        (statusTooltip ? (
+          <Tooltip content={statusTooltip}>
+            <span
+              className="buzz-avatar-status-dot"
+              data-status-tooltip=""
+              aria-hidden="true"
+            />
+          </Tooltip>
+        ) : (
+          <span className="buzz-avatar-status-dot" aria-hidden="true" />
+        ))}
     </span>
   );
 }

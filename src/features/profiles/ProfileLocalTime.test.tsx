@@ -63,3 +63,45 @@ it("catches up when the window returns after sleep", () => {
   expect(time()).toMatch(/6:05|18:05/);
   expect(vi.getTimerCount()).toBe(1);
 });
+
+it("shows only the clock in the compact AM/PM profile row", () => {
+  vi.useFakeTimers({ now: new Date("2026-01-15T15:41:30Z") });
+  render(
+    <ProfileLocalTime
+      timeZone="Pacific/Kiritimati"
+      className="local-time"
+      clockOnly
+    />,
+  );
+  expect(screen.getByText("5:41 AM")).toBeTruthy();
+  expect(screen.queryByText(/local time/)).toBeNull();
+  expect(screen.queryByText("Pacific/Kiritimati")).toBeNull();
+});
+
+it("keeps the time difference in the full profile row without duplicating its label or zone", () => {
+  vi.useFakeTimers({ now: new Date("2026-01-15T15:41:30Z") });
+  setClockPreference({ localTimeDetails: false });
+  render(
+    <ProfileLocalTime
+      timeZone="Pacific/Kiritimati"
+      className="local-time"
+      inlineDetails
+    />,
+  );
+  expect(screen.getByText(/5:41 AM.* · .*ahead/)).toBeTruthy();
+  expect(screen.queryByText(/local time|Pacific\/Kiritimati/)).toBeNull();
+});
+
+it("shows the office city before the clock without a relative offset", () => {
+  vi.useFakeTimers({ now: new Date("2026-01-15T15:41:30Z") });
+  render(
+    <ProfileLocalTime
+      timeZone="UTC"
+      className="local-time"
+      clockOnly
+      city="London"
+    />,
+  );
+  expect(screen.getByText("London · 3:41 PM")).toBeVisible();
+  expect(screen.queryByText(/ahead|behind|local time/)).toBeNull();
+});

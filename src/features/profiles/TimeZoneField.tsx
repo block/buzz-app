@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 
+import styles from "./TimeZoneField.module.css";
+
 const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
 
 // Renamed zones some engines still list only by their old name (V8 lists
@@ -73,62 +75,70 @@ export function TimeZoneField({
   const [search, setSearch] = useState("");
   return (
     <div className="grid gap-2">
-      <Checkbox
-        label="Show my local time on my profile"
-        checked={value !== undefined}
-        disabled={disabled}
-        onCheckedChange={(checked) => onChange(checked ? shown : undefined)}
-      />
+      <div className={styles.row}>
+        <div className="min-w-0 flex-1">
+          <Combobox.Root
+            items={zones}
+            value={shown}
+            itemToStringLabel={zoneLabel}
+            filter={matches}
+            inputValue={search}
+            onInputValueChange={setSearch}
+            onOpenChange={(open) => {
+              if (open) setSearch("");
+            }}
+            autoHighlight
+            disabled={disabled || value === undefined}
+            onValueChange={(zone) => {
+              if (zone) onChange(zone);
+            }}
+          >
+            <Combobox.Trigger
+              label="Time zone"
+              disabled={disabled || value === undefined}
+            >
+              {zoneLabel(shown)}
+            </Combobox.Trigger>
+            <Combobox.Popup
+              search
+              size="compact"
+              side="bottom"
+              collisionAvoidance={{ side: "none", align: "shift" }}
+              empty="No matching time zones."
+            >
+              <Combobox.List>
+                {(zone: string) => (
+                  <Combobox.Item
+                    key={zone}
+                    value={zone}
+                    description={
+                      renamed[zone]
+                        ? `Now ${zoneLabel(renamed[zone])}`
+                        : undefined
+                    }
+                  >
+                    {zoneLabel(zone)}
+                  </Combobox.Item>
+                )}
+              </Combobox.List>
+            </Combobox.Popup>
+          </Combobox.Root>
+        </div>
+        <div className={styles.visibility}>
+          <Checkbox
+            label="Show on profile"
+            checked={value !== undefined}
+            disabled={disabled}
+            onCheckedChange={(checked) => onChange(checked ? shown : undefined)}
+          />
+        </div>
+      </div>
       {byDefault && value !== undefined && (
         <p className="text-caption text-secondary">
           This device’s time zone is shared by default. Uncheck and save to stop
           sharing it.
         </p>
       )}
-      <Combobox.Root
-        items={zones}
-        value={shown}
-        itemToStringLabel={zoneLabel}
-        filter={matches}
-        inputValue={search}
-        onInputValueChange={setSearch}
-        onOpenChange={(open) => {
-          if (open) setSearch("");
-        }}
-        autoHighlight
-        disabled={disabled || value === undefined}
-        onValueChange={(zone) => {
-          if (zone) onChange(zone);
-        }}
-      >
-        <Combobox.Trigger
-          label="Time zone"
-          disabled={disabled || value === undefined}
-        >
-          {zoneLabel(shown)}
-        </Combobox.Trigger>
-        <Combobox.Popup
-          search
-          size="compact"
-          side="bottom"
-          collisionAvoidance={{ side: "none", align: "shift" }}
-          empty="No matching time zones."
-        >
-          <Combobox.List>
-            {(zone: string) => (
-              <Combobox.Item
-                key={zone}
-                value={zone}
-                description={
-                  renamed[zone] ? `Now ${zoneLabel(renamed[zone])}` : undefined
-                }
-              >
-                {zoneLabel(zone)}
-              </Combobox.Item>
-            )}
-          </Combobox.List>
-        </Combobox.Popup>
-      </Combobox.Root>
     </div>
   );
 }

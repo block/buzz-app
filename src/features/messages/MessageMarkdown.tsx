@@ -35,6 +35,7 @@ import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
 import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
+import { ResizableEmoji } from "./EmojiSizeHandle";
 import styles from "./Messages.module.css";
 import {
   profileMentionNames,
@@ -770,7 +771,8 @@ function PreparedMessageMarkdown({
       <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
-  return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
+  if (!largeEmoji) return <div className={styles.text}>{markdown}</div>;
+  return interactive ? <ResizableEmoji>{markdown}</ResizableEmoji> : markdown;
 }
 
 function elementCount(node: ReactNode): number {

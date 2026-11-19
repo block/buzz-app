@@ -1,4 +1,16 @@
+import { createContext } from "react";
+import type { Appearance } from "../../shared/theme/service";
 import type { CustomEmoji } from "../relay/emoji";
+
+/** The saved emoji size, which conversations can change in place. Absent in
+    previews and tests, where emoji-only messages show no size handle. */
+export type EmojiSizePreference = Pick<
+  Appearance,
+  "subscribe" | "snapshot" | "setEmojiSize"
+>;
+export const EmojiSizeContext = createContext<EmojiSizePreference | undefined>(
+  undefined,
+);
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const emojiPresentation =
   /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\d#*]\uFE0F?\u20E3/u;

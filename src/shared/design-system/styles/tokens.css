@@ -1462,8 +1462,6 @@
   --bg-scrim: #00000060;
   --border-control: var(--border-prominent);
   /* Emoji artwork scales with text without becoming a readable type role. */
-  --size-emoji-display: calc(var(--type-rem) * 2.625);
-  --size-emoji-line: calc(var(--type-rem) * 3);
   --size-emoji-inline: calc(var(--type-rem) * 1.375);
 
   --text-primary: var(--text-standard);
@@ -1597,11 +1595,34 @@
   --rim-shade: #ffffff1f;
 }
 
-:root[data-emoji-size="large"] {
+/* Emoji-only messages follow the saved size on the root. While someone drags
+   one message's size handle, that message previews a size on its own. */
+:root,
+[data-emoji-size-preview="default"] {
+  --size-emoji-display: calc(var(--type-rem) * 2.625);
+  --size-emoji-line: calc(var(--type-rem) * 3);
+}
+
+:root[data-emoji-size="medium"],
+[data-emoji-size-preview="medium"] {
+  --size-emoji-display: calc(var(--type-rem) * 3.25);
+  --size-emoji-line: calc(var(--type-rem) * 3.75);
+}
+
+:root[data-emoji-size="large"],
+[data-emoji-size-preview="large"],
+:root[data-emoji-size="huge"],
+[data-emoji-size-preview="huge"] {
   --size-emoji-display: calc(var(--type-rem) * 4);
   --size-emoji-line: calc(var(--type-rem) * 4.5);
   /* Reaction artwork, still inside the pill. */
   --size-emoji-reaction: 1rem;
+}
+
+:root[data-emoji-size="huge"],
+[data-emoji-size-preview="huge"] {
+  --size-emoji-display: calc(var(--type-rem) * 8);
+  --size-emoji-line: calc(var(--type-rem) * 8.5);
 }
 
 :root[data-color-mode="dark"],

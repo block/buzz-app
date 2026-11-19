@@ -608,6 +608,6 @@ it("bounds each context message's content and tags together", () => {
     total: 2,
   });
   expect(prompt).toContain(
-    `"content":"${content}","tags":[["p","${bob}"]],"tags_omitted":true}`,
+    `"content":"${content}","tags":[["p","${bob}"],["t","release"]],"tags_omitted":true}`,
   );
 });

@@ -80,8 +80,9 @@ export const contentFields = (
   const fit: (readonly string[])[] = [];
   let room = CONTENT_LIMIT - text.length;
   for (const tag of readable) {
-    room -= JSON.stringify(tag).length;
-    if (room < 0) break;
+    const size = JSON.stringify(tag).length;
+    if (size > room) continue;
+    room -= size;
     fit.push(tag);
   }
   return {

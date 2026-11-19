@@ -95,6 +95,7 @@ import {
 import {
   type AgentSettingsProposal,
   type AgentSettingsProposalSupport,
+  compactionProposalProblem,
   settingsProposalProblem,
 } from "./settings-proposal";
 import { nativeRelayInfo } from "../relay/native";
@@ -4750,6 +4751,12 @@ export class AgentsService extends Service implements Agents {
         throw new Error(`${kind.title} does not offer a Huddle voice setting`);
       if (apps !== undefined && !support.apps)
         throw new Error(`${kind.title} does not offer a Codex apps setting`);
+      const compactionProblem = compactionProposalProblem(
+        change.settings,
+        kind,
+        Boolean(identity.protection),
+      );
+      if (compactionProblem) throw new Error(compactionProblem);
       const problem = settingsProposalProblem(
         change.settings,
         identity,

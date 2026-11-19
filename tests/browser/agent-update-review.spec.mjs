@@ -180,6 +180,52 @@ test("a Codex agent's settings proposal persists only on the owner Save", async 
   );
 });
 
+test("owner review edits or restores the proposed Auto-compact threshold", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/fixtures/agent-library.html?settingsSync=codex&proposeSettings",
+  );
+  const propose = (compactAt) =>
+    page.evaluate(
+      (compactAt) => window.proposeFixtureSettings({ compactAt }),
+      compactAt,
+    );
+  const review = page.getByRole("dialog", { name: "Edit Ada" });
+  const summary = review.getByRole("region", { name: "Proposed settings" });
+  const threshold = review.getByRole("textbox", { name: /Auto-compact at/ });
+  const save = review.getByRole("button", { name: "Save", exact: true });
+  const saved = () => page.evaluate(() => window.updateReviewResult());
+
+  await propose("150000");
+  await expect(summary).toContainText("Harness default");
+  await expect(summary).toContainText("150K tokens");
+  await expect(threshold).toHaveValue("150");
+  await threshold.fill("99");
+  await save.click();
+  await expect(threshold).toHaveAttribute("aria-invalid", "true");
+  expect(await saved()).toEqual([]);
+  await threshold.fill("180");
+  await save.click();
+  await expect(review).toHaveCount(0);
+  expect((await saved())[0].config.compactAt).toBe("180000");
+
+  await propose("");
+  await expect(summary).toContainText("180K tokens");
+  await expect(summary).toContainText("Harness default");
+  await expect(threshold).toHaveValue("");
+  await save.click();
+  await expect(review).toHaveCount(0);
+  expect((await saved())[1].config).not.toHaveProperty("compactAt");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: /Auto-compact at/ }),
+  ).toHaveValue("");
+});
+
 test("a proposed Huddle voice needs a verified catalog before Save", async ({
   page,
 }) => {

@@ -39,6 +39,7 @@ import type {
   AgentCreationRequest,
   AgentUpdateRequest,
 } from "../../features/agents/service";
+import { compactAt } from "../../features/agents/compact-at";
 import { AgentSaveFooter } from "../../features/agents/AgentSaveButton";
 import {
   applySettingsProposal,
@@ -132,11 +133,16 @@ function ProposedSettings({
     workspace: "Workspace",
     voice: "Huddle voice",
     apps: "Codex apps and plugins",
+    compactAt: "Auto-compact at",
   } as const;
   const value = (settings: AgentSettingsProposal, key: keyof typeof labels) => {
     if (key === "scope")
       return `One session per ${sessionScope(settings.scope)}`;
     if (key === "apps") return settings.apps === true ? "On" : "Off";
+    if (key === "compactAt") {
+      const tokens = compactAt(settings.compactAt);
+      return tokens ? `${tokens / 1000}K tokens` : "Harness default";
+    }
     if (key === "workspace")
       return typeof settings.workspace === "string" && settings.workspace.trim()
         ? settings.workspace.trim()

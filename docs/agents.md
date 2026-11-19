@@ -140,7 +140,7 @@ the available operations and arguments. Agent tools do not expose draft approval
 agents in the same community, named by pubkey or exact name: a new name, a type
 key from `agent_types`, new instructions, or a new picture. On supported
 local harnesses the draft can also include model, thinking effort, session scope,
-and workspace. Codex additionally accepts Huddle voice and its apps
+workspace, and the Auto-compact threshold. Use a token count string such as `"150000"` for `compactAt`, or `""` to restore the harness default. Codex additionally accepts Huddle voice and its apps
 and plugins preference. A Codex agent using an execution adapter can only
 propose the default Huddle voice. The Edit dialog compares the saved and proposed runtime settings above the editable controls, with a separate preview for a harness change. Absent fields stay as
 they are. Save applies the reviewed values. Closing the dialog discards the

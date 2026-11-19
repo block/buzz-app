@@ -1,4 +1,5 @@
 import type { SessionScope } from "../agent-harness/session-scope";
+import { withCompactAt } from "./compact-at";
 import { offRecommended, type RecommendedCandidate } from "./recommended";
 import type { Agent } from "./service";
 
@@ -9,11 +10,13 @@ export type AgentSettingsProposal = Readonly<{
   workspace?: string;
   voice?: string;
   apps?: boolean;
+  compactAt?: string;
 }>;
 
 export type AgentSettingsProposalSupport = Readonly<{
   voice?: true;
   apps?: true;
+  compactAt?: true | "unprotected";
   resolveRecommended?(): Promise<RecommendedCandidate | null>;
 }>;
 
@@ -34,13 +37,38 @@ export function settingsProposalProblem(
     return "Agents using an execution adapter can only propose the default Huddle voice.";
 }
 
+/** Check the target harness's existing Auto-compact policy. */
+export function compactionProposalProblem(
+  settings: AgentSettingsProposal,
+  target: Readonly<{
+    title: string;
+    settingsProposal?: AgentSettingsProposalSupport;
+  }>,
+  protectedAgent: boolean,
+) {
+  if (settings.compactAt === undefined) return;
+  const support = target.settingsProposal?.compactAt;
+  if (!support)
+    return `${target.title} does not offer an Auto-compact threshold`;
+  if (protectedAgent && support === "unprotected")
+    return "Protected agents cannot set an Auto-compact threshold in this harness.";
+}
+
 /** Seed the normal Settings form. The form owns validation and its Save. */
 export function applySettingsProposal(
   config: unknown,
-  { model, effort, scope, workspace, voice, apps }: AgentSettingsProposal,
+  {
+    model,
+    effort,
+    scope,
+    workspace,
+    voice,
+    apps,
+    compactAt,
+  }: AgentSettingsProposal,
 ) {
   const draft = {
-    ...(config as object),
+    ...(config as AgentSettingsProposal),
     ...(model !== undefined && { model }),
     ...(effort !== undefined && { effort }),
     ...(scope !== undefined && { scope }),
@@ -48,7 +76,9 @@ export function applySettingsProposal(
     ...(voice !== undefined && { voice }),
     ...(apps !== undefined && { apps }),
   };
+  const configured =
+    compactAt === undefined ? draft : withCompactAt(draft, compactAt);
   return model !== undefined || effort !== undefined
-    ? offRecommended(draft)
-    : draft;
+    ? offRecommended(configured)
+    : configured;
 }

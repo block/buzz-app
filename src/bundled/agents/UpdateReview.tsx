@@ -1,6 +1,9 @@
 import { useState, useSyncExternalStore } from "react";
 import { communityDestination } from "../../features/communities/destination";
-import { settingsProposalProblem } from "../../features/agents/settings-proposal";
+import {
+  compactionProposalProblem,
+  settingsProposalProblem,
+} from "../../features/agents/settings-proposal";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import type {
@@ -42,14 +45,23 @@ export function UpdateReview({ agents }: { agents: Agents }) {
   if (request && agent && (held?.id !== request.id || held.agent !== agent))
     hold({ id: request.id, agent });
   if (!request || !agent) return null;
+  const type = types.find(
+    (type) => type.key === (request.type ?? request.agentType),
+  );
   const problem =
     request.settings &&
-    settingsProposalProblem(
+    (settingsProposalProblem(
       request.settings,
       agent,
       agent.executionBinding,
       request.agentType,
-    );
+    ) ??
+      (type &&
+        compactionProposalProblem(
+          request.settings,
+          type,
+          Boolean(agent.protection),
+        )));
   if (problem)
     return (
       <Dialog

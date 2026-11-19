@@ -22662,7 +22662,7 @@ it("keeps self and sibling settings proposals out of agent state until the owner
   plugin.agents.register({
     ...type,
     id: "settings",
-    settingsProposal: { voice: true, apps: true },
+    settingsProposal: { voice: true, apps: true, compactAt: true },
   });
   const kind = "example/settings";
   await service.create({ type: kind, name: "Proposer" });
@@ -22677,7 +22677,7 @@ it("keeps self and sibling settings proposals out of agent state until the owner
   const siblingOpened = service.find(sibling);
   if (!siblingOpened) throw new Error("Missing sibling");
   const proposerConfig = service.find(bot)?.config;
-  const siblingConfig = { scope: "community" };
+  const siblingConfig = { scope: "community", compactAt: "150000" };
   await callTool(client, {}, "agent_update", {
     agent: sibling,
     ...siblingConfig,

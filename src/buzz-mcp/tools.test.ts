@@ -5287,6 +5287,7 @@ it("passes only explicit runtime settings through the owner review tool", async 
     voice: "maple",
     apps: false,
     workspace: "~/example",
+    compactAt: "150000",
   };
   await expect(
     callTool(client, {}, "agent_update", {
@@ -5302,6 +5303,9 @@ it("passes only explicit runtime settings through the owner review tool", async 
     { scope: "all" },
     { apps: "false" },
     { model: null },
+    { compactAt: "99000" },
+    { compactAt: "150500" },
+    { compactAt: 150000 },
     { config: {} },
   ])
     await expect(
@@ -5311,4 +5315,9 @@ it("passes only explicit runtime settings through the owner review tool", async 
       }),
     ).rejects.toThrow();
   expect(client.updateAgent).toHaveBeenCalledTimes(1);
+  await callTool(client, {}, "agent_update", { agent: "Self", compactAt: "" });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Self",
+    settings: { compactAt: "" },
+  });
 });

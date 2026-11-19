@@ -270,7 +270,7 @@ if (thinkingHarness === "claude") {
     key: "fixture/codex",
     id: "codex",
     title: "Codex",
-    settingsProposal: { voice: true, apps: true },
+    settingsProposal: { voice: true, apps: true, compactAt: true },
     defaults: () => ({ config: { ...codexDefaults } }),
     tabs: [
       {

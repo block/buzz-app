@@ -46,6 +46,10 @@ import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
 import type { RelayEvent } from "../features/relay/events";
+import {
+  compactAt as parseCompactAt,
+  MIN_COMPACT_AT,
+} from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
 import type {
@@ -181,6 +185,10 @@ export const TOOLS: readonly Tool[] = [
         description: "Huddle voice ID; empty follows the default.",
       },
       apps: { type: "boolean", description: "Allow Codex apps and plugins." },
+      compactAt: {
+        ...str,
+        description: `Auto-compact threshold in tokens, in multiples of 1000 from ${MIN_COMPACT_AT}. Empty uses the harness default.`,
+      },
     },
     ["agent"],
   ),
@@ -620,7 +628,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name);
     const type = text(args.type);
     // Empty instructions propose clearing them.
-    const { instructions, model, effort, scope, workspace, voice, apps } = args;
+    const {
+      instructions,
+      model,
+      effort,
+      scope,
+      workspace,
+      voice,
+      apps,
+      compactAt,
+    } = args;
     for (const [key, value] of Object.entries({
       model,
       effort,
@@ -639,6 +656,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error("scope must be thread, channel or community");
     if (apps !== undefined && typeof apps !== "boolean")
       throw new Error("apps must be a boolean");
+    if (
+      compactAt !== undefined &&
+      compactAt !== "" &&
+      !parseCompactAt(compactAt)
+    )
+      throw new Error(
+        `compactAt must be a token count string in multiples of 1000 from ${MIN_COMPACT_AT}, or empty for the harness default`,
+      );
     const settings: AgentSettingsProposal = {
       ...(typeof model === "string" && { model: model.trim() }),
       ...(typeof effort === "string" && { effort: effort.trim() }),
@@ -646,6 +671,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(typeof workspace === "string" && { workspace }),
       ...(typeof voice === "string" && { voice: voice.trim() }),
       ...(typeof apps === "boolean" && { apps }),
+      ...(typeof compactAt === "string" && { compactAt }),
     };
     const picture = proposedPicture(client, args.picture);
     return JSON.stringify(

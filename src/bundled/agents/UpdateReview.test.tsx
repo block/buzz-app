@@ -45,6 +45,7 @@ const kind = (key: string, title: string) => ({
     },
   ],
   settingsProposal: {
+    compactAt: "unprotected",
     resolveRecommended: async () => ({
       harness: "goose",
       provider: "example",
@@ -239,6 +240,11 @@ it.each([
     agentState: { protection: { provider: "test/protection", policy: {} } },
     settings: { apps: true },
     message: "Protected agents cannot enable Codex apps and plugins",
+  },
+  {
+    agentState: { protection: { provider: "test/protection", policy: {} } },
+    settings: { compactAt: "150000" },
+    message: "Protected agents cannot set an Auto-compact threshold",
   },
 ])(
   "explains why a proposal can no longer be saved before review",

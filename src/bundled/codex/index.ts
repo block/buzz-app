@@ -194,6 +194,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
     settingsProposal: {
+      compactAt: true,
       voice: true,
       apps: true,
       resolveRecommended: async () => {

@@ -32,7 +32,7 @@
   }
 
   [class~="navigation-section-heading"]:has(
-      > [class~="navigation-section-heading-trailing"]
+      > [class~="navigation-section-heading-trailing"][data-has-metadata]
     )
     .heading
     > [data-solo-workspace-id] {

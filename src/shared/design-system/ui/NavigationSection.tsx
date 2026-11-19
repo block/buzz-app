@@ -35,8 +35,8 @@ export function NavigationSection({
  * while a menu from the heading is open or one of them has focus, and always
  * on touch. A heading with an accessory keeps the action space so its controls
  * stay in place. Optional metadata sets the footprint of the trailing hover
- * target. Quiet actions can overlay an adjacent accessory. Without one,
- * the slot fits the full action strip so the label stays clear.
+ * target. On pointer devices, quiet actions can overlay an adjacent accessory.
+ * On touch and when there is no accessory, the slot fits the full action strip.
  * Other headings give that space to the label until actions appear.
  */
 export function NavigationSectionHeading({
@@ -58,52 +58,43 @@ export function NavigationSectionHeading({
 }) {
   const hasMetadata = metadata != null && typeof metadata !== "boolean";
   const swap = hasMetadata && !!actions && revealActions;
-  const trailing = (hasMetadata || actions) && (
-    <div
-      className="navigation-section-heading-actions"
-      data-has-metadata={hasMetadata || undefined}
-      data-navigation-reveal={(!hasMetadata && revealActions) || undefined}
-      data-reserve-space={(!hasMetadata && reserveActionSpace) || undefined}
-    >
-      {hasMetadata && (
-        <div
-          className="navigation-section-heading-metadata"
-          data-navigation-reveal-rest={swap || undefined}
-        >
-          {metadata}
-        </div>
-      )}
-      {hasMetadata && actions ? (
-        <div
-          className="navigation-section-heading-buttons"
-          data-navigation-reveal={swap || undefined}
-        >
-          {actions}
-        </div>
-      ) : (
-        actions
-      )}
-    </div>
-  );
   return (
     <div
       className="navigation-section-heading"
       data-disclosure={disclosure || undefined}
     >
-      <div className="navigation-section-heading-label">
-        {children}
-        {!hasMetadata && accessory}
-      </div>
-      {hasMetadata ? (
+      <div className="navigation-section-heading-label">{children}</div>
+      {(accessory || hasMetadata || actions) && (
         <div
           className="navigation-section-heading-trailing"
-          data-reserve-space=""
+          data-reserve-space={hasMetadata || reserveActionSpace || undefined}
+          data-has-metadata={hasMetadata || undefined}
         >
           {accessory}
-          {trailing}
+          {(hasMetadata || actions) && (
+            <div
+              className="navigation-section-heading-actions"
+              data-has-metadata={hasMetadata || undefined}
+            >
+              {hasMetadata && (
+                <div
+                  className="navigation-section-heading-metadata"
+                  data-navigation-reveal-rest={swap || undefined}
+                >
+                  {metadata}
+                </div>
+              )}
+              {actions && (
+                <div
+                  className="navigation-section-heading-buttons"
+                  data-navigation-reveal={revealActions || undefined}
+                >
+                  {actions}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      ) : (
-        trailing
       )}
     </div>
   );

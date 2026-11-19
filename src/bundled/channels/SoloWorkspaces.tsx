@@ -755,18 +755,15 @@ export function SoloWorkspaces({
               )
             }
             actions={
-              metadata != null && typeof metadata !== "boolean" ? (
-                <>
-                  {trailing}
-                  {overflow}
-                </>
-              ) : (
-                <>
-                  {overflow}
-                  {project.id &&
-                    workspaceComposition?.newAction(project.id, project.name)}
-                  {trailing ??
-                    (onNew &&
+              <>
+                {trailing}
+                {overflow}
+                {(metadata == null || typeof metadata === "boolean") && (
+                  <>
+                    {project.id &&
+                      workspaceComposition?.newAction(project.id, project.name)}
+                    {trailing == null &&
+                      onNew &&
                       !workspaceComposition &&
                       (!compose || !project.id) && (
                         <IconButton
@@ -776,9 +773,10 @@ export function SoloWorkspaces({
                           icon={<PlusIcon size={15} strokeWidth={2.5} />}
                           onClick={() => onNew(project.id || undefined)}
                         />
-                      ))}
-                </>
-              )
+                      )}
+                  </>
+                )}
+              </>
             }
           >
             <WorkspaceDragHandle

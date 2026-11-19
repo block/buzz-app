@@ -511,6 +511,43 @@ appTest.describe("Solo header accessories", () => {
       await expect(sidebar.getByRole("button", { name: /^Mark / })).toHaveCount(
         2,
       );
+      for (const { group, title, accessory, activity } of headers) {
+        const mark = group.getByRole("button", { name: accessory });
+        const actions = group.getByRole("button", {
+          name: `Actions for ${title}`,
+        });
+        const time = group.getByText(activity, { exact: true });
+        await mark.press("Enter");
+        await expect(mark).toHaveAttribute("aria-pressed", "true");
+        await actions.focus();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(false),
+        );
+        await expect(time).toHaveCount(0);
+        await expect.soft(actions).toBeFocused();
+        await expect.soft(mark).toHaveAttribute("aria-pressed", "true");
+        await actions.focus();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(true),
+        );
+        await expect(time).toHaveCount(1);
+        await expect(actions).toBeFocused();
+        await expect(mark).toHaveAttribute("aria-pressed", "true");
+        await actions.press("Enter");
+        const menu = page.getByRole("menu");
+        await expect(menu).toBeVisible();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(false),
+        );
+        await expect(time).toHaveCount(0);
+        await expect(menu).toBeVisible();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(true),
+        );
+        await expect(time).toHaveCount(1);
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeHidden();
+      }
       await headers[0].group
         .getByRole("button", { name: "Actions for Work" })
         .press("Enter");
@@ -564,6 +601,21 @@ appTest.describe("Solo header accessories", () => {
         expect(
           Math.abs(signal.y + signal.height / 2 - time.y - time.height / 2),
         ).toBeLessThan(1);
+        const pencil = group.getByRole("button", {
+          name: `New task in ${title}`,
+        });
+        await pencil.focus();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(false),
+        );
+        await expect(group.getByText(activity, { exact: true })).toHaveCount(0);
+        await expect(pencil).toBeFocused();
+        await resize.focus();
+        await expect(pencil).toBeHidden();
+        await page.evaluate(() =>
+          window.fixtureSoloRegion.showHeaderMetadata(true),
+        );
+        await expect(group.getByText(activity, { exact: true })).toHaveCount(1);
       }
     },
   );
@@ -613,6 +665,41 @@ appTest.describe("Solo header accessories", () => {
         savedSidebar: [{ id: "other", name: workspaceTitle, order: 1 }],
         channelNames: { alpha: "Alpha", beta: "Beta", gamma: channelTitle },
       });
+
+      if (hasTouch) {
+        // A real tap detects an always-visible action stealing the accessory's hit target.
+        appTest(
+          "keeps accessories tappable beside header activity",
+          async ({ page, app }) => {
+            await admitNewTask(page);
+            await page.goto(
+              `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories`,
+            );
+            await openPage(page, "Messages");
+            for (const [selector, title, accessory] of [
+              ['[data-solo-workspace="work"]', "Work", "Mark Work workspace"],
+              [
+                '[data-solo-channel-group="alpha"]',
+                "Alpha",
+                "Mark Alpha channel",
+              ],
+            ]) {
+              const group = page.locator(selector);
+              const mark = group.getByRole("button", { name: accessory });
+              await expect(
+                group.getByRole("button", { name: `New task in ${title}` }),
+              ).toBeVisible();
+              await mark.scrollIntoViewIfNeeded();
+              const box = await mark.boundingBox();
+              await page.touchscreen.tap(
+                box.x + box.width / 2,
+                box.y + box.height / 2,
+              );
+              await expect.soft(mark).toHaveAttribute("aria-pressed", "true");
+            }
+          },
+        );
+      }
 
       appTest(
         "keeps both actions clear of long metadata-only titles",

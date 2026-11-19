@@ -1658,7 +1658,10 @@
     align-items: center;
   }
 
-  .navigation-section-heading-actions:not([data-has-metadata]):empty {
+  .navigation-section-heading-trailing:not([data-reserve-space]):has(
+    > .navigation-section-heading-actions
+      > .navigation-section-heading-buttons:empty
+  ) {
     display: none;
   }
 
@@ -1666,13 +1669,23 @@
     margin-inline-start: auto;
   }
 
-  .navigation-section-heading-trailing {
+  .navigation-section-heading-trailing[data-has-metadata] {
     gap: var(--space-1);
   }
 
   .navigation-section-heading-actions[data-has-metadata] {
-    position: relative;
     --navigation-heading-action-size: 24px;
+    position: relative;
+    /* Keep the full action strip clear of the title and touch targets. */
+    display: grid;
+
+    > :is(
+        .navigation-section-heading-metadata,
+        .navigation-section-heading-buttons
+      ) {
+      grid-area: 1 / 1;
+      justify-self: end;
+    }
   }
 
   .navigation-section-heading[data-disclosure]
@@ -1682,7 +1695,7 @@
   }
 
   .navigation-section-heading[data-disclosure]:has(
-    > .navigation-section-heading-trailing
+    > .navigation-section-heading-trailing[data-has-metadata]
   ) {
     column-gap: var(--space-1);
   }
@@ -1703,32 +1716,24 @@
 
   .navigation-section-heading-actions[data-has-metadata]
     .navigation-section-heading-buttons {
-    position: absolute;
     z-index: 1;
-    inset-inline-end: 0;
-    inset-block-start: 50%;
-    transform: translateY(-50%);
     background: var(--surface-sidebar, var(--surface-popover));
     border-radius: var(--radius-control);
   }
 
-  /* Without an accessory, both layers fit in one slot clear of the label. */
-  .navigation-section-heading-trailing
-  > .navigation-section-heading-actions[data-has-metadata]:only-child {
-    display: grid;
-
-    > :is(
-        .navigation-section-heading-metadata,
-        .navigation-section-heading-buttons
+  @media (hover: hover) {
+    .navigation-section-heading-trailing
+      > .navigation-section-heading-actions[data-has-metadata]:not(
+        :only-child
       ) {
-      grid-area: 1 / 1;
-      justify-self: end;
-    }
+      display: flex;
 
-    > .navigation-section-heading-buttons {
-      position: relative;
-      inset: auto;
-      transform: none;
+      > .navigation-section-heading-buttons {
+        position: absolute;
+        inset-inline-end: 0;
+        inset-block-start: 50%;
+        transform: translateY(-50%);
+      }
     }
   }
 
@@ -1745,12 +1750,6 @@
     flex-wrap: wrap;
     /* Leave room for the disclosure, icon and a short title before the accessory. */
     --navigation-heading-title-min: min(100%, 7rem);
-  }
-
-  .navigation-section-heading:has(> [data-reserve-space])
-    > .navigation-section-heading-label
-    > :not(:first-child) {
-    margin-inline-start: auto;
   }
 
   /* A disclosure heading's trigger spans the label slot, so the inset is its
@@ -1835,14 +1834,14 @@
     opacity: 0;
   }
 
-  .navigation-section-heading-actions[data-navigation-reveal]:where(
-    :not([data-reserve-space])
-  ) {
+  .navigation-section-heading-trailing:not([data-reserve-space])
+    .navigation-section-heading-buttons[data-navigation-reveal] {
     max-width: 0;
     overflow: hidden;
   }
 
-  .navigation-section-heading-buttons[data-navigation-reveal] {
+  .navigation-section-heading-actions[data-has-metadata]
+    > .navigation-section-heading-buttons[data-navigation-reveal] {
     pointer-events: none;
   }
 
@@ -1855,7 +1854,9 @@
     ),
     [data-context-menu-present] > .navigation-section-heading
   ) {
-    [data-navigation-reveal]:not(.navigation-section-heading-buttons) {
+    [data-navigation-reveal]:not(
+        [data-has-metadata] > .navigation-section-heading-buttons
+      ) {
       opacity: 1;
       max-width: none;
       overflow: visible;

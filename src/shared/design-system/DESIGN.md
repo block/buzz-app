@@ -541,8 +541,9 @@ for its quiet actions beside the accessory so all controls stay in place.
 When a heading has passive metadata, it defines a compact trailing hover
 target. Quiet controls appear on slot hover or whenever a control has focus.
 They can overlay an adjacent accessory. Without an accessory, the slot fits
-the full action strip and keeps it clear of the title. Touch shows the controls
-directly. The title and accessory positions stay stable.
+the full action strip and keeps it clear of the title. Touch keeps the actions
+and accessory side by side so each can be tapped. Metadata changes preserve
+the accessory and the native controls that appear in both layouts.
 When a host already names a list, as
 the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
 overlaying it; any actions it still needs take a headingless heading row.

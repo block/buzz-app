@@ -52,6 +52,7 @@ declare global {
       classify(id: string): Promise<void>;
       createWorkspace(): Promise<void>;
       present(removed: string[], hidden: string[]): void;
+      showHeaderMetadata(visible: boolean): void;
       status(status: "ready" | "loading"): void;
       addTransientRegion(): Promise<void>;
       removeTransientRegion(): Promise<void>;
@@ -74,6 +75,7 @@ export const soloRegionFixture: BundledPlugin = {
       let snapshot: SoloRegionSnapshot;
       let removed: string[] = [],
         hidden: string[] = [];
+      let headerMetadataVisible = true;
       let notify = () => {};
       if (!ctx.soloNavigation) throw new Error("Solo navigation unavailable");
       const navigation = ctx.soloNavigation;
@@ -115,6 +117,7 @@ export const soloRegionFixture: BundledPlugin = {
                 ) : undefined
               }
               headerMetadata={
+                headerMetadataVisible &&
                 headerAccessories &&
                 (workspace.id === "work" ||
                   (leadingHeader && workspace.id === "other")) ? (
@@ -154,7 +157,8 @@ export const soloRegionFixture: BundledPlugin = {
               ) : undefined
             }
             headerMetadata={
-              id === "alpha" || (leadingHeader && id === "gamma") ? (
+              headerMetadataVisible &&
+              (id === "alpha" || (leadingHeader && id === "gamma")) ? (
                 <time dateTime="P1D">1d</time>
               ) : undefined
             }
@@ -265,6 +269,11 @@ export const soloRegionFixture: BundledPlugin = {
         },
         removeTransientRegion: () => disposeTransient(),
         classify: (id) => handle.classify(binding, id),
+        showHeaderMetadata(visible) {
+          headerMetadataVisible = visible;
+          snapshot = { ...snapshot, revision: snapshot.revision + 1 };
+          notify();
+        },
         status(status) {
           snapshot = { ...snapshot, status, revision: snapshot.revision + 1 };
           notify();

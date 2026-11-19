@@ -950,6 +950,16 @@ shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
 
+### Moving an agent off Codex
+
+Before an agent on the shared Codex server changes harness, Buzz asks Codex to
+stop the background terminals in each thread the agent used. Codex closes an
+idle thread by itself after about a minute and answers `thread not found` for
+it, so Buzz counts that thread as already cleaned. Any other cleanup error stops
+the harness change. A protected agent has its own Codex process, which Buzz
+shuts down instead. The conversation stays on disk, so an agent that returns to
+Codex resumes it.
+
 ### Saved Solo follow-ups
 
 The queued rows above the Solo composer are unsent messages, separate from the

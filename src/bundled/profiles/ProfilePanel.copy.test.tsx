@@ -83,6 +83,15 @@ async function copyButton(
   return screen.getByRole("button", { name });
 }
 
+/** A clipboard write the test finishes when it chooses. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 /** The statuses that say something: one per result, none while idle. */
 const announced = () =>
   screen
@@ -119,47 +128,122 @@ it.each(fields)(
 );
 
 it.each(fields)(
-  "%s shows a refused copy inside its button alone, then offers Copy again",
+  "%s keeps a refused copy inside its button alone until the next attempt",
   async (_field, name) => {
+    const retry = deferred();
     const writeText = vi
       .fn<(text: string) => Promise<void>>()
       .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"))
-      .mockResolvedValue(undefined);
+      .mockReturnValueOnce(retry.promise);
     const button = await copyButton(name, writeText);
+    try {
+      await act(async () => fireEvent.click(button));
+      expect(button).toHaveTextContent(/^Couldn’t copy$/);
+      expect(button.querySelector(".tabler-icon-alert-circle")).not.toBeNull();
+      expect(button).toHaveAccessibleName(name);
+      expect(announced()).toEqual(["Couldn’t copy"]);
 
-    await act(async () => fireEvent.click(button));
-    expect(button).toHaveTextContent(/^Couldn’t copy$/);
-    expect(button.querySelector(".tabler-icon-alert-circle")).not.toBeNull();
-    expect(button).toHaveAccessibleName(name);
-    expect(announced()).toEqual(["Couldn’t copy"]);
+      // A copy reverts after 1.5 seconds. A refusal has no timer to revert it.
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => vi.advanceTimersByTime(1500));
+      expect(button).toHaveTextContent(/^Couldn’t copy$/);
+      expect(announced()).toEqual(["Couldn’t copy"]);
+      // The other card's idle "Copy", then this button and its status.
+      expect(screen.getAllByText(/copy|copied/i)).toHaveLength(3);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(document.querySelector("[data-sonner-toast]")).toBeNull();
 
-    act(() => vi.advanceTimersByTime(1499));
-    expect(button).toHaveTextContent(/^Couldn’t copy$/);
-    // The other card's idle "Copy", then this button and its status.
-    expect(screen.getAllByText(/copy|copied/i)).toHaveLength(3);
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(document.querySelector("[data-sonner-toast]")).toBeNull();
-    act(() => vi.advanceTimersByTime(1));
-    expect(button).toHaveTextContent(/^Copy$/);
-    expect(announced()).toEqual([]);
+      // The next attempt clears the refusal at once, then shows its own result.
+      await act(async () => fireEvent.click(button));
+      expect(writeText).toHaveBeenCalledTimes(2);
+      expect(button).toHaveTextContent(/^Copy$/);
+      expect(announced()).toEqual([]);
+      await act(async () => retry.resolve());
+      expect(button).toHaveTextContent(/^Copied$/);
+      expect(announced()).toEqual(["Copied"]);
+    } finally {
+      retry.resolve();
+    }
+  },
+);
 
-    // A retry is a fresh attempt.
+it.each(fields)(
+  "%s announces and times a second copy afresh while Copied still shows",
+  async (_field, name) => {
+    const second = deferred();
+    const writeText = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(second.promise);
+    const button = await copyButton(name, writeText);
+    try {
+      await act(async () => fireEvent.click(button));
+      act(() => vi.advanceTimersByTime(1000));
+      expect(button).toHaveTextContent(/^Copied$/);
+
+      // The click empties the status, so the same words are announced again.
+      await act(async () => fireEvent.click(button));
+      expect(writeText).toHaveBeenCalledTimes(2);
+      expect(button).toHaveTextContent(/^Copy$/);
+      expect(announced()).toEqual([]);
+      await act(async () => second.resolve());
+      expect(button).toHaveTextContent(/^Copied$/);
+      expect(announced()).toEqual(["Copied"]);
+
+      // The 1.5 seconds run from the second result, not from the first.
+      act(() => vi.advanceTimersByTime(1499));
+      expect(button).toHaveTextContent(/^Copied$/);
+      act(() => vi.advanceTimersByTime(1));
+      expect(button).toHaveTextContent(/^Copy$/);
+      expect(announced()).toEqual([]);
+    } finally {
+      second.resolve();
+    }
+  },
+);
+
+it.each(fields)(
+  "%s drops its revert when the profile closes while Copied shows",
+  async (_field, name) => {
+    const button = await copyButton(
+      name,
+      vi.fn(async (_text: string) => {}),
+    );
     await act(async () => fireEvent.click(button));
     expect(button).toHaveTextContent(/^Copied$/);
-    expect(announced()).toEqual(["Copied"]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    cleanup();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+it.each(fields)(
+  "%s starts nothing when a copy lands after the profile closes",
+  async (_field, name) => {
+    const write = deferred();
+    const writeText = vi.fn((_text: string) => write.promise);
+    const button = await copyButton(name, writeText);
+    try {
+      await act(async () => fireEvent.click(button));
+      expect(writeText).toHaveBeenCalledTimes(1);
+
+      cleanup();
+      await act(async () => write.resolve());
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      write.resolve();
+    }
   },
 );
 
 it.each(fields)(
   "%s shows only its latest attempt's result",
   async (_field, name) => {
-    let finishFirst!: () => void;
-    const first = new Promise<void>((resolve) => {
-      finishFirst = resolve;
-    });
+    const first = deferred();
     const writeText = vi
       .fn<(text: string) => Promise<void>>()
-      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(first.promise)
       .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
     const button = await copyButton(name, writeText);
     try {
@@ -172,11 +256,11 @@ it.each(fields)(
       expect(button).toHaveTextContent(/^Couldn’t copy$/);
 
       // The earlier write lands late; it must not replace the newer refusal.
-      await act(async () => finishFirst());
+      await act(async () => first.resolve());
       expect(button).toHaveTextContent(/^Couldn’t copy$/);
       expect(announced()).toEqual(["Couldn’t copy"]);
     } finally {
-      finishFirst();
+      first.resolve();
     }
   },
 );

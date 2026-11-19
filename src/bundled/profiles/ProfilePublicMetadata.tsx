@@ -8,6 +8,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { writeClipboardText } from "../../shared/clipboard";
+import styles from "./Profiles.module.css";
 
 export function ProfilePublicMetadata({
   nip05,
@@ -30,8 +31,9 @@ const outcomes = {
   failed: { Icon: WarningCircleIcon, text: "Couldn’t copy" },
 };
 
-/** A profile value with its Copy button. The button alone shows the result,
- * then reverts; the status repeats it for assistive technology. */
+/** A profile value with its Copy button. The button alone shows the result:
+ * a copy reverts after 1.5 seconds, a refused copy stays until the next
+ * attempt. The status repeats it for assistive technology. */
 export function ProfileCopyField({
   label,
   value,
@@ -56,7 +58,7 @@ export function ProfileCopyField({
     [],
   );
   useEffect(() => {
-    if (!outcome) return;
+    if (outcome !== "copied") return;
     const timer = setTimeout(() => setOutcome(undefined), 1500);
     return () => clearTimeout(timer);
   }, [outcome]);
@@ -87,7 +89,12 @@ export function ProfileCopyField({
               }}
             >
               <Icon size={16} aria-hidden="true" />
-              {text}
+              <span
+                className={styles.copyLabel}
+                data-reserve={outcomes.copied.text}
+              >
+                {text}
+              </span>
             </Button>
             <span role="status" className="sr-only">
               {outcome && text}

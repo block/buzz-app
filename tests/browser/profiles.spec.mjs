@@ -604,12 +604,16 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       value: { writeText: async (value) => window.profileCopies.push(value) },
     });
   });
-  // The button shows each result for 1.5 seconds. Hold the clock so the
-  // result stays until it has been read.
+  // The button shows a copy for 1.5 seconds. Hold the clock so the result
+  // stays until it has been read.
   await pauseClock(page);
   const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
+  // Each result is also announced: a status that the browser exposes, filled.
+  const announced = (result) =>
+    panel.getByRole("status").filter({ hasText: result });
   await copy.click();
   await expect(copy).toHaveText("Copied");
+  await expect(announced(/^Copied$/)).toHaveCount(1);
   expect(await page.evaluate(() => window.profileCopies)).toEqual([
     npubs.viewer,
   ]);
@@ -622,6 +626,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   });
   await copy.click();
   await expect(copy).toHaveText("Couldn’t copy");
+  await expect(announced(/^Couldn’t copy$/)).toHaveCount(1);
   await expect(key).toHaveText(npubs.viewer);
   await page.clock.resume();
   await page.clock.install();

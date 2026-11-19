@@ -570,6 +570,9 @@ and are asked to sign in again in Buzz.
   **Move down** in its **…** menu. Escape cancels a drag.
   The arrow beside a workspace’s creation icon offers **New chat**, **New channel**
   and **New DM**. The last choice becomes that workspace’s icon and primary action.
+  If the workspace heading shows recent activity, find these commands in its
+  **Actions** menu. Hover over the activity or Tab to the heading controls to
+  reveal the menu button. On touch, the menu button is visible directly.
   Open **Workspace settings** from the heading’s **…** menu to change the name,
   emoji, folders, worktree, Canvas, or default agents. Use **New channel** from a
   workspace to start with its destination and agent defaults selected. You can
@@ -1045,7 +1048,8 @@ and are asked to sign in again in Buzz.
   The floating **New options** button at the end of the sidebar list opens
   **New chat**, **New channel**, **New DM** and **New workspace**. **Cmd/Ctrl+N**
   opens this menu in Messages, including during Focus. The **Solo** heading's
-  **+** starts a chat, and each workspace heading has its own **New** button.
+  **+** starts a chat. A workspace heading offers creation commands from its
+  **New** button or **Actions** menu.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.

@@ -1658,9 +1658,7 @@
     align-items: center;
   }
 
-  .navigation-section-heading-actions:not([data-has-metadata]):has(
-    > .navigation-section-heading-buttons:empty
-  ) {
+  .navigation-section-heading-actions:not([data-has-metadata]):empty {
     display: none;
   }
 
@@ -1712,6 +1710,26 @@
     transform: translateY(-50%);
     background: var(--surface-sidebar, var(--surface-popover));
     border-radius: var(--radius-control);
+  }
+
+  /* Without an accessory, both layers fit in one slot clear of the label. */
+  .navigation-section-heading-trailing
+  > .navigation-section-heading-actions[data-has-metadata]:only-child {
+    display: grid;
+
+    > :is(
+        .navigation-section-heading-metadata,
+        .navigation-section-heading-buttons
+      ) {
+      grid-area: 1 / 1;
+      justify-self: end;
+    }
+
+    > .navigation-section-heading-buttons {
+      position: relative;
+      inset: auto;
+      transform: none;
+    }
   }
 
   .navigation-section-heading-actions[data-has-metadata]
@@ -1848,8 +1866,8 @@
      accessory without contributing to layout or making the whole row hot. */
   :is(
     .navigation-section-heading-actions[data-has-metadata]:hover,
+    .navigation-section-heading-actions[data-has-metadata]:focus-within,
     .navigation-section-heading-actions[data-has-metadata]:has(
-      :focus-visible,
       [aria-expanded="true"][aria-haspopup="menu"]
     ),
     [data-context-menu-present]

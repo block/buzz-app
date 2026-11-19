@@ -539,9 +539,10 @@ invisible. Hidden actions take no width, so a long label keeps its words at
 large text sizes and narrow widths. A heading with an accessory keeps space
 for its quiet actions beside the accessory so all controls stay in place.
 When a heading has passive metadata, it defines a compact trailing hover
-target. Its quiet controls overlay that slot and the adjacent accessory on
-slot hover or control focus. Touch shows these controls directly. The overlay
-keeps the title and accessory positions stable.
+target. Quiet controls appear on slot hover or whenever a control has focus.
+They can overlay an adjacent accessory. Without an accessory, the slot fits
+the full action strip and keeps it clear of the title. Touch shows the controls
+directly. The title and accessory positions stay stable.
 When a host already names a list, as
 the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
 overlaying it; any actions it still needs take a headingless heading row.

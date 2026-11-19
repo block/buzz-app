@@ -237,6 +237,47 @@ it("moves workspaces with the section menu, keeps collapse and filing, and retri
   first.dispose();
 });
 
+it("returns focus to the workspace title after a failed order save", async () => {
+  const h = fixture();
+  h.setSaved({
+    ...h.saved(),
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "home", name: "Home", order: 1 },
+    ],
+  });
+  const store = h.store();
+  const user = userEvent.setup();
+  await store.queries.ensure();
+  h.order.mockRejectedValueOnce(new Error("Order was refused"));
+  render(
+    h.view(store.queries, undefined, undefined, undefined, (parts) => (
+      <WorkspaceCompositionContext value={parts}>
+        <RegionWorkspace id="work" />
+        <RegionWorkspace
+          id="home"
+          headerLeading={{
+            icon: "H",
+            label: "Open Home summary",
+            onActivate() {},
+          }}
+        />
+      </WorkspaceCompositionContext>
+    )),
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Actions for Home" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+    const error = await screen.findByRole("alert");
+    await user.click(within(error).getByRole("button", { name: "Dismiss" }));
+    expect(
+      screen.getByRole("button", { name: "Home", exact: true }),
+    ).toHaveFocus();
+  } finally {
+    store.dispose();
+  }
+});
+
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
   const h = fixture();
   const first = h.store();

@@ -115,7 +115,9 @@ export const soloRegionFixture: BundledPlugin = {
                 ) : undefined
               }
               headerMetadata={
-                headerAccessories && workspace.id === "work" ? (
+                headerAccessories &&
+                (workspace.id === "work" ||
+                  (leadingHeader && workspace.id === "other")) ? (
                   <time dateTime="PT3M">3m</time>
                 ) : undefined
               }
@@ -152,7 +154,9 @@ export const soloRegionFixture: BundledPlugin = {
               ) : undefined
             }
             headerMetadata={
-              id === "alpha" ? <time dateTime="P1D">1d</time> : undefined
+              id === "alpha" || (leadingHeader && id === "gamma") ? (
+                <time dateTime="P1D">1d</time>
+              ) : undefined
             }
           >
             <button type="button">Channel task</button>

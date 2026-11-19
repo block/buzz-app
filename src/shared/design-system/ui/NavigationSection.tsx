@@ -35,7 +35,8 @@ export function NavigationSection({
  * while a menu from the heading is open or one of them has focus, and always
  * on touch. A heading with an accessory keeps the action space so its controls
  * stay in place. Optional metadata sets the footprint of the trailing hover
- * target. Quiet actions overlay that slot and the adjacent accessory.
+ * target. Quiet actions can overlay an adjacent accessory. Without one,
+ * the slot fits the full action strip so the label stays clear.
  * Other headings give that space to the label until actions appear.
  */
 export function NavigationSectionHeading({
@@ -72,13 +73,15 @@ export function NavigationSectionHeading({
           {metadata}
         </div>
       )}
-      {actions && (
+      {hasMetadata && actions ? (
         <div
           className="navigation-section-heading-buttons"
           data-navigation-reveal={swap || undefined}
         >
           {actions}
         </div>
+      ) : (
+        actions
       )}
     </div>
   );

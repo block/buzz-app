@@ -97,6 +97,17 @@ export const SOLO_CHAT_CAP = 7;
 export const SOLO_CHAT_STEP = 10;
 const workspaceSectionKey = (id: string) => (id ? `group:${id}` : "solo");
 
+function soloMenuFocusTarget(id: string) {
+  const row = document.querySelector(
+    `[data-solo-menu-id="${CSS.escape(id)}"]:not([inert] *)`,
+  );
+  return (
+    row?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
+    row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
+    row?.querySelector<HTMLElement>("button:not([data-solo-disclosure])")
+  );
+}
+
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SoloWorkspaces({
   session,
@@ -240,11 +251,7 @@ export function SoloWorkspaces({
       collapsed.includes(project) && !rowHosts.current.get(project)?.unframed
         ? `project-${project}`
         : rowFocus;
-    document
-      .querySelector<HTMLElement>(
-        `[data-solo-menu-id="${target}"]:not([inert] *) button:not([data-solo-disclosure])`,
-      )
-      ?.focus({ preventScroll: true });
+    soloMenuFocusTarget(target)?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, collapsed, snapshot.data]);
   // Show more and Show fewer each unmount once spent; focus stays on the row,
@@ -311,11 +318,10 @@ export function SoloWorkspaces({
   const [orderFocus, setOrderFocus] = useState<string>();
   useLayoutEffect(() => {
     if (!orderFocus) return;
-    document
-      .querySelector<HTMLElement>(
-        `[data-solo-menu-id="project-${CSS.escape(orderFocus)}"]:not([inert] *) button:not([data-solo-disclosure])`,
-      )
-      ?.focus({ preventScroll: true });
+    const workspaceId = orderFocus.replace(/^group:/, "");
+    soloMenuFocusTarget(`project-${workspaceId}`)?.focus({
+      preventScroll: true,
+    });
     setOrderFocus(undefined);
   }, [orderFocus]);
   const moveProject = (id: string, to: number) => {
@@ -1489,17 +1495,7 @@ function ChatActionsMenu({
     !target.closest(
       "[data-solo-workspace-accessory], [data-solo-leading-action]",
     );
-  const restoreFocus = () => {
-    const row = document.querySelector(
-      `[data-solo-menu-id="${id}"]:not([inert] *)`,
-    );
-    return (
-      row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
-      row?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
-      row?.querySelector<HTMLElement>("button:not([data-solo-disclosure])") ??
-      false
-    );
-  };
+  const restoreFocus = () => soloMenuFocusTarget(id) ?? false;
   if (!enabled)
     return (
       <div className={className} data-solo-menu-id={id}>

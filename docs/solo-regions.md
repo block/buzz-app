@@ -218,7 +218,8 @@ Both headers also accept optional `headerMetadata: ReactNode` for compact,
 non-interactive content such as a relative activity time. The host displays
 it at the trailing edge. Hovering that slot or focusing its controls reveals
 the native Actions button and, when available, the New task pencil. They
-overlay the metadata and adjacent accessory without shifting the header.
+overlay the metadata and can cover an adjacent accessory without shifting the
+header. Without an accessory, the slot fits both actions clear of the title.
 Touch shows the controls directly. New task also remains available in the menu.
 
 Both headers accept optional `headerLeading` with a non-interactive `icon`, an

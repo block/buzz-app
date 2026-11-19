@@ -338,20 +338,24 @@ appTest.describe("Solo header accessories", () => {
     historyCounts: { alpha: 0, beta: 0, gamma: 0 },
   });
 
+  const admitNewTask = async (page) => {
+    await page.route("**/api/relay/*/session", async (route) => {
+      const response = await route.fetch();
+      const session = await response.json();
+      await route.fulfill({
+        response,
+        json: { ...session, writeKinds: [...session.writeKinds, 9007] },
+      });
+    });
+  };
+
   // Real hit testing catches an accessory covered by the workspace selection
   // target. Text truncation, the trailing swap and focus use browser layout.
   appTest(
     "keeps optional controls usable in collapsed headings",
     async ({ page, app }) => {
       // The layout must fit the New task button when the relay admits chat starts.
-      await page.route("**/api/relay/*/session", async (route) => {
-        const response = await route.fetch();
-        const session = await response.json();
-        await route.fulfill({
-          response,
-          json: { ...session, writeKinds: [...session.writeKinds, 9007] },
-        });
-      });
+      await admitNewTask(page);
       await page.goto(
         `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories`,
       );
@@ -458,6 +462,7 @@ appTest.describe("Solo header accessories", () => {
           );
           await pencil.click();
           await expect(heading).not.toHaveAttribute("data-selected");
+          await resize.focus();
           await heading.hover();
           await expect(metadata).toBeVisible();
           await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
@@ -562,6 +567,108 @@ appTest.describe("Solo header accessories", () => {
       }
     },
   );
+
+  appTest(
+    "keeps the Actions trigger visible after closing channel creation",
+    async ({ page, app }) => {
+      await admitNewTask(page);
+      await page.goto(
+        `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
+      );
+      await openPage(page, "Messages");
+      const workspace = page.locator('[data-solo-workspace="work"]');
+      const time = workspace.getByText("3m", { exact: true });
+      const actions = workspace.getByRole("button", {
+        name: "Actions for Work",
+      });
+      const timing = await time.boundingBox();
+      await page.mouse.move(
+        timing.x + timing.width / 2,
+        timing.y + timing.height / 2,
+      );
+      await actions.click();
+      await page
+        .getByRole("menuitem", { name: "New channel", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Create a channel in Work",
+      });
+      await dialog
+        .getByRole("button", { name: "Close channel creation" })
+        .click();
+      await page.mouse.move(0, 0);
+      await expect(dialog).toBeHidden();
+      await expect(actions).toBeFocused();
+      await expect(time).toBeHidden();
+      await expect(actions.locator("..")).toHaveCSS("opacity", "1");
+    },
+  );
+
+  for (const hasTouch of [false, true]) {
+    appTest.describe(hasTouch ? "touch metadata" : "pointer metadata", () => {
+      const workspaceTitle = "Workspace planning and weekly status";
+      const channelTitle = "channel-planning-and-weekly-status";
+      appTest.use({
+        hasTouch,
+        savedSidebar: [{ id: "other", name: workspaceTitle, order: 1 }],
+        channelNames: { alpha: "Alpha", beta: "Beta", gamma: channelTitle },
+      });
+
+      appTest(
+        "keeps both actions clear of long metadata-only titles",
+        async ({ page, app }) => {
+          await admitNewTask(page);
+          await page.goto(
+            `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
+          );
+          await openPage(page, "Messages");
+          const resize = page.getByRole("separator", {
+            name: "Resize sidebar",
+          });
+          await resize.dblclick();
+          await expect(resize).toHaveAttribute("aria-valuenow", "260");
+          for (const [selector, title, activity, fontSize] of [
+            ['[data-solo-workspace="other"]', workspaceTitle, "3m", "16px"],
+            ['[data-solo-channel-group="gamma"]', channelTitle, "1d", "19px"],
+          ]) {
+            await page.evaluate((fontSize) => {
+              document.documentElement.style.fontSize = fontSize;
+            }, fontSize);
+            const group = page.locator(selector);
+            const heading = group.getByRole("button", {
+              name: title,
+              exact: true,
+            });
+            const label = heading.getByText(title, { exact: true });
+            const time = group.getByText(activity, { exact: true });
+            const pencil = group.getByRole("button", {
+              name: `New task in ${title}`,
+            });
+            const actions = group.getByRole("button", {
+              name: `Actions for ${title}`,
+            });
+            await heading.scrollIntoViewIfNeeded();
+            const rest = await label.boundingBox();
+            if (!hasTouch) {
+              await expect(time).toBeVisible();
+              const timing = await time.boundingBox();
+              await page.mouse.move(
+                timing.x + timing.width / 2,
+                timing.y + timing.height / 2,
+              );
+            }
+            await expect(time).toBeHidden();
+            await expect(actions.locator("..")).toHaveCSS("opacity", "1");
+            expect(await label.boundingBox()).toEqual(rest);
+            const button = await pencil.boundingBox();
+            expect
+              .soft(rest.x + rest.width, title)
+              .toBeLessThanOrEqual(button.x);
+          }
+        },
+      );
+    });
+  }
   appTest(
     "shares the leading slot between a header action and disclosure",
     async ({ page, app }) => {
@@ -657,6 +764,20 @@ appTest.describe("Solo header accessories", () => {
         await expect(marker).toBeVisible();
         await expect(heading).toHaveText(title);
       }
+      await expect(resize).toHaveAttribute("aria-valuenow", "260");
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "32px";
+      });
+      const workspaceTitle = sidebar
+        .getByRole("button", { name: "Work", exact: true })
+        .getByText("Work", { exact: true });
+      await expect
+        .poll(() =>
+          workspaceTitle.evaluate(
+            (label) => label.clientWidth >= label.scrollWidth,
+          ),
+        )
+        .toBe(true);
     },
   );
 

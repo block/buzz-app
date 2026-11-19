@@ -35,6 +35,18 @@ export const nativeRelayFetch: RelayFetch = (origin, path, signal) =>
 const BUZZ_SOFTWARE = "https://github.com/block/buzz";
 
 /**
+ * Packagers may name other relay software they support (NIP-11 `software`
+ * prefixes, comma-separated in BUZZ_COMPATIBLE_RELAY_SOFTWARE at build time).
+ * Empty by default, so stock builds keep accepting only buzz-relay.
+ */
+const COMPATIBLE_SOFTWARE: readonly string[] = (
+  import.meta.env?.VITE_BUZZ_COMPATIBLE_RELAY_SOFTWARE ?? ""
+)
+  .split(",")
+  .map((value: string) => value.trim())
+  .filter(Boolean);
+
+/**
  * NIP-11 and the join policy in parallel; the NIP-11 verdict is reported first.
  * A policy 404 means "none" only once NIP-11 has confirmed a Buzz relay; any
  * other non-answer is retryable rather than a silent waiver of consent.
@@ -98,7 +110,9 @@ async function relayInfo(response: Response) {
     info.name !== "Buzz Relay" &&
     !(
       typeof info.software === "string" &&
-      info.software.startsWith(BUZZ_SOFTWARE)
+      [BUZZ_SOFTWARE, ...COMPATIBLE_SOFTWARE].some((prefix) =>
+        (info.software as string).startsWith(prefix),
+      )
     )
   )
     throw new FindCommunityError("not-buzz");

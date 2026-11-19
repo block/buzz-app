@@ -1167,7 +1167,7 @@ describe("GooseRuntime", () => {
     expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
   });
 
-  it("posts a channel session's burst once, in the latest message's thread", async () => {
+  it("posts a channel session's failed burst once in each thread it answered", async () => {
     const reply = (id: string, root: EventData): RelayEvent =>
       message(id, "@Gander", {
         tags: [
@@ -1192,6 +1192,11 @@ describe("GooseRuntime", () => {
     process?.exit(1, "crashed\n");
     await flush(100);
     expect(published.map((event) => event.tags)).toEqual([
+      [
+        ["h", channel],
+        ["e", one.id, "", "reply"],
+        ["p", alice],
+      ],
       [
         ["h", channel],
         ["e", two.id, "", "reply"],
@@ -2394,6 +2399,32 @@ it("steers a channel session across threaded and top-level requests", async () =
     ]);
     expect(process.turns).toHaveLength(1);
     process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("reports a failed channel turn in each conversation it still owes", async () => {
+  const first = message("1", "thread work");
+  const f = setup({ hold: true, scope: "channel", thread: [first] });
+  const working: Promise<unknown>[] = [];
+  const workingUntil = (done: Promise<unknown>) => {
+    working.push(done);
+  };
+  try {
+    await f.deliver(first, { workingUntil });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.run({ ...pluginWake(), topLevel: true }, { workingUntil });
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
+    process.exit(1, "Error: provider unavailable\n");
+    await Promise.all(working);
+    await flush(30);
+    expect(
+      f.published.map(({ tags }) => tags.filter(([name]) => name === "e")),
+    ).toEqual(expect.arrayContaining([[["e", first.id, "", "reply"]], []]));
+    expect(f.published).toHaveLength(2);
   } finally {
     f.runtime.dispose();
   }

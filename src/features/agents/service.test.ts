@@ -8428,6 +8428,27 @@ it("refuses a blank name before making anything", async () => {
   expect(service.snapshot().agents).toEqual([]);
 });
 
+it("refuses an agent type with more skill folders than the composer can list", async () => {
+  const { plugin, service } = await setup();
+  const type = {
+    id: "skills",
+    title: "Skills",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  };
+  expect(() =>
+    plugin.agents.register({
+      ...type,
+      skillFolders: Array.from({ length: 9 }, (_, n) => `~/.skills/${n}`),
+    }),
+  ).toThrow("skillFolders");
+  const skillFolders = Array.from({ length: 8 }, (_, n) => `~/.skills/${n}`);
+  plugin.agents.register({ ...type, skillFolders });
+  expect(
+    service.types().find((entry) => entry.key === "example/skills"),
+  ).toMatchObject({ skillFolders });
+});
+
 it("returns the created agent after the community changes mid-create", async () => {
   const { service, native, connect } = await setup();
   const create = native.create.getMockImplementation();

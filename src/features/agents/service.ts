@@ -3504,6 +3504,16 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         `Agent type timeoutMs must be a whole number from 1 to ${TIMEOUT_LIMIT_MS}`,
       );
+    const folders = type.skillFolders;
+    if (
+      folders !== undefined &&
+      !(
+        Array.isArray(folders) &&
+        folders.length <= 8 &&
+        folders.every((folder) => typeof folder === "string")
+      )
+    )
+      throw new Error("Agent type skillFolders must be up to 8 folders");
     const { remote } = type;
     if (
       remote &&

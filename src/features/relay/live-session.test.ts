@@ -597,6 +597,54 @@ function reconnectHarness(
 }
 type ReconnectHarness = ReturnType<typeof reconnectHarness>;
 
+it("an empty channel someone is reading re-reads its head when the stream drop cancels its read", async () => {
+  // Waiting for the channel's route to replay on a new stream can take
+  // minutes on a link that keeps dropping; the head is readable without it.
+  for (const established of [false, true]) {
+    const h = reconnectHarness();
+    const stop = h.owner.session.channels.subscribeWindow("c", () => {});
+    try {
+      const seen = message(h.alice, "c", "seen", 10);
+      await h.list();
+      if (established) {
+        // A catch-up owns the read the reader is waiting on.
+        await h.connectAndReplay([]);
+        h.owner.session.channels.ensure("c");
+      } else {
+        h.owner.session.channels.ensure("c");
+        await flush();
+        expect(h.reads()).toHaveLength(1);
+      }
+      await flush();
+      expect(h.window().status).toBe("loading");
+      await h.drop();
+      expect(h.window().status).toBe("loading");
+      h.read().respond(h.page("head", [seen], null));
+      await flush();
+      expect(h.window().status).toBe("ready");
+      expect(h.rows()).toEqual([seen.id]);
+    } finally {
+      stop();
+      h.owner.dispose();
+    }
+  }
+});
+
+it("an empty channel nobody is reading waits for the next ensure after a stream drop", async () => {
+  const h = reconnectHarness();
+  try {
+    await h.list();
+    await h.connectAndReplay([]);
+    h.owner.session.channels.ensure("c");
+    await flush();
+    await h.drop();
+    expect(h.window().status).toBe("idle");
+    expect(h.reads()).toEqual([]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("a reconnect catch-up head newer than every loaded row pages back until it reaches one", async () => {
   // Live replay covers minutes. The head alone would leave the loaded rows on
   // screen with a silent gap before it; each page merges as it lands.

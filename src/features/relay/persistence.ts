@@ -39,8 +39,13 @@ const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
+const BUDGET = "budget";
+/** The startup snapshot and profile mirror share this budget. */
 const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_HEADS = 64;
+/** Saved heads, across identities: enough for a starred set of hundreds. */
+const MAX_HEAD_BYTES = 32 * 1024 * 1024;
+const MAX_HEADS = 512;
+const READ_PAGE = 32;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type Record = SavedHead & { key: string; scope: string; bytes: number };
 
@@ -56,7 +61,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -66,6 +71,10 @@ export function createHeadPersistence(
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        // Enforcing the head budget walks this index's keys, never the heads.
+        const heads = request.transaction?.objectStore(STORE);
+        if (heads && !heads.indexNames.contains(BUDGET))
+          heads.createIndex(BUDGET, ["savedAt", "bytes"]);
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -218,24 +227,46 @@ export function createHeadPersistence(
         },
         STARTUP,
       ),
-    read: () =>
-      transact("readonly", (store, done, then) =>
-        then(store.getAll(), (rows: Record[]) =>
-          done(
-            rows
-              .filter(
-                (row) =>
-                  row.scope === scope && Date.now() - row.savedAt < MAX_AGE,
-              )
-              .sort((a, b) => b.savedAt - a.savedAt)
-              .slice(0, MAX_HEADS),
-          ),
-        ),
-      ),
+    // Newest first, a page per transaction, so no single clone of the whole
+    // budget races the transaction timeout.
+    read: async () => {
+      const keys = await transact<IDBValidKey[]>(
+        "readonly",
+        (store, done, then) => then(store.index(BUDGET).getAllKeys(), done),
+      );
+      // A prefix can also match a longer scope; each row's scope decides.
+      const candidates = keys
+        .filter(
+          (key): key is string =>
+            typeof key === "string" && key.startsWith(`${scope}:`),
+        )
+        .reverse();
+      const rows: Record[] = [];
+      for (
+        let index = 0;
+        index < candidates.length && rows.length < MAX_HEADS;
+        index += READ_PAGE
+      ) {
+        const page = await transact<Record[]>(
+          "readonly",
+          (store, done, then) => {
+            const found: Record[] = [];
+            done(found);
+            for (const key of candidates.slice(index, index + READ_PAGE))
+              then(store.get(key), (row: Record | undefined) => {
+                if (row?.scope === scope && Date.now() - row.savedAt < MAX_AGE)
+                  found.push(row);
+              });
+          },
+        );
+        rows.push(...page);
+      }
+      return rows.sort((a, b) => b.savedAt - a.savedAt).slice(0, MAX_HEADS);
+    },
     write: (head) =>
       transact("readwrite", (store, done, then) => {
         const bytes = byteSize(head);
-        if (bytes > MAX_BYTES) {
+        if (bytes > MAX_HEAD_BYTES) {
           done(undefined);
           return;
         }
@@ -246,22 +277,30 @@ export function createHeadPersistence(
           bytes,
         };
         store.put(row);
-        then(store.getAll(), (rows: Record[]) => {
-          // Global disk budget across identities; scope is still required for every read.
-          let total = 0,
-            count = 0;
-          for (const entry of rows.sort((a, b) => b.savedAt - a.savedAt)) {
-            total += entry.bytes;
+        // Global disk budget across identities; scope is still required for
+        // every read. Newest first, over keys alone.
+        let total = 0,
+          count = 0;
+        const oldest = Date.now() - MAX_AGE;
+        then(
+          store.index(BUDGET).openKeyCursor(null, "prev"),
+          (cursor: IDBCursor | null) => {
+            if (!cursor) {
+              done(undefined);
+              return;
+            }
+            const [savedAt, bytes] = cursor.key as [number, number];
+            total += bytes;
             count++;
             if (
-              total > MAX_BYTES ||
+              total > MAX_HEAD_BYTES ||
               count > MAX_HEADS ||
-              Date.now() - entry.savedAt >= MAX_AGE
+              savedAt <= oldest
             )
-              store.delete(entry.key);
-          }
-          done(undefined);
-        });
+              store.delete(cursor.primaryKey);
+            cursor.continue();
+          },
+        );
       }),
     remove: (channelId) =>
       transact("readwrite", (store, done) => {

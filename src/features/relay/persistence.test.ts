@@ -148,3 +148,130 @@ it("evicts the profile mirror before any saved roster", async () => {
   tx.oncomplete();
   await expect(result).resolves.toBeUndefined();
 });
+
+it("keeps saved heads within budget by walking budget keys, never reading heads", async () => {
+  vi.useFakeTimers();
+  const MB = 1024 * 1024;
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  // Newest first, as the budget index walks backward.
+  const keys: [string, [number, number]][] = [
+    ["viewer:relay:new", [now, 30 * MB]],
+    ["viewer:relay:over", [now - 1, 3 * MB]],
+    ["other:relay:small", [now - 2, 1 * MB]],
+    ["viewer:relay:stale", [now - day, 1]],
+  ];
+  const cursor = {
+    onsuccess: () => {},
+    result: null as IDBCursor | null,
+  };
+  const step = (index: number) => {
+    const entry = keys[index];
+    cursor.result = entry
+      ? ({
+          key: entry[1],
+          primaryKey: entry[0],
+          continue: () => step(index + 1),
+        } as unknown as IDBCursor)
+      : null;
+  };
+  const store = {
+    put: vi.fn(),
+    delete: vi.fn(),
+    getAll: vi.fn(),
+    index: vi.fn(
+      () =>
+        ({
+          openKeyCursor: () => cursor as unknown as IDBRequest,
+        }) as unknown as IDBIndex,
+    ),
+  };
+  const { tx, result } = transaction(
+    () => {},
+    (cache) =>
+      cache.write({ channelId: "new", savedAt: now, events: [], profiles: [] }),
+    store,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.put).toHaveBeenCalledOnce();
+  expect(store.index).toHaveBeenCalledWith("budget");
+  step(0);
+  // Each continue() advances the cursor; the last success has no cursor.
+  for (let index = 0; index <= keys.length; index++) cursor.onsuccess();
+  expect(store.getAll).not.toHaveBeenCalled();
+  expect(store.delete.mock.calls).toEqual([
+    ["viewer:relay:over"],
+    ["other:relay:small"],
+    ["viewer:relay:stale"],
+  ]);
+  tx.oncomplete();
+  await expect(result).resolves.toBeUndefined();
+});
+
+it("reads saved heads newest first, a page per transaction, keeping only this scope", async () => {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const row = (key: string, scope: string, savedAt: number) => ({
+    key,
+    scope,
+    channelId: key.split(":").at(-1),
+    savedAt,
+    events: [],
+    profiles: [],
+    bytes: 1,
+  });
+  // Index order: oldest first.
+  const rows = [
+    row("viewer:relay:stale", "viewer:relay", now - day),
+    ...Array.from({ length: 40 }, (_, index) =>
+      row(`viewer:relay:c${index}`, "viewer:relay", now - 1000 + index),
+    ),
+    // A longer scope that shares the prefix is read but not kept.
+    row("viewer:relay:x:c1", "viewer:relay:x", now),
+    row("other:relay:c1", "other:relay", now),
+  ];
+  const byKey = new Map(rows.map((entry) => [entry.key, entry]));
+  const transactions: string[][] = [];
+  const answer = <T>(result: T) => {
+    const request = { onsuccess: () => {}, result };
+    queueMicrotask(() => request.onsuccess());
+    return request as unknown as IDBRequest<T>;
+  };
+  const db = {
+    transaction: () => {
+      const gets: string[] = [];
+      transactions.push(gets);
+      const tx = {
+        abort: vi.fn(),
+        error: null,
+        oncomplete: () => {},
+        onabort: () => {},
+        onerror: () => {},
+        objectStore: () => ({
+          index: () => ({
+            getAllKeys: () => answer(rows.map((entry) => entry.key)),
+          }),
+          get: (key: string) => {
+            gets.push(key);
+            return answer(byKey.get(key));
+          },
+        }),
+      };
+      setTimeout(() => tx.oncomplete(), 0);
+      return tx;
+    },
+    close: vi.fn(),
+  };
+  const open = { onsuccess: () => {}, result: db };
+  vi.stubGlobal("indexedDB", { open: () => open });
+  const cache = createHeadPersistence("viewer", "relay");
+  const reading = cache.read();
+  open.onsuccess();
+  const saved = await reading;
+  expect(saved.map((head) => head.channelId)).toEqual(
+    Array.from({ length: 40 }, (_, index) => `c${39 - index}`),
+  );
+  // One key read, then pages of 32 newest first.
+  expect(transactions.map((gets) => gets.length)).toEqual([0, 32, 10]);
+  expect(transactions[1]?.[0]).toBe("viewer:relay:x:c1");
+});

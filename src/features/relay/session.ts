@@ -3708,7 +3708,10 @@ export function createRelaySession(
     if (closed || !options.warm) return;
     const prefs = sidebarPreferences.queries.snapshot();
     if (prefs.status === "idle" || prefs.status === "loading") return;
-    channels.queries.warm?.(prefs.data?.starred ?? []);
+    channels.queries.warm?.(
+      prefs.data?.starred ?? [],
+      options.warm === "starred",
+    );
   };
   // Live heads invalidate reads. Their payloads never supply migration data.
   const sidebarHeads = new Map<string, Pick<RelayEvent, "id" | "created_at">>();

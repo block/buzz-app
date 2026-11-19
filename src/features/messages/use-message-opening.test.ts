@@ -449,7 +449,7 @@ it("waits for a queued retry of an empty failed channel while catch-up slots are
   }
 });
 
-it("reads an empty channel again when the stream drops before its queued retry runs", async () => {
+it("reads an open empty channel again at once when the stream drops before its queued retry runs", async () => {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
@@ -517,18 +517,15 @@ it("reads an empty channel again when the stream drops before its queued retry r
       live.state({ status: "connecting", routes: [] });
       await flush();
     });
-    expect(channels.window("a").status).not.toBe("loading");
-    first.unmount();
-    // Reopening reads the channel over HTTP instead of waiting for the stream.
-    const view = renderHook(() => useMessageOpening(channels, "a", target.id));
-    await act(flush);
-    expect(view.result.current).toBeUndefined();
+    // The open reader reads the channel over HTTP at once instead of waiting
+    // for the stream.
+    expect(first.result.current).toBeUndefined();
     const read = take("a");
     await act(async () => {
       read.respond([target, ...empty("a")]);
       await flush();
     });
-    expect(view.result.current).toBe(true);
+    expect(first.result.current).toBe(true);
   } finally {
     owner.dispose();
   }

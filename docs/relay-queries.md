@@ -1104,6 +1104,13 @@ re-sent batch delivered. A report with nothing continuous and no grant since
 pages back to the rows held when it arrives, so a routine re-send after a
 continuous resume reads only the head.
 
+A drop cancels finite reads, including an empty window's first head read or
+the catch-up it waited on. A window someone is reading that holds no rows yet
+re-reads its head over HTTP at once rather than waiting for its route to replay
+on a new stream, so a flapping connection cannot leave an opened channel loading
+for minutes. An empty window nobody is reading becomes idle and its next
+`ensure()` reads it.
+
 A retained window that was verified when the stream dropped, and a thread view
 that was settled then, each holding rows from a read started at most 15 minutes
 before the drop, skip the head, page and thread reads for such a channel (a

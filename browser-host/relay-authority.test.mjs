@@ -81,6 +81,25 @@ it.each([
   },
 );
 it.each([
+  [undefined, false],
+  [["nip-ar"], false],
+  [["buzz-pins"], true],
+])(
+  "offers pin commands only with a buzz-pins advertisement: %j",
+  async (supported_extensions, supported) => {
+    const h = await harness(() =>
+      Response.json({ self, supported_extensions }),
+    );
+    try {
+      const transport = await h.connect();
+      expect(transport.writer.kinds.includes(40010)).toBe(supported);
+      expect(transport.writer.kinds.includes(40011)).toBe(supported);
+    } finally {
+      await h.close();
+    }
+  },
+);
+it.each([
   ["explicit self", { self, pubkey: contact }, self, self],
   ["self without contact", { self }, self, self],
   ["contact only", { pubkey: contact }, contact, undefined],

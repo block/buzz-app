@@ -774,6 +774,35 @@ it("tags a community emoji reaction and refuses a shortcode outside the palette"
   expect(published).toHaveLength(2);
 });
 
+it("pins and unpins a message in its own channel", async () => {
+  const { client, published } = fake([
+    ...community,
+    event({ id: root, pubkey: bob }),
+  ]);
+  expect(await callTool(client, {}, "pin", { id: root })).toContain("pinned");
+  expect(await callTool(client, {}, "pin", { id: root, off: true })).toContain(
+    "unpinned",
+  );
+  expect(published).toEqual([
+    {
+      kind: 40010,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", root],
+      ],
+    },
+    {
+      kind: 40011,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", root],
+      ],
+    },
+  ]);
+});
+
 it("reads no emoji sets for a message without a shortcode", async () => {
   const { client } = fake(community);
   await callTool(client, { channel: "chan" }, "send", {

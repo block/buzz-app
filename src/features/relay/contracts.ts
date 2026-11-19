@@ -117,12 +117,17 @@ export type Attachment = Readonly<{
 export const MEDIA_TARGET_TAG = "buzz:media";
 export const INVOCATION_INTENT_TAG = "buzz:invocation-intent";
 export const INVOCATION_INTENT_VERSION = 1;
-/** Relay-authored membership activity, not a membership grant or user message. */
-export type MembershipChange = Readonly<{
-  type: "member_joined" | "member_left" | "member_removed";
-  actor: string;
-  target: string;
-}>;
+/** Relay-authored membership activity, not a membership grant or user message.
+ * A pin notice is channel activity too: its target is the pinner, and
+ * `messageId` names the pinned message. */
+export type MembershipChange = Readonly<
+  | {
+      type: "member_joined" | "member_left" | "member_removed";
+      actor: string;
+      target: string;
+    }
+  | { type: "message_pinned"; actor: string; target: string; messageId: string }
+>;
 export type ChannelMessage = Readonly<{
   id: string;
   channelId: string;

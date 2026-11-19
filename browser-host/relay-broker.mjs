@@ -361,6 +361,10 @@ async function relayAuthority(fetch, relay) {
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-search-sort"),
+    // Pin and unpin commands; the relay keeps the pin list either way.
+    pins:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-pins"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -573,6 +577,36 @@ export function validReport(event) {
       "illegal",
       "other",
     ].includes(target[2])
+  );
+}
+/** A pin (40010) or unpin (40011): one channel and one message, as native
+ * `valid_pin_command`; the relay decides who may pin what. */
+export function validPinCommand(event) {
+  if (
+    ![40010, 40011].includes(event?.kind) ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const named = (name) => event.tags.filter((tag) => tag[0] === name);
+  const [channel] = named("h");
+  const [target] = named("e");
+  return (
+    named("h").length === 1 &&
+    channel[1].length > 0 &&
+    channel[1].length <= 256 &&
+    named("e").length === 1 &&
+    /^[0-9a-f]{64}$/.test(target[1]) &&
+    named("client-id").length <= 1
   );
 }
 /** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
@@ -1737,6 +1771,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).artifactSupport ? [45010] : []),
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
+                ...((await getAuthority(relay)).pins ? [40010, 40011] : []),
               ],
               channelLifecycle: true,
               channelDetails: true,
@@ -3170,6 +3205,12 @@ export function relayBrokerPlugin({
               if (!validReport(filters))
                 return json(res, 400, {
                   error: "Report rejected",
+                  sent: false,
+                });
+            } else if ([40010, 40011].includes(filters?.kind)) {
+              if (!validPinCommand(filters))
+                return json(res, 400, {
+                  error: "Invalid pin command",
                   sent: false,
                 });
             } else if (filters?.kind === 20002) {

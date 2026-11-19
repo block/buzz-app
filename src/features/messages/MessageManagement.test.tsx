@@ -83,7 +83,13 @@ async function fixture(
   {
     outboxStorage = { load: () => [], save() {} },
     viewer = keypair(),
-  }: { outboxStorage?: OutboxStorage; viewer?: Key } = {},
+    pins,
+  }: {
+    outboxStorage?: OutboxStorage;
+    viewer?: Key;
+    /** With a relay that supports pins, the ids its list names. */
+    pins?: (original: RelayEvent) => string[];
+  } = {},
 ) {
   let role = viewerRole,
     rosterTime = 1700000000;
@@ -208,6 +214,15 @@ async function fixture(
               ],
             }),
           ];
+        if (pins && filter.kinds?.includes(30623))
+          return [
+            signed(relay, {
+              kind: 30623,
+              content: "",
+              created_at: 1700000000,
+              tags: [["d", "room"], ...pins(original).map((id) => ["e", id])],
+            }),
+          ];
         if (filter.kinds?.includes(0))
           return [
             ...(originalMention && filter.authors?.includes(peer.pubkey)
@@ -229,7 +244,7 @@ async function fixture(
         return [];
       },
       writer: {
-        kinds: [9, 40003, 5],
+        kinds: [9, 40003, 5, ...(pins ? [40010, 40011] : [])],
         async sign(template) {
           return signed(viewer, template);
         },
@@ -820,6 +835,59 @@ const savedFollows = () =>
   Object.keys(localStorage)
     .filter((key) => key.startsWith("buzz.thread-follows.v1:"))
     .map((key) => localStorage.getItem(key));
+
+it("pins from the message menu, and offers unpin for a pinned message", async () => {
+  const h = await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      pins: () => [],
+    },
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Pin to channel" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const { event } = h.publication(0);
+  expect(event.kind).toBe(40010);
+  expect(event.content).toBe("");
+  expect(event.tags.filter(([name]) => name !== "client-id")).toEqual([
+    ["h", "room"],
+    ["e", h.original.id],
+  ]);
+  cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
+  await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      pins: (original) => [original.id],
+    },
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Unpin from channel" }),
+  ).toBeInTheDocument();
+});
+
+it("offers no pin action when the relay does not support pins", async () => {
+  await fixture(false);
+  await screen.findByRole("menuitem", { name: "Follow thread" });
+  expect(screen.queryByRole("menuitem", { name: /pin/i })).toBeNull();
+});
 
 it("follows a thread without replying and keeps the saved choice", async () => {
   localStorage.clear();

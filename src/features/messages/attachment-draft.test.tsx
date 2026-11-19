@@ -389,6 +389,44 @@ it("names three files per reason, counts the rest and gives empty files one sent
   ]);
 });
 
+it("refuses a folder as a folder, alone or in a batch, and a zero-byte file still as empty", () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  const folder = file("top-recipes", 0);
+  const add = (files: globalThis.File[], folders: globalThis.File[]) =>
+    draft.result.current.store.add(files, undefined, new Set(folders));
+  expect(() => add([folder], [folder])).toThrow(
+    /^top-recipes is a folder\. Folders can’t be attached\.$/,
+  );
+  expect(() => add([file("empty.txt", 0)], [folder])).toThrow(
+    /^empty\.txt is empty\.$/,
+  );
+  // A folder's reported size varies by platform; its size never admits it.
+  const more = ["photos", "drafts", "notes"].map((name) => file(name, 4096));
+  let left: readonly string[] = [];
+  act(() => {
+    left = add(
+      [folder, file("notes.txt"), file("empty.txt", 0), ...more],
+      [folder, ...more],
+    );
+  });
+  expect(draft.result.current.items.map((item) => item.file.name)).toEqual([
+    "notes.txt",
+  ]);
+  expect(left).toEqual([
+    "top-recipes, photos, drafts and 1 more are folders. Folders can’t be attached.",
+    "empty.txt is empty.",
+  ]);
+  act(() => {
+    left = add([folder, file("more.txt")], [folder]);
+  });
+  expect(left).toEqual(["top-recipes is a folder. Folders can’t be attached."]);
+  expect(draft.result.current.items.map((item) => item.file.name)).toEqual([
+    "notes.txt",
+    "more.txt",
+  ]);
+});
+
 it("charges a batch's admitted files, not its refused ones, to the shared retention budget", () => {
   const h = fixture();
   const a = renderHook(() => useAttachmentDraft(h.session, "a", "a"));

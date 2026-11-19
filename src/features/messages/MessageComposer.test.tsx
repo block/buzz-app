@@ -1940,9 +1940,21 @@ function attachByPaste(target: HTMLElement, file = attachmentFile()) {
   });
 }
 function attachByDrop(target: HTMLElement, file = attachmentFile()) {
+  dropFiles(target, [file]);
+}
+/** `folders` are the dropped files whose entries are directories. */
+function dropFiles(
+  target: HTMLElement,
+  files: readonly File[],
+  folders: readonly File[] = [],
+) {
   const transfer = {
     types: ["Files"],
-    files: [file],
+    files,
+    items: files.map((file) => ({
+      kind: "file",
+      webkitGetAsEntry: () => ({ isDirectory: folders.includes(file) }),
+    })),
     dropEffect: "uninitialized",
   };
   const over = new Event("dragover", { bubbles: true, cancelable: true });
@@ -2267,6 +2279,96 @@ it("counts every picked file when none of several can be attached", async () => 
   });
   expect(notice).toHaveAccessibleDescription("a.png, b.png are empty.");
   expect(h.uploadCalls).toHaveLength(0);
+});
+
+it.each([
+  {
+    folders: ["top-recipes"],
+    empty: [],
+    title: "Could not attach folder",
+    description: "top-recipes is a folder. Folders can’t be attached.",
+  },
+  {
+    folders: ["photos", "drafts"],
+    empty: [],
+    title: "Could not attach 2 folders",
+    description: "photos, drafts are folders. Folders can’t be attached.",
+  },
+  {
+    folders: ["top-recipes"],
+    empty: ["empty.txt"],
+    title: "Could not attach 2 items",
+    description:
+      "top-recipes is a folder. Folders can’t be attached. empty.txt is empty.",
+  },
+  // An empty file is still an empty file, however it arrives.
+  {
+    folders: [],
+    empty: ["empty.txt"],
+    title: "Could not attach file",
+    description: "empty.txt is empty.",
+  },
+])(
+  "reports dropped folders $folders and empty files $empty as $title",
+  async ({ folders, empty, title, description }) => {
+    const h = await mountUploadComposer();
+    const dropped = folders.map((name) => attachmentFile(name, ""));
+    dropFiles(
+      h.form(),
+      [...dropped, ...empty.map((name) => attachmentFile(name, ""))],
+      dropped,
+    );
+    const notice = await screen.findByRole("dialog", { name: title });
+    expect(notice).toHaveAccessibleDescription(description);
+    expect(h.uploadCalls).toHaveLength(0);
+  },
+);
+
+it("attaches the files dropped beside a folder and names the folder in one notice", async () => {
+  const h = await mountUploadComposer();
+  const folder = attachmentFile("top-recipes", "");
+  dropFiles(
+    h.form(),
+    [attachmentFile("one.txt"), folder, attachmentFile("two.txt")],
+    [folder],
+  );
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach 1 of 3 items",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "top-recipes is a folder. Folders can’t be attached.",
+  );
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  // The chips fade in.
+  for (const name of ["one.txt", "two.txt"])
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: `Remove ${name}` }),
+      ).toBeVisible(),
+    );
+  expect(
+    screen.queryByRole("button", { name: "Remove top-recipes" }),
+  ).toBeNull();
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+});
+
+it("admits a dropped file of any type and shows the relay's refusal on its chip", async () => {
+  // No file type is refused on the way in; the relay decides, as for a picked file.
+  const h = await mountUploadComposer();
+  dropFiles(h.form(), [
+    new File(["MZ"], "setup.exe", { type: "application/x-msdownload" }),
+  ]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("rejected"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual([`setup.exe: ${UPLOAD_FAILURES.rejected}`]),
+  );
+  expect(screen.getByRole("button", { name: "Retry setup.exe" })).toBeVisible();
 });
 
 it("does not focus after a picker upload fails or is later retried", async () => {

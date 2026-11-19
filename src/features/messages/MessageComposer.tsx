@@ -1726,7 +1726,7 @@ function Composer({
       !voice.capturing,
     attachFiles,
   );
-  function attachFiles(files: readonly File[]) {
+  function attachFiles(files: readonly File[], folders?: ReadonlySet<File>) {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -1746,9 +1746,15 @@ function Composer({
       );
       return;
     }
+    // A drop can hold folders, which the notice must not call files.
+    const kind = !folders?.size
+      ? "file"
+      : folders.size === files.length
+        ? "folder"
+        : "item";
     try {
       const before = attachments.store.snapshot().length;
-      const left = attachments.store.add(files);
+      const left = attachments.store.add(files, undefined, folders);
       const added = attachments.store
         .snapshot()
         .slice(before)
@@ -1758,17 +1764,19 @@ function Composer({
         left.length
           ? {
               title: added.length
-                ? `Could not attach ${refused} of ${files.length} files`
-                : `Could not attach ${refused} files`,
+                ? `Could not attach ${refused} of ${files.length} ${kind}s`
+                : `Could not attach ${refused} ${kind}s`,
               description: left.join(" "),
             }
           : undefined,
       );
       return added;
     } catch (reason) {
-      refuseAttachment(
-        reason instanceof Error ? reason.message : "Could not attach files.",
-      );
+      setAttachmentError({
+        title: `Could not attach ${kind}`,
+        description:
+          reason instanceof Error ? reason.message : "Could not attach files.",
+      });
     }
   }
   const outbox = session.outbox;

@@ -977,7 +977,7 @@ it.each([
     expect(top?.result).not.toMatchObject({ final: true });
     const thread = await call(name, {
       text: "Thread reply",
-      [field]: mention.id,
+      [field]: ` ${mention.id} `,
     });
     expect(thread?.result).not.toMatchObject({ isError: true });
     expect(thread?.result).toMatchObject({ final: true });

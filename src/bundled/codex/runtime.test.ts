@@ -9287,15 +9287,48 @@ it("settles the thread a parent-only subthread answers in a two-thread channel t
         f.sent.filter((wire) => wire.method === "turn/steer"),
       ).toHaveLength(1),
     );
-    // The tool takes no channel: the parent says where it goes.
+    // The tool takes no channel: the parent says where it goes, padded as
+    // a model may send it.
     await f.tool("reply_in_subthread", {
-      parent: first.trigger.event.id,
+      parent: ` ${first.trigger.event.id} `,
       audience: "everyone",
       text: "Thread A reply",
       final: true,
     });
     expect(await state(0)).not.toBe(pending);
     expect(await state(1)).toBe(pending);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("settles a community DM whose final send replies to its message", async () => {
+  const f = fixture();
+  f.snapshot.session.channels.list = () => ({
+    status: "ready",
+    channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+  });
+  const base = f.delivery("DM work");
+  if (base.trigger.type !== "mention") throw new Error("Expected a mention");
+  base.trigger.event.tags = [["h", "channel"]];
+  const pending = Symbol("pending");
+  try {
+    await f.runtime.run({ ...base, ...scoped(base) });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.tool("send", {
+      reply: base.trigger.event.id,
+      audience: "everyone",
+      text: "DM reply",
+      final: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      await Promise.race([
+        f.workingUntil.mock.calls[0]?.[0],
+        Promise.resolve(pending),
+      ]),
+    ).not.toBe(pending);
     await f.complete(0);
   } finally {
     f.runtime.dispose();

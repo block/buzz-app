@@ -324,10 +324,19 @@ async function placeOf(
 ): Promise<Place> {
   const id = [args.reply, args.parent]
     .find((id): id is string => typeof id === "string")
-    ?.toLowerCase();
+    ?.trim()
+    .toLowerCase();
   if (!id) return {};
-  const known = answering.find(({ activityScope }) => activityScope === id);
-  if (known) return { channel: known.conversation.channelId, thread: id };
+  // A reply to a request's own message, or in its thread, answers it there,
+  // a DM's at its top level included.
+  const known = answering.find(
+    ({ activityScope, event }) => activityScope === id || event?.id === id,
+  );
+  if (known)
+    return {
+      channel: known.conversation.channelId,
+      thread: known.activityScope,
+    };
   const [event] = await agent.query([{ ids: [id], limit: 1 }]).catch(() => []);
   if (!event) return { thread: id };
   const channel = event.tags.find(([name]) => name === "h")?.[1];

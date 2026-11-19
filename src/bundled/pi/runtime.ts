@@ -1803,7 +1803,8 @@ async function destination(
 ) {
   const id = [args.reply, args.parent]
     .find((id): id is string => typeof id === "string")
-    ?.toLowerCase();
+    ?.trim()
+    .toLowerCase();
   if (id && id !== context.root) {
     const [event] =
       (await client?.query([{ ids: [id], limit: 1 }]).catch(() => [])) ?? [];

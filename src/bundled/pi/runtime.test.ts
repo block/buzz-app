@@ -985,6 +985,63 @@ it.each([
   },
 );
 
+it("does not credit the default thread for a subthread under another thread", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver, agent, runtime, published } = setup({
+    wait: () => finished.promise,
+  });
+  const mention = reply("2", "thread T");
+  const other = message("3", "thread U");
+  agent.query.mockImplementation(async (...args: unknown[]) => {
+    const [[filter] = []] = args as { ids?: string[] }[][];
+    return [root, mention, other].filter((event) =>
+      filter?.ids?.includes(event.id),
+    );
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  await deliver({ type: "mention", event: mention }, { config }).run;
+  await deliver(pluginWake(other.id), { config }).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  for (const [request, entry] of [
+    [mention.id, 1],
+    [`plugin/${WAKE_ID}`, 2],
+  ] as const)
+    runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request,
+      entry,
+    });
+  const call = (name: string, args: Record<string, unknown>) =>
+    host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: other.id },
+      name,
+      arguments: { audience: "everyone", final: true, ...args },
+    });
+  const nested = await call("reply_in_subthread", {
+    text: "T nested answer",
+    parent: root.id,
+  });
+  const thread = await call("send", {
+    text: "T answer",
+    channel,
+    reply: root.id,
+  });
+  expect(nested?.result).not.toMatchObject({ isError: true });
+  expect(thread?.result).not.toMatchObject({ isError: true });
+  expect(
+    published.every(({ tags }) =>
+      tags.some(([name, id]) => name === "e" && id === root.id),
+    ),
+  ).toBe(true);
+  // U still has no answer.
+  expect(thread?.result).not.toMatchObject({ final: true });
+  finished.resolve(undefined);
+});
+
 it.each([true, false])(
   "rechecks guarded Pi input after native queue waits (current=%s)",
   async (valid) => {

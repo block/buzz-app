@@ -9755,6 +9755,342 @@ it("holds a watch's live events while it catches up, then hears them oldest firs
   }
 });
 
+it.each([false, true])(
+  "catches up healthy channels while another channel fails, then recovers without repeats (same watch: %s)",
+  async (sameWatch) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const { service, run, session, history, recover, ctx } = await setup({
+      identities: [echo],
+    });
+    const now = nowSeconds();
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/broken": sameWatch
+          ? null
+          : { ...chat["watch/chat"], channels: [lobby] },
+        "watch/chat": {
+          ...chat["watch/chat"],
+          channels: sameWatch ? [lobby, channel] : [channel],
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    history.push(
+      eventDto(message(author, lobby, "delayed", now + 10)),
+      posted("healthy", now + 11),
+    );
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failing = true;
+    let failures = 0;
+    read.mockImplementation(async (filters, options) => {
+      if (failing && filters[0]?.["#h"]?.includes(lobby)) {
+        failures++;
+        throw new Error("Channel history unavailable");
+      }
+      return original(filters, options);
+    });
+    try {
+      vi.setSystemTime((now + 60) * 1000);
+      recover();
+      await vi.waitFor(() => expect(heard(run)).toEqual(["healthy"]));
+      expect(failures).toBe(1);
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(failures).toBe(1);
+      // The service checks the 30-second retry on its five-second tick.
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(failures).toBe(2);
+      expect(heard(run)).toEqual(["healthy"]);
+      failing = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(heard(run)).toEqual(["healthy", "delayed"]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(heard(run)).toEqual(["healthy", "delayed"]);
+    } finally {
+      await ctx.fiber.dispose();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  { jitter: 0, delays: [30_000, 60_000, 120_000, 240_000, 240_000] },
+  { jitter: 1, delays: [37_500, 75_000, 150_000, 300_000, 300_000] },
+])(
+  "backs off failed history streams without delaying healthy polls (jitter: $jitter)",
+  async ({ jitter, delays }) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const random = vi.spyOn(Math, "random").mockReturnValue(jitter);
+    const { service, run, session, history, recover, connect, unrouted, ctx } =
+      await setup({ identities: [echo] });
+    unrouted.add(lobby);
+    unrouted.add(channel);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/chat": { ...chat["watch/chat"], channels: [lobby, channel] },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const now = nowSeconds();
+    history.push(eventDto(message(author, lobby, "recovered", now + 1)));
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    const failures: number[] = [];
+    let failing = true;
+    const observed: (readonly unknown[] | undefined)[] = [];
+    const unsubscribe = service.subscribe(() => {
+      const statuses = service.snapshot().watchReadFailures;
+      if (statuses !== observed.at(-1)) observed.push(statuses);
+    });
+    read.mockImplementation(async (filters, options) => {
+      if (
+        failing &&
+        filters[0]?.["#h"]?.includes(lobby) &&
+        filters[0]?.kinds?.includes(9)
+      ) {
+        failures.push(Date.now());
+        throw new Error("Private relay diagnostic must stay in the host");
+      }
+      return original(filters, options);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      recover();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(failures).toHaveLength(1);
+      // Reconnects retain the deadline instead of restarting the failed read.
+      recover();
+      connect(false);
+      expect(service.snapshot().watchReadFailures).toEqual([]);
+      connect(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(failures).toHaveLength(1);
+      for (const [index, delay] of delays.entries()) {
+        if (index === 1) {
+          history.push(posted("healthy during backoff", nowSeconds() + 1));
+          await vi.advanceTimersByTimeAsync(35_000);
+          expect(heard(run)).toEqual(["healthy during backoff"]);
+        }
+        const failedAt = failures.at(-1) as number;
+        const deadline = failedAt + delay;
+        expect(observed.at(-1)).toEqual([
+          {
+            agentKey: bot,
+            watchSlug: "watch/chat",
+            channelId: lobby,
+            summary: "Channel history could not be read",
+            consecutiveFailures: index + 1,
+            failedAt,
+            retryAt: deadline,
+          },
+        ]);
+        await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
+        expect(failures).toHaveLength(index + 1);
+        await vi.advanceTimersByTimeAsync(5_001);
+        expect(failures).toHaveLength(index + 2);
+        expect(failures.at(-1)).toBeGreaterThanOrEqual(deadline);
+        expect(failures.at(-1)).toBeLessThanOrEqual(deadline + 5_000);
+      }
+      failing = false;
+      await vi.advanceTimersByTimeAsync((delays.at(-1) as number) + 5_000);
+      expect(heard(run)).toEqual(["healthy during backoff", "recovered"]);
+      expect(observed.at(-1)).toEqual([]);
+      // A successful read resets the next failure to the first delay.
+      failing = true;
+      await vi.advanceTimersByTimeAsync(35_000);
+      const count = failures.length;
+      expect(count).toBe(7);
+      expect(observed.at(-1)).toMatchObject([{ consecutiveFailures: 1 }]);
+      const resetDeadline = (failures.at(-1) as number) + (delays[0] as number);
+      await vi.advanceTimersByTimeAsync(resetDeadline - Date.now() - 1);
+      expect(failures).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(failures).toHaveLength(count + 1);
+    } finally {
+      unsubscribe();
+      await ctx.fiber.dispose();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  "disable",
+  "remove",
+  "edit",
+  "pause",
+  "offline pause",
+  "stop",
+] as const)(
+  "resets or cancels history backoff when its owner chooses %s",
+  async (action) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const { service, session, recover, connect, unrouted, ctx } = await setup({
+      identities: [echo],
+    });
+    unrouted.add(lobby);
+    const watch = { ...chat["watch/chat"], channels: [lobby] };
+    await service.save(bot, {
+      attention: { "watch/channel": null, "watch/chat": watch },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    const failures: number[] = [];
+    read.mockImplementation(async (filters, options) => {
+      if (
+        filters[0]?.["#h"]?.includes(lobby) &&
+        filters[0]?.kinds?.includes(9)
+      ) {
+        failures.push(Date.now());
+        throw new Error("Channel history unavailable");
+      }
+      return original(filters, options);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      recover();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(failures).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(failures).toHaveLength(2);
+      expect(service.snapshot().watchReadFailures).toMatchObject([
+        { consecutiveFailures: 2 },
+      ]);
+      const offline = action === "offline pause";
+      const pause = action === "pause" || offline;
+      if (offline) {
+        connect(false);
+        expect(service.snapshot().running).toEqual([]);
+      }
+      if (action === "stop") await ctx.fiber.dispose();
+      else
+        await service.save(bot, {
+          attention: pause
+            ? {
+                "interest/default": {
+                  type: "interest",
+                  instructions: "Watch",
+                  paused: true,
+                },
+              }
+            : {
+                "watch/chat":
+                  action === "remove"
+                    ? null
+                    : {
+                        ...watch,
+                        ...(action === "edit"
+                          ? { name: "Edited watch" }
+                          : { enabled: false }),
+                      },
+              },
+        });
+      await vi.advanceTimersByTimeAsync(0);
+      if (action !== "edit") {
+        expect(service.snapshot().watchReadFailures).toEqual([]);
+        if (!offline) await vi.advanceTimersByTimeAsync(600_000);
+        expect(failures).toHaveLength(2);
+        if (action === "stop") return;
+        await service.save(bot, {
+          attention: pause
+            ? {
+                "interest/default": {
+                  type: "interest",
+                  instructions: "Watch",
+                },
+              }
+            : { "watch/chat": watch },
+        });
+        if (offline) connect(true);
+        await vi.advanceTimersByTimeAsync(offline ? 5_000 : 35_000);
+      }
+      expect(failures).toHaveLength(3);
+      expect(service.snapshot().watchReadFailures).toMatchObject([
+        { consecutiveFailures: 1 },
+      ]);
+      const deadline = (failures.at(-1) as number) + 30_000;
+      await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
+      expect(failures).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(failures).toHaveLength(4);
+    } finally {
+      await ctx.fiber.dispose();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([false, true])(
+  "does not overlap a history pass while another stream waits, and honors cancellation (%s)",
+  async (cancel) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const { service, session, recover, ctx } = await setup({
+      identities: [echo],
+    });
+    const gate = runnerGate();
+    const watch = { ...chat["watch/chat"], channels: [lobby, channel] };
+    await service.save(bot, {
+      attention: { "watch/channel": null, "watch/chat": watch },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failures = 0,
+      pending = 0;
+    read.mockImplementation(async (filters, options) => {
+      if (filters[0]?.kinds?.includes(9) && filters[0]?.until !== undefined) {
+        if (filters[0]?.["#h"]?.includes(lobby)) {
+          failures++;
+          throw new Error("Channel history unavailable");
+        }
+        if (filters[0]?.["#h"]?.includes(channel)) {
+          pending++;
+          await gate.promise;
+          options?.signal?.throwIfAborted();
+        }
+      }
+      return original(filters, options);
+    });
+    try {
+      vi.setSystemTime(1_060_000);
+      recover();
+      await vi.waitFor(() => expect(pending).toBe(1));
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(failures).toBe(1);
+      expect(pending).toBe(1);
+      if (cancel)
+        await service.save(bot, {
+          attention: { "watch/chat": { ...watch, enabled: false } },
+        });
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(cancel ? 300_000 : 5_000);
+      expect(failures).toBe(cancel ? 1 : 2);
+    } finally {
+      gate.resolve();
+      await ctx.fiber.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
 it("starts catch-up again when its watch is edited while a page is being read", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {

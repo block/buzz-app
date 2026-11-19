@@ -98,9 +98,8 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
-  /** The host's cancellation signal for this call. Keep this signal across
-   * waits; a later turn cannot restore a canceled call. Hosts without request
-   * cancellation omit it. */
+  /** Cancellation for this call, or its owning turn or connection when the
+   * host only supplies a lifetime signal. Keep it across waits. */
   readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */

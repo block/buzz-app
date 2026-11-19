@@ -869,16 +869,14 @@ it("is an agent type on the desktop app", () => {
       workspace: "~/code",
       scope: "channel",
     }),
-  ).toEqual({ instructions: "Triage.", workspace: "~/code" });
+  ).toEqual({
+    instructions: "Triage.",
+    workspace: "~/code",
+    sessionScope: "channel",
+  });
   expect(type.describeMigration?.(DEFAULT_CONFIG)).toEqual([
     { id: "model", label: "Model", isOverride: false },
     { id: "thinking", label: "Thinking", isOverride: false },
-    {
-      id: "sessions",
-      label: "Session scope",
-      isOverride: false,
-      unchangedKey: "thread",
-    },
   ]);
   expect(
     type.describeMigration?.({
@@ -890,12 +888,6 @@ it("is an agent type on the desktop app", () => {
   ).toEqual([
     { id: "model", label: "Model", isOverride: true },
     { id: "thinking", label: "Thinking", isOverride: true },
-    {
-      id: "sessions",
-      label: "Session scope",
-      isOverride: true,
-      unchangedKey: "channel",
-    },
   ]);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
@@ -2235,11 +2227,11 @@ it("separates identity fields from runtime settings without changing the stored 
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Session scope")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   view.rerender(<Settings {...props} settingsSection="runtime" />);
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
-  expect(screen.getByLabelText("Session scope")).toBeInTheDocument();
+  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();

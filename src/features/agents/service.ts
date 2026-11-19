@@ -1380,6 +1380,20 @@ export type InterruptedTurn = Readonly<{
   channelId: string;
   channel?: ChannelSummary | undefined;
 }>;
+/** A failing event-watch history stream on this device. */
+export type WatchReadFailure = Readonly<{
+  agentKey: AgentKey;
+  watchSlug: string;
+  /** The channel the watch reads, or null for its all-channels stream. */
+  channelId: string | null;
+  /** Host-authored text. Raw relay errors are private to host diagnostics. */
+  summary: string;
+  consecutiveFailures: number;
+  /** Unix milliseconds of the most recent failure. */
+  failedAt: number;
+  /** Earliest retry in Unix milliseconds. A tick, connection or pass can delay it. */
+  retryAt: number;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1393,6 +1407,9 @@ export type AgentsSnapshot = Readonly<{
   /** Running agents that were working when the app last closed or reloaded,
    * until the owner resumes or forgets those turns. */
   interrupted: readonly Agent[];
+  /** Local event-watch history failures for the viewer's running agents.
+   * Absent on older hosts. Runtime only, cleared on app restart. */
+  watchReadFailures?: readonly WatchReadFailure[];
   /** The owner's teams on this device, which every community shares, and
    * each synced team with a confirmed copy. */
   teams: readonly Team[];
@@ -2446,6 +2463,7 @@ export class AgentsService extends Service implements Agents {
       agents: [],
       running: [],
       interrupted: [],
+      watchReadFailures: Object.freeze([]),
       teams: this.teamList,
     });
     this.protection = new AgentProtectionService(
@@ -2537,8 +2555,10 @@ export class AgentsService extends Service implements Agents {
         this.attend(this.state.running);
         this.notify();
       },
+      watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
+      savedAttention: (key) => this.records[key]?.attention ?? EMPTY,
       member: (agent, event) => this.member(agent, event),
       reads: (agent, event) => this.reads(agent, event),
       resolveChannels: async (agent, ids, signal) => {
@@ -8125,6 +8145,18 @@ export class AgentsService extends Service implements Agents {
     }
   }
   private notify() {
+    const failures = this.state.running.flatMap((agent) =>
+      this.runners.watchReadFailures(agent),
+    );
+    const prior = this.state.watchReadFailures;
+    if (
+      failures.length !== prior?.length ||
+      failures.some((failure, index) => failure !== prior[index])
+    )
+      this.state = Object.freeze({
+        ...this.state,
+        watchReadFailures: Object.freeze(failures),
+      });
     for (const listener of this.listeners) listener();
   }
   /** The event's channel as the agent's community knows it, if at all. */

@@ -245,26 +245,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
+      scope: carry.sessionScope ?? saved.scope,
       workspace: carry.workspace ?? saved.workspace,
     }),
     carry: (saved) => {
-      const { instructions, workspace } = config(saved);
+      const { instructions, workspace, scope } = config(saved);
       return {
         ...(instructions.trim() && { instructions }),
         ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        ...(scope !== DEFAULT_CONFIG.scope && { sessionScope: scope }),
       };
     },
     describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
+      const { model, effort } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
         { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
-        {
-          id: "sessions",
-          label: "Session scope",
-          isOverride: scope !== DEFAULT_CONFIG.scope,
-          unchangedKey: scope,
-        },
       ];
     },
     summary: (agent) =>

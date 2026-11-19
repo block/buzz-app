@@ -310,14 +310,18 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   const root = panel.locator(`[data-message-id="${event.id}"]`);
   await expect(root).toBeVisible();
-  // A pointer click leaves focus on the control; the bar still follows hover.
+  // A pointer click leaves focus on the control. Once the copy's check has
+  // had its 1.5 seconds, the bar follows hover again.
   await hoverMessage(row);
+  await pauseClock(page);
   await copyLink.click();
   await page.mouse.move(0, 0);
+  await page.clock.runFor(1500);
   await expect(actions).toHaveCSS("opacity", "0");
+  await page.clock.resume();
   // Tab only exercises the keyboard path if focus is still on Copy link, so
-  // it lands on the row's next control. Copy link is briefly disabled while
-  // copying, which would otherwise let focus fall back to the body.
+  // it lands on the row's next control. Copy link stays focusable while it
+  // copies, so focus never falls back to the body.
   await expect(copyLink).toBeFocused();
   // Keyboard focus still reveals it while the mouse is elsewhere.
   await page.keyboard.press("Tab");
@@ -580,6 +584,153 @@ test("a pointer press on More after keyboard input leaves the open toolbar in pl
       rect: bar.getBoundingClientRect().toJSON(),
     })),
   ).toEqual({ started: [], rect: before });
+});
+
+// Browser-only: an engine moves focus off a button that becomes natively
+// disabled, and the floating bar closes once focus has left its row. jsdom
+// does neither, and a clipboard that answers at once hides both.
+test("keyboard Copy link keeps its focus, toolbar and check while a slow clipboard writes", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    // Each write waits until the test finishes it.
+    window.clipboardWrites = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text) =>
+          new Promise((finish) => {
+            window.clipboardWrites.push({ text, finish });
+          }),
+      },
+    });
+  });
+  await open(page, app);
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .click();
+  await page.mouse.move(0, 0);
+  const before = app.append(
+    "primary",
+    "alpha",
+    "[Before](https://example.com/before)",
+  );
+  const event = app.append("primary", "alpha", "Keyboard link copy check");
+  // A row after it keeps the group's avatar out of the Tab path to its toolbar.
+  const after = app.append("primary", "alpha", "Following continuation");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await expect(
+    page.locator(`[data-channel-timeline] [data-message-id="${after.id}"]`),
+  ).toBeVisible();
+  await settle(page);
+  const actions = row.getByRole("group", { name: "Message actions" });
+  const copyLink = row.getByRole("button", { name: "Copy link", exact: true });
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${before.id}"]`)
+    .getByRole("link", { name: "Before", exact: true })
+    .focus();
+  for (const name of ["Add reaction", "Reply", "Copy link"]) {
+    await page.keyboard.press("Tab");
+    await expect(
+      actions.getByRole("button", { name, exact: true }),
+    ).toBeFocused();
+  }
+  await expect(actions).toHaveCSS("opacity", "1");
+
+  await page.keyboard.press("Enter");
+  const writes = () =>
+    page.evaluate(() => window.clipboardWrites.map((write) => write.text));
+  const link = `buzz://message?channel=alpha&id=${event.id}`;
+  await expect.poll(writes).toEqual([link]);
+  // The write is still out. The button refuses another press, yet keeps
+  // focus, so its row keeps the toolbar.
+  await expect(copyLink).toBeFocused();
+  await expect(copyLink).toHaveAttribute("aria-disabled", "true");
+  await expect(actions).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Enter");
+
+  // Hold the clock so the check stays until it has been read.
+  await pauseClock(page);
+  await page.evaluate(() => window.clipboardWrites[0].finish());
+  await expect(copyLink.locator(".tabler-icon-check")).toBeVisible();
+  await expect(copyLink).toBeFocused();
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(
+    row.getByRole("status").filter({ hasText: /^Copied$/ }),
+  ).toHaveCount(1);
+  expect(await writes()).toEqual([link]);
+  await page.clock.runFor(1500);
+  await expect(copyLink.locator(".tabler-icon-link")).toBeVisible();
+  await expect(copyLink).toBeFocused();
+  await expect(actions).toHaveCSS("opacity", "1");
+  await page.clock.resume();
+});
+
+// Browser-only: the toolbar is a top-layer popover that opens and closes with
+// real hover over laid-out rows.
+test("a copied link's check holds its toolbar open after the pointer leaves, while another message shows its own", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => {} },
+    });
+  });
+  await open(page, app);
+  const [copied, other] = ["Link copy hold check", "Another message"].map(
+    (text) => {
+      const event = app.append("primary", "alpha", text);
+      const row = page.locator(
+        `[data-channel-timeline] [data-message-id="${event.id}"]`,
+      );
+      return {
+        row,
+        actions: row.getByRole("group", { name: "Message actions" }),
+      };
+    },
+  );
+  await expect(other.row).toBeVisible();
+  await settle(page);
+  const copyLink = copied.row.getByRole("button", {
+    name: "Copy link",
+    exact: true,
+  });
+  const check = copyLink.locator(".tabler-icon-check");
+  await hoverMessage(copied.row);
+  await expect(copied.actions).toHaveCSS("opacity", "1");
+  // Hold the clock so the check stays until the pointer has come and gone.
+  await pauseClock(page);
+  await copyLink.click();
+  await expect(check).toBeVisible();
+
+  // Another message shows its own toolbar; the copied one keeps its check.
+  await hoverMessage(other.row);
+  await expect(other.actions).toHaveCSS("opacity", "1");
+  await expect(copied.actions).toHaveCSS("opacity", "1");
+  // Off every message, as on the way to paste. The other toolbar closing
+  // shows that hover has been heard; the copied one is held all the same.
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .hover();
+  await expect(other.actions).toHaveCSS("opacity", "0");
+  await expect(copied.actions).toHaveCSS("opacity", "1");
+  await expect(check).toBeVisible();
+
+  // The check reverts after its 1.5 seconds and the toolbar closes with it.
+  await page.clock.runFor(1500);
+  await expect(copied.actions).toHaveCSS("opacity", "0");
+  await expect(check).toHaveCount(0);
+  await page.clock.resume();
+  // It follows hover as before.
+  await hoverMessage(copied.row);
+  await expect(copied.actions).toHaveCSS("opacity", "1");
+  await page.mouse.move(0, 0);
+  await expect(copied.actions).toHaveCSS("opacity", "0");
 });
 
 // Browser-only: clipboard -> rendered Markdown -> cross-conversation navigation

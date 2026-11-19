@@ -8,7 +8,7 @@ import { ChoiceRow } from "../design-system/ui/ChoiceRow";
 import { PreviewCard } from "../design-system/ui/PreviewCard";
 import { formatPublicKey } from "./public-key";
 import { writeClipboardText } from "../clipboard";
-import { CopyStatus, useCopyFeedback } from "../CopyFeedback";
+import { useCopyFeedback } from "../CopyFeedback";
 
 /** Shared identity presentation. The caller retains selection and action behavior. */
 export function IdentityRow({
@@ -32,7 +32,7 @@ export function IdentityRow({
   const anchor = useRef<HTMLSpanElement>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
   const notify = useToastNotification();
-  const { attempted, copied, copy } = useCopyFeedback();
+  const { copied, copy, status } = useCopyFeedback();
   const npub = npubEncode(pubkey);
   const content = (
     <span ref={anchor} className="inline-flex max-w-full align-middle">
@@ -129,7 +129,7 @@ export function IdentityRow({
               });
             }}
           />
-          {attempted && <CopyStatus copied={copied} />}
+          {status}
         </div>
       </PreviewCard>
     </>

@@ -18,7 +18,7 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { useToastNotification } from "../shared/design-system/ui/Toast";
 import { writeClipboardText } from "../shared/clipboard";
 import { relayCacheUsage } from "../features/relay/partition-purge";
-import { CopyLabel, CopyStatus, useCopyFeedback } from "../shared/CopyFeedback";
+import { CopyLabel, useCopyFeedback } from "../shared/CopyFeedback";
 import { formatFileSize } from "../features/messages/FileAttachment";
 
 const size = (bytes: number) => (bytes ? formatFileSize(bytes) : "0 MB");
@@ -37,7 +37,7 @@ export function CommunityLocalSettings({
   viewer: string | undefined;
 }) {
   const notify = useToastNotification();
-  const { attempted, copied, copy } = useCopyFeedback();
+  const { copied, copy, status } = useCopyFeedback();
   const address = communityDestination(community.id).url;
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -201,7 +201,7 @@ export function CommunityLocalSettings({
             >
               <CopyLabel label="Copy URL" copied={copied} />
             </Button>
-            {attempted && <CopyStatus copied={copied} />}
+            {status}
             <Button
               type="button"
               size="xs"

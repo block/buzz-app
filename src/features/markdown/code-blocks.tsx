@@ -13,7 +13,7 @@ import { CheckIcon, CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { writeClipboardText } from "../../shared/clipboard";
-import { CopyStatus, useCopyFeedback } from "../../shared/CopyFeedback";
+import { useCopyFeedback } from "../../shared/CopyFeedback";
 import { resolveMatch } from "../../plugins/contributions";
 import type {
   CodeBlockRenderer,
@@ -199,7 +199,7 @@ export function CodeActions({
   className?: string | undefined;
 }) {
   const notify = useToastNotification();
-  const { attempted, copied, copy } = useCopyFeedback();
+  const { copied, copy, status } = useCopyFeedback();
   const [copying, setCopying] = useState(false);
   return (
     <span className={className}>
@@ -219,7 +219,7 @@ export function CodeActions({
           });
         }}
       />
-      {attempted && <CopyStatus copied={copied} />}
+      {status}
     </span>
   );
 }

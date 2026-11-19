@@ -12,7 +12,7 @@ import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
-import { CopyStatus, useCopyFeedback } from "../shared/CopyFeedback";
+import { useCopyFeedback } from "../shared/CopyFeedback";
 import { Panel } from "../shared/design-system/ui/Panel";
 import {
   CaretLeftIcon,
@@ -54,7 +54,7 @@ export function IdentityBadge({
     action: RefObject<HTMLButtonElement | null>,
   ): ReactNode;
 }) {
-  const { attempted, copied, copy } = useCopyFeedback();
+  const { copied, copy, status } = useCopyFeedback();
   const [back, setBack] = useState(false);
   const [loaded, setLoaded] = useState<string>();
   const faceId = useId();
@@ -259,7 +259,7 @@ export function IdentityBadge({
                           onClick={() => void copy(onCopy)}
                         />
                       </Tooltip>
-                      {attempted && <CopyStatus copied={copied} />}
+                      {status}
                     </span>
                   </div>
                 </div>

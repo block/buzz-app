@@ -146,10 +146,13 @@ function setup({
   saved = [] as OutgoingEvent[],
   nested = false,
   content = <Trigger />,
+  unavailable = false,
 }: {
   saved?: OutgoingEvent[];
   nested?: boolean;
   content?: ReactNode;
+  /** The source message can't be read: deleted, or no longer the viewer's. */
+  unavailable?: boolean;
 } = {}) {
   const history = createMemoryHistory();
   const controller = createNavigationController(history);
@@ -266,14 +269,16 @@ function setup({
     agentChoices: { snapshot: () => choices, subscribe: () => () => {} },
     media: (url: string) => url,
     thread: () => {
-      const snapshot = {
-        status: "ready",
-        root: sourceRow,
-        replies: [],
-        target: sourceRow,
-        targetStatus: "ready",
-        canLoadMore: false,
-      };
+      const snapshot = unavailable
+        ? { status: "ready", replies: [], canLoadMore: false }
+        : {
+            status: "ready",
+            root: sourceRow,
+            replies: [],
+            target: sourceRow,
+            targetStatus: "ready",
+            canLoadMore: false,
+          };
       return {
         snapshot: () => snapshot,
         subscribe: () => () => {},
@@ -1162,8 +1167,7 @@ it("shows a forwarding problem before submission and offers a working Copy link"
   );
 });
 
-const pasteHint =
-  "Copy as forward, then paste it in any message box to forward it.";
+const pasteHint = "Paste the copy in any message box to forward it.";
 /** The status of the one copy button pressed so far. */
 const copyStatus = () =>
   within(screen.getByRole("dialog", { name: "Forward message" })).getByRole(
@@ -1211,6 +1215,21 @@ it("shows a copied forward in the Copy as forward button, beside the standing pa
   expect(copy.querySelector("svg")).toBeNull();
   expect(copyStatus()).toBeEmptyDOMElement();
   expect(screen.getByText(pasteHint)).toBeVisible();
+});
+
+it("gives no paste instruction while Copy as forward has no message to copy", async () => {
+  const user = userEvent.setup();
+  setup({ unavailable: true });
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  const dialog = await screen.findByRole("dialog", { name: "Forward message" });
+  expect(
+    await within(dialog).findByText(/^Couldn’t load this message\./),
+  ).toBeVisible();
+  const copy = screen.getByRole("button", { name: "Copy as forward" });
+  expect(copy).toBeDisabled();
+  // An instruction would point at a button that cannot be pressed.
+  expect(screen.queryByText(pasteHint)).toBeNull();
+  expect(copy).not.toHaveAccessibleDescription();
 });
 
 it("reports a refused Copy as forward in a toast, and leaves the button's label alone", async () => {

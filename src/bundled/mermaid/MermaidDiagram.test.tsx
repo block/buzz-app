@@ -129,7 +129,12 @@ it("shows the source instead of drawing a diagram too large to draw", async () =
 
 it("expands the diagram in a dialog that copies its source and restores focus", async () => {
   const user = userEvent.setup();
-  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  let finishWrite!: () => void;
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockReturnValue(
+    new Promise<void>((done) => {
+      finishWrite = done;
+    }),
+  );
   const code = "flowchart LR\n  A[Start] --> B[End]";
   render(<MermaidExpand code={code} />, { wrapper: ToastProvider });
   const expand = screen.getByRole("button", { name: "Expand diagram" });
@@ -142,6 +147,11 @@ it("expands the diagram in a dialog that copies its source and restores focus", 
   expect(copy).toHaveTextContent(/^Copy code$/);
   await user.click(copy);
   expect(write).toHaveBeenCalledWith(code);
+  // Busy in behavior only: disabled natively, it would drop keyboard focus.
+  expect(copy).toHaveAttribute("aria-disabled", "true");
+  expect(copy).not.toHaveAttribute("disabled");
+  expect(copy).toHaveFocus();
+  await act(async () => finishWrite());
   await waitFor(() => expect(copy).toHaveTextContent(/^Copied$/));
   expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
   expect(copy).toHaveAccessibleName("Copy code");

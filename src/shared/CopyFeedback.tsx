@@ -11,9 +11,12 @@ const results = {
  * `copied` for 1.5 seconds, `failed` until the next attempt. `copy` starts a
  * write at once, while the click still counts as the user's, and resolves to
  * how it ended, or to nothing once a newer attempt has begun, so a control
- * that reports a refusal elsewhere reports only the latest. `attempted` turns
- * true with the first attempt and stays. */
-export function useCopyFeedback() {
+ * that reports a refusal elsewhere reports only the latest. Pass
+ * `reportsRefusal` where the button itself shows a refusal; elsewhere `failed`
+ * stays false. `status` is the control's `CopyStatus`, to render beside its
+ * button: nothing until the first attempt, then in place for good, so a page
+ * that copies nothing gains no status. */
+export function useCopyFeedback({ reportsRefusal = false } = {}) {
   const [outcome, setOutcome] = useState<keyof typeof results | "none">();
   const generation = useRef(0);
   useEffect(() => {
@@ -21,10 +24,14 @@ export function useCopyFeedback() {
     const timer = setTimeout(() => setOutcome("none"), 1500);
     return () => clearTimeout(timer);
   }, [outcome]);
+  const copied = outcome === "copied";
+  const failed = reportsRefusal && outcome === "failed";
   return {
-    attempted: outcome !== undefined,
-    copied: outcome === "copied",
-    failed: outcome === "failed",
+    copied,
+    failed,
+    status: outcome !== undefined && (
+      <CopyStatus copied={copied} failed={failed} />
+    ),
     copy(write: () => unknown) {
       const current = ++generation.current;
       const settle = (next: keyof typeof results) => () => {
@@ -44,8 +51,8 @@ export function useCopyFeedback() {
 /** The contents of a labelled copy button: its label becomes a check and
  * "Copied". Pass `failed` only where the button also reports a refusal, as a
  * warning and "Couldn’t copy". The button never resizes for a copy that works.
- * Give it an `aria-label`, so its name stays the same in every state, and a
- * `CopyStatus` beside it. */
+ * Give it an `aria-label`, so its name stays the same in every state, and the
+ * hook's `status` beside it. */
 export function CopyLabel({
   label,
   icon,
@@ -85,8 +92,8 @@ export function CopyLabel({
 
 /** Repeats a copy control's result for assistive technology, beside a button
  * whose name does not change. It must be in place, empty, before the result
- * fills it: keep it mounted, or render it once the control is `attempted`, so
- * a page that copies nothing gains no status. */
+ * fills it: render the `status` that `useCopyFeedback` hands back, or keep
+ * this mounted with the control. */
 export function CopyStatus({
   copied,
   failed = false,

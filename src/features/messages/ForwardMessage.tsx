@@ -1,11 +1,7 @@
 import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { copyAsForward } from "./forward-clipboard";
-import {
-  CopyLabel,
-  CopyStatus,
-  useCopyFeedback,
-} from "../../shared/CopyFeedback";
+import { CopyLabel, useCopyFeedback } from "../../shared/CopyFeedback";
 import { snapshotMessage } from "../relay/forwarded-message";
 import { writeClipboardText } from "../../shared/clipboard";
 import { ForwardDisclosure } from "./ForwardDisclosure";
@@ -420,6 +416,9 @@ function ForwardMessageDialog({
           note,
         )
       : undefined;
+  // Whether there is a message Copy as forward can copy. Its paste hint shows
+  // only then, so it never points at a button that cannot be pressed.
+  const copyable = !!forwardRow && !forwardProblem;
   // Each copy button shows its own copy.
   const forwardCopy = useCopyFeedback();
   const linkCopy = useCopyFeedback();
@@ -613,8 +612,8 @@ function ForwardMessageDialog({
           <>
             <Button
               aria-label="Copy as forward"
-              aria-describedby={forwardProblem ? undefined : pasteHintId}
-              disabled={pending || !forwardRow || !!forwardProblem}
+              aria-describedby={copyable ? pasteHintId : undefined}
+              disabled={pending || !copyable}
               onClick={() => {
                 if (!forwardRow) return;
                 void forwardCopy
@@ -636,15 +635,13 @@ function ForwardMessageDialog({
             >
               <CopyLabel label="Copy as forward" copied={forwardCopy.copied} />
             </Button>
-            {forwardCopy.attempted && (
-              <CopyStatus copied={forwardCopy.copied} />
-            )}
+            {forwardCopy.status}
             {forwardProblem && (
               <>
                 <Button aria-label="Copy link" onClick={() => void copyLink()}>
                   <CopyLabel label="Copy link" copied={linkCopy.copied} />
                 </Button>
-                {linkCopy.attempted && <CopyStatus copied={linkCopy.copied} />}
+                {linkCopy.status}
               </>
             )}
             <Button disabled={pending} onClick={close}>
@@ -771,10 +768,13 @@ function ForwardMessageDialog({
             </p>
           )}
 
-          {/* Always shown, so a copy adds no line that would move its button. */}
-          {!forwardProblem && (
+          {/* Shown before and after a copy, so a copy adds no line that would
+              move its button. It stays while a forward is sent: the button is
+              disabled for that moment, and a line removed would resize the
+              dialog under the pointer. */}
+          {copyable && (
             <p id={pasteHintId} className="text-body-sm text-subtle">
-              Copy as forward, then paste it in any message box to forward it.
+              Paste the copy in any message box to forward it.
             </p>
           )}
         </div>

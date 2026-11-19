@@ -44,7 +44,7 @@ export function ProfileCopyField({
   /** How the value is shown, when not as plain text. */
   children?: ReactNode;
 }) {
-  const { copied, failed, copy } = useCopyFeedback();
+  const { copied, failed, copy } = useCopyFeedback({ reportsRefusal: true });
   return (
     <SettingsGroup>
       <PreferenceRow

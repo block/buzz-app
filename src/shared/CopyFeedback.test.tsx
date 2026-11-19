@@ -8,7 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { CopyLabel, CopyStatus, useCopyFeedback } from "./CopyFeedback";
+import { CopyLabel, useCopyFeedback } from "./CopyFeedback";
 
 afterEach(() => {
   cleanup();
@@ -27,8 +27,7 @@ function Control({
   ended: unknown[];
   reportsRefusal?: boolean;
 }) {
-  const { attempted, copied, failed, copy } = useCopyFeedback();
-  const shown = reportsRefusal && failed;
+  const { copied, failed, copy, status } = useCopyFeedback({ reportsRefusal });
   return (
     <>
       <button
@@ -36,9 +35,9 @@ function Control({
         aria-label="Copy URL"
         onClick={() => void copy(write).then((end) => ended.push(end))}
       >
-        <CopyLabel label="Copy URL" copied={copied} failed={shown} />
+        <CopyLabel label="Copy URL" copied={copied} failed={failed} />
       </button>
-      {attempted && <CopyStatus copied={copied} failed={shown} />}
+      {status}
     </>
   );
 }

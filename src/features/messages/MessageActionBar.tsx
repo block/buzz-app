@@ -45,7 +45,7 @@ import {
   writeClipboardRichText,
   writeClipboardText,
 } from "../../shared/clipboard";
-import { CopyStatus, useCopyFeedback } from "../../shared/CopyFeedback";
+import { useCopyFeedback } from "../../shared/CopyFeedback";
 import { captureSelectedQuote, quoteSelection } from "./selection-quote";
 
 const AfterMenuClose = createContext<
@@ -221,11 +221,14 @@ function MessageActionBarControls({
   if (open && (!active || (host && !messageId))) setOpen(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
+  const toolbarLink = useCopyFeedback();
   const floating = useFloatingActionBar(
     children ? undefined : rowRef,
     barRef,
     slotRef,
-    open,
+    // A copied link's check holds the bar open as its menu does, so the check
+    // is seen out wherever the pointer or focus goes next.
+    open || toolbarLink.copied,
   );
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
@@ -270,7 +273,6 @@ function MessageActionBarControls({
     useRef<ReturnType<typeof captureSelectedQuote>>(undefined);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = menuTriggerRef ?? ownTrigger;
-  const toolbarLink = useCopyFeedback();
   /** A menu item closes, so a toast naming `label` confirms its copy. The
    * toolbar's Copy link stays in view and passes no label: its own icon shows
    * the copy. A refusal raises a toast either way. */
@@ -644,14 +646,15 @@ function MessageActionBarControls({
               title="Copy link"
               size="sm"
               disabled={!link || copying}
+              // Disabling it natively mid-copy would drop keyboard focus to
+              // the page and close the bar before its check shows.
+              focusableWhenDisabled={!!link}
               icon={toolbarLink.copied ? <CheckIcon /> : <LinkIcon />}
               onClick={() => {
                 if (link) void copy(() => link);
               }}
             />
-            {toolbarLink.attempted && (
-              <CopyStatus copied={toolbarLink.copied} />
-            )}
+            {toolbarLink.status}
             <MenuRoot
               open={open}
               onOpenChange={(next, details) => {

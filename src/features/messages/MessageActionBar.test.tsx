@@ -758,9 +758,14 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
     />,
   );
   const link = screen.getByRole("button", { name: "Copy link" });
+  link.focus();
   fireEvent.click(link);
   try {
-    expect(link.hasAttribute("disabled")).toBe(true);
+    // Disabled in behavior only: a natively disabled button would drop the
+    // keyboard focus that keeps its toolbar, and so its check, on screen.
+    expect(link.getAttribute("aria-disabled")).toBe("true");
+    expect(link.hasAttribute("disabled")).toBe(false);
+    expect(document.activeElement).toBe(link);
     fireEvent.click(link);
     expect(write).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledWith("buzz://link");
@@ -773,7 +778,7 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   await waitFor(() =>
     expect(link.querySelector(".tabler-icon-check")).not.toBeNull(),
   );
-  expect(link.hasAttribute("disabled")).toBe(false);
+  expect(link.getAttribute("aria-disabled")).toBe("false");
 });
 
 it("shows the toolbar's copied link as a check in its button for 1.5 seconds, with no toast", async () => {
@@ -812,7 +817,7 @@ it("reports the toolbar's refused link copy in a toast, and shows no check", asy
   expect(refusal.closest(".buzz-toast")).not.toBeNull();
   expect(link.querySelector(".tabler-icon-link")).not.toBeNull();
   expect(screen.getByRole("status").textContent).toBe("");
-  expect(link.hasAttribute("disabled")).toBe(false);
+  expect(link.getAttribute("aria-disabled")).toBe("false");
 });
 
 it.each([false, true])(

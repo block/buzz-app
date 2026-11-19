@@ -5,11 +5,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { writeClipboardText } from "../../shared/clipboard";
-import {
-  CopyLabel,
-  CopyStatus,
-  useCopyFeedback,
-} from "../../shared/CopyFeedback";
+import { CopyLabel, useCopyFeedback } from "../../shared/CopyFeedback";
 
 /** Opens a complex diagram at full size, with its source a click away. */
 export function MermaidExpand({ code }: { code: string }) {
@@ -44,12 +40,15 @@ export function MermaidExpand({ code }: { code: string }) {
  * the dialog, so a refusal it is still showing does not outlast a close. */
 function CopyCode({ code }: { code: string }) {
   const [copying, setCopying] = useState(false);
-  const { attempted, copied, failed, copy } = useCopyFeedback();
+  const { copied, failed, copy, status } = useCopyFeedback({
+    reportsRefusal: true,
+  });
   return (
     <>
       <Button
         aria-label="Copy code"
         disabled={copying}
+        focusableWhenDisabled
         onClick={() => {
           setCopying(true);
           void copy(() => writeClipboardText(code)).then(() =>
@@ -64,7 +63,7 @@ function CopyCode({ code }: { code: string }) {
           failed={failed}
         />
       </Button>
-      {attempted && <CopyStatus copied={copied} failed={failed} />}
+      {status}
     </>
   );
 }

@@ -1176,11 +1176,11 @@ for (const privateSource of [false, true]) {
           exact: true,
         });
         const pasteHint = dialog.getByText(
-          "Copy as forward, then paste it in any message box to forward it.",
+          "Paste the copy in any message box to forward it.",
         );
         await expect(pasteHint).toBeVisible();
         await expect(copyForward).toHaveAccessibleDescription(
-          "Copy as forward, then paste it in any message box to forward it.",
+          "Paste the copy in any message box to forward it.",
         );
         const layout = async () => [
           await copyForward.boundingBox(),

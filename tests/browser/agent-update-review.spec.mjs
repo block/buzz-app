@@ -220,7 +220,7 @@ test("owner review edits or restores the proposed Auto-compact threshold", async
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
-  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByRole("tab", { name: "Identity", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: /Auto-compact at/ }),
   ).toHaveValue("");

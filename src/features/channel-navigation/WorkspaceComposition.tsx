@@ -85,11 +85,7 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
       {disclosure}
       <NavigationItem
         label={title}
-        icon={
-          leading ? undefined : (
-            <Cube3dSphereIcon size={14} aria-hidden="true" />
-          )
-        }
+        icon={<Cube3dSphereIcon size={14} aria-hidden="true" />}
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
         onClick={() => props.onSelect?.()}

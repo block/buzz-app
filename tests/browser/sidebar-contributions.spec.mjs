@@ -572,14 +572,18 @@ appTest.describe("Solo header accessories", () => {
       const sidebar = page.getByRole("complementary", { name: "Sidebar" });
       const resize = page.getByRole("separator", { name: "Resize sidebar" });
       await resize.dblclick();
-      for (const [selector, title] of [
-        ['[data-solo-workspace="work"]', "Work"],
-        ['[data-solo-channel-group="alpha"]', "Alpha"],
+      for (const [selector, title, icon] of [
+        ['[data-solo-workspace="work"]', "Work", "cube-3d-sphere"],
+        ['[data-solo-channel-group="alpha"]', "Alpha", "hash"],
       ]) {
         const group = sidebar.locator(selector);
         const heading = group.getByRole("button", { name: title, exact: true });
         const action = group.getByRole("button", { name: /open .* summary/i });
         const disclosure = group.getByRole("button", { name: /tasks/i });
+        const marker = heading.locator(`:scope > svg.tabler-icon-${icon}`);
+        await expect(marker).toHaveCount(1);
+        await expect(marker).toBeVisible();
+        await expect(heading).toHaveText(title);
         if ((await disclosure.getAttribute("aria-expanded")) === "true") {
           await disclosure.click();
         }
@@ -594,6 +598,7 @@ appTest.describe("Solo header accessories", () => {
         await heading.hover();
         await expect(action).toHaveCSS("opacity", "0");
         await expect(disclosure).toHaveCSS("opacity", "1");
+        await expect(marker).toBeVisible();
         expect(await disclosure.boundingBox()).toEqual(leadingBox);
         expect(await heading.boundingBox()).toEqual(titleBox);
         await disclosure.click();
@@ -623,6 +628,20 @@ appTest.describe("Solo header accessories", () => {
         await expect(action).toHaveAccessibleName(`Open ${title} summary`);
         await expect(disclosure).toHaveAttribute("aria-expanded", "false");
         await expect(heading).not.toHaveAttribute("data-selected");
+      }
+      for (const [selector, title, icon] of [
+        ['[data-solo-workspace="other"]', "Other", "cube-3d-sphere"],
+        ['[data-solo-channel-group="gamma"]', "Gamma", "hash"],
+      ]) {
+        const heading = sidebar
+          .locator(selector)
+          .getByRole("button", { name: title, exact: true });
+        const marker = heading.locator(`:scope > svg.tabler-icon-${icon}`);
+        await expect(marker).toHaveCount(1);
+        await expect(marker).toBeVisible();
+        await heading.hover();
+        await expect(marker).toBeVisible();
+        await expect(heading).toHaveText(title);
       }
     },
   );

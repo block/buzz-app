@@ -26,6 +26,11 @@
 }
 
 @container solo-workspace-header (max-width: 9rem) {
+  .heading:has([data-solo-leading-action]) > [data-solo-workspace-id] {
+    column-gap: var(--space-1);
+    padding-inline-start: 0;
+  }
+
   [class~="navigation-section-heading"]:has(
       > [class~="navigation-section-heading-trailing"]
     )

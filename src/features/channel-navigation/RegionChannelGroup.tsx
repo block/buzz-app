@@ -179,7 +179,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
             <NavigationItem
               label={channel.name}
               title={channel.name}
-              icon={leading ? undefined : <Icon size={14} />}
+              icon={<Icon size={14} />}
               selected={!!props.selected}
               onClick={() => {
                 if (eligible(current())) props.onSelect();

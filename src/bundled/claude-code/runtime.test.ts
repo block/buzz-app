@@ -1421,6 +1421,42 @@ it("keeps steering a busy turn's effort through a follow-up without a pick", asy
   expect(claudes()).toHaveLength(1);
   runtime.dispose();
 });
+it("steers a follow-up's own effort into a busy turn", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude lower", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply], { hold: true });
+  const run = (event: typeof root, effort: string) =>
+    runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config: DEFAULT_CONFIG,
+      effort,
+      signal: new AbortController().signal,
+      workingUntil: () => {},
+    } as unknown as Delivery);
+  const prompts = () =>
+    claudes().reduce((sum, process) => sum + process.prompts.length, 0);
+  await run(root, "high");
+  await flush(10);
+  expect(prompts()).toBe(1);
+  await run(reply, "low");
+  await flush(10);
+  expect(prompts()).toBe(2);
+  expect(claudes()).toHaveLength(1);
+  runtime.dispose();
+});
 it("checks a synced effort when a saved session resumes or a folder change relaunches it", async () => {
   const mention = (id: string, resumed?: boolean) => ({
     type: "mention" as const,
@@ -3257,13 +3293,12 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn, a
   const config = { ...DEFAULT_CONFIG, scope: "channel" };
   runtime.sync([{ key: self, pubkey: self, config } as Agent]);
   await flush(10);
-  const run = (event: RelayEvent, effort?: string) =>
+  const run = (event: RelayEvent) =>
     runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
       agent,
       config,
-      effort,
       signal: new AbortController().signal,
       workingUntil: () => undefined,
     } as unknown as Delivery);
@@ -3271,9 +3306,9 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn, a
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
   solo.delete(channel);
-  await run(mention("2"), "high");
+  await run(mention("2"));
   await flush(10);
-  // An effort change waits for its own turn.
+  // It waits for the Solo turn rather than steering into it.
   expect(claude?.prompts).toHaveLength(1);
   // Admitted to the channel's conversation, it is told so even if the agent
   // is moved to thread scope meanwhile.
@@ -5668,8 +5703,7 @@ it.each(["unpublished", "published", "failed", "delegated"])(
       let interrupt: unknown;
       const held = vi.spyOn(worker, "emit").mockImplementation((message) => {
         const response = message.response as
-          | { request_id?: unknown }
-          | undefined;
+          { request_id?: unknown } | undefined;
         const request = worker.received.find(
           (row) => row.request_id === response?.request_id,
         );

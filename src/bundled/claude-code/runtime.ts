@@ -191,6 +191,7 @@ type Entry = {
   policies: Map<
     string,
     {
+      solo: boolean;
       steerable?(model?: string, effort?: string): boolean;
       /** The running turn's effective model and effort picks. */
       picks?: Readonly<{
@@ -1217,9 +1218,14 @@ export class ClaudeRuntime {
       return handoff.done;
     }
     const prior = entry.policies.get(key);
+    // A turn keeps the posting policy it was admitted with: a request in a
+    // Solo chat shared since, or the reverse, waits for its turns to settle
+    // rather than steering into them and changing their tools' context.
     const same =
-      (key !== COMMUNITY_SESSION || entry.config.scope === "community") &&
-      prior?.steerable?.(model, effort) === true;
+      key === COMMUNITY_SESSION
+        ? entry.config.scope === "community" &&
+          prior?.steerable?.(model, effort) === true
+        : prior?.solo === solo;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
@@ -1407,6 +1413,7 @@ export class ClaudeRuntime {
         }
       : { model, effort };
     const policy = {
+      solo,
       steerable: (nextModel?: string, nextEffort?: string) =>
         !interrupted &&
         !foregroundDone &&

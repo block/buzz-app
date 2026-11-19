@@ -157,7 +157,9 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   scope: string;
   /** Where a run's failure for it is reported. */
   where?: Where;
-  /** A recovered turn keeps its own reply destination until its run settles. */
+  /** Whether its turn is a Solo chat's, which keeps its posting policy. */
+  solo?: boolean;
+  /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
   /** Records a successful final post before the native tail drains. */
   published?: () => void;
@@ -181,6 +183,7 @@ type Entry = {
   policies: Map<
     string,
     {
+      solo: boolean;
       steerable?(model?: string, effort?: string): boolean;
       /** The running turn's effective model and effort picks. */
       picks?: Readonly<{
@@ -699,9 +702,14 @@ export class PiRuntime {
     const where = { channel, root, topLevel };
     const saveReply = attention || (!wake && key === COMMUNITY_SESSION);
     const prior = entry.policies.get(key);
+    // A turn keeps the posting policy it was admitted with: a request in a
+    // Solo chat shared since, or the reverse, waits for its turns to settle
+    // rather than steering into them and changing their tools' context.
     const same =
-      (key !== COMMUNITY_SESSION || entry.config.scope === "community") &&
-      prior?.steerable?.(model, effort) === true;
+      key === COMMUNITY_SESSION
+        ? entry.config.scope === "community" &&
+          prior?.steerable?.(model, effort) === true
+        : prior?.solo === solo;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
@@ -729,7 +737,7 @@ export class PiRuntime {
             key === COMMUNITY_SESSION
               ? !same || receipt.key !== key || !receipt.where
               : receipt.key === key &&
-                (!receipt.where || (!same && (!!model || !!effort))),
+                (!receipt.where || receipt.solo !== solo),
           )
           .map((receipt) => receipt.settled),
       );
@@ -786,6 +794,7 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
+        solo,
         ...(attention || accepted
           ? {
               prompt: async () => {
@@ -894,6 +903,7 @@ export class PiRuntime {
         }
       : { model, effort };
     const policy = {
+      solo,
       steerable: (nextModel?: string, nextEffort?: string) =>
         !interrupted &&
         !foregroundDone &&
@@ -1392,6 +1402,8 @@ export class PiRuntime {
             : where.root
           : recoveredKey,
         ...(where ? { where } : {}),
+        // Only a Solo chat's tool context posts at the top level.
+        solo: !!context?.topLevel,
       };
       // A delivery of the same request takes it over, and says how it ended.
       const ours = () => entry.receipts.get(request) === receipt;

@@ -5846,11 +5846,8 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn", 
   await f.runtime.run(channelScope(f.delivery("@Codex first")));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   soloChannels.delete("channel");
-  await f.runtime.run({
-    ...channelScope(f.delivery("@Codex after share")),
-    effort: "high",
-  });
-  // An effort change waits for its own turn.
+  await f.runtime.run(channelScope(f.delivery("@Codex after share")));
+  // The converted chat's request waits for the Solo turn instead of steering in.
   await f.tool("send", { audience: "everyone", text: "Progress" });
   expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
   expect(f.starts()).toHaveLength(1);

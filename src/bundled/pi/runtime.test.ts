@@ -591,6 +591,21 @@ it("keeps steering a busy run's effort through a follow-up without a pick", asyn
   finished.resolve(undefined);
 });
 
+it("steers a follow-up's own effort into a busy run", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver } = setup({ wait: () => finished.promise });
+  await deliver(
+    { type: "mention", event: reply("2", "first") },
+    { effort: "high" },
+  ).run;
+  await deliver(
+    { type: "mention", event: reply("3", "low now") },
+    { effort: "low" },
+  ).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  finished.resolve(undefined);
+});
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({
@@ -2466,6 +2481,45 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
     expect(mention.superseded).not.toHaveBeenCalled();
     expect(mention.step).toHaveBeenCalledWith("read", undefined);
   } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("waits for a recovered Solo run before a threaded mention in the chat shared since", async () => {
+  const old = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "e".repeat(64),
+          context: { channel, topLevel: true },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? old.promise
+        : Promise.resolve({ status: "done", answer: 10, text: "New answer" }),
+  });
+  try {
+    const next = f.deliver(
+      { type: "mention", event: reply("2", "threaded") },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    );
+    await vi.waitFor(() =>
+      expect(
+        f.host.requests("wait").map(({ params }) => params.submission),
+      ).toContain(41),
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+    old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    await next.run;
+  } finally {
+    old.resolve({ status: "unanswered", reason: "aborted" });
     f.runtime.dispose();
   }
 });

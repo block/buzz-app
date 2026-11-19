@@ -744,8 +744,7 @@ it.each(["retire", "dispose"] as const)(
     };
     const f = setup({ hold: true, protection });
     let pending:
-      | ReturnType<NonNullable<ReturnType<typeof f.goose>>["mcp"]>
-      | undefined;
+      ReturnType<NonNullable<ReturnType<typeof f.goose>>["mcp"]> | undefined;
     try {
       await f.deliver(message("1", "Post my notes"));
       await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
@@ -2394,6 +2393,30 @@ it("steers a channel session across threaded and top-level requests", async () =
     ]);
     expect(process.turns).toHaveLength(1);
     process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("finishes a Solo turn under its policy when the chat is shared mid-turn", async () => {
+  const solo = new Set([channel]);
+  const f = setup({ hold: true, scope: "channel", solo });
+  f.agent.query.mockResolvedValue([message("2", "after share")]);
+  try {
+    await f.deliver(message("1", "solo work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    solo.delete(channel);
+    await f.deliver(message("2", "after share"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    // It waits for the Solo turn rather than steering into it.
+    expect(process.turns[0]?.steered).toEqual([]);
+    expect(process.turns).toHaveLength(1);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toContain("after share");
+    process.turns[1]?.finish();
   } finally {
     f.runtime.dispose();
   }

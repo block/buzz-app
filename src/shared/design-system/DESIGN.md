@@ -2187,7 +2187,10 @@ autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus.
 Public plugin placements remain compatible: primary topbar and toolbar contributions
 appear in the dock; sidebar contributions retain their sidebar links and exact route.
-Settings remains available from the profile menu.
+Settings remains available from the profile menu. The dock's last tile,
+Plugins, is an action rather than a destination: it opens the Settings dialog
+at Manage plugins, has no panel and is never selected, so the current app's
+tile stays selected beneath the dialog.
 
 ### Artwork actions (proposed)
 

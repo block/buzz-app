@@ -377,6 +377,12 @@ function AppShellContent({
               onSelect={onSelect}
               placement="dock"
               previews
+              // Held back until the apps load, so it doesn't appear alone.
+              onManagePlugins={
+                dockPages.length > 0
+                  ? () => onSelect("settings", { section: "plugins" })
+                  : undefined
+              }
             />
           </div>
           <div className="shell-community-switcher">

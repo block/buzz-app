@@ -19,9 +19,10 @@ import {
   contributionKey,
 } from "../../features/conversation/ContributionBoundary";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { Tabs, type TabItem } from "../../shared/design-system/ui/Tabs";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { PageIcon } from "./PageIcon";
+import { SquaresFourIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { BestieUnreadBadge, usePagePresentation } from "./BestieNavigation";
 import {
@@ -38,6 +39,7 @@ export function PageNavigation({
   onSelect,
   placement = "sidebar",
   previews = false,
+  onManagePlugins,
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
@@ -48,6 +50,8 @@ export function PageNavigation({
   placement?: "sidebar" | "dock";
   /** Show inactive page previews in this navigation surface on hover-capable devices. */
   previews?: boolean;
+  /** Adds a last dock tile that opens Settings → Manage plugins. */
+  onManagePlugins?: (() => void) | undefined;
 }) {
   const presentation = usePagePresentation();
   const hover = useHoverPointer();
@@ -60,61 +64,72 @@ export function PageNavigation({
         variant="dock"
         orientation="vertical"
         value={pages.some((page) => page.key === selected) ? selected : null}
-        onValueChange={(key) => onSelect(key, { focus: "preserve" })}
+        onValueChange={(key) => {
+          // Settings opens over the current app, which stays selected.
+          if (key === MANAGE_PLUGINS) onManagePlugins?.();
+          else onSelect(key, { focus: "preserve" });
+        }}
         // The selected app returns from a page opened in its navigation.
         onReselect={(key) => {
           if (key !== currentPage) onSelect(key, { focus: "preserve" });
         }}
-        items={pages.map((page) => {
-          const Badge = page.badge;
-          const Preview = page.preview;
-          const { icon, image, avatar, label, placeholder } =
-            presentation(page);
-          return {
-            value: page.key,
-            label,
-            icon: placeholder ? (
-              <EmptyBestieAvatar key={page.key} compact />
-            ) : avatar ? (
-              <Avatar
-                src={avatar.src}
-                alt=""
-                fallback={label}
-                shape={avatar.shape}
-                size="small"
-              />
-            ) : (
-              <PageIcon icon={icon} image={image} size={20} strokeWidth={2.5} />
-            ),
-            panelId: `shell-page-${page.key}`,
-            renderTab: Preview
-              ? (tab: ReactElement<ComponentProps<"button">>) => (
-                  <PagePreview
-                    page={page}
-                    preview={Preview}
-                    label={label}
-                    enabled={previewed(page)}
-                    dockHint
-                  >
-                    {tab}
-                  </PagePreview>
-                )
-              : undefined,
-            trailing: (
-              <>
-                {Badge && (
-                  <ContributionBoundary
-                    key={contributionKey(page)}
-                    fallback={null}
-                  >
-                    <Badge />
-                  </ContributionBoundary>
-                )}
-                <BestieUnreadBadge pageKey={page.key} />
-              </>
-            ),
-          };
-        })}
+        items={pages
+          .map((page): TabItem<string> => {
+            const Badge = page.badge;
+            const Preview = page.preview;
+            const { icon, image, avatar, label, placeholder } =
+              presentation(page);
+            return {
+              value: page.key,
+              label,
+              icon: placeholder ? (
+                <EmptyBestieAvatar key={page.key} compact />
+              ) : avatar ? (
+                <Avatar
+                  src={avatar.src}
+                  alt=""
+                  fallback={label}
+                  shape={avatar.shape}
+                  size="small"
+                />
+              ) : (
+                <PageIcon
+                  icon={icon}
+                  image={image}
+                  size={20}
+                  strokeWidth={2.5}
+                />
+              ),
+              panelId: `shell-page-${page.key}`,
+              renderTab: Preview
+                ? (tab: ReactElement<ComponentProps<"button">>) => (
+                    <PagePreview
+                      page={page}
+                      preview={Preview}
+                      label={label}
+                      enabled={previewed(page)}
+                      dockHint
+                    >
+                      {tab}
+                    </PagePreview>
+                  )
+                : undefined,
+              trailing: (
+                <>
+                  {Badge && (
+                    <ContributionBoundary
+                      key={contributionKey(page)}
+                      fallback={null}
+                    >
+                      <Badge />
+                    </ContributionBoundary>
+                  )}
+                  <BestieUnreadBadge pageKey={page.key} />
+                </>
+              ),
+            };
+          })
+          .concat(onManagePlugins ? managePluginsTile : [])}
       />
     );
   }
@@ -181,6 +196,14 @@ export function PageNavigation({
     );
   });
 }
+
+// Every page key is `plugin/page`, so this value never names a page.
+const MANAGE_PLUGINS = "shell:manage-plugins";
+const managePluginsTile: TabItem<string> = {
+  value: MANAGE_PLUGINS,
+  label: "Plugins",
+  icon: <PageIcon icon={SquaresFourIcon} size={20} strokeWidth={2.5} />,
+};
 
 const hoverQuery = "(hover: hover) and (pointer: fine)";
 function useHoverPointer() {

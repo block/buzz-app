@@ -1030,7 +1030,8 @@ and are asked to sign in again in Buzz.
   on the right. Compact avatars sit before the name on the left; Solo chats show
   the included agents.
 - **App navigation**: use the left dock to switch apps. Bestie is first,
-  followed by Messages and the other apps. Activity is the first row of the
+  followed by Messages and the other apps. The last tile, **Plugins**, opens
+  **Settings → Manage plugins**. Activity is the first row of the
   Messages sidebar. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages shows your workspaces, Starred and unfiled conversations together.

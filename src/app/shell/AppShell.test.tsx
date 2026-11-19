@@ -553,6 +553,7 @@ it("shows global pages in the side dock and keeps the conversation mounted acros
     "Bestie",
     "Messages",
     "Reminders",
+    "Plugins",
   ]);
   expect(screen.getByRole("tablist")).toHaveAttribute(
     "aria-orientation",
@@ -572,6 +573,19 @@ it("shows global pages in the side dock and keeps the conversation mounted acros
   expect(onSelect).toHaveBeenLastCalledWith("buzz.reminders/reminders", {
     focus: "preserve",
   });
+  // The last tile opens Settings at Manage plugins over the current app.
+  await user.click(within(dock).getByRole("tab", { name: "Plugins" }));
+  expect(onSelect).toHaveBeenLastCalledWith("settings", {
+    section: "plugins",
+  });
+  expect(within(dock).getByRole("tab", { name: "Messages" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(within(dock).getByRole("tab", { name: "Plugins" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
   view.rerender(tree());
   expect(screen.getByRole("textbox", { name: "Message draft" })).toBe(draft);
   expect(draft).toHaveValue("Keep this draft");

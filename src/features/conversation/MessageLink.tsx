@@ -52,6 +52,7 @@ import {
 import { namedChannel, useChannelReference } from "./channel-reference";
 import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
+import { plainLabel } from "../messages/label-text";
 import { soloChatLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
@@ -172,9 +173,27 @@ export function MessageLink({
       : channelPrivate || named?.private
         ? "private"
         : "channel";
-  // The authored label is message text, so it stays; the lock marks it. A raw
-  // destination has no name to show.
-  const shown = withheld && label === undefined ? "Private channel" : children;
+  const channelName = withheld
+    ? undefined
+    : (directoryLabel ?? (named ? `#${named.name}` : undefined));
+  // The `#` completion writes a channel's name of the moment as its Markdown
+  // link's label, so a plain `#` label follows the channel's current name once
+  // known. `#name` prose has no children: its author wrote that name.
+  const current =
+    !chatName &&
+    children !== undefined &&
+    plainLabel(children) &&
+    label?.startsWith("#") &&
+    channelName?.startsWith("#")
+      ? channelName
+      : undefined;
+  // Any other authored label is message text, so it stays; the lock marks it.
+  // A raw destination has no name to show.
+  const shown = current
+    ? undefined
+    : withheld && label === undefined
+      ? "Private channel"
+      : children;
   // A raw message destination names its author once read; a draft never reads.
   const byline = useLinkedMessageByline(
     interactive && label === undefined && children === undefined
@@ -184,13 +203,11 @@ export function MessageLink({
     destination?.messageId,
   );
   const display =
+    current ??
     label ??
     (withheld
       ? "Private channel"
-      : (byline ??
-        (chatName || undefined) ??
-        directoryLabel ??
-        (named ? `#${named.name}` : undefined)));
+      : (byline ?? (chatName || undefined) ?? channelName));
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -297,7 +314,7 @@ export function MessageLink({
         aria-label={accessibleName ?? display}
         aria-description={description}
         aria-disabled={withheld || undefined}
-        data-link-label={label ?? ""}
+        data-link-label={current ?? label ?? ""}
         data-panel-target={panelTarget ? url : undefined}
         title={
           withheld

@@ -9,3 +9,11 @@ export const labelText = (children: ReactNode): string =>
         : String(child),
     )
     .join("");
+
+/** Whether those children are text alone, with no formatting around any of it. */
+export const plainLabel = (children: ReactNode): boolean =>
+  Children.toArray(children).every(
+    (child) =>
+      !isValidElement<{ children?: ReactNode }>(child) ||
+      child.props.children === undefined,
+  );

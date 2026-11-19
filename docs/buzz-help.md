@@ -594,7 +594,8 @@ and are asked to sign in again in Buzz.
   Folders are optional unless **Work in a new worktree** is on.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
-  remove it and pick again with **#**.
+  remove it and pick again with **#**. A sent chip shows the channel's current
+  name, so it follows a rename; a link with your own text keeps that text.
 - **Folder chips.** In the desktop app, type **!** and part of a folder name in
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the

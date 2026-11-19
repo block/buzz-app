@@ -126,15 +126,33 @@ it("names an open channel and shows its hover card", async () => {
     <>
       {link(t.session, "open")}
       {link(t.session, "open", null)}
+      {link(t.session, "open", "the crew room")}
+      <MessageLink
+        url="buzz://channel/open"
+        registry={undefined}
+        onOpenLink={() => true}
+        session={t.session}
+        label="#authored"
+      >
+        <strong>#authored</strong>
+      </MessageLink>
     </>,
   );
   await act(async () => {});
   expect(t.refer).toHaveBeenCalledWith("open");
+  // Until the channel is known, a `#` label shows as written.
+  expect(screen.getAllByRole("link")[0]?.textContent).toBe("#authored");
   t.answer("open", crew);
-  // The authored label stays; a raw link takes the channel's name.
-  const [authored, raw] = screen.getAllByRole("link");
-  expect(authored?.textContent).toBe("#authored");
+  // A plain `#` label and a raw link take the channel's name, which copies
+  // with it; other authored text stays, formatted `#` text included.
+  const [chip, raw, authored, formatted] = screen.getAllByRole("link");
+  expect(chip?.textContent).toBe("#crew-open");
+  expect(chip?.getAttribute("aria-label")).toBe("#crew-open");
+  expect(chip?.getAttribute("data-link-label")).toBe("#crew-open");
   expect(raw?.textContent).toBe("#crew-open");
+  expect(authored?.textContent).toBe("the crew room");
+  expect(formatted?.innerHTML).toBe("<strong>#authored</strong>");
+  expect(formatted?.getAttribute("data-link-label")).toBe("#authored");
   fireEvent.mouseEnter(raw as HTMLElement);
   fireEvent.mouseMove(raw as HTMLElement);
   await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));

@@ -3065,7 +3065,10 @@ credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
-the full destination remains on the anchor. A raw message or thread link in a listed
+the full destination remains on the anchor. A channel link whose label is plain `#` text, as `#` completion
+writes it, shows the channel's current name once known, so it follows a rename, and selection copy takes that
+name; until then, and for a withheld channel, DM or Solo chat, the written label shows. Any other label,
+formatted `#` text included, and `#name` prose stay as written. A raw message or thread link in a listed
 channel reads as “<author> in #<channel>” once its author has a name, and a workflow’s
 as “Workflow in #<channel>”; DMs, Solo chats, authored labels and drafts keep the channel
 name. So does a message the lookup cannot find or read, whether deleted or not yet

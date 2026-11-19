@@ -123,6 +123,10 @@ test("outside people survive Close and send reference-only with Send anyway", as
   // block/buzz parity: this fixture cannot add members, so no Invite or Cancel.
   await expect(dialog.getByRole("button", { name: "Invite" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+  // Not listed as public, so nobody outside can be let know.
+  await expect(
+    dialog.getByRole("button", { name: "Let them know" }),
+  ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(input).toBeFocused();
@@ -144,6 +148,38 @@ test("outside people survive Close and send reference-only with Send anyway", as
   expect(event.kind).toBe(9);
   expect(event.tags).toContainEqual(["mention", key]);
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
+  expect(event.content).toBe("@Outside Person hello");
+  await expect(input).toHaveJSProperty("value", "");
+});
+
+test("Let them know in a listed public stream keeps the outside person as a real mention", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?nonmember-admission&public");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await input.fill("@Outside");
+  await page.getByRole("option", { name: /^Outside Person / }).click();
+  await input.pressSequentially("hello");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Mention people outside this channel?",
+  });
+  await expect(dialog).toContainText(
+    "You can let them know without inviting them, or send without notifying them.",
+  );
+  await dialog
+    .getByRole("button", { name: "Let them know", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  const { event, key } = await page.evaluate(() => ({
+    event: window.mentionFixture.publications[0],
+    key: window.mentionFixture.outsider,
+  }));
+  expect(
+    event.tags.filter((tag) => tag[0] === "p" || tag[0] === "mention"),
+  ).toEqual([["p", key]]);
   expect(event.content).toBe("@Outside Person hello");
   await expect(input).toHaveJSProperty("value", "");
 });

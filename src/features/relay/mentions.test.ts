@@ -143,6 +143,16 @@ function setup(
       );
       await owner.session.profiles.ensure([key.pubkey]);
     },
+    async personProfile(key: typeof honey) {
+      profileEvents.push(
+        signed(key, {
+          kind: 0,
+          content: JSON.stringify({ name: "Honey" }),
+          tags: [],
+        }),
+      );
+      await owner.session.profiles.ensure([key.pubkey]);
+    },
     sign,
     publish,
     hold: () => {
@@ -268,6 +278,101 @@ it("raw outbox writes cannot bypass the pre-sign membership check", async () => 
   expect(h.sign).not.toHaveBeenCalled();
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
+});
+const listed = (...extra: string[][]) =>
+  metadata(relay, "c", "General", 1_700_000_000, [
+    ["public"],
+    ["t", "stream"],
+    ...extra,
+  ]);
+it.each([false, true])(
+  "Let them know keeps a real mention of a person outside a listed public stream, reply=%s, rechecked against a fresh roster",
+  async (reply) => {
+    const h = setup();
+    await h.members([viewer.pubkey], 1700000000, relay, listed());
+    await h.personProfile(honey);
+    const root = "a".repeat(64);
+    const id = reply
+      ? h.session.messages.reply("c", root, "@Honey look", [honey.pubkey])
+      : h.session.messages.send("c", "@Honey look", [honey.pubkey]);
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.id).toBe(id);
+    expect(
+      event?.tags.filter(([name]) => name === "p" || name === "mention"),
+    ).toEqual([["p", honey.pubkey]]);
+  },
+);
+it("Do nothing sends a person outside a listed public stream only as a reference", async () => {
+  const h = setup();
+  await h.members([viewer.pubkey], 1700000000, relay, listed());
+  await h.personProfile(honey);
+  h.session.messages.send("c", "@Honey", [], [], undefined, [honey.pubkey]);
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(
+    h.publish.mock.calls[0]?.[0].tags.filter(
+      ([name]) => name === "p" || name === "mention",
+    ),
+  ).toEqual([["mention", honey.pubkey]]);
+});
+it.each([
+  ["a private stream", [["private"], ["t", "stream"]], "person"],
+  [
+    "an unlisted public stream",
+    [["public"], ["t", "stream"], ["unlisted"]],
+    "person",
+  ],
+  ["a channel of unknown visibility", [["t", "stream"]], "person"],
+  ["an agent", [["public"], ["t", "stream"]], "agent"],
+  ["a local agent", [["public"], ["t", "stream"]], "local agent"],
+  ["a profile that has not loaded", [["public"], ["t", "stream"]], "none"],
+] as const)("refuses a real mention outside %s", async (_case, tags, who) => {
+  // A local agent's profile need not say it is one.
+  const h =
+    who === "local agent"
+      ? setup(
+          false,
+          false,
+          localAgentsFixture([
+            {
+              pubkey: honey.pubkey,
+              name: "Honey",
+              relayUrl: "wss://relay.example.test",
+              owner: viewer.pubkey,
+            },
+          ]),
+        )
+      : setup();
+  await h.members(
+    [viewer.pubkey],
+    1700000000,
+    relay,
+    metadata(
+      relay,
+      "c",
+      "General",
+      1_700_000_000,
+      tags.map((tag) => [...tag]),
+    ),
+  );
+  if (who === "person" || who === "local agent") await h.personProfile(honey);
+  if (who === "agent") await h.agentProfile(honey);
+  expect(() => h.session.messages.send("c", "@Honey", [honey.pubkey])).toThrow(
+    /no longer a channel member/,
+  );
+  assert.exists(h.session.outbox);
+  // A raw write is held to the same rule when it is signed.
+  h.session.outbox.send({
+    kind: 9,
+    content: "@Honey",
+    tags: [
+      ["h", "c"],
+      ["p", honey.pubkey],
+    ],
+  });
+  await flush();
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
 });
 it("disposal during signing fences publication to a retired session", async () => {
   const h = setup();

@@ -10750,6 +10750,95 @@ for (const channelType of ["stream", "forum"] as const)
     },
   );
 
+for (const channelType of ["stream", "forum"] as const)
+  it.each([undefined, "f".repeat(64)])(
+    `Let them know keeps a person outside a listed public ${channelType} as a mention and adds nobody, root=%s`,
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+      const add = vi.fn();
+      const list = {
+        status: "ready",
+        channels: [
+          {
+            id: "channel",
+            channelType,
+            visibility: "public",
+            members: ["d".repeat(64)],
+          },
+        ],
+      };
+      Object.assign(h.session, {
+        viewer: "d".repeat(64),
+        channels: { list: () => list, subscribeList: () => () => {} },
+        memberAdditions: { add },
+      });
+      act(() => h.commands().insertMention(first));
+      fireEvent.submit(screen.getByRole("form"));
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Honey is not in this channel. Invite them to the channel, let them know without inviting them, or send without notifying them.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Let them know" }));
+      const send = threadRootId ? h.messages.reply : h.messages.send;
+      await waitFor(() => expect(send).toHaveBeenCalledOnce());
+      const call = send.mock.calls[0] ?? [];
+      expect(call[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
+      // Not also a reference: the mention stays the only tag naming them.
+      expect(call.slice(threadRootId ? 4 : 3).flat()).not.toContain(
+        first.pubkey,
+      );
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+it.each([
+  ["a private stream", { visibility: "private" }, { name: "Honey" }],
+  [
+    "an unlisted public stream",
+    { visibility: "public", unlisted: true },
+    { name: "Honey" },
+  ],
+  ["a stream of unknown visibility", {}, { name: "Honey" }],
+  ["an agent", { visibility: "public" }, { name: "Honey", isAgent: true }],
+  ["one of your agents", { visibility: "public" }, { name: "Honey" }],
+  ["a profile that has not loaded", { visibility: "public" }, undefined],
+] as const)(
+  "does not offer Let them know for %s",
+  async (name, channel, profile) => {
+    const h = mount();
+    if (profile) h.setProfiles(new Map([[first.pubkey, profile]]));
+    if (name === "one of your agents") {
+      // Known from the local library, though its profile does not say so.
+      const real = h.session.agentChoices;
+      const library = { ...real.snapshot(), identities: [first] };
+      Object.assign(h.session, {
+        agentChoices: { ...real, snapshot: () => library },
+      });
+    }
+    const list = {
+      status: "ready",
+      channels: [
+        {
+          id: "channel",
+          channelType: "stream",
+          members: ["d".repeat(64)],
+          ...channel,
+        },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add: vi.fn() },
+    });
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Let them know" })).toBeNull();
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("let them know");
+  },
+);
+
 it.each(["Do nothing", "Invite"])(
   "after %s, the next draft carries an outside agent only if it was notified",
   async (action) => {

@@ -76,6 +76,8 @@ import { createUnread } from "./unread";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
+import { notifiesOutside } from "./inbox";
+import { knownAgentPubkeys } from "../agents/known";
 import type {
   IncomingListener,
   IncomingMessage,
@@ -1644,10 +1646,24 @@ export function createRelaySession(
         !addressesPartnerOnly)
     )
       throw new Error("Refresh channel membership before mentioning anyone");
-    if (pubkeys.some((key) => !channel.members?.includes(key)))
+    if (
+      pubkeys.some(
+        (key) =>
+          !channel.members?.includes(key) && !mentionsOutside(channel, key),
+      )
+    )
       throw new Error(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
+  }
+  function mentionsOutside(channel: ChannelSummary, pubkey: string) {
+    const known = profiles.queries.snapshot();
+    return notifiesOutside(
+      channel,
+      pubkey,
+      known,
+      knownAgentPubkeys(known, agentChoices.snapshot()),
+    );
   }
   function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 40100) return;
@@ -1817,10 +1833,16 @@ export function createRelaySession(
       );
     accept([roster]);
     validateMentionEvent(event); // A newer live removal beats an older read result.
+    const channel = channels.queries
+      .list()
+      .channels.find((item) => item.id === channelId);
     if (
       !hasTag(roster, "p", transport.viewer) ||
       event.tags.some(
-        ([name, key]) => name === "p" && !hasTag(roster, "p", key ?? ""),
+        ([name, key]) =>
+          name === "p" &&
+          !hasTag(roster, "p", key ?? "") &&
+          !(channel && mentionsOutside(channel, key ?? "")),
       )
     )
       throw new Error(

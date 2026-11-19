@@ -72,7 +72,7 @@ async function viewerSession(key = keypair(), relay = relayUrl) {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  return { key, session: owner.session, transport };
+  return { key, session: owner.session, transport, base };
 }
 
 it.skipIf(!relayUrl)(
@@ -472,5 +472,65 @@ it.skipIf(!relayUrl)(
     ]);
     expect(roster?.tags).not.toContainEqual(["p", bob.key.pubkey]);
     console.info("[e2e] outside mentions", { lobby, vault, history });
+  },
+);
+
+it.skipIf(!relayUrl)(
+  "Let them know sends a real mention through the sender's checks; a private channel refuses it",
+  { timeout: 90_000 },
+  async () => {
+    const alice = await runningSession();
+    const bob = await runningSession();
+    const stamp = Date.now().toString(36);
+    const lobby = await alice.session.channelCreation.create({
+      name: `lobby ${stamp}`,
+      visibility: "open",
+    });
+    const vault = await alice.session.channelCreation.create({
+      name: `vault ${stamp}`,
+      visibility: "private",
+    });
+    // Only a loaded profile that is not an agent can be let know.
+    const saved = await fetch(`${bob.base}/api/relay/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: `Bob ${stamp}`, picture: "", existing: {} }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    await vi.waitFor(
+      async () => {
+        await alice.session.profiles.ensure([bob.key.pubkey]);
+        expect(
+          alice.session.profiles.snapshot().get(bob.key.pubkey),
+        ).toBeDefined();
+        expect(alice.session.channels.get?.(lobby)).toMatchObject({
+          visibility: "public",
+          channelType: "stream",
+        });
+        expect(alice.session.channels.get?.(vault)).toMatchObject({
+          visibility: "private",
+        });
+      },
+      { timeout: 15_000 },
+    );
+    const id = alice.session.messages.send(lobby, "let them know", [
+      bob.key.pubkey,
+    ]);
+    // Publication rechecks a fresh roster from the relay before it goes.
+    await vi.waitFor(
+      async () => {
+        const [stored] = await alice.transport.query([{ ids: [id], limit: 1 }]);
+        expect(stored?.tags).toContainEqual(["p", bob.key.pubkey]);
+      },
+      { timeout: 15_000 },
+    );
+    const [members] = await alice.transport.query([
+      { kinds: [39002], "#d": [lobby], limit: 1 },
+    ]);
+    expect(members?.tags).not.toContainEqual(["p", bob.key.pubkey]);
+    expect(() =>
+      alice.session.messages.send(vault, "crafted", [bob.key.pubkey]),
+    ).toThrow(/no longer a channel member/);
+    console.info("[e2e] let them know", { lobby, vault, id });
   },
 );

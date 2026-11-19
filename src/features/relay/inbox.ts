@@ -1,4 +1,4 @@
-import type { ChannelSummary } from "./contracts";
+import type { ChannelSummary, Profile } from "./contracts";
 import type { ReadTarget } from "./read-state-model";
 
 /** A listed public stream or forum the viewer reads without joining. Its
@@ -14,6 +14,19 @@ export const outsideChannel = (channel: ChannelSummary, viewer: string) =>
   !channel.huddle &&
   !channel.archived &&
   !channel.members?.includes(viewer);
+
+/** "Let them know": a mention may keep notifying `pubkey` though they are not
+ * in `channel`. Only a loaded profile qualifies, never one of `agents`
+ * (`knownAgentPubkeys`: profile hints and the local library). */
+export const notifiesOutside = (
+  channel: ChannelSummary,
+  pubkey: string,
+  profiles: ReadonlyMap<string, Profile>,
+  agents: ReadonlySet<string>,
+) =>
+  outsideChannel(channel, pubkey) &&
+  profiles.has(pubkey) &&
+  !agents.has(pubkey);
 
 /** A conversation projected from the unread owner's bounded verified evidence. */
 export type InboxItem = Readonly<{

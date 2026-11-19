@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
+import { knownAgentPubkeys } from "../agents/known";
+import { notifiesOutside } from "../relay/inbox";
 import type { MentionRecipient } from "./mention-draft";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -29,6 +31,14 @@ export function useNonmemberMentions(
     .list()
     .channels.find((item) => item.id === channelId);
   const canAdd = !!channel && canAddMembers(session, channel);
+  const profiles = session.profiles.snapshot();
+  const agents = knownAgentPubkeys(profiles, session.agentChoices.snapshot());
+  // Agents are invited or referenced, never notified outside a channel.
+  const canNotify =
+    !!channel &&
+    !!pending?.people.every((person) =>
+      notifiesOutside(channel, person.pubkey, profiles, agents),
+    );
   async function add() {
     if (!pending || adding.current || !canAdd) return;
     adding.current = true;
@@ -89,7 +99,7 @@ export function useNonmemberMentions(
           if (!open) pending?.finish(null);
         }}
         title="Mention people outside this channel?"
-        description={pending && describe(pending.people, canAdd)}
+        description={pending && describe(pending.people, canAdd, canNotify)}
         preventClose={!!pending?.busy}
         initialFocus={canAdd ? inviteAction : undefined}
         finalFocus={() => {
@@ -105,8 +115,17 @@ export function useNonmemberMentions(
                 pending?.finish(pending.people.map((person) => person.pubkey))
               }
             >
-              {canAdd ? "Do nothing" : "Send anyway"}
+              {canAdd || canNotify ? "Do nothing" : "Send anyway"}
             </Button>
+            {canNotify && (
+              <Button
+                type="button"
+                disabled={pending?.busy}
+                onClick={() => pending?.finish([])}
+              >
+                Let them know
+              </Button>
+            )}
             {canAdd && (
               <Button
                 ref={inviteAction}
@@ -133,12 +152,20 @@ export function useNonmemberMentions(
 }
 
 /** Match block/buzz desktop: name the people, then the available outcome. */
-function describe(people: readonly MentionRecipient[], canAdd: boolean) {
+function describe(
+  people: readonly MentionRecipient[],
+  canAdd: boolean,
+  canNotify: boolean,
+) {
   const names = people.map((person) => person.name).join(", ");
   const verb = people.length === 1 ? "is" : "are";
   return `${names} ${verb} not in this channel. ${
-    canAdd
-      ? "Invite them to the channel, or send without inviting them."
-      : "You cannot add people to this channel. You can still send without inviting them."
+    canAdd && canNotify
+      ? "Invite them to the channel, let them know without inviting them, or send without notifying them."
+      : canAdd
+        ? "Invite them to the channel, or send without inviting them."
+        : canNotify
+          ? "You cannot add people to this channel. You can let them know without inviting them, or send without notifying them."
+          : "You cannot add people to this channel. You can still send without inviting them."
   }`;
 }

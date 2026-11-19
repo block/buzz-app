@@ -382,9 +382,12 @@ offers these actions, like block/buzz desktop:
 | Action | Shown | Result |
 | --- | --- | --- |
 | Invite | With add-member permission | Add each outside key. Wait until the relay confirms membership. Then send with those keys as recipients. |
-| Do nothing | With add-member permission | Send. Outside keys become references. Nobody is added or notified. |
-| Send anyway | Without add-member permission | The same as Do nothing. |
+| Let them know | In a listed public stream or forum, when every outside key has a loaded profile and none is a known agent | Send with the outside keys as recipients. Nobody is added. Each is notified and can read the message without joining. |
+| Do nothing | With add-member permission or Let them know | Send. Outside keys become references. Nobody is added or notified. |
+| Send anyway | With neither | The same as Do nothing. |
 | Close or Escape | Always | Do not send. Keep the draft. |
+
+Let them know is never offered for an agent, which joins or is only named.
 
 A DM has fixed participants, so there is no choice to make. The client MUST NOT
 ask. It sends outside keys in a DM as references, which do not notify them. The
@@ -425,8 +428,9 @@ A kind 9 channel message (or its reply) carries:
 - one `["mention", key]` tag per reference.
 
 Each list MUST have unique, valid, lowercase keys, at most 32 per list. Every
-recipient MUST be a member when the message is written. A writer MUST reject the
-message instead of dropping or converting a bad key.
+recipient MUST be a member when the message is written, except an outside key
+that section 7's Let them know allows. A writer MUST reject the message instead
+of dropping or converting a bad key.
 
 A reader:
 

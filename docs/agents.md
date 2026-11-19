@@ -1066,7 +1066,7 @@ The composer accepts these people:
 
 | Where you write               | Who you can mention                                                                                                                                 |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Channel or forum              | Anyone. Before sending, the app asks what to do about people who are not in the channel.                                                            |
+| Channel or forum              | Anyone. Before sending, the app asks what to do about people who are not in the channel. In a listed public one, it can let people know without adding them; never agents. |
 | DM                            | Anyone. People outside the DM are named but not notified.                                                                                           |
 | Solo chat                     | Anyone. A send adds your tagged agents; other people outside the chat are named but not notified. Media comments and edits offer chat members only. |
 | New DM, before it is created  | Only the people you chose for the DM.                                                                                                               |
@@ -1076,7 +1076,9 @@ Everywhere, the composer refuses invalid keys and people known to be archived.
 You can always mention yourself. If archive state is unknown, the mention is
 allowed.
 
-A mention notifies a member. It does not promise that an agent will answer, and
+A mention notifies a member, or a person outside a listed public channel whom
+the sender chose to let know. Agent tools refuse to mention anyone outside the
+channel. A mention does not promise that an agent will answer, and
 choosing someone does not give them access or start an agent. In a one-to-one
 DM with your own agent, it answers every message you send, mention or not; a
 group DM still requires a mention.

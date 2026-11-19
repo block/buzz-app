@@ -499,7 +499,10 @@ and are asked to sign in again in Buzz.
   whether to add it; in a Solo chat, sending adds it without asking. Typing a
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
-  from someone with permission.
+  from someone with permission. In a listed public channel or forum, sending
+  can instead **Let them know**: they are notified without being added and can
+  read the message without joining. It is not offered for agents, or in private
+  or unlisted channels.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Drag a workspace header onto another workspace to reorder it, or use **Move up**
   and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
@@ -549,7 +552,8 @@ and are asked to sign in again in Buzz.
   A bare **!**, or **!** before a space, stays text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
-  threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
+  threads stay separate. A mention from a listed public channel you have not joined appears too and opens
+  there without joining; a running app lists a new one after it reconnects, or at once while that channel is open. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered

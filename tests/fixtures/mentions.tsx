@@ -61,6 +61,8 @@ const admission = new URLSearchParams(location.search).has(
 );
 // With nonmember-admission: make "General" a DM, which can never add members.
 const dm = new URLSearchParams(location.search).has("dm");
+// With nonmember-admission: make "General" a listed public stream.
+const listed = new URLSearchParams(location.search).has("public");
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const secondProfile = () =>
@@ -200,6 +202,7 @@ const owner = createRelaySession(
                   ["d", "c"],
                   ["name", "General"],
                   ["t", dm ? "dm" : "stream"],
+                  ...(listed ? [["public"]] : []),
                 ],
               })
             : metadata(

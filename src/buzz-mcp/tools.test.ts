@@ -510,6 +510,27 @@ it("signs the turn's triggering request separately from the flattened reply", as
   expect(published).toHaveLength(1);
 });
 
+it("refuses an agent's mention of a person outside even a listed public stream", async () => {
+  // Let them know is the composer's choice for people, never an agent's.
+  const outsider = "d".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    profile(outsider, "Carol"),
+    event({
+      kind: 39000,
+      tags: [["d", "chan"], ["t", "stream"], ["public"]],
+    }),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      text: "hi",
+      mentions: [outsider],
+    }),
+  ).rejects.toThrow(`Not in this channel: ${outsider}`);
+  expect(published).toHaveLength(0);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

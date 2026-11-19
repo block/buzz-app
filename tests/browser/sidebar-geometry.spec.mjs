@@ -47,6 +47,7 @@ test("working badges align in their rows and clear the Solo actions button", asy
   const [soloRow] = rows;
   const chat = soloRow.locator(`button[data-channel-id="${solo}"]`);
   const action = soloRow.locator("[data-solo-row-action]");
+  const preview = page.getByRole("dialog", { name: "Activity in Alpha" });
   const titleWidth = () =>
     chat
       .locator(".navigation-item-label")
@@ -106,7 +107,10 @@ test("working badges align in their rows and clear the Solo actions button", asy
     await expect(action).toHaveCSS("opacity", "1");
     await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
     await expect.poll(titleWidth).toBe(restingWidth);
+    await expect(preview).toBeVisible();
     await page.mouse.move(0, 0);
+    // The preview temporarily owns Tab while its dismissal is in flight.
+    await expect(preview).toHaveCount(0);
     await chat.focus();
     await page.keyboard.press("Tab");
     await expect(action).toBeFocused();

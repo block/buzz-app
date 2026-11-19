@@ -23,6 +23,9 @@ import {
   emptyReferenceDirectory,
   MentionLabel,
 } from "./ReferenceText";
+import { ProfilePeek } from "../profiles/ProfilePeek";
+import { avatarMedia } from "../../shared/avatar-source";
+import { fullSession } from "./composer-session";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -682,7 +685,7 @@ function PreparedMessageMarkdown({
       const label = key ? resolveName(key, shown) : shown;
       const Mention = clickable ? "button" : "span";
       // Selection copy reads the identity and the whole label (selection-copy.ts).
-      return (
+      const mention = (
         <Mention
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
@@ -691,17 +694,26 @@ function PreparedMessageMarkdown({
           data-profile-target={target}
           data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}
-          onClick={
-            clickable
-              ? (event) => {
-                  event.currentTarget.focus();
-                  onOpenLink(target);
-                }
-              : undefined
-          }
         >
           <MentionLabel agent={!!agent} label={label} />
         </Mention>
+      );
+      if (!clickable || !key) return mention;
+      const profile = profiles.get(key);
+      return (
+        <ProfilePeek
+          key={`${scope}:${session?.viewer}:${key}`}
+          trigger={mention}
+          name={label}
+          picture={avatarMedia(profile?.picture, media)}
+          pubkey={key}
+          agent={!!agent}
+          session={fullSession(session)}
+          viewer={session?.viewer}
+          channelId={row.channelId}
+          target={target}
+          onOpen={onOpenLink}
+        />
       );
     }
     return undefined;

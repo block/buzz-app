@@ -176,9 +176,35 @@ for (const theme of ["light", "dark"]) {
       );
     }
     // Real keyboard input reaches and activates the link.
+    await page.mouse.move(0, 0);
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("dialog", { name: /profile preview$/ }),
+    ).toHaveCount(0);
+    await page.keyboard.press(tabKey(browserName));
     await received.locator('button[data-mention-kind="person"]').focus();
-    await page.keyboard.press(tabKey(browserName));
-    await page.keyboard.press(tabKey(browserName));
+    for (const name of ["Sam Rivera", "Studio assistant"]) {
+      const trigger = received
+        .getByRole("button", {
+          name: `View ${name} profile`,
+          exact: true,
+        })
+        .and(received.locator("[data-mention-kind]"));
+      const preview = page.getByRole("dialog", {
+        name: `${name} profile preview`,
+        exact: true,
+      });
+      await expect(trigger).toBeFocused();
+      await expect(preview).toBeVisible();
+      await page.keyboard.press(tabKey(browserName));
+      await expect(
+        preview.getByRole("button", { name: "View profile", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(preview).toBeHidden();
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press(tabKey(browserName));
+    }
     await expect(receivedLink).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(received.getByRole("status")).toContainText(

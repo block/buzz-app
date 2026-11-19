@@ -69,7 +69,8 @@ function serialize(node: Node, depth = 0): string[] {
   const attributes = [...node.attributes]
     // React ids depend on hook order, not on what is rendered.
     .map(({ name, value }) =>
-      name === "id" && value.startsWith("base-ui-")
+      name === "id" &&
+      (value.startsWith("base-ui-") || /^_r_[a-z0-9]+_$/.test(value))
         ? "id=<react id>"
         : `${name}=${JSON.stringify(value)}`,
     )

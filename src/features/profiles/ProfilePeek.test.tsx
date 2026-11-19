@@ -75,6 +75,7 @@ function fixture(
   const view = render(
     <>
       <ProfilePeek
+        avoidMessageActions
         trigger={<button type="button">Avatar</button>}
         name="Morgan"
         picture={undefined}

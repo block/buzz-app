@@ -14,6 +14,7 @@ import {
   cloneElement,
   type ReactElement,
   type FocusEvent,
+  type MouseEvent,
 } from "react";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { AgentAvatar } from "../agents/AgentAvatar";
@@ -42,6 +43,8 @@ type ProfilePeekProps = {
   target: string;
   onOpen(target: string): boolean;
   onFocusChange?(focused: boolean): void;
+  /** Avatars can sit on the retained pointer route to message actions. */
+  avoidMessageActions?: boolean;
 };
 
 /** The verified name this reader does not go by. Mounted only in an open
@@ -99,6 +102,7 @@ export function ProfilePeek({
   channelId,
   viewer,
   onFocusChange,
+  avoidMessageActions = false,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
   const compact = useMessageDensity() === "compact";
@@ -184,12 +188,19 @@ export function ProfilePeek({
         trigger as ReactElement<
           {
             id?: string;
-            onClick?: () => void;
+            onClick?: (event: MouseEvent<HTMLElement>) => void;
           } & typeof focusRegion
         >,
         {
           id: triggerId,
-          onClick: openProfile,
+          onClick: (event: MouseEvent<HTMLElement>) => {
+            (
+              trigger.props as {
+                onClick?: (event: MouseEvent<HTMLElement>) => void;
+              }
+            ).onClick?.(event);
+            if (!event.defaultPrevented) openProfile();
+          },
           ...focusRegion,
           onFocus: () => {
             if (returningFromProfile.current === "pending")
@@ -207,6 +218,7 @@ export function ProfilePeek({
         // there they do not mark a route.
         const avatar = document.getElementById(triggerId);
         if (
+          avoidMessageActions &&
           next &&
           !compact &&
           details.reason === "trigger-hover" &&

@@ -1,6 +1,9 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
-import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
+import {
+  TypingIndicator,
+  useLiveConversationActivity,
+} from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
@@ -55,6 +58,7 @@ import { MessageContextMenus } from "./MessageActionBar";
 import {
   continuesMessageGroup,
   publicMessageNeighbor,
+  responseAvatarAnchors,
 } from "./message-grouping";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
@@ -1327,7 +1331,19 @@ function ThreadMessages({
       ),
     [tree, activitySnapshot, agentPubkeys, rootId, loadedRows],
   );
-  const liveAgents = useLiveConversationAgents(session, channelId, rootId);
+  const { agents: liveAgents, responding } = useLiveConversationActivity(
+    session,
+    channelId,
+    rootId,
+  );
+  const responseAvatars = responseAvatarAnchors(
+    rows,
+    responding.includes(liveAgents[0] ?? "") ? liveAgents[0] : undefined,
+    (previous, current) =>
+      tree.parents.get(previous.id) === tree.parents.get(current.id) &&
+      !tree.children.get(previous.id)?.length &&
+      continuesMessageGroup(previous, current),
+  );
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
     !!lastMessage &&
@@ -1953,6 +1969,7 @@ function ThreadMessages({
             }
             row={row}
             getThreadRoot={getThreadRoot}
+            responseAvatar={!inside && responseAvatars.has(row.id)}
             stackPrevious={inside || continuation}
             stackNext={
               inside ||
@@ -2338,6 +2355,7 @@ function ThreadMessages({
                 scope={scope}
                 onReply={soloConversation ? undefined : focusReply}
                 stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+                responseAvatar={responseAvatars.has(snapshot.root.id)}
                 row={snapshot.root}
                 representedAgents={stableActivity.agents(
                   snapshot.root.id,

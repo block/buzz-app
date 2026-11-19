@@ -203,9 +203,11 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   communities still count toward quota until deletion cleanup finishes.
   Remote agents show their model and setup state.
   The title includes the count. Each row’s **…** menu offers **Copy key**.
-  Uploaded animated avatars play during responses and in the expanded agent profile.
-  Cards, sidebar entries and completed replies use a still portrait. Reduce Motion
-  keeps uploaded avatars still in both places. The still portrait stays visible
+  Uploaded animated avatars play beside the current response, including compact
+  conversations, and in the expanded agent profile. Hover or focus a conversation
+  avatar to play it and its open profile preview. Playback stops when the response
+  or preview ends. Cards, sidebar entries and idle replies use a still portrait.
+  Reduce Motion keeps uploaded avatars still. The still portrait stays visible
   while an animation loads or if it cannot load.
   Saved agents show their community avatar and open their **Agents** pane when
   clicked, with **View Agent** also available in the menu. **In Agents** marks

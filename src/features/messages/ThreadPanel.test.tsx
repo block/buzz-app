@@ -13,6 +13,7 @@ import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
+import { useLiveConversationActivity } from "./TypingIndicator";
 import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -45,6 +46,7 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 vi.mock("./TypingIndicator", () => ({
   TypingIndicator: () => null,
   useLiveConversationAgents: () => [],
+  useLiveConversationActivity: vi.fn(() => ({ agents: [], responding: [] })),
 }));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
@@ -58,8 +60,13 @@ vi.mock("./MessageRow", () => ({
     onReply,
     onOpenMediaReview,
     onMediaPlayback,
+    responseAvatar,
   }: MessageRowProps) => (
-    <article data-message-id={row.id} data-scope={scope}>
+    <article
+      data-message-id={row.id}
+      data-scope={scope}
+      data-response-avatar={responseAvatar || undefined}
+    >
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -341,6 +348,34 @@ function messagesHarness(
     },
   };
 }
+it("passes the root its response-avatar ownership when a current cue joins it", () => {
+  const h = messagesHarness();
+  vi.mocked(useLiveConversationActivity).mockReturnValue({
+    agents: [row.authorId],
+    responding: [row.authorId],
+  });
+  try {
+    h.render();
+    expect(
+      h.element.querySelector(`[data-message-id="${row.id}"]`),
+    ).toHaveAttribute("data-response-avatar", "true");
+    vi.mocked(useLiveConversationActivity).mockReturnValue({
+      agents: [],
+      responding: [],
+    });
+    h.render();
+    expect(
+      h.element.querySelector(`[data-message-id="${row.id}"]`),
+    ).not.toHaveAttribute("data-response-avatar");
+  } finally {
+    vi.mocked(useLiveConversationActivity).mockReturnValue({
+      agents: [],
+      responding: [],
+    });
+    h.unmount();
+  }
+});
+
 it("allocates only after commit and disposes distinct owned views under StrictMode", () => {
   const h = messagesHarness();
   renderToString(<ThreadPanel {...h.props} />);

@@ -23,6 +23,7 @@ import type { RelaySession } from "../relay/session";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { ProfileBackdrop } from "./ProfileBackdrop";
 import { ProfileLocalTime } from "./ProfileLocalTime";
+import { useChatAvatar } from "./use-chat-avatar";
 import styles from "./ProfilePeek.module.css";
 import {
   otherVerifiedName,
@@ -31,9 +32,11 @@ import {
 } from "./name-preference";
 
 type ProfilePeekProps = {
-  trigger: ReactElement;
+  trigger: ReactElement | ((picture: string | undefined) => ReactElement);
   name: string;
   picture: string | undefined;
+  avatarSource?: unknown;
+  responding?: boolean;
   pubkey: string;
   agent: boolean;
   session: RelaySession | undefined;
@@ -93,6 +96,8 @@ export function ProfilePeek({
   onOpen,
   name,
   picture,
+  avatarSource,
+  responding = false,
   pubkey,
   agent,
   session,
@@ -101,6 +106,12 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
+  const portrait =
+    useChatAvatar(
+      avatarSource,
+      session?.media,
+      agent && (open || responding),
+    ) ?? picture;
   const compact = useMessageDensity() === "compact";
   const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
@@ -181,7 +192,9 @@ export function ProfilePeek({
   return (
     <PreviewCard
       trigger={cloneElement(
-        trigger as ReactElement<
+        (typeof trigger === "function"
+          ? trigger(portrait)
+          : trigger) as ReactElement<
           {
             id?: string;
             onClick?: () => void;
@@ -253,7 +266,8 @@ export function ProfilePeek({
                 session={session}
                 agentPubkey={pubkey}
                 channelId={channelId}
-                src={picture}
+                src={portrait}
+                fallbackSrc={picture}
                 alt=""
                 fallback={name}
                 size="fill"

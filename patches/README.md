@@ -229,6 +229,16 @@ added. `membership.spec.mjs` checks painted frames for a revisit without saved
 geometry and a late notice at the bottom, and its journeys fail on any
 observer-loop error once Messages is ready.
 
+Sizes delivered per callback can flush a second correction in the same task as
+the first, before the first jump's scroll event updates the store's offset.
+Virtua's relative path starts from the native offset, but its absolute path
+added the jump to the stale store offset: in Chromium, a page landing among the
+loaded rows moved the reader about 220px on 2–3 of 20 runs of
+`history-loading.spec.mjs` "keeps a reader 250px up". The absolute path now
+starts from the native offset as well. An installed-driver regression flushes a
+shrink above the viewport before the shift's scroll event, a case that
+previously jumped to the top.
+
 ## Automated checks
 
 ```sh

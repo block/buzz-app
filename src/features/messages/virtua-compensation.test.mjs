@@ -438,6 +438,23 @@ it("a prepend whose rows measure after scroll-end still keeps the former first r
   c.driver.R();
 });
 
+// Sizes apply as each observer delivery arrives, so a second correction can
+// flush before the first jump's scroll event updates the store's offset.
+it("a correction before the previous jump's scroll event starts from the native offset", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  openHistory(c);
+  c.prepend(40);
+  expect(c.viewport.scrollTop).toBe(2000);
+  c.calls.length = 0;
+  c.store.h(3, [[2, 90]]); // a prepended row above the viewport measures short
+  c.driver.te();
+  expect(c.calls.map((call) => call.options)).toEqual([
+    { top: -10, behavior: "instant" },
+  ]);
+  expect(c.viewport.scrollTop).toBe(1990);
+  c.driver.R();
+});
+
 it("a deferred shift waits through unrelated and partial measurement batches", () => {
   const c = setup({ platform: "Linux x86_64", offset: 0 });
   openHistory(c);

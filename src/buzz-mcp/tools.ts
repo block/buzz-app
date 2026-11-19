@@ -2538,10 +2538,13 @@ function messageLine(
   const owner = tag(event, "auth");
   const reference = threadReference(event);
   const thread = reference?.rootId;
-  // The rest, but for the thread markers the line already names.
+  // The rest, but for the thread references the line already names.
+  const named = [reference?.rootId, reference?.parentId];
   const tags = readableTags(event.tags).filter(
-    ([name, , , marker]) =>
-      name !== "e" || (marker !== "root" && marker !== "reply"),
+    ([name, value, , marker]) =>
+      name !== "e" ||
+      (marker !== "root" && marker !== "reply") ||
+      !named.includes(value?.toLowerCase()),
   );
   return [
     event.id,

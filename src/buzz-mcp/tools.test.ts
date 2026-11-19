@@ -941,6 +941,8 @@ it.each([
     const line = text.split("\n").find((line) => line.startsWith(id));
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
+    // Its thread fields name its root and reply tags, so no tags repeat them.
+    expect(line).not.toContain("tags ");
     expect(line).toContain("hello, edited");
     if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
@@ -961,6 +963,8 @@ it.each([
 it("shows a message's meaningful tags in a read, but not its bookkeeping", async () => {
   const id = "4".repeat(64);
   const shown = [
+    // A lone root isn't a reply, so no thread field names it.
+    ["e", root, "", "root"],
     ["p", bob],
     ["q", nested],
     ["t", "release"],
@@ -979,7 +983,7 @@ it("shows a message's meaningful tags in a read, but not its bookkeeping", async
     event({
       id,
       content: "tagged",
-      tags: [["h", "chan"], auth, ["e", root, "", "root"], ...shown, ...hidden],
+      tags: [["h", "chan"], auth, ...shown, ...hidden],
     }),
   ]);
   const line = (await read(client, { channel: "chan" }))

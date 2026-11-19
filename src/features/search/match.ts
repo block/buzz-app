@@ -1,5 +1,6 @@
+// Combining marks (the vowel sign in "की") belong to the letter before them.
 const isWordChar = (char: string | undefined) =>
-  /[\p{L}\p{N}]/u.test(char ?? "");
+  /[\p{L}\p{M}\p{N}]/u.test(char ?? "");
 
 /** How well a label matches typed text, best first. Ranks are whole numbers,
  * so callers can order them and add fractional tie-breaks. */
@@ -90,16 +91,22 @@ export function matchName(
   }
   // Last, each typed word must appear whole, preferably where a word starts.
   // Scattered single letters never match.
-  const words = needle.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const words = needle.split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean);
   if (!words.length) return undefined;
   const positions = new Set<number>();
   for (const word of words) {
-    const first = text.indexOf(word);
-    if (first < 0) return undefined;
-    let at = first;
-    while (at >= 0 && isWordChar(text[at - 1])) at = text.indexOf(word, at + 1);
-    for (const position of run(at < 0 ? first : at, word))
-      positions.add(position);
+    // A one-letter word ("q" in "q&a") matches only a one-letter word, so it
+    // cannot land inside a longer one.
+    const single = [...word].length === 1;
+    const whole = (at: number) =>
+      !isWordChar(text[at - 1]) &&
+      (!single || !isWordChar(text[at + word.length]));
+    let at = text.indexOf(word);
+    const inside = single ? -1 : at;
+    while (at >= 0 && !whole(at)) at = text.indexOf(word, at + 1);
+    if (at < 0) at = inside;
+    if (at < 0) return undefined;
+    for (const position of run(at, word)) positions.add(position);
   }
   return found(
     MatchRank.words,

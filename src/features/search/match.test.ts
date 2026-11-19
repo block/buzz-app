@@ -34,6 +34,8 @@ describe("matchName", () => {
     ["buzz-hive-team", "team buzz", MatchRank.words, "[buzz]-hive-[team]"],
     ["buzz-steam-team", "zz-team", MatchRank.words, "bu[zz]-steam-[team]"],
     ["mybuzz-steam", "buzz-team", MatchRank.words, "my[buzz]-s[team]"],
+    ["q-and-a", "a q", MatchRank.words, "[q]-and-[a]"],
+    ["काम-की", "की काम", MatchRank.words, "[काम]-[की]"],
   ])("%s for %s", (label, needle, rank, underlined) => {
     expect(matchName(label, needle)?.rank).toBe(rank);
     expect(marked(label, needle)).toBe(underlined);
@@ -45,6 +47,8 @@ describe("matchName", () => {
     ["https://github.com/example-org/buzz-app/pulls", "buzz-team"],
     ["general", "gnrl"],
     ["general", "-"],
+    ["quality", "q&a"],
+    ["काम", "की"],
   ])("%s does not match %s", (label, needle) => {
     expect(matchName(label, needle)).toBeUndefined();
   });

@@ -2713,6 +2713,9 @@ export class AgentRunners {
         ...(wake
           ? {
               syntheticMessage: true,
+              ...(trigger.type === "timer"
+                ? { attentionTimerId: trigger.slug }
+                : {}),
               ...(wake.text ? { requestText: wake.text } : {}),
             }
           : {}),

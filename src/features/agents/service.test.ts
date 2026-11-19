@@ -15146,6 +15146,7 @@ it.each(
       messageId: trigger.id,
       threadRootId: root ?? trigger.id,
       syntheticMessage: true,
+      attentionTimerId: "watch/once",
       requestText: trigger.text,
       state: "working",
     });
@@ -15176,6 +15177,7 @@ it.each(
     if (outcome !== "invalidated") {
       expect(activity.reader.work()[0]).toMatchObject({
         requestText: trigger.text,
+        attentionTimerId: "watch/once",
         state:
           outcome === "failure"
             ? "error"
@@ -15354,6 +15356,7 @@ it("delivers matched events to their configured address rather than the listenin
       requestText: trigger.text,
       state: "working",
     });
+    expect(activity.reader.work()[0]?.attentionTimerId).toBeUndefined();
     await service.save(bot, {
       attention: {
         "interest/default": {

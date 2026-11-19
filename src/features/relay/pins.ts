@@ -12,23 +12,32 @@ export const UNPIN_KIND = 40011;
 /** The relay's refusal as the outbox stores it: the transport drops the
  * NIP-01 prefix and capitalizes the rest for display. */
 const TOO_OLD = READ_STATE_TIMESTAMP_REFUSAL.replace(/^invalid:\s*/, "");
-/** A pin command refused as too old, by the relay or by the desktop host
- * before resending it. Its outcome is unknown and resending it is refused
- * again, so NIP-PM has the client read the list and leave any new command to
- * the person, since one signed by itself could undo another member's change. */
-export function expiredPinCommand(
-  item: Pick<OutgoingEvent, "event" | "error">,
-): boolean {
-  const error = item.error?.toLowerCase();
-  return (
-    (item.event.kind === PIN_KIND || item.event.kind === UNPIN_KIND) &&
-    !!error &&
-    (error.includes(TOO_OLD) ||
-      error.includes(OLD_EVENT_NOT_FOUND.toLowerCase()))
-  );
-}
+/** NIP-PM: a relay that does not take the commands refuses them as
+ * `restricted: unknown event kind`. */
+const UNSUPPORTED = "unknown event kind";
 export const EXPIRED_PIN_RECOVERY =
   "Refused as too old, so it was not sent again. Pin or unpin from the message menu if the pins still need it.";
+export const UNSUPPORTED_PIN_RECOVERY =
+  "This community does not take pins, so it was not sent again.";
+/** What to show in place of Retry for a pin command that resending cannot
+ * help, else undefined. One refused as too old, by the relay or by the desktop
+ * host before resending it, has an unknown outcome and is refused again, so
+ * NIP-PM has the client read the list and leave any new command to the
+ * person, since one signed by itself could undo another member's change. */
+export function refusedPinCommand(
+  item: Pick<OutgoingEvent, "event" | "error">,
+): string | undefined {
+  if (item.event.kind !== PIN_KIND && item.event.kind !== UNPIN_KIND)
+    return undefined;
+  const error = item.error?.toLowerCase() ?? "";
+  if (
+    error.includes(TOO_OLD) ||
+    error.includes(OLD_EVENT_NOT_FOUND.toLowerCase())
+  )
+    return EXPIRED_PIN_RECOVERY;
+  if (error.includes(UNSUPPORTED)) return UNSUPPORTED_PIN_RECOVERY;
+  return undefined;
+}
 /** The relay-signed pin list for one channel (`d`), newest pin first. */
 export const PIN_LIST_KIND = 30623;
 

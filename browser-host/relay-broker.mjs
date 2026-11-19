@@ -361,10 +361,9 @@ async function relayAuthority(fetch, relay) {
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-search-sort"),
-    // Pin and unpin commands; the relay keeps the pin list either way.
-    pins:
-      Array.isArray(nip11.supported_extensions) &&
-      nip11.supported_extensions.includes("buzz-pins"),
+    // NIP-PM is not advertised: a relay without it refuses the commands. Its
+    // lists are verified by `self`, so without it no pin can be shown.
+    pins: nip11.self === author,
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -3329,10 +3328,13 @@ export function relayBrokerPlugin({
                 failure.refusal?.startsWith("conflict:");
               // Answer a proven validation refusal as the relay's HTTP API does,
               // 400 with its bounded text, so every publish path shows the same
-              // reason. The text goes to this client only, never to the log.
+              // reason. The text goes to this client only, never to the log. A
+              // relay without NIP-PM refuses pin commands as `restricted:`.
               if (
                 failure?.sent === false &&
-                failure.reason?.startsWith("invalid:") &&
+                (failure.reason?.startsWith("invalid:") ||
+                  ([40010, 40011].includes(filters.kind) &&
+                    failure.reason?.startsWith("restricted:"))) &&
                 !(
                   readPublishing &&
                   failure.refusal === READ_STATE_TIMESTAMP_REFUSAL

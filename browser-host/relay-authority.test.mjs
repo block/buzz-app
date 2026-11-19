@@ -81,15 +81,14 @@ it.each([
   },
 );
 it.each([
-  [undefined, false],
-  [["nip-ar"], false],
-  [["buzz-pins"], true],
+  [{ self }, true],
+  [{ self, supported_extensions: ["nip-ar"] }, true],
+  // Without `self` no list can be verified.
+  [{ pubkey: self }, false],
 ])(
-  "offers pin commands only with a buzz-pins advertisement: %j",
-  async (supported_extensions, supported) => {
-    const h = await harness(() =>
-      Response.json({ self, supported_extensions }),
-    );
+  "offers pin commands where the relay names itself: %j",
+  async (nip11, supported) => {
+    const h = await harness(() => Response.json(nip11));
     try {
       const transport = await h.connect();
       expect(transport.writer.kinds.includes(40010)).toBe(supported);

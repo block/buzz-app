@@ -38,7 +38,7 @@ import {
   type OutboxStorage,
   type OutgoingEvent,
 } from "../relay/outbox";
-import { EXPIRED_PIN_RECOVERY } from "../relay/pins";
+import { EXPIRED_PIN_RECOVERY, UNSUPPORTED_PIN_RECOVERY } from "../relay/pins";
 import { acceptPublish } from "../relay/transport";
 import {
   keypair,
@@ -955,7 +955,37 @@ it.each([
   },
 );
 
-it("offers no pin action when the relay does not support pins", async () => {
+it("says a community without pins refused one, and offers no retry", async () => {
+  const h = await fixture(
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    "member",
+    { pins: () => [] },
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Pin to channel" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const refusal = await acceptPublish(
+    Response.json({ error: "restricted: unknown event kind" }, { status: 400 }),
+    "pin",
+  ).catch((error: unknown) => error);
+  await act(async () => h.publication(0).result.reject(refusal));
+  expect(await screen.findByText(UNSUPPORTED_PIN_RECOVERY)).toBeInTheDocument();
+  expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
+  expect(
+    screen.queryByRole("button", { name: "Retry message update" }),
+  ).toBeNull();
+  expect(h.publications).toHaveLength(1);
+});
+
+it("offers no pin action when the host cannot send pin commands", async () => {
   await fixture(false);
   await screen.findByRole("menuitem", { name: "Follow thread" });
   expect(screen.queryByRole("menuitem", { name: /pin/i })).toBeNull();

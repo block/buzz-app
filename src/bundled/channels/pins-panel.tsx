@@ -36,8 +36,7 @@ function Launcher({
     connection.session,
     current && connection.session.relayAuthor ? context.channelId : undefined,
   );
-  // Where the relay takes pins (NIP-11 `buzz-pins`), or still lists some
-  // after it stopped.
+  // Where this host sends pin commands, or still lists some pins.
   if (
     !current ||
     (!connection.session.outbox?.supports(PIN_KIND) && !pins.ids.length)

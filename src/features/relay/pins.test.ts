@@ -4,7 +4,8 @@ import type { LiveListener } from "./incoming";
 import { OLD_EVENT_NOT_FOUND, PublishRejected } from "./outbox";
 import { acceptPublish } from "./transport";
 import {
-  expiredPinCommand,
+  EXPIRED_PIN_RECOVERY,
+  refusedPinCommand,
   LOADING_PINS,
   PIN_KIND,
   PIN_LIST_KIND,
@@ -12,6 +13,7 @@ import {
   pinnedIds,
   readPinnedMessages,
   type PinSource,
+  UNSUPPORTED_PIN_RECOVERY,
   UNPIN_KIND,
 } from "./pins";
 
@@ -337,7 +339,7 @@ const relayPage = (corpus: readonly EventData[], filter: ReadFilter) =>
     )
     .slice(0, filter.limit);
 
-it("classifies a pin command refused as too old by the relay or this device", async () => {
+it("classifies a pin command refused as too old or unsupported", async () => {
   const command = (kind: number, error?: string) => ({
     event: event({ kind, tags: [["h", "c"]] }),
     error,
@@ -352,21 +354,33 @@ it("classifies a pin command refused as too old by the relay or this device", as
   ).catch((error: unknown) => error);
   assert.instanceOf(refused, PublishRejected);
   const relayRefusal = refused.message;
-  expect(expiredPinCommand(command(PIN_KIND, relayRefusal))).toBe(true);
+  expect(refusedPinCommand(command(PIN_KIND, relayRefusal))).toBe(
+    EXPIRED_PIN_RECOVERY,
+  );
   expect(
-    expiredPinCommand(command(UNPIN_KIND, `Retry blocked: ${relayRefusal}`)),
-  ).toBe(true);
+    refusedPinCommand(command(UNPIN_KIND, `Retry blocked: ${relayRefusal}`)),
+  ).toBe(EXPIRED_PIN_RECOVERY);
   expect(
-    expiredPinCommand(
+    refusedPinCommand(
       command(PIN_KIND, `Retry blocked: ${OLD_EVENT_NOT_FOUND}`),
     ),
-  ).toBe(true);
-  expect(expiredPinCommand(command(PIN_KIND, "blocked: not a member"))).toBe(
-    false,
+  ).toBe(EXPIRED_PIN_RECOVERY);
+  // A relay without NIP-PM, as the transport reports it.
+  const unsupported = await acceptPublish(
+    Response.json({ error: "restricted: unknown event kind" }, { status: 400 }),
+    "pin",
+  ).catch((error: unknown) => error);
+  assert.instanceOf(unsupported, PublishRejected);
+  expect(refusedPinCommand(command(UNPIN_KIND, unsupported.message))).toBe(
+    UNSUPPORTED_PIN_RECOVERY,
   );
-  expect(expiredPinCommand(command(PIN_KIND))).toBe(false);
+  expect(
+    refusedPinCommand(command(PIN_KIND, "blocked: not a member")),
+  ).toBeUndefined();
+  expect(refusedPinCommand(command(PIN_KIND))).toBeUndefined();
   // Other kinds keep their own retry rules.
-  expect(expiredPinCommand(command(9, relayRefusal))).toBe(false);
+  expect(refusedPinCommand(command(9, relayRefusal))).toBeUndefined();
+  expect(refusedPinCommand(command(9, unsupported.message))).toBeUndefined();
 });
 
 it("pages through one second holding more than a full page", async () => {

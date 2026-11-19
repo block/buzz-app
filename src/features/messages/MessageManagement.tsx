@@ -31,8 +31,8 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
-import { expiredPinCommand, PIN_KIND, UNPIN_KIND } from "../relay/pins";
-import { ExpiredPin } from "./ExpiredPin";
+import { PIN_KIND, refusedPinCommand, UNPIN_KIND } from "../relay/pins";
+import { RefusedPin } from "./RefusedPin";
 import { followUpQueue } from "./follow-up-queue";
 import { usePinnedMessages } from "./use-pins";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -913,9 +913,9 @@ export function MessageManagementStatus() {
             : {item.error ?? "Delivery could not be confirmed."}
           </p>
           {item.event.kind === 40003 && <p>{item.event.content}</p>}
-          {expiredPinCommand(item) ? (
+          {refusedPinCommand(item) ? (
             <p>
-              <ExpiredPin source={session} event={item.event} />
+              <RefusedPin source={session} item={item} />
             </p>
           ) : (
             <>

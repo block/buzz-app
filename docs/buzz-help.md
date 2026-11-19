@@ -1267,7 +1267,8 @@ available rather than silently discarding it.
   choices, each DM, huddle room and Solo chat remains its own continuing
   conversation. Session lifetime and restoration still depend on the harness.
   The session scope stays selected when you switch between Codex, Claude, Goose
-  and Pi.
+  and Pi. The harness-switch confirmation shows **Session scope · Dropped**
+  when the destination cannot keep the saved scope.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.

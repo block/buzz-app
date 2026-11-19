@@ -220,31 +220,44 @@ it("keeps the existing local migration flow available", async () => {
   expect(retype).not.toHaveBeenCalled();
 });
 
-it.each(["dropped", "moved"] as const)(
-  "omits session scope from the migration confirmation (%s)",
-  async (outcome) => {
-    const user = userEvent.setup();
-    const { previewRetype } = fixture({ hosted: false });
-    previewRetype.mockReturnValue({
-      config: {},
-      moved: outcome === "moved" ? ["sessionScope"] : [],
-      dropped: outcome === "dropped" ? ["sessionScope"] : [],
-      settings: [],
-    });
-    await user.click(
-      screen.getByRole("button", { name: "Change harness from Echo" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitemradio", { name: "Next" }),
-    );
-    const dialog = within(
-      await screen.findByRole("dialog", { name: "Move Ada to Next?" }),
-    );
-    expect(
-      dialog.queryByText(/^(Sessions|Session scope)$/i),
-    ).not.toBeInTheDocument();
-  },
-);
+it("omits carried session scope from the migration confirmation", async () => {
+  const user = userEvent.setup();
+  const { previewRetype } = fixture({ hosted: false });
+  previewRetype.mockReturnValue({
+    config: {},
+    moved: ["sessionScope"],
+    dropped: [],
+    settings: [],
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Next" }));
+  const dialog = within(
+    await screen.findByRole("dialog", { name: "Move Ada to Next?" }),
+  );
+  expect(dialog.queryByRole("term")).not.toBeInTheDocument();
+});
+
+it("warns when the migration drops session scope", async () => {
+  const user = userEvent.setup();
+  const { previewRetype } = fixture({ hosted: false });
+  previewRetype.mockReturnValue({
+    config: {},
+    moved: [],
+    dropped: ["sessionScope"],
+    settings: [],
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Next" }));
+  const dialog = within(
+    await screen.findByRole("dialog", { name: "Move Ada to Next?" }),
+  );
+  expect(dialog.getByRole("term")).toHaveTextContent("Session scope");
+  expect(dialog.getByText("Dropped")).toBeVisible();
+});
 
 it("does not offer local migration for an agent on another device", () => {
   fixture({ place: "elsewhere" });

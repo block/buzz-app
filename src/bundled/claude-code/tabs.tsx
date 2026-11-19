@@ -5,7 +5,10 @@ import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
@@ -1222,8 +1225,32 @@ export function createTabs({
       // A Custom agent's save drops a mark left from before, which a later
       // blank synced model would otherwise turn back on.
       const config = onRecommended(next) ? next : offRecommended(next);
-      submitted(config);
       try {
+        if (
+          settingsHost?.proposedModelOrEffort &&
+          (config.model || config.effort)
+        ) {
+          const models = remote ? [] : await setup.catalog();
+          const id = config.model || providerDefaults.model || "default";
+          if (
+            !models.some(
+              (model) => model.value === id || model.resolvedModel === id,
+            )
+          )
+            throw new Error(
+              "Choose an available Claude model or clear the model and thinking overrides.",
+            );
+          if (
+            config.effort &&
+            !createEffortsFor(id, models).some(
+              (level) => level.id === config.effort,
+            )
+          )
+            throw new Error(
+              "Choose a thinking level this Claude model supports or use Default.",
+            );
+        }
+        submitted(config);
         // This draft incorporates the current props; revise that exact snapshot.
         // The host routes staged provider changes through pendingSave instead.
         await save(config, { base: agent.configBase ?? {} });
@@ -1497,6 +1524,15 @@ export function createTabs({
             </div>
           </>
         )}
+        {settingsHost?.proposedModelOrEffort &&
+          (draft.model || draft.effort) && (
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
+          )}
         <AgentSaveButton
           form={form}
           saving={saving}

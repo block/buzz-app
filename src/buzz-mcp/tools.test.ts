@@ -936,6 +936,8 @@ it.each([
     const line = text.split("\n").find((line) => line.startsWith(id));
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
+    // Its thread fields name its root and reply tags, so no tags repeat them.
+    expect(line).not.toContain("tags ");
     expect(line).toContain("hello, edited");
     if ("channel" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
@@ -952,6 +954,87 @@ it.each([
     expect(message.sig).toBe(signature);
   },
 );
+
+it("shows a message's meaningful tags in a read, but not its bookkeeping", async () => {
+  const id = "4".repeat(64);
+  const shown = [
+    // A lone root isn't a reply, so no thread field names it.
+    ["e", root, "", "root"],
+    ["p", bob],
+    ["q", nested],
+    ["t", "release"],
+    ["imeta", "url https://relay.test/media/a.png", "m image/png"],
+    ["buzz:request", nested],
+  ];
+  const auth = ["auth", bob, "kind=9", "8".repeat(128)];
+  const hidden = [
+    ["audience", "agents"],
+    ["client-id", "c1"],
+    ["ms", "5"],
+    ["model", bob, "m"],
+  ];
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "tagged",
+      tags: [["h", "chan"], auth, ...shown, ...hidden],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(`tags ${JSON.stringify(shown)} at `);
+  expect(line).not.toContain('"h"');
+  expect(line).not.toContain(auth[3]);
+});
+
+it("reads an edited message with the files and emoji its latest edit leaves", async () => {
+  const id = "4".repeat(64);
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "files :party:",
+      tags: [
+        ["h", "chan"],
+        ["imeta", "url https://relay.test/media/old.png"],
+        ["emoji", "party", "https://relay.test/party.png"],
+      ],
+    }),
+    event({
+      id: "5".repeat(64),
+      kind: 40003,
+      created_at: 110,
+      content: "files, edited",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["imeta", "url https://relay.test/media/new.png"],
+      ],
+    }),
+    // Newer, with no files, so it clears them, as the relay does.
+    event({
+      id: "6".repeat(64),
+      kind: 40003,
+      created_at: 120,
+      content: "files, edited again :wave:",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["emoji", "wave", "https://relay.test/wave.png"],
+      ],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(
+    `tags ${JSON.stringify([
+      ["emoji", "wave", "https://relay.test/wave.png"],
+    ])} at `,
+  );
+});
 
 const reply = (id: string, created_at: number) =>
   event({
@@ -5272,4 +5355,52 @@ it("preserves ordinary attachment sends when snapshot hashing is unavailable", a
   } finally {
     hash.mockRestore();
   }
+});
+
+it("passes only explicit runtime settings through the owner review tool", async () => {
+  const { client } = fake([]);
+  client.updateAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  const settings = {
+    model: "",
+    effort: "high",
+    scope: "community",
+    voice: "maple",
+    apps: false,
+    workspace: "~/example",
+    compactAt: "150000",
+  };
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: "Self",
+      ...settings,
+      model: "  ",
+      effort: " high ",
+      voice: " maple ",
+    }),
+  ).resolves.toBe('{"requestId":"draft","saved":false}');
+  expect(client.updateAgent).toHaveBeenCalledWith({ agent: "Self", settings });
+  for (const invalid of [
+    { scope: "all" },
+    { apps: "false" },
+    { model: null },
+    { compactAt: "99000" },
+    { compactAt: "150500" },
+    { compactAt: 150000 },
+    { config: {} },
+  ])
+    await expect(
+      callTool(client, {}, "agent_update", {
+        agent: "Self",
+        ...invalid,
+      }),
+    ).rejects.toThrow();
+  expect(client.updateAgent).toHaveBeenCalledTimes(1);
+  await callTool(client, {}, "agent_update", { agent: "Self", compactAt: "" });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Self",
+    settings: { compactAt: "" },
+  });
 });

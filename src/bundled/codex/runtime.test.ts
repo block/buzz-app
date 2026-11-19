@@ -44,7 +44,7 @@ import type {
   McpHandler,
   HostProcessOptions,
 } from "../../features/host/service";
-import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, HANDOVER_MS, programs } from "./runtime";
 import { codexRun } from "./run";
 import { config } from "./config";
@@ -743,7 +743,12 @@ it("hands over promptly and runs conversations independently on one server", asy
   expect(started.developerInstructions).toContain(
     "Never publish a bare acknowledgement.",
   );
-  expect(started.developerInstructions).toContain(BUZZ_PROMPT);
+  expect(started.developerInstructions).toContain("## Audience");
+  expect(started.developerInstructions).toContain("## Product help");
+  // The agent's session scope picks its Session Model.
+  expect(started.developerInstructions).toContain(
+    "## Session Model\n\nYou are one session of your agent identity",
+  );
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
@@ -904,6 +909,167 @@ it("serves every agent from one server and routes each tool call to its own agen
   expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
   expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
 });
+it("keeps other turns alive when unsubscribe times out and confirms release before resuming", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const b = second(f);
+  const firstCleanup = deferred<void>();
+  const nextCleanup = deferred<void>();
+  const unsubscribes = () =>
+    f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await f.runtime.run(b.delivery("other work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    f.held.set("thread/unsubscribe", firstCleanup.promise);
+    await f.complete(0, "");
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(1));
+
+    f.held.set("thread/unsubscribe", nextCleanup.promise);
+    await f.runtime.run(f.delivery("queued follow-up"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(f.runtime.sessions(pubkey)[0]).toMatchObject({
+      status: "Needs attention",
+      detail: "Codex thread/unsubscribe timed out",
+    });
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
+    expect(b.agent.publish).not.toHaveBeenCalled();
+
+    // Codex may have processed the first request even if Buzz got no answer.
+    // The follow-up must wait for a confirmed release before resuming.
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(2));
+    firstCleanup.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(false);
+
+    f.held.delete("thread/unsubscribe");
+    nextCleanup.resolve();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(servers(f)).toHaveLength(1);
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject(unsubscribes()[0]?.params as object);
+
+    await f.complete(1, "OTHER FINISHED");
+    await f.complete(2, "FOLLOW-UP FINISHED");
+    expect(contents(b.agent.publish as never)).toEqual(["OTHER FINISHED"]);
+    expect(contents(f.publish)).toEqual(["FOLLOW-UP FINISHED"]);
+  } finally {
+    firstCleanup.resolve();
+    nextCleanup.resolve();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it("replaces a silent app-server before resuming a queued follow-up", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const b = second(f);
+  const replacement = fixture();
+  const silent = deferred<void>();
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await f.runtime.run(b.delivery("other work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    for (const method of ["thread/unsubscribe", "account/read", "config/read"])
+      f.held.set(method, silent.promise);
+    await f.complete(0, "FIRST FINISHED");
+    const unsubscribes = () =>
+      f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(1));
+    await f.runtime.run(f.delivery("queued follow-up"));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(b.agent.publish).not.toHaveBeenCalled();
+
+    f.spawn.mockImplementationOnce(replacement.spawn);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).toHaveBeenCalledTimes(1);
+    expect(contents(b.agent.publish as never)).toEqual([
+      "Codex could not finish: Buzz closed the Codex connection after app-server responsiveness check failed.",
+    ]);
+    await vi.waitFor(() => expect(replacement.starts()).toHaveLength(1));
+    expect(servers(f)).toHaveLength(2);
+    expect(
+      replacement.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject(unsubscribes()[0]?.params as object);
+    await replacement.complete(0, "FOLLOW-UP FINISHED");
+    expect(contents(f.publish)).toEqual([
+      "FIRST FINISHED",
+      "FOLLOW-UP FINISHED",
+    ]);
+  } finally {
+    silent.resolve();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it.each([
+  "unknown",
+  "refused",
+  "completed before the start reply",
+  "completed during unsubscribe",
+])(
+  "handles unsubscribe failure when the turn state is %s",
+  async (turnState) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const b = second(f);
+    const startReply = deferred<void>();
+    const unsubscribeReply = deferred<void>();
+    const refused = turnState === "refused";
+    try {
+      await f.runtime.run(b.delivery("other work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      if (refused) f.failing.add("turn/start");
+      else f.held.set("turn/start", startReply.promise);
+      f.failing.add("thread/unsubscribe");
+      if (turnState === "completed during unsubscribe")
+        f.held.set("thread/unsubscribe", unsubscribeReply.promise);
+
+      await f.runtime.run(f.delivery("work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      if (turnState === "completed before the start reply")
+        await f.complete(1, "");
+      if (!refused) await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() =>
+        expect(f.sent).toContainEqual(
+          expect.objectContaining({ method: "thread/unsubscribe" }),
+        ),
+      );
+      expect(contents(f.publish)).toEqual([
+        refused
+          ? "Codex could not finish: turn/start failed."
+          : "Codex could not finish: Codex turn/start timed out.",
+      ]);
+      if (turnState === "completed during unsubscribe") {
+        await f.complete(1, "");
+        f.held.delete("thread/unsubscribe");
+        unsubscribeReply.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      if (turnState !== "unknown") {
+        expect(f.process.end).not.toHaveBeenCalled();
+        f.failing.delete("thread/unsubscribe");
+        await f.complete(0, "OTHER FINISHED");
+        expect(contents(b.agent.publish as never)).toEqual(["OTHER FINISHED"]);
+      } else {
+        expect(f.process.end).toHaveBeenCalledTimes(1);
+        expect(contents(b.agent.publish as never)).toEqual([
+          "Codex could not finish: Buzz closed the Codex connection after thread unsubscribe failed.",
+        ]);
+      }
+    } finally {
+      startReply.resolve();
+      unsubscribeReply.resolve();
+      f.runtime.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
 it("keeps an agent's two communities' threads apart, each under its membership's key", async () => {
   const f = fixture();
   const elsewhere = `${pubkey}@other.example`;
@@ -3499,6 +3665,37 @@ it("reports a failed huddle text mention without a reply tag", async () => {
     ],
   });
 });
+it("describes the session that started: a huddle's room, and a watch's run", async () => {
+  const f = fixture();
+  f.huddleChannels.add("channel");
+  await f.runtime.run(f.delivery("@Codex work", root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = (ephemeral: boolean) =>
+    f.sent.find(
+      (wire) =>
+        wire.method === "thread/start" &&
+        ((wire.params as { ephemeral?: boolean }).ephemeral === true) ===
+          ephemeral,
+    )?.params as { developerInstructions: string } | undefined;
+  // A thread-scoped agent's huddle is one conversation, not a thread.
+  expect(started(false)?.developerInstructions).toContain(
+    "This session is one whole conversation",
+  );
+  await f.complete(0, "");
+  const running = f.runtime.runOnce({
+    delivery: f.delivery("check"),
+    key: "source/check",
+    signal: new AbortController().signal,
+    prompt: async () => "check",
+  });
+  await vi.waitFor(() => expect(started(true)).toBeDefined());
+  expect(started(true)?.developerInstructions).toContain(
+    "This run joins no conversation",
+  );
+  await f.complete(1, "");
+  await running;
+  f.runtime.dispose();
+});
 /** A plugin's wake; its id is its own, which nothing may publish. */
 const WAKE_ID = "8".repeat(64);
 const pluginWake = (
@@ -3704,8 +3901,11 @@ it("ends the server when its agent stops running and suppresses a late final ans
 
 it("reports an interruption cleanup failure when Codex reports surviving terminals", async () => {
   const f = fixture([{ processId: "42" }]);
-  await f.runtime.run(f.delivery("work"));
+  const b = second(f);
+  await f.runtime.run(b.delivery("other work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.interrupt();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
@@ -3715,6 +3915,14 @@ it("reports an interruption cleanup failure when Codex reports surviving termina
   });
   expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Needs attention");
   expect(f.process.end).toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(b.agent.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Codex could not finish: Buzz closed the Codex connection after background terminal cleanup failed.",
+      }),
+    ),
+  );
 });
 /** The threads whose start prompt is saved, oldest first, and their parts. */
 const savedPrompts = (storage: Map<string, string>) => {
@@ -5865,6 +6073,13 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn", 
   });
   await f.runtime.run(channelScope(f.delivery("@Codex first")));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.sent.find((wire) => wire.method === "thread/start")?.params,
+  ).toMatchObject({
+    developerInstructions: expect.stringContaining(
+      "## Session Model\n\nYou are one per-channel session",
+    ),
+  });
   soloChannels.delete("channel");
   await f.runtime.run(channelScope(f.delivery("@Codex after share")));
   // The converted chat's request waits for the Solo turn instead of steering in.
@@ -9073,6 +9288,287 @@ it.each(["attention", "plugin"] as const)(
     await f.complete(0);
   },
 );
+
+it.each(["channel", "thread"] as const)(
+  "steers a top-level plugin wake into an active %s session only when they share it",
+  async (scope) => {
+    const f = fixture();
+    const first = f.delivery("Threaded work");
+    if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+    const config = { ...(first.config as object), scope };
+    const wake = pluginWake(f);
+    if (wake.trigger.type !== "plugin")
+      throw new Error("Expected a plugin wake");
+    try {
+      await f.runtime.run({ ...first, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.runtime.run({
+        ...wake,
+        config,
+        trigger: { ...wake.trigger, topLevel: true },
+      });
+      if (scope === "thread") {
+        await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+        expect(f.sent.filter((wire) => wire.method === "turn/steer")).toEqual(
+          [],
+        );
+        await Promise.all([f.complete(0), f.complete(1)]);
+        return;
+      }
+      await vi.waitFor(() =>
+        expect(
+          f.sent.filter((wire) => wire.method === "turn/steer").map(inputText),
+        ).toEqual([expect.stringContaining("CI failed: lint")]),
+      );
+      expect(f.starts()).toHaveLength(1);
+      await f.tool("send", {
+        request: first.trigger.event.id,
+        audience: "everyone",
+        text: "Thread reply",
+      });
+      await f.tool("send", {
+        channel: "channel",
+        audience: "everyone",
+        text: "Channel reply",
+      });
+      expect(tagsOf(f)).toEqual([
+        [
+          ["h", "channel"],
+          ["e", root, "", "reply"],
+          ["buzz:request", first.trigger.event.id],
+        ],
+        [["h", "channel"]],
+      ]);
+      await f.complete(0);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("attributes a single-request send to an earlier message outside the turn", async () => {
+  const f = fixture();
+  const delegating = "d".repeat(64);
+  try {
+    await f.runtime.run(f.delivery("Delegated work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.tool("send", {
+      request: delegating,
+      audience: "agents",
+      text: "Done",
+    });
+    expect(tagsOf(f)).toEqual([
+      expect.arrayContaining([["buzz:request", delegating]]),
+    ]);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("keeps an unaddressed send on the turn's thread after a top-level wake steers in", async () => {
+  const f = fixture();
+  const first = f.delivery("Threaded work");
+  const config = { ...(first.config as object), scope: "channel" };
+  const wake = pluginWake(f);
+  if (wake.trigger.type !== "plugin") throw new Error("Expected a plugin wake");
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...wake,
+      config,
+      trigger: { ...wake.trigger, topLevel: true },
+    });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    await f.tool("send", { audience: "everyone", text: "Thread reply" });
+    expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("settles only the destination a final reply answers in a mixed channel turn", async () => {
+  const f = fixture();
+  const first = f.delivery("Threaded work");
+  if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+  const config = { ...(first.config as object), scope: "channel" };
+  const wake = pluginWake(f);
+  if (wake.trigger.type !== "plugin") throw new Error("Expected a plugin wake");
+  const pending = Symbol("pending");
+  const state = async (index: number) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return Promise.race([
+      f.workingUntil.mock.calls[index]?.[0],
+      Promise.resolve(pending),
+    ]);
+  };
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...wake,
+      config,
+      trigger: { ...wake.trigger, topLevel: true },
+    });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    await f.tool("send", {
+      request: first.trigger.event.id,
+      audience: "everyone",
+      text: "Thread reply",
+      final: true,
+    });
+    expect(await state(1)).toBe(pending);
+    await f.tool("send", {
+      channel: "channel",
+      audience: "everyone",
+      text: "Channel reply",
+      final: true,
+    });
+    expect(await state(1)).not.toBe(pending);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it.each([
+  ["send", "reply"],
+  ["reply_in_subthread", "parent"],
+])(
+  "settles a thread a final %s answers under one of its messages",
+  async (tool, field) => {
+    const f = fixture();
+    const first = f.delivery("Threaded work");
+    if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+    const config = { ...(first.config as object), scope: "channel" };
+    const wake = pluginWake(f);
+    if (wake.trigger.type !== "plugin")
+      throw new Error("Expected a plugin wake");
+    const pending = Symbol("pending");
+    const state = async (index: number) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Promise.race([
+        f.workingUntil.mock.calls[index]?.[0],
+        Promise.resolve(pending),
+      ]);
+    };
+    try {
+      await f.runtime.run({ ...first, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.runtime.run({
+        ...wake,
+        config,
+        trigger: { ...wake.trigger, topLevel: true },
+      });
+      await vi.waitFor(() =>
+        expect(
+          f.sent.filter((wire) => wire.method === "turn/steer"),
+        ).toHaveLength(1),
+      );
+      await f.tool(tool, {
+        // reply_in_subthread takes no channel: its parent's is used.
+        ...(tool === "send" ? { channel: "channel" } : {}),
+        [field]: first.trigger.event.id,
+        audience: "everyone",
+        text: "Thread reply",
+        final: true,
+      });
+      expect(await state(0)).not.toBe(pending);
+      expect(await state(1)).toBe(pending);
+      await f.tool("send", {
+        channel: "channel",
+        audience: "everyone",
+        text: "Channel reply",
+        final: true,
+      });
+      expect(await state(1)).not.toBe(pending);
+      await f.complete(0);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("settles the thread a parent-only subthread answers in a two-thread channel turn", async () => {
+  const f = fixture();
+  const first = f.delivery("Thread A work");
+  if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+  const config = { ...(first.config as object), scope: "channel" };
+  const second = f.delivery("Thread B work", "b".repeat(64));
+  const pending = Symbol("pending");
+  const state = async (index: number) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return Promise.race([
+      f.workingUntil.mock.calls[index]?.[0],
+      Promise.resolve(pending),
+    ]);
+  };
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({ ...second, config });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    // The tool takes no channel: the parent says where it goes, padded as
+    // a model may send it.
+    await f.tool("reply_in_subthread", {
+      parent: ` ${first.trigger.event.id} `,
+      audience: "everyone",
+      text: "Thread A reply",
+      final: true,
+    });
+    expect(await state(0)).not.toBe(pending);
+    expect(await state(1)).toBe(pending);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("settles a community DM whose final send replies to its message", async () => {
+  const f = fixture();
+  f.snapshot.session.channels.list = () => ({
+    status: "ready",
+    channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+  });
+  const base = f.delivery("DM work");
+  if (base.trigger.type !== "mention") throw new Error("Expected a mention");
+  base.trigger.event.tags = [["h", "channel"]];
+  const pending = Symbol("pending");
+  try {
+    await f.runtime.run({ ...base, config: scoped(base).config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.tool("send", {
+      reply: base.trigger.event.id,
+      audience: "everyone",
+      text: "DM reply",
+      final: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      await Promise.race([
+        f.workingUntil.mock.calls[0]?.[0],
+        Promise.resolve(pending),
+      ]),
+    ).not.toBe(pending);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 it("keeps community sessions apart for memberships of the same identity", async () => {
   const f = fixture();

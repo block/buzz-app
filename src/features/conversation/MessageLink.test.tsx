@@ -467,21 +467,17 @@ it("a signed chosen rename repaints the session card without changing authored l
     await waitFor(() =>
       expect(owner.session.channels.list().status).toBe("ready"),
     );
-    const label = `Session · ${id.slice(0, 8)}`;
     render(
       <MessageLink
         session={owner.session}
         url={`buzz://channel/${id}`}
         registry={undefined}
         onOpenLink={() => true}
-        label={label}
-      >
-        {label}
-      </MessageLink>,
+      />,
     );
-    // An unnamed chat shows its starting title, not the authored short ID.
+    // Raw chat links resolve their current title without acquiring card chrome.
     const anchor = screen.getByRole("link", {
-      name: "Open Chat: First prompt",
+      name: "First prompt",
     });
     anchor.focus();
     const base = await owner.session.channelDetails.load(id);
@@ -493,14 +489,14 @@ it("a signed chosen rename repaints the session card without changing authored l
     );
     expect(
       await screen.findByRole("link", {
-        name: "Open Chat: Accessible contrast",
+        name: "Accessible contrast",
       }),
     ).toBe(anchor);
     expect(anchor).toHaveFocus();
     expect(owner.session.channels.list().channels[0]?.labels).toContain(
       SOLO_NAMED_LABEL,
     );
-    expect(anchor).toHaveAttribute("data-link-label", label);
+    expect(anchor).toHaveAttribute("data-link-label", "");
     expect(publish).not.toHaveBeenCalled();
   } finally {
     cleanup();
@@ -509,7 +505,7 @@ it("a signed chosen rename repaints the session card without changing authored l
 });
 
 it.each(["Session · 12345678", "Session: PR 45 fixes", "Chat: PR 45 fixes"])(
-  "renders sent session labels as cards without membership: %s",
+  "preserves legacy chat labels as ordinary inline links: %s",
   (label) => {
     render(
       <MessageLink
@@ -522,12 +518,11 @@ it.each(["Session · 12345678", "Session: PR 45 fixes", "Chat: PR 45 fixes"])(
       </MessageLink>,
     );
     const link = screen.getByRole("link", {
-      name: `Open Chat: ${label.replace(/^(?:Session|Chat)(?::| ·)\s+/, "")}`,
+      name: label,
     });
-    expect(
-      link.querySelector("svg.tabler-icon-message-circle"),
-    ).toBeInTheDocument();
-    expect(link).toHaveTextContent("Chat:");
+    expect(link).toHaveTextContent(label);
+    expect(link.querySelector("svg")).toBeNull();
+    expect(link).not.toHaveAttribute("data-solo-link");
   },
 );
 
@@ -551,7 +546,21 @@ it("shows escaped chosen names faithfully when only the sent label is available"
       onOpenLink={() => true}
     />,
   );
-  expect(
-    screen.getByRole("link", { name: `Open Chat: ${name}` }),
-  ).toHaveTextContent(name);
+  expect(screen.getByRole("link", { name })).toHaveTextContent(name);
+});
+
+it("lets registered renderers own chat link presentation like other links", () => {
+  const entries = [entry];
+  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  render(
+    <MessageLink
+      url="buzz://channel/session"
+      label="Chat: Work"
+      registry={registry}
+      onOpenLink={() => true}
+    />,
+  );
+  const link = screen.getByRole("link", { name: "Chat: Work" });
+  expect(link).toHaveTextContent("Link face");
+  expect(link).toHaveClass("link-style");
 });

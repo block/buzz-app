@@ -223,6 +223,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    settingsProposal: {
+      compactAt: "unprotected",
+      resolveRecommended: recommended.find,
+    },
     readModelSettings: (saved, context) =>
       providerDefaults.readModelSettings(saved, context),
     Create,

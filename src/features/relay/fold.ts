@@ -502,7 +502,7 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits.length ? { edited: true as const } : {}),
+        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

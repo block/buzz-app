@@ -7,6 +7,7 @@ import type {
   AgentAttention,
   SoloPlacement,
   AgentReadout,
+  AgentUpdateInput,
   TeamReadout,
   TeamUpdateInput,
 } from "../features/agents/service";
@@ -120,14 +121,7 @@ export interface BuzzClient {
     }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent?(
-    input: Readonly<{
-      agent: string;
-      name?: string;
-      type?: string;
-      instructions?: string;
-      /** Uploads the picture once the request is valid: its URL. */
-      picture?: () => Promise<string>;
-    }>,
+    input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
   readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;

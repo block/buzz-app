@@ -106,6 +106,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    settingsProposal: { compactAt: true },
     readModelSettings: (saved) =>
       readModelSettings(config(saved), { provider: true }),
     Create,

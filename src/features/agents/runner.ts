@@ -1085,6 +1085,13 @@ export class AgentRunners {
     const runner = this.runners.get(key);
     return !!runner?.type?.run && !runner.mayHold && !!this.host.ready(key);
   }
+  /** Whether a turn of the agent is working now, in any community it is in. */
+  answering(key: AgentKey) {
+    const pubkey = this.runners.get(key)?.member.pubkey;
+    return [...this.runners.values()].some(
+      (runner) => runner.member.pubkey === pubkey && runner.working,
+    );
+  }
   /** Whether a change of type holds the agent's runner now. */
   transitioning(key: AgentKey) {
     return this.runners.get(key)?.transitioning === true;

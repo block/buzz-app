@@ -138,11 +138,11 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
-key from `agent_types`, new instructions or a new picture. An agent may propose
-changes to itself. Absent fields stay as they are. The
-owner reviews them in the New agent form, titled Edit and filled in with the
-agent's settings and the proposed changes, with the usual type-change preview;
-saving applies what the owner reviewed, and closing the review discards the
+key from `agent_types`, new instructions, or a new picture. On supported
+local harnesses the draft can also include model, thinking effort, session scope,
+workspace, and the Auto-compact threshold. Use a token count string such as `"150000"` for `compactAt`, or `""` to restore the harness default. Codex additionally accepts Huddle voice and its apps
+and plugins preference. For a Codex agent using an execution adapter, the target runtime checks the model and thinking overrides when it starts a turn. Its Huddle voice proposal can select the target’s default. For other harnesses, agents using an execution adapter cannot receive model or thinking proposals. The Edit dialog compares the saved and proposed runtime settings above the editable controls, with a separate preview for a harness change. Absent fields stay as
+they are. Settings that all match the saved values are omitted when queuing a draft. A settings-only proposal with matching values returns a message to the requester and skips owner review. Save applies the reviewed values. Closing the dialog discards the
 request. A type change carries what the new type adopts, as a manual one does. A proposed picture
 is a local PNG, JPEG, GIF or WebP file that the tool uploads to the community as
 the requesting agent once the request is valid, stripped of metadata as the
@@ -471,7 +471,7 @@ Attention command processes on macOS and Linux stop when their app process exits
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
 Attention tools. How to use the Attention tools is in their own descriptions,
-not `BUZZ_PROMPT`. Every session gets the
+not the base prompt. Every session gets the
 same list and prompt, whether Attention is on or off, so turning Attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
 to add at the end of each turn: the Attention review when Attention is on and

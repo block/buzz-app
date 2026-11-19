@@ -21,11 +21,8 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   BrowserIcon,
-  ChatCircleIcon,
   CopyIcon,
-  CaretRightIcon,
   ThreadIcon,
-  LockIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
@@ -37,7 +34,7 @@ import {
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import { safeLinkUrl } from "../relay/message-content";
 import {
-  LinkChannelPrivateContext,
+  LinkChannelKindContext,
   LinkDescriptionContext,
   LinkAccessibleNameContext,
   LinkInteractiveContext,
@@ -148,13 +145,14 @@ export function MessageLink({
   const reference = useChannelReference(host?.channels, referenced);
   // Subscribe to the session's presentation, including chosen-name provenance.
   // A string snapshot stays stable when unrelated channel activity changes.
+  const channels = session?.channels;
   const chatName = useSyncExternalStore(
-    host?.channels.subscribeList ?? subscribe,
+    channels?.subscribeList ?? subscribe,
     () => {
       if (!destination || destination.messageId || destination.threadRootId)
         return "";
-      const channel = host?.channels
-        .list()
+      const channel = channels
+        ?.list()
         .channels.find((item) => item.id === destination.channelId);
       return channel?.channelType === "solo" && !channel.cached
         ? soloChatLinkName(channel)
@@ -162,21 +160,18 @@ export function MessageLink({
     },
     () => "",
   );
-  // Authored Session labels survive access loss; they are presentation only.
-  const sentChatName = label?.match(/^(?:Session|Chat)(?::| ·)\s+(.+)$/s)?.[1];
-  const chatChip = !!(
-    destination &&
-    !destination.messageId &&
-    !destination.threadRootId &&
-    (chatName ||
-      (reference.state === "found" && reference.channelType === "solo") ||
-      (reference.state !== "found" && sentChatName))
-  );
-  const chipName =
-    chatName || sentChatName || destination?.channelId.slice(0, 8);
-  const chatLabel = chatChip ? `Chat: ${chipName}` : undefined;
   const named = namedChannel(reference);
   const withheld = reference.state === "withheld";
+  const soloChat =
+    !!chatName ||
+    (reference.state === "found" && reference.channelType === "solo");
+  const channelKind = withheld
+    ? "private"
+    : soloChat
+      ? "chat"
+      : channelPrivate || named?.private
+        ? "private"
+        : "channel";
   // The authored label is message text, so it stays; the lock marks it. A raw
   // destination has no name to show.
   const shown = withheld && label === undefined ? "Private channel" : children;
@@ -190,9 +185,12 @@ export function MessageLink({
   );
   const display =
     label ??
-    byline ??
-    directoryLabel ??
-    (named ? `#${named.name}` : withheld ? "Private channel" : undefined);
+    (withheld
+      ? "Private channel"
+      : (byline ??
+        (chatName || undefined) ??
+        directoryLabel ??
+        (named ? `#${named.name}` : undefined)));
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -290,72 +288,32 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const content =
-      chatChip && destination ? (
-        <span className={styles.soloChip}>
-          <span className={styles.soloIcon}>
-            <ChatCircleIcon size={16} aria-hidden="true" />
-          </span>
-          <span className={styles.soloPrefix}>Chat:</span>
-          <span className={styles.soloName}>{chipName}</span>
-          {withheld ? (
-            <LockIcon
-              className={styles.soloLock}
-              size={12}
-              aria-hidden="true"
-            />
-          ) : reference.state === "found" ? (
-            <CaretRightIcon size={16} aria-hidden="true" />
-          ) : null}
-        </span>
-      ) : Content ? (
-        <Content url={url} />
-      ) : (
-        (shown ?? display ?? url)
-      );
+    const content = Content ? <Content url={url} /> : (shown ?? display ?? url);
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
         ref={trigger}
         href={url}
-        aria-label={
-          chatLabel
-            ? withheld
-              ? `${chatLabel}, unavailable`
-              : `Open ${chatLabel}`
-            : (accessibleName ?? display)
-        }
-        aria-description={
-          chatChip && withheld
-            ? "Chat unavailable. You don’t have access, or it no longer exists."
-            : description
-        }
+        aria-label={accessibleName ?? display}
+        aria-description={description}
         aria-disabled={withheld || undefined}
         data-link-label={label ?? ""}
         data-panel-target={panelTarget ? url : undefined}
-        data-solo-link={chatChip ? "" : undefined}
         title={
-          chatLabel
-            ? withheld
-              ? `${chatLabel}. Chat unavailable. You don’t have access, or it no longer exists.`
-              : chatLabel
-            : withheld
-              ? previewFailures.withheld
-              : !preview && !named
-                ? url
-                : undefined
+          withheld
+            ? previewFailures.withheld
+            : !preview && !named
+              ? url
+              : undefined
         }
-        className={chatChip ? styles.soloLink : entry?.className}
+        className={entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
       >
         {content}
       </a>
     ) : (
-      <span
-        className={chatChip ? styles.soloLink : entry?.className}
-        data-link-renderer={entry?.key}
-      >
+      <span className={entry?.className} data-link-renderer={entry?.key}>
         {content}
       </span>
     );
@@ -535,9 +493,7 @@ export function MessageLink({
     </>
   );
   return (
-    <LinkChannelPrivateContext
-      value={channelPrivate || withheld || !!named?.private}
-    >
+    <LinkChannelKindContext value={channelKind}>
       <LinkLabelContext value={display}>
         <LinkContentContext value={shown}>
           <LinkInteractiveContext value={interactive}>
@@ -557,6 +513,6 @@ export function MessageLink({
           </LinkInteractiveContext>
         </LinkContentContext>
       </LinkLabelContext>
-    </LinkChannelPrivateContext>
+    </LinkChannelKindContext>
   );
 }

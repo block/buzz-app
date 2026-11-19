@@ -259,6 +259,50 @@ const turn = (content: string, context: readonly EventData[] = []) =>
     total: context.length + 1,
   });
 
+it("shows delivered steering attachments in the running turn", () => {
+  const attachment = (type: string, prompt: string, extra = {}) =>
+    line("attachment", undefined, {
+      attachment: { type, prompt },
+      ...extra,
+    });
+  const file = [
+    line("user", turn("fix the tests")),
+    line("assistant", [
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "test" } },
+    ]),
+    line("user", [{ type: "tool_result", tool_use_id: "t1", content: "ok" }]),
+    attachment("queued_command", steerPrompt(turn("also lint"))),
+    attachment("queued_command", steerPrompt(turn("check formatting"))),
+    attachment(
+      "queued_command",
+      `<new-message-arrived-while-you-were-working>\n${prompt("include legacy sessions")}\n</new-message-arrived-while-you-were-working>`,
+    ),
+    attachment("queued_command", steerPrompt("A scheduled wake.")),
+    attachment("queued_command", turn("ordinary queued prompt")),
+    attachment("other", steerPrompt(turn("other attachment"))),
+    attachment("queued_command", steerPrompt(turn("from a subagent")), {
+      isSidechain: true,
+    }),
+    line("assistant", [{ type: "text", text: "Fixed." }]),
+  ].join("\n");
+  const name = (pubkey: string) => (pubkey === sam ? "Sam" : undefined);
+  const turns = claudeTurns(file, conversation, false, name);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.items).toMatchObject([
+    { type: "prompt", text: "fix the tests", author: "Sam", steer: false },
+    { type: "tool", output: "ok", status: "completed" },
+    { type: "prompt", text: "also lint", author: "Sam", steer: true },
+    { type: "prompt", text: "check formatting", author: "Sam", steer: true },
+    {
+      type: "prompt",
+      text: "include legacy sessions",
+      author: "Sam",
+      steer: true,
+    },
+    { type: "message", text: "Fixed." },
+  ]);
+});
+
 it("reads a prompt and a steer sent as exact records, naming the sender", () => {
   clock = 0;
   const file = [
@@ -896,6 +940,39 @@ it("reads a session's latest whole turns from its end", async () => {
       .filter(([id]) => id === "read-page")
       .map(([, options]) => options?.args?.slice(1)),
   ).toEqual([["2", "2"]]);
+});
+
+it("requests a full read when a clipped turn contains a delivered steer", async () => {
+  clock = 0;
+  const session = { ...conversation, sessionId: "clipped-steer" };
+  const { spawn } = host({
+    "./-Users-me--buzz/clipped-steer.jsonl": [
+      line("user", turn("older")),
+      line("assistant", [{ type: "text", text: "x".repeat(3 << 20) }]),
+      line("attachment", undefined, {
+        attachment: {
+          type: "queued_command",
+          prompt: steerPrompt(turn("also lint")),
+        },
+      }),
+      line("assistant", [{ type: "text", text: "Lint passed." }]),
+      line("user", turn("latest")),
+      line("assistant", [{ type: "text", text: "Done." }]),
+    ].join("\n"),
+  });
+  const signal = new AbortController().signal;
+  await expect(
+    readLatestTurns(spawn, "~/.buzz", session, true, signal),
+  ).resolves.toBeUndefined();
+  const full = await readTranscript(spawn, "~/.buzz", session, true, signal);
+  expect(full?.turns[0]?.items).toMatchObject([
+    { text: "older" },
+    expect.anything(),
+    expect.objectContaining({ text: "also lint", steer: true }),
+    expect.objectContaining({ text: "Lint passed." }),
+  ]);
+  const latest = await readLatestTurns(spawn, "~/.buzz", session, true, signal);
+  expect(latest?.map(({ turnId }) => turnId)).toEqual(["u5"]);
 });
 
 it("reads a turn larger than the chunk in full only every 30 s, keeping what is shown between", async () => {

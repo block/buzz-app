@@ -183,8 +183,13 @@ type Entry = {
   policies: Map<
     string,
     {
-      topLevel: boolean;
+      solo: boolean;
       steerable?(model?: string, effort?: string): boolean;
+      /** The running turn's effective model and effort picks. */
+      picks?: Readonly<{
+        model?: string | undefined;
+        effort?: string | undefined;
+      }>;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -583,11 +588,14 @@ export class GooseRuntime {
     let noteRoot: string | undefined;
     let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
     const prior = entry.policies.get(key);
+    // A turn keeps the posting policy it was admitted with: a request in a
+    // Solo chat shared since, or the reverse, waits for its turns to settle
+    // rather than steering into them and changing their tools' context.
     const same =
       key === COMMUNITY_SESSION
         ? entry.config.scope === "community" &&
           prior?.steerable?.(model, effort) === true
-        : prior?.topLevel === topLevel;
+        : prior?.solo === solo;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
@@ -721,13 +729,21 @@ export class GooseRuntime {
     void done.then(() => {
       foregroundDone = true;
     });
+    // A steer without a pick runs on the turn's own picks.
+    const picks = same
+      ? {
+          model: model ?? prior?.picks?.model,
+          effort: effort ?? prior?.picks?.effort,
+        }
+      : { model, effort };
     const policy = {
-      topLevel,
+      solo,
       steerable: (nextModel?: string, nextEffort?: string) =>
         !interrupted &&
         !foregroundDone &&
-        (!nextModel || nextModel === model) &&
-        (!nextEffort || nextEffort === effort),
+        (!nextModel || nextModel === picks.model) &&
+        (!nextEffort || nextEffort === picks.effort),
+      picks,
       handed,
       settled: Promise.all([same ? prior?.settled : undefined, done]).then(() =>
         entry.sessions.idle(key),

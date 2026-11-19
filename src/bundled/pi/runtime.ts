@@ -23,7 +23,7 @@ import {
 // turn that fails; what Pi writes without `send` stays in local activity.
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
-import type { Context } from "../../buzz-mcp/client";
+import type { BuzzClient, Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -161,10 +161,14 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   scope: string;
   /** Where a run's failure for it is reported. */
   where?: Where;
+  /** Whether its turn is a Solo chat's, which keeps its posting policy. */
+  solo?: boolean;
   /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
   /** Records a successful final post before the native tail drains. */
   published?: () => void;
+  /** Its destination got a final reply in a run spanning destinations. */
+  answered?: boolean;
   /** A wake prompt rebuilt when the native queue is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
 };
@@ -183,8 +187,13 @@ type Entry = {
   policies: Map<
     string,
     {
-      topLevel: boolean;
+      solo: boolean;
       steerable?(model?: string, effort?: string): boolean;
+      /** The running turn's effective model and effort picks. */
+      picks?: Readonly<{
+        model?: string | undefined;
+        effort?: string | undefined;
+      }>;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -696,15 +705,15 @@ export class PiRuntime {
     const root = threadReference(event)?.rootId ?? event.id;
     const where = { channel, root, topLevel };
     const saveReply = attention || (!wake && key === COMMUNITY_SESSION);
-    // A turn keeps the posting policy it was admitted with: a request under
-    // the other policy waits for the conversation's turns to settle rather
-    // than steering into them and changing their tools' context.
     const prior = entry.policies.get(key);
+    // A turn keeps the posting policy it was admitted with: a request in a
+    // Solo chat shared since, or the reverse, waits for its turns to settle
+    // rather than steering into them and changing their tools' context.
     const same =
       key === COMMUNITY_SESSION
         ? entry.config.scope === "community" &&
           prior?.steerable?.(model, effort) === true
-        : prior?.topLevel === topLevel;
+        : prior?.solo === solo;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
@@ -731,7 +740,8 @@ export class PiRuntime {
           .filter((receipt) =>
             key === COMMUNITY_SESSION
               ? !same || receipt.key !== key || !receipt.where
-              : receipt.key === key && receipt.where?.topLevel !== topLevel,
+              : receipt.key === key &&
+                (!receipt.where || receipt.solo !== solo),
           )
           .map((receipt) => receipt.settled),
       );
@@ -788,6 +798,7 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
+        solo,
         ...(attention || accepted
           ? {
               prompt: async () => {
@@ -888,13 +899,21 @@ export class PiRuntime {
     void settled.then(() => {
       foregroundDone = true;
     });
+    // A steer without a pick runs on the turn's own picks.
+    const picks = same
+      ? {
+          model: model ?? prior?.picks?.model,
+          effort: effort ?? prior?.picks?.effort,
+        }
+      : { model, effort };
     const policy = {
-      topLevel,
+      solo,
       steerable: (nextModel?: string, nextEffort?: string) =>
         !interrupted &&
         !foregroundDone &&
-        (!nextModel || nextModel === model) &&
-        (!nextEffort || nextEffort === effort),
+        (!nextModel || nextModel === picks.model) &&
+        (!nextEffort || nextEffort === picks.effort),
+      picks,
       cancel: () => {
         interrupted = true;
         prior?.cancel();
@@ -1142,10 +1161,24 @@ export class PiRuntime {
         this.added(),
       );
       const final = isFinalMessage(call.name, call.arguments);
-      if (final) for (const receipt of receipts) receipt.published?.();
+      // A run spanning destinations ends once each has its final reply.
+      const where =
+        final &&
+        new Set(receipts.map(({ scope }) => scope)).size > 1 &&
+        (await destination(client, call.context, call.arguments));
+      const answering = where
+        ? receipts.filter(({ scope }) => scope === where)
+        : final
+          ? receipts
+          : [];
+      for (const receipt of answering) {
+        receipt.answered = true;
+        receipt.published?.();
+      }
+      const ended = final && receipts.every(({ answered }) => answered);
       return {
         content: content(reply),
-        ...(final ? { final: true } : {}),
+        ...(ended ? { final: true } : {}),
       };
     } catch (error) {
       return {
@@ -1373,6 +1406,8 @@ export class PiRuntime {
             : where.root
           : recoveredKey,
         ...(where ? { where } : {}),
+        // Only a Solo chat's tool context posts at the top level.
+        solo: !!context?.topLevel,
       };
       // A delivery of the same request takes it over, and says how it ended.
       const ours = () => entry.receipts.get(request) === receipt;
@@ -1768,4 +1803,25 @@ function unanswered({
   if (reason === "no_model") return "Pi has no model for this agent";
   if (reason === "aborted") return "The turn was stopped";
   return `Pi did not answer (${reason ?? "unknown"})`;
+}
+
+/** The activity scope a send posts to: its thread's root, or a channel. A
+ * reply to any message in a thread is in the thread, as the tools post it. */
+async function destination(
+  client: Pick<BuzzClient, "query"> | undefined,
+  context: Context,
+  args: Record<string, unknown>,
+) {
+  const id = [args.reply, args.parent]
+    .find((id): id is string => typeof id === "string")
+    ?.trim()
+    .toLowerCase();
+  if (id && id !== context.root) {
+    const [event] =
+      (await client?.query([{ ids: [id], limit: 1 }]).catch(() => [])) ?? [];
+    return event ? (threadReference(event)?.rootId ?? event.id) : id;
+  }
+  if (id) return id;
+  if (typeof args.channel === "string") return args.channel;
+  return context.topLevel ? context.channel : (context.root ?? context.channel);
 }

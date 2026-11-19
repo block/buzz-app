@@ -395,6 +395,9 @@ describe("harnessKit.systemPrompt", () => {
     expect(text).toContain("~/work");
     expect(text).toContain(`<repos for="https://kit.example:${alice}"/>`);
     expect(text).not.toContain("<buzz-tools-unavailable>");
+    await expect(text).toMatchFileSnapshot(
+      "./sections/snapshots/kit.thread.txt",
+    );
   });
 
   it("tells a session without tools that its final message is its reply", async () => {

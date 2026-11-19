@@ -13,7 +13,11 @@ import { CodexSetup, explainTurn, reviewHome, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
 import { reviewModel } from "./security-review";
-import { followRecommended } from "../../features/agents/recommended";
+import {
+  candidatesFor,
+  followRecommended,
+  recommendationReady,
+} from "../../features/agents/recommended";
 import { AppServer, listModels } from "./rpc";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
@@ -189,6 +193,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    settingsProposal: {
+      adapterModelAndEffort: true,
+      compactAt: true,
+      voice: true,
+      apps: true,
+      resolveRecommended: async () => {
+        await recommendationReady();
+        if (!candidatesFor(TYPE_ID).length) return null;
+        if (providerController.recommended() === undefined)
+          await providerController.check();
+        return providerController.recommended() ?? null;
+      },
+    },
     readModelSettings: (saved, context) =>
       providerController.readModelSettings(saved, context),
     Create,
@@ -227,7 +244,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     describeMigration: (saved) => {
-      const { model, effort, voice } = config(saved);
+      const { model, effort, voice, apps } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
         {
@@ -236,6 +253,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
           isOverride: Boolean(effort),
         },
         { id: "voice", label: "Voice", isOverride: Boolean(voice) },
+        // Another harness has no place for it, and Codex starts it off.
+        { id: "apps", label: "Codex apps and plugins", isOverride: !!apps },
       ];
     },
     migrationWarning: "Any commands Codex left running will stop.",

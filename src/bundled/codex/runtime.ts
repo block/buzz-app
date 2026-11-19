@@ -276,6 +276,37 @@ type Entry = {
   waiting: Set<Request>;
 };
 
+/** The community request a send answers: the one its ID names, else the one
+ * at its explicit destination, else a wake with no destination of its own.
+ * An unknown ID needs an explicit destination. */
+function addressed(
+  args: Record<string, unknown>,
+  answering: readonly Request[],
+) {
+  const id =
+    typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
+  const named = id && answering.find((pending) => pending.event?.id === id);
+  if (named) return named;
+  const { channel, reply } = args;
+  if (typeof channel !== "string") {
+    if (id)
+      throw new Error(
+        `Request ${id} is not part of this turn. Pass channel, and reply for a thread, to say where this goes.`,
+      );
+    return undefined;
+  }
+  const scope = typeof reply === "string" ? reply : channel;
+  return (
+    answering.find(
+      (pending) =>
+        pending.conversation.channelId === channel &&
+        pending.activityScope === scope,
+    ) ??
+    answering.find((pending) => pending.unaddressed) ??
+    null
+  );
+}
+
 /** The conversation's lane. A new community lane waits for every other lane. */
 function laneFor(entry: Entry, key: string, community: boolean) {
   let lane = entry.lanes.get(key);
@@ -2945,6 +2976,29 @@ export class CodexRuntime {
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.
+  /** Posts a failure where the turn still owes an answer. The latest
+   * conversation gets `content`; another a community turn took in gets a
+   * generic retry notice, so one conversation's details stay out of it. */
+  private async publishOwed(active: Active, content: string) {
+    if (!active.reply.conversation.community)
+      return void (await this.publish(active.reply, content));
+    const where = (taken: Request) =>
+      `${taken.conversation.channelId}/${taken.replyRoot ?? ""}`;
+    const owed = new Map<string, Request>();
+    for (const taken of active.requests)
+      if (taken.finalDelivery !== true) owed.set(where(taken), taken);
+    const latest = where(active.reply);
+    await Promise.all(
+      [...owed].map(([key, taken]) =>
+        this.publish(
+          taken,
+          key === latest
+            ? content
+            : "Codex could not finish this request. Send another mention to retry.",
+        ),
+      ),
+    );
+  }
   private publish(request: Request, content: string) {
     if (request.unaddressed) return Promise.resolve();
     return request.agent.publish({
@@ -2993,15 +3047,14 @@ export class CodexRuntime {
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
     const answering = active ? [...active.requests] : [];
-    const requestId =
-      typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
-    const request =
+    // Undefined uses the default destination; null is an explicit one that
+    // answers no request in this turn.
+    const target =
       active?.reply.settings.scope === "community" &&
-      (call.tool === "send" || call.tool === "reply_in_subthread") &&
-      requestId
-        ? (answering.find((pending) => pending.event?.id === requestId) ??
-          active.reply)
-        : active?.reply;
+      (call.tool === "send" || call.tool === "reply_in_subthread")
+        ? addressed(args, answering)
+        : undefined;
+    const request = target ?? active?.reply;
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
@@ -3063,9 +3116,11 @@ export class CodexRuntime {
     const final = isFinalMessage(call.tool, args);
     // A community turn answers each conversation with its own final send.
     const settling = request?.conversation.community
-      ? answering.filter(
-          (taken) => taken.activityScope === request.activityScope,
-        )
+      ? target === null
+        ? []
+        : answering.filter(
+            (taken) => taken.activityScope === request.activityScope,
+          )
       : answering;
     const reply = await callSessionTool(
       this.target
@@ -3771,8 +3826,8 @@ export class CodexRuntime {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, threadId);
-        await this.publish(
-          active.reply,
+        await this.publishOwed(
+          active,
           "Codex’s turn was interrupted. Send another mention to continue.",
         );
         this.status(agent.key, key, "Interrupted");
@@ -3826,7 +3881,7 @@ export class CodexRuntime {
       const why = explain?.();
       if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
-        await this.publish(active.reply, reason).catch((failure) =>
+        await this.publishOwed(active, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
         // The denied input may have shaped the provider's reason, so it shows

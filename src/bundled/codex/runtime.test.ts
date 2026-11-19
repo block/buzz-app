@@ -8641,6 +8641,69 @@ it("settles each steered community conversation only with its own final send", a
   await f.complete(0, "");
 });
 
+it("asks for an explicit destination when a community request ID is not in the turn", async () => {
+  const f = fixture();
+  const thread = f.delivery("Work in the channel");
+  const solo = f.delivery("Quick question in Solo", "e".repeat(64));
+  const { config } = scoped(thread);
+  f.soloChannels.add("channel");
+  await f.runtime.run({ ...thread, channelId: "other", config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...solo, config });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  const reply = await f.tool("send", {
+    audience: "everyone",
+    request: "f".repeat(64),
+    text: "Which conversation?",
+  });
+  expect(reply?.result).toMatchObject({ success: false });
+  expect(JSON.stringify(reply?.result)).toContain("channel");
+  expect(f.publish).not.toHaveBeenCalled();
+  await f.complete(0, "");
+});
+
+it.each([false, true])(
+  "tells each unanswered community conversation when a shared turn is interrupted (Solo answered: %s)",
+  async (answered) => {
+    const f = fixture();
+    const thread = f.delivery("Work in the channel");
+    const solo = f.delivery("Quick question in Solo", "e".repeat(64));
+    const { config } = scoped(thread);
+    f.soloChannels.add("channel");
+    await f.runtime.run({ ...thread, channelId: "other", config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({ ...solo, config });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    if (solo.trigger.type !== "mention") throw new Error("Expected mention");
+    if (answered)
+      await f.tool("send", {
+        audience: "everyone",
+        channel: "channel",
+        request: solo.trigger.event.id,
+        text: "SOLO ANSWER",
+        final: true,
+      });
+    f.publish.mockClear();
+    f.interrupt();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+    );
+    const notices = f.publish.mock.calls.map(
+      ([post]) =>
+        (post as { tags: string[][] }).tags.find(([name]) => name === "h")?.[1],
+    );
+    expect(notices.sort()).toEqual(answered ? ["other"] : ["channel", "other"]);
+  },
+);
+
 it("steers community follow-ups received while Codex starts the first turn", async () => {
   const f = fixture();
   const first = f.delivery("Start the channel task");
@@ -8776,9 +8839,12 @@ it.each(["attention", "plugin"] as const)(
       throw new Error("Expected plugin wake and mention");
     await f.runtime.run({ ...first, channelId: "other", config });
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const woken = vi.fn<Delivery["workingUntil"]>();
+    const followed = vi.fn<Delivery["workingUntil"]>();
     await f.runtime.run({
       ...wake,
       config,
+      workingUntil: woken,
       trigger: {
         ...wake.trigger,
         ...(type === "attention" ? { type } : { type, plugin: "github" }),
@@ -8794,6 +8860,7 @@ it.each(["attention", "plugin"] as const)(
       ...f.delivery("Follow-up in the original channel", "e".repeat(64)),
       channelId: "other",
       config,
+      workingUntil: followed,
     });
 
     const steers = f.sent.filter((wire) => wire.method === "turn/steer");
@@ -8808,6 +8875,13 @@ it.each(["attention", "plugin"] as const)(
       text: "Build update",
       final: true,
     });
+    const settled = (working: typeof woken) =>
+      Promise.race([
+        Promise.all(working.mock.calls.map(([done]) => done)).then(() => true),
+        new Promise((resolve) => setTimeout(resolve, 0, false)),
+      ]);
+    expect(await settled(woken)).toBe(true);
+    expect(await settled(followed)).toBe(false);
     expect(f.publish.mock.calls.map(([post]) => post)).toEqual([
       expect.objectContaining({
         tags: expect.arrayContaining([

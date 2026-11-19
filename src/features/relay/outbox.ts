@@ -714,8 +714,13 @@ export function createOutbox(
       if (latest)
         saveStatus({
           ...latest,
+          // NIP-PM commands are never echoed: the relay's acceptance is their
+          // outcome, and its signed pin list reports the result.
           delivery:
-            latest.delivery === "seen" || attempt.previousDelivery === "seen"
+            latest.delivery === "seen" ||
+            attempt.previousDelivery === "seen" ||
+            signed.kind === 40010 ||
+            signed.kind === 40011
               ? "seen"
               : "accepted",
           error: undefined,

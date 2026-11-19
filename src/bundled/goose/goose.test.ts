@@ -1770,29 +1770,27 @@ it("says a message's steer only when it joins the running turn", async () => {
   });
   const first = session.send("one");
   await vi.waitFor(() => expect(process.turns).toHaveLength(1));
-  const steered = session.send("two", { steer: "steer two" });
+  const prompt = (text: string) =>
+    vi.fn(async (_fresh?: boolean, steers?: boolean) =>
+      steers ? `steer ${text}` : text,
+    );
+  const two = prompt("two");
+  const three = prompt("three");
+  const steered = session.send("old two", { refresh: two });
   // Another model cannot join the running turn: it runs as its own.
-  const other = session.send("three", { steer: "steer three" }, "o3");
-  const refresh = vi.fn(async (_fresh?: boolean, steers?: boolean) =>
-    steers ? "steer four" : "four",
-  );
-  const woken = session.send("old four", { current: () => true, refresh });
+  const other = session.send("old three", { refresh: three }, "o3");
   try {
     await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
-    expect(process.turns[0]?.steered).toEqual(["steer two"]);
+    expect(process.turns[0]?.steered[0]).toContain("steer two");
     process.turns[0]?.finish();
     await vi.waitFor(() => expect(process.turns).toHaveLength(2));
     expect(process.turns[1]?.text).toBe("three");
+    expect(three).toHaveBeenCalledExactlyOnceWith();
     process.turns[1]?.finish();
-    await vi.waitFor(() => expect(process.turns).toHaveLength(3));
-    // Queued behind the pick, the wake is rebuilt as a turn of its own.
-    expect(process.turns[2]?.text).toBe("four");
-    expect(refresh).toHaveBeenCalledWith();
-    process.turns[2]?.finish();
   } finally {
     await flush();
     await goose.close(session);
-    await Promise.all([first, steered, other, woken]);
+    await Promise.all([first, steered, other]);
   }
 });
 

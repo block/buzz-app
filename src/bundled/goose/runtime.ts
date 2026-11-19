@@ -83,7 +83,6 @@ import {
 import {
   CONTEXT_LIMIT,
   type Scope,
-  steerPrompt,
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
@@ -669,6 +668,20 @@ export class GooseRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
+    // Where it answers needs the channel's kind, which a reconnecting
+    // community does not know yet: it waits, as a workflow's mention does,
+    // rather than answer a Solo chat or a DM as a thread.
+    if (!ownerReads(this.relay(agent.key), agent.pubkey)) {
+      await readyOwnerReads(
+        this.relay(agent.key),
+        agent,
+        signal,
+        channel,
+        "This turn",
+      );
+      signal.throwIfAborted();
+      if (current && !current()) return ignored?.();
+    }
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
     const solo = await soloChat(
       () => this.relay(agent.key),
@@ -708,7 +721,7 @@ export class GooseRuntime {
         current,
       );
       acceptProject = turn.acceptProject;
-      const { steering, ...shown } = turn;
+      const { steering, choices, ...shown } = turn;
       const { channel: where } = shown;
       const woken = wake && {
         wake: { ...wake, text: wakePrompt ?? wake.text },
@@ -737,6 +750,7 @@ export class GooseRuntime {
         // A message that steers the running turn has its Canvas as that
         // turn's prompt has the conversation's working location.
         steer: steering === shown.project ? text : render(steering),
+        choices,
       };
     };
     const prepared =
@@ -880,35 +894,28 @@ export class GooseRuntime {
         delivered = entry.sessions.deliver(key, text, shown, {
           ...options,
           ...activity,
-          ...(wake
-            ? {
-                current,
-                refresh: async (fresh = false, steers = false) => {
-                  const built = await prompt(fresh, key, valid);
-                  const text = this.review(
-                    entry,
-                    steers ? built.steer : built.text,
-                    notes,
-                    channel,
-                    noteRoot,
-                    key,
-                  );
-                  return marking ? marked(text, marking) : text;
-                },
-              }
-            : {}),
-          steer: steerPrompt(
-            this.review(entry, built.steer, notes, channel, noteRoot, key),
-          ),
-          fresh: async () =>
-            this.review(
+          ...(wake ? { current } : {}),
+          // Built again as it is handed over: a wake, to read what is
+          // current; a session closed since, for what the new one has not
+          // been shown; and a message whose section choices changed while
+          // it waited, so its Canvas says what its turn's instructions say.
+          refresh: async (fresh = false, steers = false) => {
+            const { now, running } = this.choices(entry, channel, key);
+            const same =
+              JSON.stringify((steers ? running : now) ?? null) ===
+              built.choices[steers ? "running" : "now"];
+            const ready =
+              wake || fresh || !same ? await prompt(fresh, key, valid) : built;
+            const text = this.review(
               entry,
-              (await prompt(true, key, valid)).text,
+              steers ? ready.steer : ready.text,
               notes,
               channel,
               noteRoot,
               key,
-            ),
+            );
+            return marking ? marked(text, marking) : text;
+          },
           // A Solo chat takes the name goose gives its first session.
           ...(solo && named ? { named } : {}),
         });
@@ -1522,9 +1529,7 @@ export class GooseRuntime {
     // Keyed as its session launches: a community session has no folder of
     // its own, whatever folder the chat kept.
     const folder = session ? this.folder(agent.key, key) : undefined;
-    const now = entry.handle?.promptSections?.(channelId);
-    // The choices its running turn's prompt was built with, for a steer.
-    const running = entry.located.has(key) ? entry.located.get(key) : now;
+    const { now, running } = this.choices(entry, channelId, key);
     const reading = solo
       ? readCanvas(
           session && owner
@@ -1622,6 +1627,21 @@ export class GooseRuntime {
         : {}),
       // Without a Canvas read, a steer keeps the turn's own project.
       steering: canvas ? canvas.steering || undefined : turnProject?.section,
+      /** The choices it was built with, to tell when to build it again. */
+      choices: {
+        now: JSON.stringify(now ?? null),
+        running: JSON.stringify(running ?? null),
+      },
+    };
+  }
+
+  /** The section choices a turn's Canvas is read with: the current ones, and
+   * for a steer, those its running turn's prompt was built with. */
+  private choices(entry: Entry, channelId: string, key: string) {
+    const now = entry.handle?.promptSections?.(channelId);
+    return {
+      now,
+      running: entry.located.has(key) ? entry.located.get(key) : now,
     };
   }
 

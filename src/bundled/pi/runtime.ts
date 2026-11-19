@@ -306,12 +306,14 @@ export class PiRuntime {
     private readonly storage: AgentStore = localStore(),
     /** The model gateway's routes and context; none: all external. */
     private readonly seam?: GatewaySeam,
-    /** The agent's reads once its community is ready, for a workflow's
-     * mention that arrived while it reconnects; rejects when `signal` aborts. */
+    /** The agent's reads once its community is ready, for a turn that arrived
+     * while it reconnects; rejects, naming `what` waited, when `signal`
+     * aborts. */
     private readonly readyReads?: (
       agent: AgentHandle,
       signal: AbortSignal,
       channelId: string | undefined,
+      what?: string,
     ) => Promise<AgentReads | undefined>,
     /** The community's storage scope, which a reconnecting relay keeps
      * (`Agents.relay(key)?.snapshot().scope`); by default, while `reads` can
@@ -750,6 +752,14 @@ export class PiRuntime {
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
+    // Where it answers needs the channel's kind, which a reconnecting
+    // community does not know yet: it waits, as a workflow's mention does,
+    // rather than answer a Solo chat or a DM as a thread.
+    if (!this.reads(agent.key) && this.readyReads) {
+      await this.readyReads(agent, signal, channel, "This turn");
+      signal.throwIfAborted();
+      if (current && !current()) return ignored?.();
+    }
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
@@ -833,8 +843,10 @@ export class PiRuntime {
       // again then, so it reads what is current.
       const refresh = !!(attention || accepted);
       let turned: { text: string; sections: string } | undefined;
-      // What Pi is set up with before it asks for the prompt.
+      // What each attempt sets Pi up with before it asks for the prompt,
+      // and the instructions the turn last ran with.
       let configured: { sections: string; instructions: string } | undefined;
+      let instructed: string | undefined;
       let notes: readonly string[] | undefined;
       let acceptProject: (() => void) | undefined;
       const turn = async (sections: SectionChoices | undefined) => {
@@ -886,7 +898,8 @@ export class PiRuntime {
             refresh || turned?.sections !== chosen
               ? await turn(sections)
               : turned.text;
-          if (refresh && (interrupted || (current && !current()))) return;
+          // Against what this attempt was set up with: a host that stopped
+          // first is set up with it again.
           const instructions =
             steers || !configured || chosen === configured.sections
               ? undefined
@@ -900,8 +913,9 @@ export class PiRuntime {
                     sections,
                   )
                 ).instructions;
-          if (configured && instructions !== undefined)
-            configured = { sections: chosen, instructions };
+          // The final guard, once the turn is ready to hand over.
+          if (refresh && (interrupted || (current && !current()))) return;
+          if (instructions !== undefined) instructed = instructions;
           if (!steers) entry.located.set(key, sections);
           accepted?.();
           notes ??= agent.notes?.(channel, replyRoot) ?? [];
@@ -973,7 +987,10 @@ export class PiRuntime {
         void this.prompts(agent.key).save(
           `${submitted.conversation}:${submitted.session}`,
           [
-            { label: "instructions", text: configured.instructions },
+            {
+              label: "instructions",
+              text: instructed ?? configured.instructions,
+            },
             { label: "core memory", text: picked.core?.text ?? "" },
           ],
         );

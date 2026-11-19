@@ -54,8 +54,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Without a Pi upstream in this build, every agent keeps its own
     // providers, as the runner sends every turn without the gateway.
     upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
-    (agent, signal, channelId) =>
-      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
+    (agent, signal, channelId, what) =>
+      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId, what),
     (key) => agents.relay(key)?.snapshot().scope,
   );
   ctx.agentProtection.registerModels({

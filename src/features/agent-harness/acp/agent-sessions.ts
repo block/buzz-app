@@ -355,8 +355,9 @@ export class AgentSessions {
   }
 
   /** Sends `text` into the conversation `key`, and resolves when the session
-   * has answered it, or the running turn, with the activity's `steer`;
-   * `fresh` builds it again when the session it was built for was closed;
+   * has answered it; the activity's `refresh`, if any, builds it again as
+   * it is handed over, and `fresh` when the session it was built for was
+   * closed;
    * `title` names a session opened for it, except that the conversation's
    * first one is left for the harness to name, if it names sessions, when `named`
    * takes that name;

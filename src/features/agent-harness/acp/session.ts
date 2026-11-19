@@ -345,7 +345,7 @@ export class AcpSession {
           : undefined);
       const said = activity.refresh
         ? steerPrompt(await activity.refresh(false, true))
-        : (activity.steer ?? text);
+        : text;
       if (!live()) return;
       if (activity.current && !activity.current()) {
         this.discard(waiter);

@@ -666,6 +666,99 @@ it("sets a new run up with the sections chosen once Pi is ready for it, and keep
   expect(steered.text).toContain("They are for reading.");
 });
 
+it("sets a new run up again with the sections chosen once Pi is ready, when the host stops first", async () => {
+  let hosts = 0;
+  let managed = false;
+  const prompts: { instructions?: string }[] = [];
+  const { deliver, settled, agent } = setup({
+    deliver: async (params, process) => {
+      // The plugin takes the working location while the turn waits.
+      managed = true;
+      prompts.push(
+        (
+          await process.tool(
+            { agent: self, request: params.request, steers: false },
+            "prompt",
+          )
+        ).result as { instructions?: string },
+      );
+      // The first host stops before it keeps the submission; the next one
+      // is set up from the turn as it was handed over.
+      if (++hosts === 1) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  Object.assign(agent, {
+    promptSections: (): SectionChoices =>
+      managed
+        ? {
+            plugin: {
+              id: "example.plugin",
+              sections: { "working-location": "Work in the task's folder." },
+            },
+          }
+        : {},
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(prompts).toHaveLength(2);
+  for (const prompt of prompts)
+    expect(prompt.instructions).toContain(
+      '<plugin-section id="working-location" plugin="example.plugin">',
+    );
+});
+
+it("checks a guarded turn once its new run's instructions are ready", async () => {
+  let managed = false;
+  let live = true;
+  const prompts: unknown[] = [];
+  const accepted = vi.fn();
+  const { deliver, agent, core } = setup({
+    deliver: async (params, process) => {
+      managed = true;
+      prompts.push(
+        (
+          await process.tool(
+            { agent: self, request: params.request, steers: false },
+            "prompt",
+          )
+        ).result,
+      );
+      return { submission: 1, conversation: CONVERSATION };
+    },
+  });
+  Object.assign(agent, {
+    promptSections: (): SectionChoices =>
+      managed
+        ? {
+            plugin: {
+              id: "example.plugin",
+              sections: { "working-location": "Work in the task's folder." },
+            },
+          }
+        : {},
+  });
+  // Withdrawn while the new instructions read the agent's memory.
+  core.mockImplementation(async () => {
+    if (managed) live = false;
+    return null;
+  });
+  await deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    { accepted, current: () => live },
+  ).run;
+  expect(core).toHaveBeenCalledTimes(2);
+  // No prompt, so Pi submits nothing.
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).toBeFalsy();
+  expect(accepted).not.toHaveBeenCalled();
+});
+
 it("tells a Solo chat given its own folder to read its Canvas's folders", async () => {
   const { host, deliver, solo, storage, desktop } = setup({}, [], {
     content: workspaceCanvas({
@@ -1868,18 +1961,81 @@ it("refuses the turn of a conversation whose folder is gone, naming the folder",
   expect(published.at(-1)?.content).toContain("/repos/worktree");
 });
 
-it("starts a turn while Buzz reconnects, in the folder or the workspace", async () => {
-  const { deliver, host, storage, published, desktop, link } = setup();
+/** Reads that wait for Buzz to be back, as `readyOwnerReads` does. */
+function waitingReads(runtime: PiRuntime) {
+  const back = deferred<void>();
+  const readyReads = vi.fn(
+    async (
+      _agent: unknown,
+      _signal: AbortSignal,
+      _channel: string | undefined,
+      _what?: string,
+    ) => {
+      await back.promise;
+      return runtime["reads"](self);
+    },
+  );
+  Object.assign(runtime, { readyReads });
+  return { readyReads, back: () => back.resolve() };
+}
+
+it("starts a turn while Buzz reconnects in its folder, and routes one that comes then once it is back", async () => {
+  const placed = deferred<{ seen: number }>();
+  const { deliver, host, storage, published, desktop, link, runtime } = setup({
+    place: () => placed.promise,
+  });
   Object.assign(desktop, { resolveDirectory: folders() });
   await assign(storage);
+  const { readyReads, back } = waitingReads(runtime);
+  // Taken in while Buzz is connected; it starts while Buzz reconnects.
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
   link.status = "connecting";
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
-  await deliver({ type: "mention", event: message("3", "@Pi hi") }).run;
+  placed.resolve({ seen: 0 });
+  await first.run;
+  // Where one that comes now answers is not known until Buzz is back.
+  const later = deliver({ type: "mention", event: message("3", "@Pi hi") });
+  await vi.waitFor(() =>
+    expect(readyReads).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      expect.anything(),
+      channel,
+      "This turn",
+    ),
+  );
+  expect(host.requests("deliver")).toHaveLength(1);
+  link.status = "ready";
+  back();
+  await later.run;
   expect(host.requests("deliver").map(({ params }) => params.cwd)).toEqual([
     "/repos/worktree",
     DEFAULT_CONFIG.workspace,
   ]);
   expect(published).toEqual([]);
+});
+
+it("answers a Solo chat that writes while Buzz reconnects in its own conversation", async () => {
+  const { deliver, host, storage, desktop, link, runtime, solo } = setup();
+  Object.assign(desktop, { resolveDirectory: folders() });
+  solo.add("solo-1");
+  await assign(storage, "solo-1");
+  const { readyReads, back } = waitingReads(runtime);
+  link.status = "connecting";
+  const turn = deliver(
+    {
+      type: "mention",
+      event: message("2", "@Pi", { tags: [["h", "solo-1"]] }),
+    },
+    { channelId: "solo-1" },
+  );
+  await vi.waitFor(() => expect(readyReads).toHaveBeenCalledOnce());
+  expect(host.requests("deliver")).toEqual([]);
+  link.status = "ready";
+  back();
+  await turn.run;
+  const [delivered] = host.requests("deliver");
+  expect(delivered?.params.key).toBe("solo-1");
+  expect(delivered?.params.cwd).toBe("/repos/worktree");
 });
 
 it("reads a file a tool names from the conversation's folder, also while Buzz reconnects", async () => {

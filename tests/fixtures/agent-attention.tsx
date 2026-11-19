@@ -178,6 +178,7 @@ const Tab = createTab({
         ? presentGitHub(watch, title)
         : undefined,
     snapshot: () => snapshot,
+    classifier: () => "unavailable" as const,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

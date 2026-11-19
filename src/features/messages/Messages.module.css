@@ -4136,3 +4136,23 @@ html[data-keyboard-navigation] .activityExpansion {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+
+/* A relayed line names the agent that wrote it and the chat it came from. */
+.relayedSource {
+  color: var(--text-subtle);
+}
+.audienceContent > .relayedSource {
+  display: block;
+  margin-block-end: var(--space-1);
+}
+.relayedTime {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-subtle);
+}
+.relayedFooter {
+  margin: var(--space-1) 0 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}

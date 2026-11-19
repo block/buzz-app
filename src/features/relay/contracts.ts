@@ -145,6 +145,14 @@ export type ChannelMessage = Readonly<{
   /** Signed `audience` tag of the original event: `agents` is coordination
    * between agents, shown quietly. Absent means everyone; unknown values too. */
   audience?: "agents";
+  /** Signed `relayed-from` tag: the author's claim that this agent wrote the
+   * text in another chat. `verified` when the agent's cryptographically
+   * verified owner is the author; only then is it drawn as the agent's. */
+  relayedFrom?: Readonly<{
+    agent: string;
+    channelId?: string;
+    verified: boolean;
+  }>;
   /** Signed `buzz:request` tag: the agent's claim of the triggering message
    * this update belongs to, separate from its flattened reply link. */
   request?: string;

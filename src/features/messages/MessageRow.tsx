@@ -96,6 +96,7 @@ import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
+import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import {
   safeMessageUrl,
@@ -1842,6 +1843,8 @@ export const MessageRow = memo(function AudienceMessageRow(
         ) : (
           <AgentsMessageRow {...props} failure />
         )
+      ) : row.relayedFrom?.verified ? (
+        <RelayedMessageRow {...props} />
       ) : row.audience === "agents" ? (
         <AgentsMessageRow {...props} />
       ) : (
@@ -2103,6 +2106,152 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     </>
   ) : (
     content
+  );
+}
+
+/** Another agent's message that its owner relayed here from another chat. It
+ * reads as that agent's quiet line, never as the signer's own message, and
+ * opens to the text without the notice older clients show in its place. */
+function RelayedMessageRow(props: MessageRowProps) {
+  const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const source = row.relayedFrom;
+  const references = props.references ?? session;
+  const [open, setOpen] = useState(false);
+  const keepMounted = props.keepMounted;
+  useEffect(() => {
+    if (open) return keepMounted?.(row.id);
+  }, [open, keepMounted, row.id]);
+  const resolveName = useChannelIdentityNames(references, row.channelId);
+  const directory = useReferenceDirectory(references, participantProfiles);
+  const shown = useMemo(
+    () => ({ ...row, content: withoutRelayNotice(row.content) }),
+    [row],
+  );
+  if (!source) return null;
+  const name = (pubkey: string) =>
+    resolveName(
+      pubkey,
+      (pubkey === row.authorId ? props.profile : directory.profiles.get(pubkey))
+        ?.name ?? pubkey.slice(0, 10),
+    );
+  const agent = {
+    name: name(source.agent),
+    profile: directory.profiles.get(source.agent),
+  };
+  const recipients = row.mentions
+    .filter((pubkey) => pubkey !== source.agent)
+    .map(name);
+  // Only the reader's own chats are named; anyone else sees the agent alone.
+  const chat = directory.channels.find((item) => item.id === source.channelId);
+  const chatLabel =
+    chat && `${chat.channelType === "dm" ? "" : "#"}${chat.name}`;
+  const excerpt = Array.from(
+    messagePreviewText(shown.content).replace(/\s+/g, " "),
+  );
+  const preview =
+    excerpt.length > 280
+      ? `${excerpt.slice(0, 279).join("")}…`
+      : excerpt.join("");
+  return (
+    <FullMessageRow
+      {...props}
+      shownRow={shown}
+      alignViewer={false}
+      day={false}
+      layout="continuation"
+      stackPrevious
+      stackNext
+      renderMessage={(message, trigger) => (
+        <div
+          className={styles.audienceRow}
+          data-relayed=""
+          data-layout={props.layout ?? "timeline"}
+          data-open={open || undefined}
+        >
+          {props.day && <DayDivider createdAt={row.createdAt} />}
+          <Collapsible.Root
+            open={open}
+            onOpenChange={setOpen}
+            className={styles.audienceEntry}
+            data-highlight-surface=""
+            data-thread-open={props.threadOpen || undefined}
+            aria-current={props.threadOpen ? true : undefined}
+            data-message-id={row.id}
+          >
+            <Collapsible.Trigger
+              ref={trigger}
+              data-buzz-ui=""
+              className={styles.audienceLine}
+              aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
+            >
+              <span className={styles.audienceAvatar} title={agent.name}>
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={source.agent}
+                  channelId={row.channelId}
+                  src={avatarMedia(agent.profile?.picture, media)}
+                  alt=""
+                  fallback={agent.name}
+                  size="fill"
+                  shape={
+                    agentPubkeys?.has(source.agent) || agent.profile?.isAgent
+                      ? "squircle"
+                      : "circle"
+                  }
+                />
+              </span>
+              {!open && (
+                <span className={styles.audiencePreviewText}>
+                  <span className={styles.relayedSource}>
+                    {agent.name}
+                    {chatLabel && ` from ${chatLabel}`}
+                  </span>{" "}
+                  {preview}
+                </span>
+              )}
+              {!open && row.edited && <EditedMarker />}
+              {!open && (
+                <span className={styles.relayedTime}>
+                  <MessageTimestamp createdAt={row.createdAt} compact />
+                </span>
+              )}
+            </Collapsible.Trigger>
+            <Collapsible.Panel
+              className={`${styles.audiencePanel} ${styles.audienceBody}`}
+              inert={!open || undefined}
+              aria-hidden={!open || undefined}
+            >
+              <div className={styles.activityExpansionContent}>
+                <div className={styles.audienceContent}>
+                  <span className={styles.relayedSource}>
+                    {agent.name}
+                    {chat && (
+                      <>
+                        {" from "}
+                        <MessageLink
+                          url={`buzz://channel/${encodeURIComponent(chat.id)}`}
+                          label={chatLabel}
+                          registry={props.extensions?.links}
+                          onOpenLink={(url) => props.onOpenLink(url)}
+                          session={session}
+                          scope={props.scope}
+                          channelPrivate={!!chat.private}
+                        />
+                      </>
+                    )}
+                  </span>
+                  {message}
+                  <p className={styles.relayedFooter}>
+                    Sent as {name(row.authorId)}
+                    {recipients.length > 0 && ` · to ${recipients.join(", ")}`}
+                  </p>
+                </div>
+              </div>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        </div>
+      )}
+    />
   );
 }
 

@@ -5557,3 +5557,68 @@ it("opens the thread when a file drag rests on its summary, unless already open"
     vi.useRealTimers();
   }
 });
+
+it("draws a verified relayed message as its agent's quiet line, never the signer's", () => {
+  const subscribe = () => () => {};
+  const profiles = new Map([
+    ["zerk", { name: "Zerk", isAgent: true }],
+    ["juno", { name: "Juno", isAgent: true }],
+  ]);
+  const session = {
+    viewer: "owner",
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [{ id: "source", name: "rebase", channelType: "stream" }],
+      }),
+      subscribeList: subscribe,
+    },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+  } as unknown as RelaySession;
+  const relayed = (verified: boolean, channelId?: string) => ({
+    ...row,
+    authorId: "owner",
+    replyCount: 0,
+    mentions: ["juno"],
+    content: "@Juno Nexus message from Zerk (relayed)\n\nRebase on main",
+    relayedFrom: {
+      agent: "zerk",
+      verified,
+      ...(channelId ? { channelId } : {}),
+    },
+  });
+  const props = {
+    profile: { name: "Gil" },
+    session,
+    viewer: "owner",
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(
+      <MessageRow {...props} row={relayed(true, "source")} />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Zerk from #rebase: Rebase on main",
+    });
+    expect(trigger).not.toHaveTextContent("Nexus message");
+    expect(view.container.querySelector("[data-viewer-message]")).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByText("Sent as Gil · to Juno")).toBeVisible();
+    expect(screen.getByText("Rebase on main")).toBeVisible();
+    expect(screen.queryByText(/Nexus message/)).toBeNull();
+    // A chat the reader is not in stays unnamed.
+    view.rerender(<MessageRow {...props} row={relayed(true, "elsewhere")} />);
+    expect(
+      screen.getByRole("button", { name: "Zerk: Rebase on main" }),
+    ).toBeVisible();
+    // Unverified, it is the signer's ordinary message with its notice.
+    view.rerender(<MessageRow {...props} row={relayed(false, "source")} />);
+    expect(screen.getByText(/Nexus message from Zerk/)).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});

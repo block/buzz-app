@@ -388,13 +388,26 @@ test("older-page retry reparents a visible reply under its late parent", async (
   await server.listen();
   try {
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&failOlderPages=1`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&failOlderPages=2`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
     const child = history.getByText("Nested window child", { exact: true });
+    const note = history.getByText(
+      "Earlier reply unavailable in loaded history.",
+    );
     await expect(replies).toHaveCount(10);
     // No gesture: the thread reads the page that holds the child's parent.
+    // Nobody asked for that read, so its failure shows only on the reply.
+    await expect(note).toBeVisible();
+    await expect(history.getByRole("alert")).toHaveCount(0);
+    // The page the reader scrolls for fails as theirs.
+    await history.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await history.hover();
+    await page.mouse.wheel(0, -300);
     const retry = history.getByRole("button", { name: "Try again" });
     await expect(history.getByRole("alert")).toContainText("Older page failed");
     await child.scrollIntoViewIfNeeded();
@@ -405,7 +418,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
-      .toBe(3);
+      .toBe(4);
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
@@ -413,6 +426,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
     await expect(parent).toBeVisible();
     await expect(child).toBeInViewport();
     await expect(replies).toHaveCount(60);
+    await expect(note).toHaveCount(0);
     // The missing parent must reparent this child without losing it from the
     // reader's viewport; the exact Y coordinate is not the user contract.
     expect(
@@ -428,60 +442,69 @@ test("older-page retry reparents a visible reply under its late parent", async (
   }
 });
 
-test("a thread shows its first page while it reads the page that holds a loaded reply's parent, then nests the reply", async ({
-  page,
-}) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
+for (const reading of [false, true])
+  test(`a thread shows its first page while it reads the page that holds a loaded reply's parent, then nests the reply ${reading ? "where it is read" : "behind the newest reply"}`, async ({
+    page,
+  }) => {
+    const server = await createServer({
+      root: fileURLToPath(new URL("../../", import.meta.url)),
+      configFile: false,
+      envFile: false,
+      plugins: [react()],
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    await server.listen();
+    try {
+      await page.goto(
+        `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&holdOlderPage=1`,
+      );
+      const history = page.getByRole("region", { name: "Thread messages" });
+      const child = history.getByText("Nested window child", { exact: true });
+      const newest = history.getByText("First root reply 302", { exact: true });
+      // With no gesture the thread reads the page that holds the child's parent
+      // behind its first window. That read is held: the first page is positioned
+      // and readable, and nothing calls the parent unavailable.
+      await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.messagesFixture.report.filters.length),
+        )
+        .toBe(2);
+      await expect(history).not.toHaveAttribute("data-positioning");
+      await expect(newest).toBeInViewport();
+      await expect(child).toBeVisible();
+      await expect(
+        history.getByText("Earlier reply unavailable in loaded history."),
+      ).toHaveCount(0);
+      if (reading) {
+        // The reader leaves the newest reply for the child.
+        await history.evaluate((el) => {
+          el.scrollTop -= 120;
+        });
+        await expect(history).toHaveAttribute("data-jump-visible");
+        await expect(child).toBeInViewport();
+      }
+      await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+      const parent = history.getByText("First root reply 292", { exact: true });
+      // The page lands with no gesture. The child moves into its parent's
+      // branch and stays shown, and the reader stays where they were.
+      await expect(parent).toBeVisible();
+      await expect(history.locator("ol [data-message-id]")).toHaveCount(60);
+      await expect(reading ? child : newest).toBeInViewport();
+      await expect(child).toBeVisible();
+      expect(
+        await parent.evaluate((el) =>
+          el.closest("li")?.textContent.includes("Nested window child"),
+        ),
+      ).toBe(true);
+      await expect(
+        history.getByText("Earlier reply unavailable in loaded history."),
+      ).toHaveCount(0);
+    } finally {
+      await page
+        .evaluate(() => window.messagesFixture.releaseOlderPage())
+        .catch(() => {});
+      await server.close();
+    }
   });
-  await server.listen();
-  try {
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&holdOlderPage=1`,
-    );
-    const history = page.getByRole("region", { name: "Thread messages" });
-    const child = history.getByText("Nested window child", { exact: true });
-    const newest = history.getByText("First root reply 302", { exact: true });
-    // With no gesture the thread reads the page that holds the child's parent
-    // behind its first window. That read is held: the first page is positioned
-    // and readable, and nothing calls the parent unavailable.
-    await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.messagesFixture.report.filters.length),
-      )
-      .toBe(2);
-    await expect(history).not.toHaveAttribute("data-positioning");
-    await expect(newest).toBeInViewport();
-    await expect(child).toBeVisible();
-    await expect(
-      history.getByText("Earlier reply unavailable in loaded history."),
-    ).toHaveCount(0);
-    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
-    const parent = history.getByText("First root reply 292", { exact: true });
-    // The page lands behind the reader, who stays at the newest reply; the
-    // child moves into its parent's branch, as any nested reply shows.
-    await expect(child).toHaveCount(0);
-    await expect(newest).toBeInViewport();
-    await history.getByRole("button", { name: /^View 1 reply/ }).click();
-    await expect(child).toBeVisible();
-    expect(
-      await parent.evaluate((el) =>
-        el.closest("li")?.textContent.includes("Nested window child"),
-      ),
-    ).toBe(true);
-    await expect(
-      history.getByText("Earlier reply unavailable in loaded history."),
-    ).toHaveCount(0);
-  } finally {
-    await page
-      .evaluate(() => window.messagesFixture.releaseOlderPage())
-      .catch(() => {});
-    await server.close();
-  }
-});

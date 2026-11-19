@@ -256,6 +256,9 @@ export function createThreadView({
   let older: (() => number) | boolean = false;
   /** The read that failed transiently, which session recovery retries. */
   let failed: "refresh" | "older" | undefined;
+  /** The read running is one for a missing parent, or `null` once the relay
+   * rejected one: no other follows. See `advance`. */
+  let seek: AbortController | null | undefined;
   /** Resumed rows shown beside the evidence until the first refresh settles.
    * That refresh reads as a fresh view would, in the background. */
   let shown: ThreadResume | undefined;
@@ -332,6 +335,7 @@ export function createThreadView({
     // A parent retained but not shown, as a deleted one is, is not coming.
     const known = new Set(next.replies.map((row) => row.id));
     const seeking =
+      seek !== null &&
       (next.direction
         ? next.direction === "older" && next.canLoadMore
         : next.status === "idle" || next.status === "loading") &&
@@ -509,7 +513,13 @@ export function createThreadView({
       const through = older === true ? undefined : older;
       older = false;
       void run(false, false, through);
-    } else if (recover && snapshot.status === "ready" && snapshot.seeking)
+    } else if (
+      recover &&
+      // A resumed view has no page of its own to read on from yet.
+      cursor &&
+      snapshot.status === "ready" &&
+      snapshot.seeking
+    )
       void run(false, false, undefined, true);
   }
   if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
@@ -722,8 +732,10 @@ export function createThreadView({
   /** Demand for an older page. It waits out a quiet failure, whose retry is
    * session recovery's. */
   async function more(through?: () => number) {
-    if (failed) older = through ?? (older || true);
-    else await run(false, false, through);
+    if (!failed) return run(false, false, through);
+    older = through ?? (older || true);
+    // The wait shows as the read it is for.
+    publishStatus({ status: "loading", readKind: "older" });
   }
   async function run(
     replace: boolean,
@@ -733,7 +745,9 @@ export function createThreadView({
     sought = false,
   ) {
     if (disposed) return;
-    if (controller) {
+    // A read someone asked for takes the place of one for a missing parent.
+    if (controller && controller === seek) controller.abort();
+    else if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
       else older = through ?? (older || true);
@@ -750,6 +764,7 @@ export function createThreadView({
     failed = undefined;
     const owned = new AbortController();
     controller = owned;
+    if (seek !== null) seek = sought ? owned : undefined;
     // A read for a missing parent yields to the reads a person waits on.
     const yielding = sought ? { priority: "background" as const } : {};
     const startedAt = now();
@@ -1047,8 +1062,15 @@ export function createThreadView({
             : isRetryableRead(error))
         ) {
           failed = replace ? "refresh" : "older";
-          // The page a person asked for is still wanted once this recovers.
-          if (!replace && !sought) older = through ?? (older || true);
+          // The page a person asked for is still wanted once this recovers,
+          // to the frontier asked for last.
+          if (!replace && !sought && typeof older !== "function")
+            older = through ?? true;
+          publishStatus({});
+        } else if (sought) {
+          // Nobody asked for this read: its failure shows only as the parent
+          // not being found.
+          seek = null;
           publishStatus({});
         } else {
           // A failed repair stays visible with Retry; the page queued behind
@@ -1063,8 +1085,9 @@ export function createThreadView({
           publishStatus({
             status: "error",
             error: String(error),
-            // A background read published no kind when it began.
-            ...(replace ? {} : { readKind: "older" as const }),
+            // A background read published no kind when it began, and a
+            // page asked for behind it published its own.
+            readKind: replace ? "refresh" : "older",
           });
         }
       }

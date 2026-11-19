@@ -889,20 +889,20 @@ function ThreadMessages({
     request: [] as unknown[],
     ids: new Set<string>(),
   });
-  // A continuation may supply the parent of the visible reply. Commit its new
-  // ancestors before restoring geometry; expanded branches stay open.
+  // A page may supply the parent of a reply shown without it. The reply stays
+  // shown, in its parent's branch: commit that before restoring geometry.
+  const shownTree = useRef(tree);
   useLayoutEffect(() => {
-    const anchor = olderAnchor.current;
-    if (!anchor || snapshot.status === "loading") return;
-    const added = tree
-      .ancestors(anchor.id)
-      .filter((id) => !anchor.ancestors.includes(id));
+    const added = (shownTree.current.children.get(undefined) ?? []).flatMap(
+      (row) => tree.parents.get(row.id) ?? [],
+    );
+    shownTree.current = tree;
     if (added.length)
       setExpanded((current) => {
         if (added.every((id) => current.has(id))) return current;
         return new Set([...current, ...added]);
       });
-  }, [tree, snapshot.status]);
+  }, [tree]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -977,6 +977,8 @@ function ThreadMessages({
   }>(() => ({ opening }));
   if (opening && opening !== boundary.opening) setBoundary({ opening });
   const unreadBoundary = boundary.id;
+  // The line stays with a reply that moved under its late parent.
+  const lineRow = tree.parents.get(unreadBoundary ?? "") ?? unreadBoundary;
   const placed = useRef<typeof boundary>(undefined);
   // Focus as this panel opened, and whether pointer or keyboard input has
   // come since: either way the person owns focus now.
@@ -1864,7 +1866,7 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.id === unreadBoundary && (
+          {!parent && row.id === lineRow && (
             <div className={styles.newMessages} data-new-messages-boundary>
               <hr className="sr-only select-none" aria-label="New messages" />
               <span className="select-none" aria-hidden="true">
@@ -1980,8 +1982,8 @@ function ThreadMessages({
         : plainText(selectedParent?.content ?? ""),
     [selectedParent?.diff, selectedParent?.content],
   );
-  const captureOlderAnchor = (element: HTMLElement) => {
-    follow.current = false;
+  const captureOlderAnchor = (element: HTMLElement, following = false) => {
+    follow.current &&= following;
     const row = [
       ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
     ].find(
@@ -1997,6 +1999,18 @@ function ThreadMessages({
         }
       : undefined;
   };
+  // A page read for a missing parent lands with no gesture: hold the reader's
+  // place through it as through a page scrolled for, still following. Every
+  // commit may have used the anchor or moved its row.
+  useLayoutEffect(() => {
+    if (
+      snapshot.seeking &&
+      !olderAnchor.current &&
+      positioned.current &&
+      scroller.current
+    )
+      captureOlderAnchor(scroller.current, true);
+  });
   const loadOlder = () => {
     const element = scroller.current;
     if (

@@ -934,6 +934,40 @@ it("shows the loaded page while the read for the first unread reply waits on rec
   expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
   expect(h.view.loadMore).toHaveBeenCalledOnce();
 });
+it("keeps the first unread reply and its line showing when a page brings the reply's parent", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read: thread } = unreadReplies(h);
+  const parent = reply("parent", 1);
+  const [read, first, later] = [
+    reply("read", 2),
+    { ...reply("first unread", 3), replyParentId: parent.id },
+    reply("later unread", 4),
+  ];
+  unread.add(first.id).add(later.id);
+  thread.through = 2;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.seeking = true;
+  h.snapshot.replies = [read, first, later];
+  h.render();
+  const row = (id: string) =>
+    h.element.querySelector(`[data-message-id="${id}"]`);
+  const line = () => screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line().compareDocumentPosition(row(first.id) as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  // The page read for the parent lands with no gesture.
+  h.snapshot.seeking = undefined;
+  h.snapshot.replies = [parent, read, first, later];
+  h.render();
+  // The reply shows in its parent's branch, under the line.
+  const branch = row(parent.id)?.closest("li");
+  expect(branch).toContainElement(row(first.id) as HTMLElement);
+  expect(branch).toContainElement(line());
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+});
 it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);

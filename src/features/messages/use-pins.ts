@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
+import type { EventData } from "../relay/events";
 import {
   LOADING_PINS,
   pinLists,
@@ -34,8 +35,10 @@ export type PinnedMessages = Readonly<{
 /** An open panel also reloads on this period, so a message erased without a
  * list change leaves it. Jittered so open panels do not read together. */
 const REFRESH_MS = 10 * 60_000;
-/** Edits and deletions reload the rows they change. */
-const OVERLAY_KINDS = [5, 9005, 40003];
+/** Deletions in the channel reload the rows, since one may withdraw an edit
+ * a row shows; edits reload the rows they name. */
+const DELETION_KINDS = [5, 9005];
+const EDIT_KIND = 40003;
 
 /** Loads the rows behind `ids` when the list changes, when one of them is
  * edited or deleted, on `attempt`, and periodically. Earlier rows the list
@@ -61,22 +64,26 @@ export function usePinnedRows(
   }, []);
   useEffect(() => {
     const wanted = new Set(key ? key.split(",") : []);
+    const tagged = (event: EventData, name: string, values: Set<string>) =>
+      event.tags.some(
+        ([tag, value]) => tag === name && !!value && values.has(value),
+      );
+    const channel = new Set([channelId]);
     return source.subscribeLive(
       ({ events }) => {
         if (
-          events.some(
-            (event) =>
-              OVERLAY_KINDS.includes(event.kind) &&
-              event.tags.some(
-                ([name, id]) => name === "e" && !!id && wanted.has(id),
-              ),
+          wanted.size &&
+          events.some((event) =>
+            DELETION_KINDS.includes(event.kind)
+              ? tagged(event, "h", channel)
+              : event.kind === EDIT_KIND && tagged(event, "e", wanted),
           )
         )
           setTick((value) => value + 1);
       },
       { replay: true },
     );
-  }, [source, key]);
+  }, [source, channelId, key]);
   useEffect(() => {
     void tick;
     void attempt;

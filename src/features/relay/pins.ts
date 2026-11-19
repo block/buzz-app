@@ -47,12 +47,20 @@ export type PinSource = Readonly<{
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
   ): Promise<readonly EventData[]>;
+  /** `relayCount` counts the relay's page before visibility filtering. */
+  readPage(
+    filters: readonly ReadFilter[],
+    settings?: ReadOptions,
+  ): Promise<{ events: readonly EventData[]; relayCount: number }>;
   subscribeLive(
     listener: LiveListener,
     options?: { replay?: boolean },
   ): () => void;
   live: Readonly<{
-    snapshot(): Readonly<{ status: string }>;
+    /** A channel whose route re-establishes reads its head again (pending). */
+    snapshot(): Readonly<{
+      heads: readonly Readonly<{ channelId?: string; state: string }>[];
+    }>;
     subscribe(listener: () => void): () => void;
   }>;
 }>;
@@ -78,13 +86,16 @@ type Entry = {
 
 const READ_CHUNK = 100;
 const OVERLAY_LIMIT = 500;
+/** Overlay pages read per chunk of pins before folding what arrived. */
+const OVERLAY_PAGES = 20;
 
 const stores = new WeakMap<PinSource, ReturnType<typeof createPinLists>>();
 
 /** One list per channel the UI asked about: read once, then kept current by
- * the channel's live subscription and its replay. A reconnect reads every
- * watched list again in one read, since a cut replay may not carry a change.
- * A failed read stays failed until `retry` or the next reconnect. */
+ * the channel's live subscription and its replay. When channels catch up
+ * after their routes re-establish, their watched lists are read again in one
+ * read, since a cut replay may not carry a change. A failed read stays failed
+ * until `retry` or the next catch-up. */
 function createPinLists(source: PinSource) {
   const entries = new Map<string, Entry>();
   let listening = false;
@@ -124,6 +135,8 @@ function createPinLists(source: PinSource) {
             authors: [relayAuthor],
             "#d": wanted.map(([id]) => id),
             limit: wanted.length,
+            // A repair read must not be served state older than the gap.
+            consistency: "strong",
           },
         ],
         { priority: "background" },
@@ -158,18 +171,28 @@ function createPinLists(source: PinSource) {
     // Kept for the session: lists stay current once asked for. Replay
     // listeners hear live batches too.
     source.subscribeLive(({ events }) => accept(events), { replay: true });
-    let connected = source.live.snapshot().status === "connected";
+    const catchingUp = () =>
+      new Set(
+        source.live
+          .snapshot()
+          .heads.flatMap((head) =>
+            head.state === "pending" && head.channelId ? [head.channelId] : [],
+          ),
+      );
+    let pending = catchingUp();
     source.live.subscribe(() => {
-      const now = source.live.snapshot().status === "connected";
-      if (now && !connected) {
+      const now = catchingUp();
+      const stale: string[] = [];
+      for (const id of now) {
+        const entry = entries.get(id);
+        if (pending.has(id) || !entry || entry.reading) continue;
         // An unwatched list is read again when next asked for.
-        for (const [id, entry] of entries)
-          if (!entry.listeners.size && !entry.reading) entries.delete(id);
-        const watched = [...entries.keys()];
-        for (let index = 0; index < watched.length; index += READ_CHUNK)
-          read(watched.slice(index, index + READ_CHUNK));
+        if (entry.listeners.size) stale.push(id);
+        else entries.delete(id);
       }
-      connected = now;
+      pending = now;
+      for (let index = 0; index < stale.length; index += READ_CHUNK)
+        read(stale.slice(index, index + READ_CHUNK));
     });
   }
   return {
@@ -182,7 +205,9 @@ function createPinLists(source: PinSource) {
         entry = { snapshot: LOADING_PINS, listeners: new Set() };
         entries.set(channelId, entry);
         read([channelId]);
-      }
+      } else if (entry.snapshot.status === "error" && !entry.listeners.size)
+        // A revisit tries a failed list once more.
+        read([channelId]);
       entry.listeners.add(listener);
       const owned = entry;
       return () => {
@@ -204,7 +229,8 @@ export function pinLists(source: PinSource) {
 }
 
 /** Pinned messages by id, with their edits and deletions applied as the
- * timeline applies them. An id the relay no longer returns is absent from the
+ * timeline applies them. Reads are strong: a reload follows an observed list
+ * change, edit or deletion, and must not be served older state. An id the relay no longer returns is absent from the
  * map: deleted or erased. A failed read rejects; callers must not treat it as
  * a deletion. */
 export async function readPinnedMessages(
@@ -228,38 +254,36 @@ export async function readPinnedMessages(
                 ids: chunk,
                 "#h": [channelId],
                 limit: chunk.length,
+                consistency: "strong",
               },
             ],
             settings,
           )),
         ];
-        // Newest first: once a message has an edit or a deletion, older
-        // overlays cannot change it, so each page asks only for the rest.
-        let open = chunk;
+        // Newest first, every page over every pin: a reference settles
+        // nothing until folding checks who may change that message.
+        const seen = new Set<string>();
         let until: number | undefined;
-        while (open.length) {
-          const page = await source.read(
+        for (let pages = 0; pages < OVERLAY_PAGES; pages++) {
+          const page = await source.readPage(
             [
               {
                 kinds: [5, 9005, 40003],
-                "#e": open,
+                "#e": chunk,
                 limit: OVERLAY_LIMIT,
+                consistency: "strong",
                 ...(until === undefined ? {} : { until }),
               },
             ],
             settings,
           );
-          read.push(...page);
-          if (page.length < OVERLAY_LIMIT) break;
-          const seen = new Set(
-            page.flatMap((event) =>
-              event.tags.flatMap(([name, id]) =>
-                name === "e" && id ? [id] : [],
-              ),
-            ),
-          );
-          open = open.filter((id) => !seen.has(id));
-          until = Math.min(...page.map((event) => event.created_at));
+          const fresh = page.events.filter((event) => !seen.has(event.id));
+          for (const event of fresh) seen.add(event.id);
+          read.push(...fresh);
+          // Fullness is the relay's count: visibility may drop some events.
+          if (page.relayCount < OVERLAY_LIMIT || !fresh.length) break;
+          // Inclusive, so events sharing the oldest second are not skipped.
+          until = Math.min(...fresh.map((event) => event.created_at));
         }
         return read;
       }),

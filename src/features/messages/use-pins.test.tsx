@@ -28,12 +28,16 @@ function source(
   const value: PinSource = {
     relayAuthor: relay,
     read: vi.fn(read),
+    async readPage(filters, settings) {
+      const events = await value.read(filters, settings);
+      return { events, relayCount: events.length };
+    },
     subscribeLive(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     live: {
-      snapshot: () => ({ status: "connected" }),
+      snapshot: () => ({ heads: [] }),
       subscribe: () => () => {},
     },
   };
@@ -109,4 +113,19 @@ it("reloads a pinned row when it is edited live", async () => {
     ]),
   );
   expect(vi.mocked(s.value.read).mock.calls.length).toBe(reads);
+  // Withdrawing the edit names only the edit, so any deletion in the channel
+  // reloads; one in another channel does not.
+  content = "before";
+  const deletion = (channel: string) => ({
+    ...message("9".repeat(64)),
+    kind: 5,
+    tags: [
+      ["h", channel],
+      ["e", "e".repeat(64)],
+    ],
+  });
+  act(() => s.deliver([deletion("other")]));
+  expect(vi.mocked(s.value.read).mock.calls.length).toBe(reads);
+  act(() => s.deliver([deletion("c")]));
+  await waitFor(() => expect(result.current.rows[0]?.content).toBe("1"));
 });

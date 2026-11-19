@@ -39,17 +39,21 @@ function source(
   const listeners: LiveListener[] = [];
   const replays: boolean[] = [];
   const connection = new Set<() => void>();
-  let status = "connected";
+  let heads: { channelId: string; state: string }[] = [];
   const value: PinSource = {
     relayAuthor: relayAuthor ?? undefined,
     read: vi.fn(read),
+    async readPage(filters, settings) {
+      const events = await value.read(filters, settings);
+      return { events, relayCount: events.length };
+    },
     subscribeLive(listener, options) {
       listeners.push(listener);
       replays.push(!!options?.replay);
       return () => {};
     },
     live: {
-      snapshot: () => ({ status }),
+      snapshot: () => ({ heads }),
       subscribe(listener) {
         connection.add(listener);
         return () => connection.delete(listener);
@@ -62,11 +66,14 @@ function source(
     for (const listener of listeners)
       listener({ events } as unknown as Parameters<LiveListener>[0]);
   };
-  const connect = (next: string) => {
-    status = next;
-    for (const listener of connection) listener();
+  // Channels whose routes re-establish read their heads again, then settle.
+  const catchUp = (channels: string[]) => {
+    for (const state of ["pending", "verified"]) {
+      heads = channels.map((channelId) => ({ channelId, state }));
+      for (const listener of connection) listener();
+    }
   };
-  return { value, deliver, replays, connect };
+  return { value, deliver, replays, catchUp };
 }
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -97,7 +104,15 @@ it("reads the newest list once, then follows live and replayed lists", async () 
   expect(store.snapshot("c").status).toBe("loading");
   await flush();
   expect(filters).toEqual([
-    [{ kinds: [PIN_LIST_KIND], authors: [relay], "#d": ["c"], limit: 1 }],
+    [
+      {
+        kinds: [PIN_LIST_KIND],
+        authors: [relay],
+        "#d": ["c"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ],
   ]);
   // One replay listener: it hears live batches too.
   expect(s.replays).toEqual([true]);
@@ -140,11 +155,17 @@ it("treats no list as empty, shows none without relay self, and retries a failed
   const stop = store.subscribe("c", () => {});
   await flush();
   expect(store.snapshot("c").status).toBe("error");
-  // Subscribing again, as a re-render does, never reads again by itself.
-  stop();
-  store.subscribe("c", () => {});
+  // Another reader of the failed list, as a second marker, reads nothing.
+  const other = store.subscribe("c", () => {});
   await flush();
   expect(flaky.value.read).toHaveBeenCalledTimes(1);
+  // Revisiting the channel tries once more.
+  stop();
+  other();
+  store.subscribe("c", () => {});
+  await flush();
+  expect(flaky.value.read).toHaveBeenCalledTimes(2);
+  expect(store.snapshot("c").status).toBe("error");
   fail = false;
   store.retry("c");
   expect(store.snapshot("c").status).toBe("loading");
@@ -152,7 +173,7 @@ it("treats no list as empty, shows none without relay self, and retries a failed
   expect(store.snapshot("c")).toMatchObject({ status: "ready", ids: [one] });
 });
 
-it("reads every watched list again in one read after a reconnect", async () => {
+it("reads watched lists again in one read when their channels catch up", async () => {
   const filters: ReadFilter[][] = [];
   const s = source(async (read) => {
     filters.push([...read]);
@@ -166,16 +187,39 @@ it("reads every watched list again in one read after a reconnect", async () => {
   const stop = store.subscribe("e", () => {});
   await flush();
   stop();
-  s.connect("retrying");
-  s.connect("connected");
+  s.catchUp(["c", "d", "e"]);
   await flush();
   // The unwatched list is dropped, and read again when next asked for.
   expect(filters.at(-1)).toEqual([
-    { kinds: [PIN_LIST_KIND], authors: [relay], "#d": ["c", "d"], limit: 2 },
+    {
+      kinds: [PIN_LIST_KIND],
+      authors: [relay],
+      "#d": ["c", "d"],
+      limit: 2,
+      consistency: "strong",
+    },
   ]);
   expect(store.snapshot("c").ids).toEqual([two]);
   expect(store.snapshot("d").ids).toEqual([three]);
   expect(store.snapshot("e")).toBe(LOADING_PINS);
+});
+
+it("keeps a shown list through a failed catch-up read and repairs it on the next", async () => {
+  let reply: () => readonly EventData[] = () => [list([one])];
+  const s = source(async () => reply());
+  const store = pinLists(s.value);
+  store.subscribe("c", () => {});
+  await flush();
+  reply = () => {
+    throw new Error("offline");
+  };
+  s.catchUp(["c"]);
+  await flush();
+  expect(store.snapshot("c")).toMatchObject({ status: "ready", ids: [one] });
+  reply = () => [list([two], 200)];
+  s.catchUp(["c"]);
+  await flush();
+  expect(store.snapshot("c")).toMatchObject({ status: "ready", ids: [two] });
 });
 
 it("loads pinned messages with edits applied and drops ids the relay no longer returns", async () => {
@@ -223,17 +267,56 @@ it("loads pinned messages with edits applied and drops ids the relay no longer r
   ).toEqual([100, 50]);
 });
 
-it("pages edits newest first until every pinned message is settled", async () => {
-  const author = "c".repeat(64);
-  const message = (id: string) =>
+it("pages edits newest first over every pin, whoever references them", async () => {
+  const author = "c".repeat(64),
+    stranger = "d".repeat(64);
+  const message = (id: string, pubkey: string) =>
+    event({ id, pubkey, kind: 9, content: "original", tags: [["h", "c"]] });
+  const edit = (
+    pubkey: string,
+    targets: string[],
+    created_at: number,
+    content: string,
+  ) =>
     event({
-      id,
-      pubkey: author,
-      kind: 9,
-      content: "original",
-      tags: [["h", "c"]],
+      pubkey,
+      kind: 40003,
+      created_at,
+      content,
+      tags: [["h", "c"], ...targets.map((id) => ["e", id])],
     });
-  const edit = (target: string, created_at: number, content: string) =>
+  // A full page of a stranger's edits to their own message, each also naming
+  // `two`, pushes `two`'s author's correction to a later page.
+  const newer = Array.from({ length: 500 }, (_, index) =>
+    edit(stranger, [one, two], 1000 + index, `one ${index}`),
+  );
+  const overlays: ReadFilter[] = [];
+  const s = source(async ([filter]) => {
+    if (filter?.ids) return [message(one, stranger), message(two, author)];
+    assert.exists(filter);
+    overlays.push(filter);
+    return overlays.length === 1
+      ? newer
+      : [edit(author, [two], 900, "two edited")];
+  });
+  const rows = await readPinnedMessages(
+    s.value,
+    "c",
+    [one, two],
+    new AbortController().signal,
+  );
+  const overlay = { kinds: [5, 9005, 40003], "#e": [one, two], limit: 500 };
+  expect(overlays).toEqual([
+    { ...overlay, consistency: "strong" },
+    { ...overlay, consistency: "strong", until: 1000 },
+  ]);
+  expect(rows.get(one)?.content).toBe("one 499");
+  expect(rows.get(two)?.content).toBe("two edited");
+});
+
+it("pages past filtered full pages and a second shared by two pages", async () => {
+  const author = "c".repeat(64);
+  const edit = (created_at: number, target: string, content: string) =>
     event({
       pubkey: author,
       kind: 40003,
@@ -244,28 +327,55 @@ it("pages edits newest first until every pinned message is settled", async () =>
         ["e", target],
       ],
     });
-  // A full page of newer edits to `one` pushes `two`'s edit to a later page.
-  const newer = Array.from({ length: 500 }, (_, index) =>
-    edit(one, 1000 + index, `one ${index}`),
+  // 499 newer edits of `one`, then two at second 1000. Ties order by id, so
+  // `two`'s edit, made last, falls to the second page.
+  const corpus = [
+    ...Array.from({ length: 499 }, (_, index) =>
+      edit(1001 + index, one, `one ${index}`),
+    ),
+    edit(1000, one, "one oldest"),
+    edit(1000, two, "two edited"),
+  ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+  // The session hides one event of the first page, as visibility may.
+  const hidden = corpus[10]?.id;
+  const pages: ReadFilter[] = [];
+  const s = source(async ([filter]) =>
+    filter?.ids
+      ? filter.ids.map((id) =>
+          event({ id, pubkey: author, kind: 9, tags: [["h", "c"]] }),
+        )
+      : [],
   );
-  const overlays: ReadFilter[] = [];
-  const s = source(async ([filter]) => {
-    if (filter?.ids) return [message(one), message(two)];
-    assert.exists(filter);
-    overlays.push(filter);
-    return overlays.length === 1 ? newer : [edit(two, 900, "two edited")];
-  });
+  const value: PinSource = {
+    ...s.value,
+    async readPage([filter], settings) {
+      if (filter?.ids)
+        return {
+          events: await s.value.read([filter], settings),
+          relayCount: 0,
+        };
+      assert.exists(filter);
+      pages.push(filter);
+      const page = corpus
+        .filter(
+          (event) =>
+            filter.until === undefined || event.created_at <= filter.until,
+        )
+        .slice(0, filter.limit);
+      return {
+        events: page.filter((event) => event.id !== hidden),
+        relayCount: page.length,
+      };
+    },
+  };
   const rows = await readPinnedMessages(
-    s.value,
+    value,
     "c",
     [one, two],
     new AbortController().signal,
   );
-  expect(overlays).toEqual([
-    { kinds: [5, 9005, 40003], "#e": [one, two], limit: 500 },
-    { kinds: [5, 9005, 40003], "#e": [two], limit: 500, until: 1000 },
-  ]);
-  expect(rows.get(one)?.content).toBe("one 499");
+  expect(pages.map((page) => page.until)).toEqual([undefined, 1000]);
+  expect(rows.get(one)?.content).toBe("one 498");
   expect(rows.get(two)?.content).toBe("two edited");
 });
 

@@ -405,7 +405,17 @@ const huddles = createHuddles(relay, bridge, async (...args) => {
 });
 const stopRing = createHuddleRing(huddles, () => {
   const audio = new Audio(HUDDLE_RING);
+  // Count clip starts, not `playing` events. `playing` also fires whenever one
+  // clip resumes after its ready state dips (`waiting`), which WebKit's media
+  // pipeline can do while it prerolls on a loaded machine. `play` marks each
+  // new play() from a paused clip, so only its first `playing` counts.
+  let started = false;
+  audio.addEventListener("play", () => {
+    started = false;
+  });
   audio.addEventListener("playing", () => {
+    if (started) return;
+    started = true;
     stats.ringPlays++;
   });
   audio.addEventListener("ended", () => {

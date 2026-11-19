@@ -399,11 +399,18 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   const row = page.locator('button[data-channel-id="dm-peer"]');
   await row.click();
   await expect(row).toHaveAttribute("aria-current", "page");
+  // The first presence read carries only the viewer: the DM row's avatar
+  // subscribes after it. presence.ts admits the peer behind its read gate
+  // (5 s after the previous read settles), and a busy presence lane answers
+  // null and defers another 5–6 s. Budget for those gates, not for the
+  // default expect timeout, which a loaded runner can exceed.
   await expect
-    .poll(() =>
-      app.report.presenceSnapshots.some((snapshot) =>
-        snapshot.filter.authors.includes(app.participants[0]),
-      ),
+    .poll(
+      () =>
+        app.report.presenceSnapshots.some((snapshot) =>
+          snapshot.filter.authors.includes(app.participants[0]),
+        ),
+      { timeout: 20_000 },
     )
     .toBe(true);
   // Snapshot admission precedes the separate live presence REQ.

@@ -1483,6 +1483,7 @@ export function createTabs({
               {conflict("scope")}
               <Select
                 label="Session scope"
+                description="Choose how your agent uses sessions to keep context."
                 variant="preference"
                 value={draft.scope}
                 groups={SCOPES}

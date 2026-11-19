@@ -2232,6 +2232,9 @@ it("separates identity fields from runtime settings without changing the stored 
   view.rerender(<Settings {...props} settingsSection="runtime" />);
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
   expect(screen.getByLabelText("Session scope")).toBeInTheDocument();
+  expect(
+    screen.getByText("Choose how your agent uses sessions to keep context."),
+  ).toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();

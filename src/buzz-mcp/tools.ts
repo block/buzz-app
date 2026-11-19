@@ -1271,17 +1271,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!ids.length && !q) throw new Error("Give ids or q.");
     if (ids.length && q) throw new Error("Give ids or q, not both.");
     if (ids.length > 100) throw new Error("Give at most 100 ids.");
-    // One key lookup serves both the search and the archive list.
     const relay = tools.relayKey();
-    const [people, archived] = await Promise.all([
+    const [people, byId, archived] = await Promise.all([
       ids.length ? undefined : tools.searchPeople(q ?? "", relay),
-      tools.archivedIdentities(relay),
+      ids.length
+        ? client.query([{ kinds: [0], authors: ids, limit: ids.length }])
+        : undefined,
+      // The standalone lookup serves both the search and the archive list.
+      tools.archivedIdentities(client.relayAuthorLookup && relay),
     ]);
     const hidden = (key: string) =>
       !ids.length && args.include_archived !== true && !!archived?.has(key);
-    const profiles =
-      people?.profiles ??
-      (await client.query([{ kinds: [0], authors: ids, limit: ids.length }]));
+    const profiles = people?.profiles ?? byId ?? [];
     const verified = people?.verified ?? new Map<string, VerifiedProfile>();
     const shown = (pubkey: string, name: string) => {
       const found = verified.get(pubkey);
@@ -2419,24 +2420,37 @@ class Tools {
     };
   }
 
-  /** The relay's signed NIP-IA archive list, read fresh; undefined when it
-   * can't be read, so callers fail open. A relay with no key archives no one. */
   /** The relay's key: rejects when it can't be learned now. */
   async relayKey() {
     return this.client.relayAuthor ?? this.client.relayAuthorLookup?.();
   }
 
+  /** The relay's signed NIP-IA archive list, read fresh within ARCHIVE_READ_MS; undefined when it
+   * can't be read, so callers fail open. Only the relay's NIP-11
+   * self key signs it: the standalone lookup, or the app's signing authority,
+   * never its contact key. A relay with no self key archives no one. */
   async archivedIdentities(
-    relay = this.relayKey(),
+    lookup = this.client.relayAuthorLookup?.(),
   ): Promise<ReadonlySet<string> | undefined> {
-    const authority = await relay.catch(() => null);
-    if (authority === null) return undefined;
+    let authority: string | undefined;
+    try {
+      authority = lookup ? await lookup : this.client.signingAuthority;
+    } catch {
+      return undefined;
+    }
     if (!authority) return new Set();
     const client = this.client;
     const archives = createIdentityArchives(
       {
-        async read(filters) {
-          const events = await client.query(filters as readonly Filter[]);
+        async read(filters, options) {
+          const signal = options?.signal;
+          const events = await new Promise<readonly BuzzEvent[]>(
+            (resolve, reject) => {
+              const stop = () => reject(signal?.reason);
+              signal?.addEventListener("abort", stop, { once: true });
+              client.query(filters as readonly Filter[]).then(resolve, reject);
+            },
+          );
           // The connection admits signed events; anything else is no evidence.
           if (
             !events.every((event) =>
@@ -2449,13 +2463,21 @@ class Tools {
       } as RelayReader,
       authority,
     );
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await archives.queries.refresh();
+      await Promise.race([
+        archives.queries.refresh(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, ARCHIVE_READ_MS);
+        }),
+      ]);
       const snapshot = archives.queries.snapshot();
       return snapshot.status === "ready"
         ? new Set(snapshot.archived)
         : undefined;
     } finally {
+      clearTimeout(timer);
+      // Aborts a read still held open.
       archives.dispose();
     }
   }
@@ -3054,6 +3076,8 @@ const NAME_WEIGHT = {
 } as const;
 
 const HEX_KEY = /^[0-9a-f]{64}$/;
+/** How long a users lookup waits for the archive list before going on without it. */
+const ARCHIVE_READ_MS = 5000;
 
 const relayAuthorityOf = (relay: string | undefined) =>
   relay && HEX_KEY.test(relay)

@@ -4159,7 +4159,7 @@ function archivedPeople(forge = false) {
   ]);
   const client = {
     ...base,
-    relayAuthor: relay.pubkey,
+    signingAuthority: relay.pubkey,
     searchProfiles: vi.fn(async () => [
       profile(alice, "Alice Smith"),
       profile(bob, "Bob"),
@@ -4167,6 +4167,47 @@ function archivedPeople(forge = false) {
   };
   return client;
 }
+
+it("reads no archive list signed by a contact key alone", async () => {
+  const { signingAuthority, ...client } = archivedPeople();
+  // The app's contact key, never an archive authority.
+  const contact = { ...client, relayAuthor: signingAuthority };
+  expect(await callTool(contact, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob"`,
+  );
+  expect(contact.query).not.toHaveBeenCalledWith([
+    expect.objectContaining({ kinds: [13535] }),
+  ]);
+});
+
+it("goes on without an archive list held open", async () => {
+  vi.useFakeTimers();
+  try {
+    const client = archivedPeople();
+    const query = client.query;
+    client.query = vi.fn((filters: readonly Filter[]) =>
+      (filters[0]?.kinds as number[] | undefined)?.includes(13535)
+        ? new Promise<never>(() => {})
+        : query(filters),
+    );
+    const warning =
+      "warning: the relay's archive list could not be read, so archived identities are not left out or marked.";
+    const byId = callTool(client, {}, "users", { ids: [bob] });
+    const search = callTool(client, {}, "users", { q: "b" });
+    await vi.advanceTimersByTimeAsync(0);
+    // The profile read starts beside the archive read, not after it.
+    expect(client.query).toHaveBeenCalledWith([
+      { kinds: [0], authors: [bob], limit: 1 },
+    ]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await byId).toBe(`${bob} "Bob"\n${warning}`);
+    expect(await search).toBe(
+      `${alice} "Alice Smith"\n${bob} "Bob"\n${warning}`,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("leaves archived identities out of a name search unless asked", async () => {
   const client = archivedPeople();

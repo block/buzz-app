@@ -157,7 +157,8 @@ it.each([false, true])(
         // The shared session gate checks these optional hooks before dispatch.
         if (property === "protect")
           return protectedSession ? protect : undefined;
-        if (property === "nativeToolGate") return undefined;
+        if (property === "nativeToolGate" || property === "settle")
+          return undefined;
         // The tool list checks whether settings and the Bestie can change here.
         if (property === "settings" || property === "bestie") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
@@ -889,14 +890,9 @@ it("reads the current thread when optional fields are blank or 0", async () => {
 
 it.each([
   ["channel", { channel: "chan" }],
-  ["search", { q: "hello" }],
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
-  [
-    "message search",
-    { message_url: `buzz://message?channel=chan&id=${nested}`, q: "hello" },
-  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -941,8 +937,10 @@ it.each([
     const line = text.split("\n").find((line) => line.startsWith(id));
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
+    // Its thread fields name its root and reply tags, so no tags repeat them.
+    expect(line).not.toContain("tags ");
     expect(line).toContain("hello, edited");
-    if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
+    if ("channel" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
     // Human authors and direct replies keep their compact, unambiguous form.
     expect(
@@ -957,6 +955,87 @@ it.each([
     expect(message.sig).toBe(signature);
   },
 );
+
+it("shows a message's meaningful tags in a read, but not its bookkeeping", async () => {
+  const id = "4".repeat(64);
+  const shown = [
+    // A lone root isn't a reply, so no thread field names it.
+    ["e", root, "", "root"],
+    ["p", bob],
+    ["q", nested],
+    ["t", "release"],
+    ["imeta", "url https://relay.test/media/a.png", "m image/png"],
+    ["buzz:request", nested],
+  ];
+  const auth = ["auth", bob, "kind=9", "8".repeat(128)];
+  const hidden = [
+    ["audience", "agents"],
+    ["client-id", "c1"],
+    ["ms", "5"],
+    ["model", bob, "m"],
+  ];
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "tagged",
+      tags: [["h", "chan"], auth, ...shown, ...hidden],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(`tags ${JSON.stringify(shown)} at `);
+  expect(line).not.toContain('"h"');
+  expect(line).not.toContain(auth[3]);
+});
+
+it("reads an edited message with the files and emoji its latest edit leaves", async () => {
+  const id = "4".repeat(64);
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "files :party:",
+      tags: [
+        ["h", "chan"],
+        ["imeta", "url https://relay.test/media/old.png"],
+        ["emoji", "party", "https://relay.test/party.png"],
+      ],
+    }),
+    event({
+      id: "5".repeat(64),
+      kind: 40003,
+      created_at: 110,
+      content: "files, edited",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["imeta", "url https://relay.test/media/new.png"],
+      ],
+    }),
+    // Newer, with no files, so it clears them, as the relay does.
+    event({
+      id: "6".repeat(64),
+      kind: 40003,
+      created_at: 120,
+      content: "files, edited again :wave:",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["emoji", "wave", "https://relay.test/wave.png"],
+      ],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(
+    `tags ${JSON.stringify([
+      ["emoji", "wave", "https://relay.test/wave.png"],
+    ])} at `,
+  );
+});
 
 const reply = (id: string, created_at: number) =>
   event({
@@ -975,47 +1054,7 @@ const next = (answer: string) => {
   return found ? (JSON.parse(found) as Record<string, unknown>) : undefined;
 };
 
-it("searches one author's messages since a time across channels, before the limit", async () => {
-  const { client } = fake([
-    profile(alice, "Alice Smith"),
-    event({ id: "3".repeat(64), created_at: 50, content: "too old" }),
-    event({
-      id: "4".repeat(64),
-      created_at: 200,
-      content: "rollout done",
-      tags: [["h", "other"]],
-    }),
-    // Newer messages from someone else that a limit applied first would keep.
-    ...["5", "6", "7"].map((n) =>
-      event({ id: n.repeat(64), pubkey: bob, created_at: 300 }),
-    ),
-  ]);
-  const answer = await read(client, {
-    q: "rollout",
-    author: npubEncode(alice),
-    since: 100,
-    limit: 2,
-  });
-  expect(answer).toBe(
-    `${"4".repeat(64)} from ${alice} "Alice Smith" in other at 1970-01-01T00:03Z: rollout done`,
-  );
-  // Without a channel, search still spans every channel it can read.
-  expect(client.query).toHaveBeenCalledWith([
-    {
-      kinds: [9, 40002, 45001, 45003],
-      search: "rollout",
-      limit: 2,
-      authors: [alice],
-      since: 100,
-    },
-  ]);
-  // A full page says more may match.
-  expect(await read(client, { q: "x", limit: 1 })).toMatch(
-    /\nResult limit reached; more matches may exist\. Narrow with channel, author, since or before\.$/,
-  );
-});
-
-it("tells apart people with the same name, and where each message is", async () => {
+it("names a channel read's channel once, and each reply's thread", async () => {
   const { client } = fake([
     profile(alice, "Sam"),
     profile(bob, "Sam"),
@@ -1031,11 +1070,6 @@ it("tells apart people with the same name, and where each message is", async () 
       ],
     }),
   ]);
-  expect((await read(client, { q: "ship" })).split("\n")).toEqual([
-    `${"3".repeat(64)} from ${alice} "Sam" in chan at 1970-01-01T00:01Z: ship it`,
-    `${"4".repeat(64)} from ${bob} "Sam" in other re ${root} at 1970-01-01T00:02Z: ship it too`,
-  ]);
-  // A channel read names the channel once, and each reply's thread.
   expect(
     (await read(client, { channel: "other", author: bob, since: 110 })).split(
       "\n",
@@ -1096,26 +1130,34 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
 it("refuses read arguments it cannot apply, saying how to fix them", async () => {
   const { client } = fake(community);
   for (const [args, error] of [
-    [{ q: "x", author: "alice" }, "author must be a hex pubkey or npub"],
-    [{ q: "x", author: 7 }, "author must be a hex pubkey or npub"],
-    [{ q: "x", since: "friday" }, "since must be Unix seconds"],
-    [{ q: "x", since: -1 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1.5 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1_760_000_000_000 }, "since must be Unix seconds"],
-    [{ q: "x", since: 200, before: 100 }, "since must not be after before"],
+    // A session that kept an older tool list may still search through read.
+    [{ q: "x" }, "read does not search; use search with the same q."],
+    [{ q: "x", channel: "chan" }, "read does not search; use search"],
+    [
+      { channel: "chan", author: "alice" },
+      "author must be a hex pubkey or npub",
+    ],
+    [{ channel: "chan", author: 7 }, "author must be a hex pubkey or npub"],
+    [{ channel: "chan", since: "friday" }, "since must be Unix seconds"],
+    [{ channel: "chan", since: -1 }, "since must be Unix seconds"],
+    [{ channel: "chan", since: 1.5 }, "since must be Unix seconds"],
+    [
+      { channel: "chan", since: 1_760_000_000_000 },
+      "since must be Unix seconds",
+    ],
+    [
+      { channel: "chan", since: 200, before: 100 },
+      "since must not be after before",
+    ],
     [{ channel: "chan", before_id: root }, "before_id needs before"],
     [{ channel: "chan", before: 1, before_id: "x" }, "before_id must be"],
     [
-      { q: "x", before: 1, before_id: root },
-      "before_id pages thread and channel reads",
-    ],
-    [
       { author: alice },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread; add channel, or use search.",
     ],
     [
       { thread: root, since: 1 },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread",
     ],
   ] as const)
     await expect(read(client, args), JSON.stringify(args)).rejects.toThrow(
@@ -5314,4 +5356,52 @@ it("preserves ordinary attachment sends when snapshot hashing is unavailable", a
   } finally {
     hash.mockRestore();
   }
+});
+
+it("passes only explicit runtime settings through the owner review tool", async () => {
+  const { client } = fake([]);
+  client.updateAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  const settings = {
+    model: "",
+    effort: "high",
+    scope: "community",
+    voice: "maple",
+    apps: false,
+    workspace: "~/example",
+    compactAt: "150000",
+  };
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: "Self",
+      ...settings,
+      model: "  ",
+      effort: " high ",
+      voice: " maple ",
+    }),
+  ).resolves.toBe('{"requestId":"draft","saved":false}');
+  expect(client.updateAgent).toHaveBeenCalledWith({ agent: "Self", settings });
+  for (const invalid of [
+    { scope: "all" },
+    { apps: "false" },
+    { model: null },
+    { compactAt: "99000" },
+    { compactAt: "150500" },
+    { compactAt: 150000 },
+    { config: {} },
+  ])
+    await expect(
+      callTool(client, {}, "agent_update", {
+        agent: "Self",
+        ...invalid,
+      }),
+    ).rejects.toThrow();
+  expect(client.updateAgent).toHaveBeenCalledTimes(1);
+  await callTool(client, {}, "agent_update", { agent: "Self", compactAt: "" });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Self",
+    settings: { compactAt: "" },
+  });
 });

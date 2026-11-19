@@ -1,0 +1,1 @@
+Make file changes in a worktree, not on the default branch. When continuing recent work, reuse the existing worktree rather than creating another. For an existing local checkout, make changes in a new worktree.

@@ -84,10 +84,10 @@ jobs:
           source bin/activate-hermit
           cd src/bundled/pi/deps
           npm ci --ignore-scripts --no-audit --no-fund
-      - name: Real Pi tools and recovery
+      - name: Real Pi tools, recovery and host
         env:
           PI_DEPS: ${{ github.workspace }}/src/bundled/pi/deps
-        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/vitest.json evidence=test-results/protection/timing.json title="Protected Pi" -- ./bin/pnpm exec vitest run src/bundled/pi/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/vitest.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/vitest.json evidence=test-results/protection/timing.json title="Protected Pi" -- ./bin/pnpm exec vitest run src/bundled/pi/protection.live.test.ts src/bundled/pi/host.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/vitest.json
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: agent-protection
@@ -115,7 +115,16 @@ jobs:
   native:
     if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
-    runs-on: ubuntu-24.04
+    # Use the PR author so a human rerunning a bot PR keeps standard runners.
+    # Fork-owned workflows also retain runners they can access.
+    runs-on: &linux_16core_or_standard >-
+      ${{ fromJSON(
+        github.repository == 'block/buzz-app' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.type == 'User' &&
+        '{"group":"buzz-runners","labels":"buzz-ubuntu-x64-16core"}' ||
+        '"ubuntu-24.04"'
+      ) }}
     # A Cargo.lock change rebuilds most crates from a cold cache, and only a
     # finished main push saves a warm one, so leave room for that cold run.
     timeout-minutes: 30
@@ -268,7 +277,14 @@ jobs:
   browser_fixture:
     if: github.event_name != 'workflow_dispatch'
     name: Native browser fixture
-    runs-on: ubuntu-24.04
+    runs-on: &linux_8core_or_standard >-
+      ${{ fromJSON(
+        github.repository == 'block/buzz-app' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.type == 'User' &&
+        '{"group":"buzz-runners","labels":"buzz-ubuntu-x64-8core"}' ||
+        '"ubuntu-24.04"'
+      ) }}
     timeout-minutes: 15
     outputs:
       artifact-id: ${{ steps.fixture-upload.outputs.artifact-id }}
@@ -308,7 +324,7 @@ jobs:
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
     needs: [browser_fixture]
-    runs-on: ubuntu-24.04
+    runs-on: *linux_8core_or_standard
     # Match package.json's Playwright version and pin immutable browser/OS layers.
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27

@@ -146,11 +146,12 @@ writer selects the admission contract by the event's `d` coordinate. The
 sidebar coordinates must match what the sidebar signer produces, and recipe
 coordinates must satisfy the recipe contract.
 
-The sidebar defaults to **Plugins** (sidebar pages such as Activity, when
-any are enabled), **Starred**, personal workspaces, **Solo**, **Team**,
-**Forums**, and **Direct messages**. All sections can be reordered by dragging
-the heading or through **Move up** and **Move down**. The saved order syncs with
-workspace placement.
+Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
+list. When the pinned rows run out of vertical space, scroll their area to see
+the rest. The conversation sections default to **Starred**, personal
+workspaces, **Solo**, **Team**, **Forums**, and **Direct messages**. Reorder them
+by dragging their headings or using **Move up** and **Move down**. The saved
+order syncs with workspace placement.
 
 Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
 its home section. The row’s **Move to…** menu offers the same destinations.
@@ -170,9 +171,12 @@ They survive page switches in the same mounted sidebar, are saved when that
 sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
 palette; legacy sidebar filters are ignored. Each section's ellipsis menu offers
-**Filter → All, Unreads, Active in the last**. Unreads shows channels with observed or
-manually marked unread messages or unread thread activity. Muted channels with retained unread backlog remain eligible even when their ordinary sidebar cues are quiet: mute does not mark messages read. Active in the last opens a compact,
-content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
+**Filter → All, Unreads, Active**. Unreads shows channels with observed or
+manually marked unread messages or unread thread activity. Muted channels with
+retained unread backlog remain eligible even when their ordinary sidebar cues
+are quiet: mute does not mark messages read. Active opens the compact
+**Active in the last** dialog with 1-, 7-, 30-, and 90-day text-only radio tiles
+in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
 failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until their activity is read. Activity applies in one update when a read finishes; a read that fails partway still applies what it read, and channels it did not reach stay available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
@@ -232,7 +236,7 @@ The development broker and packaged native host save these choices in the deskto
 kind-30078 `channel-workspace-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
 A–Z writes a null register and removes that group's legacy override.
 Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
-coordinate: Unreads is `unreads`, Active in the last is `active`, and All
+coordinate: Unreads is `unreads`, Active is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
 stores each group’s duration in whole-day seconds; absence means 30 days. Presets
 and custom values share this representation. Apply publishes mode and duration
@@ -635,7 +639,12 @@ New message from previewing the DM's history (see
 refreshes with the channel roster, preserves the last good set on failure and
 rejects older snapshots. Live cross-device visibility updates are deferred; any
 confirmed `41010` open, including New message Send, unhides the DM, and its row
-returns when visibility next refreshes.
+returns when visibility next refreshes. A new message from another member also
+unhides it on the relay, which republishes the snapshot before the message fans
+out, so its arrival in a hidden DM refreshes visibility and the row returns.
+Reconnect replay counts as an arrival, and one that lands before the first
+visibility read finishes waits for that read to classify it. A message only for
+agents (`audience: agents`) leaves the DM hidden.
 
 A definitive rejection offers retry without optimistic removal. If publication or
 confirmation has an uncertain outcome, the dialog warns that the command may have

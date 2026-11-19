@@ -2157,7 +2157,7 @@ it("keeps the message's place when older rows move its date separator to another
       const top =
         row?.dataset.messageId === h.saved.anchor.id
           ? itemTop +
-            (this.tagName === "P" &&
+            (this.closest("[data-message-action-anchor]") &&
             !document.querySelector('[data-message-id="older"]')
               ? 120
               : 0)

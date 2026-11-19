@@ -41,12 +41,21 @@ import {
 import { imageType } from "../features/relay/attachment-limits";
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
+import {
+  editedTags,
+  readableTags,
+} from "../features/agent-harness/turn-records";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
 import type { RelayEvent } from "../features/relay/events";
+import {
+  compactAt as parseCompactAt,
+  MIN_COMPACT_AT,
+} from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
+import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -161,8 +170,30 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str, picture: str },
+    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Supported runtime settings can be proposed for your owner’s local agents in this community. Nothing changes until the owner saves it.",
+    {
+      agent: str,
+      name: str,
+      type: str,
+      instructions: str,
+      picture: str,
+      model: { ...str, description: "Model ID; empty follows the default." },
+      effort: {
+        ...str,
+        description: "Thinking level; empty follows the default.",
+      },
+      scope: { type: "string", enum: ["thread", "channel", "community"] },
+      workspace: str,
+      voice: {
+        ...str,
+        description: "Huddle voice ID; empty follows the default.",
+      },
+      apps: { type: "boolean", description: "Allow Codex apps and plugins." },
+      compactAt: {
+        ...str,
+        description: `Auto-compact threshold in tokens, in multiples of 1000 from ${MIN_COMPACT_AT}. Empty uses the harness default.`,
+      },
+    },
     ["agent"],
   ),
   tool(
@@ -232,36 +263,31 @@ export const TOOLS: readonly Tool[] = [
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
   ),
-  tool(
-    "read",
-    "Read a thread (default: current), a channel's latest, or search with q.",
-    {
-      channel: str,
-      thread: str,
-      message_url: {
-        type: "string",
-        description: "Buzz message link; replaces channel and thread.",
-      },
-      q: str,
-      author: {
-        type: "string",
-        description: "With q or channel: only this hex pubkey or npub.",
-      },
-      since: {
-        type: "integer",
-        description: "With q or channel: Unix seconds, at or after.",
-      },
-      before: { type: "integer", description: "Unix seconds, at or before." },
-      before_id: {
-        type: "string",
-        description: "For paginating: with before, from a continue line.",
-      },
-      limit: {
-        type: "integer",
-        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
+  tool("read", "Read a thread (default: current) or a channel's latest.", {
+    channel: str,
+    thread: str,
+    message_url: {
+      type: "string",
+      description: "Buzz message link; replaces channel and thread.",
     },
-  ),
+    author: {
+      type: "string",
+      description: "With channel: only this hex pubkey or npub.",
+    },
+    since: {
+      type: "integer",
+      description: "With channel: Unix seconds, at or after.",
+    },
+    before: { type: "integer", description: "Unix seconds, at or before." },
+    before_id: {
+      type: "string",
+      description: "For paginating: with before, from a continue line.",
+    },
+    limit: {
+      type: "integer",
+      description: "Thread 100 (max 500), channel 30 (max 200).",
+    },
+  }),
   tool(
     "search",
     'Search messages you can read, best match first. The query q matches whole words only, not other forms of a word, and supports "exact phrase", -word and a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
@@ -509,7 +535,11 @@ export function callTool(
   if (!handler) throw new Error(`No tool ${name}`);
   // A channel or member tool refuses arguments it does not list, so a
   // misspelled target cannot fall back to the current channel.
-  if (name.startsWith("channel_") || name.startsWith("member_")) {
+  if (
+    name.startsWith("channel_") ||
+    name.startsWith("member_") ||
+    name === "agent_update"
+  ) {
     const listed =
       TOOLS.find((tool) => tool.name === name)?.inputSchema.properties ?? {};
     const extra = Object.keys(args).filter(
@@ -602,7 +632,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name);
     const type = text(args.type);
     // Empty instructions propose clearing them.
-    const { instructions } = args;
+    const {
+      instructions,
+      model,
+      effort,
+      scope,
+      workspace,
+      voice,
+      apps,
+      compactAt,
+    } = args;
+    for (const [key, value] of Object.entries({
+      model,
+      effort,
+      workspace,
+      voice,
+    })) {
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${key} must be a string`);
+    }
+    if (
+      scope !== undefined &&
+      scope !== "thread" &&
+      scope !== "channel" &&
+      scope !== "community"
+    )
+      throw new Error("scope must be thread, channel or community");
+    if (apps !== undefined && typeof apps !== "boolean")
+      throw new Error("apps must be a boolean");
+    if (
+      compactAt !== undefined &&
+      compactAt !== "" &&
+      !parseCompactAt(compactAt)
+    )
+      throw new Error(
+        `compactAt must be a token count string in multiples of 1000 from ${MIN_COMPACT_AT}, or empty for the harness default`,
+      );
+    const settings: AgentSettingsProposal = {
+      ...(typeof model === "string" && { model: model.trim() }),
+      ...(typeof effort === "string" && { effort: effort.trim() }),
+      ...(scope !== undefined && { scope }),
+      ...(typeof workspace === "string" && { workspace }),
+      ...(typeof voice === "string" && { voice: voice.trim() }),
+      ...(typeof apps === "boolean" && { apps }),
+      ...(typeof compactAt === "string" && { compactAt }),
+    };
     const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
       await client.updateAgent({
@@ -610,6 +684,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(Object.keys(settings).length && { settings }),
         ...(picture && { picture }),
       }),
     );
@@ -781,6 +856,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async read(tools, args) {
     const { client, context } = tools;
+    // A session that kept an older tool list may still search through read.
+    if (text(args.q))
+      throw new Error("read does not search; use search with the same q.");
     args = ignoreBlankFields(args, [
       "channel",
       "thread",
@@ -832,32 +910,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(before !== undefined ? { until: before } : {}),
       ...(beforeId ? { before_id: beforeId } : {}),
     };
-    const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    if (q) {
-      if (beforeId)
-        throw new Error(
-          "before_id pages thread and channel reads; narrow a search with before or since.",
-        );
-      const max = bound(limit, 20, 100);
-      const found = await client.query([
-        {
-          kinds: SEARCH,
-          search: q,
-          limit: max,
-          ...(args.channel ? { "#h": [channel] } : {}),
-          ...cursor,
-          ...filters,
-        },
-      ]);
-      const lines = await tools.messages(found, {});
-      if (!lines.length) return "No messages.";
-      if (found.length >= max)
-        lines.push(
-          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
-        );
-      return lines.join("\n");
-    }
     let scope: { channel?: string; root?: string };
     let max: number;
     let more: Args;
@@ -866,7 +919,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (text(args.thread) || (args.channel === undefined && context.root)) {
       if (author || since !== undefined)
         throw new Error(
-          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+          "author and since filter a channel read, not a thread; add channel, or use search.",
         );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
@@ -2583,7 +2636,8 @@ class Tools {
   }
 }
 
-/** A message's line in a read, omitting what `scope` names. */
+/** A message's line in a read, omitting what `scope` names, then its other
+ * tags. */
 function messageLine(
   event: BuzzEvent,
   name: string | undefined,
@@ -2593,6 +2647,14 @@ function messageLine(
   const owner = tag(event, "auth");
   const reference = threadReference(event);
   const thread = reference?.rootId;
+  // The rest, but for the thread references the line already names.
+  const named = [reference?.rootId, reference?.parentId];
+  const tags = readableTags(event.tags).filter(
+    ([name, value, , marker]) =>
+      name !== "e" ||
+      (marker !== "root" && marker !== "reply") ||
+      !named.includes(value?.toLowerCase()),
+  );
   return [
     event.id,
     `from ${event.pubkey}`,
@@ -2603,6 +2665,7 @@ function messageLine(
     reference &&
       reference.parentId !== thread &&
       `reply_to ${reference.parentId}`,
+    tags.length > 0 && `tags ${JSON.stringify(tags)}`,
     `at ${time(event.created_at)}: ${event.content}`,
   ]
     .filter(Boolean)
@@ -2619,7 +2682,10 @@ function rootOf(event: BuzzEvent) {
   return ((root && reply ? root : reply)?.[1] ?? event.id) as string;
 }
 
-/** Messages oldest first, each showing its author's latest edit. */
+/** Messages oldest first, each showing its author's latest edit, with the
+ * files it leaves (none when it clears them, as the relay serves; the
+ * timeline's `foldMessages` still shows the last files) and its custom
+ * emoji. */
 function edited(events: readonly BuzzEvent[]) {
   const messages = events.filter((event) => event.kind !== 40003);
   const byId = new Map(messages.map((event) => [event.id, event]));
@@ -2627,12 +2693,11 @@ function edited(events: readonly BuzzEvent[]) {
   for (const event of events)
     if (event.kind === 40003) {
       const target = tag(event, "e");
-      const message = target ? byId.get(target) : undefined;
       const last = target && edits.get(target);
       // Authorship first, so someone else's newer edit hides none.
       if (
         target &&
-        message?.pubkey === event.pubkey &&
+        byId.get(target)?.pubkey === event.pubkey &&
         (!last || last.created_at < event.created_at)
       )
         edits.set(target, event);
@@ -2640,7 +2705,18 @@ function edited(events: readonly BuzzEvent[]) {
   return messages
     .map((event) => {
       const edit = edits.get(event.id);
-      return edit ? { ...event, content: edit.content } : event;
+      return edit
+        ? {
+            ...event,
+            content: edit.content,
+            tags: editedTags(
+              event.tags,
+              edit.tags,
+              (edit.tags.some(([name]) => name === "emoji") ? edit : event)
+                .tags,
+            ),
+          }
+        : event;
     })
     .sort((a, b) => a.created_at - b.created_at);
 }

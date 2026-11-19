@@ -7,7 +7,7 @@ test.use({
   exactMessages: true,
   historyCounts: { alpha: 103, beta: 0 },
 });
-test("ordinary thread reveals its first content already positioned at the bottom", async ({
+test("ordinary read thread reveals its first content already positioned at its root", async ({
   page,
   app,
 }) => {
@@ -69,18 +69,19 @@ test("ordinary thread reveals its first content already positioned at the bottom
       "opacity",
       "0",
     );
-    await page.evaluate(() => {
+    await page.evaluate((rootId) => {
       const sample = () => {
         const el = document.querySelector('[aria-label="Thread messages"]');
-        if (el && !el.hasAttribute("data-positioning")) {
+        const root = el?.querySelector(`[data-message-id="${rootId}"]`);
+        if (el && root && !el.hasAttribute("data-positioning")) {
           window.firstThreadFrame = {
-            top: el.scrollTop,
-            gap: el.scrollHeight - el.clientHeight - el.scrollTop,
+            rootTop:
+              root.getBoundingClientRect().top - el.getBoundingClientRect().top,
           };
         } else requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
-    });
+    }, app.exact.root.id);
   } finally {
     release();
   }
@@ -92,7 +93,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   await expect
     .poll(() => page.evaluate(() => window.firstThreadFrame))
     .toBeTruthy();
+  // Nothing is unread and this device left no place, so it opens at the root.
   const first = await page.evaluate(() => window.firstThreadFrame);
-  expect(first.top).toBeGreaterThan(0);
-  expect(Math.abs(first.gap)).toBeLessThanOrEqual(1);
+  expect(Math.abs(first.rootTop)).toBeLessThanOrEqual(1);
 });

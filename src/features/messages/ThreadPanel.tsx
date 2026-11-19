@@ -67,6 +67,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+import { readView, writeView } from "../../shared/view-state";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
@@ -228,6 +229,50 @@ type ThreadPlace = {
   anchor?: { id: string; top: number; ancestors: readonly string[] };
 };
 const THREAD_PLACE = "thread";
+// Where each thread was last left on this device, so an ordinary opening with
+// nothing unread returns there. One record per account/community keeps the 256
+// newest places, keyed `<channel>:<root>`, oldest first.
+const PLACES = "thread-places";
+const MAX_PLACES = 256;
+const savedPlaces = (scope: string) => {
+  const places = readView<unknown>(scope, PLACES, undefined);
+  return new Map(
+    places && typeof places === "object" && !Array.isArray(places)
+      ? Object.entries(places)
+      : [],
+  );
+};
+function savedThreadPlace(
+  scope: string,
+  channelId: string,
+  rootId: string,
+): ThreadPlace | undefined {
+  const place = savedPlaces(scope).get(`${channelId}:${rootId}`);
+  if (!place || typeof place !== "object") return undefined;
+  const { anchor } = place as ThreadPlace;
+  if (anchor === undefined) return {};
+  // Ids select rows, so only event ids pass.
+  const eventId = (id: unknown) =>
+    typeof id === "string" && /^[0-9a-f]{64}$/.test(id);
+  return eventId(anchor?.id) &&
+    Number.isFinite(anchor.top) &&
+    Array.isArray(anchor.ancestors) &&
+    anchor.ancestors.every(eventId)
+    ? { anchor }
+    : undefined;
+}
+function saveThreadPlace(
+  scope: string,
+  channelId: string,
+  rootId: string,
+  place: ThreadPlace,
+) {
+  const key = `${channelId}:${rootId}`;
+  const places = savedPlaces(scope);
+  places.delete(key);
+  places.set(key, place);
+  writeView(scope, PLACES, Object.fromEntries([...places].slice(-MAX_PLACES)));
+}
 /** Reader lifetime follows the open thread; navigation owns only a reveal request. */
 function RetainedThreadPanel(props: ThreadPanelProps) {
   type Opening = {
@@ -978,6 +1023,8 @@ function ThreadMessages({
     opening?: object | undefined;
     id?: string | null;
     failed?: true;
+    /** With no line, where the opening starts. */
+    place?: ThreadPlace;
   }>(() => ({ opening }));
   if (opening && opening !== boundary.opening) setBoundary({ opening });
   const unreadBoundary = boundary.id;
@@ -1120,7 +1167,35 @@ function ThreadMessages({
           : new Set([...current, ...ancestors]),
       );
     }
-    setBoundary({ ...boundary, id: first?.id ?? null });
+    // With nothing unread, an opening returns to where this device last left
+    // the thread, or else starts at its root. Older pages load until that
+    // place's reply is shown; the root needs the whole bounded history. A
+    // place the reader already chose, as a route lands late, wins.
+    const rootId = snapshot.root?.id ?? messageId;
+    const place =
+      first || !boundary.opening || (positioned.current && !follow.current)
+        ? undefined
+        : (savedThreadPlace(scope, channelId, rootId) ?? {
+            anchor: { id: rootId, top: 0, ancestors: [] },
+          });
+    // A legacy walk reads forward from the oldest reply on its own.
+    const anchor = place?.anchor;
+    const older = snapshot.direction === "older";
+    if (
+      anchor &&
+      snapshot.canLoadMore &&
+      (anchor.id === rootId
+        ? older
+        : !snapshot.replies.some((row) => row.id === anchor.id))
+    ) {
+      if (older && !snapshot.resumed) void view.loadMore();
+      return;
+    }
+    setBoundary({
+      ...boundary,
+      id: first?.id ?? null,
+      ...(place && { place }),
+    });
   }, [
     boundary,
     active,
@@ -1137,6 +1212,7 @@ function ThreadMessages({
     channelId,
     view,
     threadUnread,
+    scope,
   ]);
   const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
@@ -1177,36 +1253,48 @@ function ThreadMessages({
   // the next route arrives, before that route can restore the place. No
   // reading is captured while it is hidden, and showing it again restores the
   // reading first, so an offset the browser dropped meanwhile is never saved.
+  // The thread's place on this device is recorded with it, and also as the
+  // page hides, since reload and quit never unmount.
   const leftTree = useRef(tree);
   leftTree.current = tree;
+  // A failed opening showed no place to come back to.
+  const leftRoot = useRef<string>(undefined);
+  leftRoot.current = boundary.failed ? undefined : snapshot.root?.id;
   const withdrawn = useRef<() => void>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: hiding or showing the reader again records its place too.
   useLayoutEffect(() => {
     if (!navigation) return withdrawn.current;
     withdrawn.current = undefined;
-    return () => {
-      const presented = returning
+    const presented = () =>
+      returning
         ? restoredVisit.current === navigation.signal
         : (rootTarget && positioned.current) ||
           revealed.current === navigation.signal;
-      if (!presented) return;
-      const record = () => {
-        const reading = resizePosition.current;
-        if (!reading) return;
-        const id = reading.anchor?.element.dataset.messageId;
-        navigation.savePosition(
-          THREAD_PLACE,
-          follow.current || !reading.anchor || !id
-            ? {}
-            : {
-                anchor: {
-                  id,
-                  top: reading.anchor.top,
-                  ancestors: leftTree.current.ancestors(id),
-                },
+    const record = () => {
+      const reading = resizePosition.current;
+      if (!reading) return;
+      const id = reading.anchor?.element.dataset.messageId;
+      const place =
+        follow.current || !reading.anchor || !id
+          ? {}
+          : {
+              anchor: {
+                id,
+                top: reading.anchor.top,
+                ancestors: leftTree.current.ancestors(id),
               },
-        );
-      };
+            };
+      navigation.savePosition(THREAD_PLACE, place);
+      if (leftRoot.current)
+        saveThreadPlace(scope, channelId, leftRoot.current, place);
+    };
+    const hide = () => {
+      if (presented()) record();
+    };
+    window.addEventListener("pagehide", hide);
+    return () => {
+      window.removeEventListener("pagehide", hide);
+      if (!presented()) return;
       record();
       withdrawn.current = record;
     };
@@ -1445,7 +1533,18 @@ function ThreadMessages({
     shown.current = active;
     // Back/Forward returns once to where this visit was left: its row, with
     // the branch holding it reopened, or else its nearest ancestor shown.
-    // When neither is loaded the visit opens again as it first did.
+    // When neither is loaded the visit opens again as it first did. An
+    // ordinary opening with nothing unread returns likewise to its decided
+    // place, or else to the root.
+    const back =
+      navigation && returning && restoredVisit.current !== navigation.signal
+        ? navigation
+        : undefined;
+    const decided =
+      unreadBoundary === null && placed.current !== boundary
+        ? boundary.place
+        : undefined;
+    const place = back ? (back.position(THREAD_PLACE) as ThreadPlace) : decided;
     if (openLatest) {
       positionedLatestRequest.current = latestRequest;
       targetAnchor.current = undefined;
@@ -1453,12 +1552,8 @@ function ThreadMessages({
       lineTop.current = undefined;
       jumpingToLatest.current = false;
       follow.current = true;
-    } else if (
-      navigation &&
-      returning &&
-      restoredVisit.current !== navigation.signal
-    ) {
-      const { anchor } = navigation.position(THREAD_PLACE) as ThreadPlace;
+    } else if (place) {
+      const { anchor } = place;
       const closed = anchor
         ? tree.ancestors(anchor.id).filter((id) => !expanded.has(id))
         : [];
@@ -1468,17 +1563,21 @@ function ThreadMessages({
       }
       const row =
         anchor &&
-        [anchor.id, ...anchor.ancestors]
+        [
+          anchor.id,
+          ...anchor.ancestors,
+          ...(!back && snapshot.root ? [snapshot.root.id] : []),
+        ]
           .map((id) =>
             element.querySelector<HTMLElement>(`[data-message-id="${id}"]`),
           )
           .find((row) => row);
-      if (anchor && !row) {
+      if (back && anchor && !row) {
         revealed.current = undefined;
-        setLostPlace(navigation.signal);
+        setLostPlace(back.signal);
         return;
       }
-      restoredVisit.current = navigation.signal;
+      if (back) restoredVisit.current = back.signal;
       targetAnchor.current = undefined;
       follow.current = !row;
       if (row && anchor)

@@ -642,8 +642,11 @@ and are asked to sign in again in Buzz.
   reply's branch, whose count shows what is new. Buzz loads older replies until
   it finds where unread replies begin. Opening the thread again, even in a tab
   that is still open, finds the first unread reply again; switching tabs keeps
-  the divider. A thread with nothing unread opens at its latest reply, as
-  does one whose unread replies this device has not seen yet. An unread
+  the divider. A thread with nothing unread opens where you last left it on
+  this device, at a reply or at its latest reply, or else at its top, loading
+  older replies first. So does one whose unread replies this device has not
+  seen yet. Buzz remembers the 256 most recently left threads per account and
+  community. An unread
   channel thread selected in Activity opens the same way, though selecting it
   marks it read. Opening a specific reply, such as a mention, opens at that
   reply.

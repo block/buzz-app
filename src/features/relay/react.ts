@@ -28,32 +28,34 @@ export function useChannelList(queries: ChannelQueries) {
  * The roster without its live activity: previews and activity replace the list
  * on every message, so a ready list that changed only those fields keeps the
  * previous snapshot. `activity` keeps `lastActivityAt` and `activityKnown`
- * changes for all rows or for rows that match a predicate. `preview` keeps
- * `preview` changes. Rows can read their own preview with useLiveChannelSummary.
+ * changes for all rows or for rows that match a predicate. With `order`, those
+ * changes are kept only when they reorder the rows `activity` selects, so a
+ * list sorted by `order` stays correct. `preview` keeps `preview` changes. Rows
+ * can read their own preview with useLiveChannelSummary.
  */
 export function useChannelRoster(
   queries: ChannelQueries,
   {
     activity = false,
     preview = false,
+    order,
   }: {
     activity?: boolean | ((channel: ChannelSummary) => boolean);
     preview?: boolean;
+    order?: Order;
   } = {},
 ) {
   useEffect(() => queries.ensureList(), [queries]);
   const ignoredWithActivity = preview ? noFields : previewField;
+  const ignoredWithoutActivity = preview ? activityTimes : activityFields;
   const ignored =
-    activity === true
-      ? ignoredWithActivity
-      : preview
-        ? activityTimes
-        : activityFields;
+    activity === true ? ignoredWithActivity : ignoredWithoutActivity;
   const activityFilter = typeof activity === "function" ? activity : undefined;
   const last = useRef<{
     queries: ChannelQueries;
     ignored: ReadonlySet<string>;
     activityFilter: typeof activityFilter;
+    order: typeof order;
     list: ChannelList;
   }>(undefined);
   const snapshot = useCallback(() => {
@@ -63,17 +65,55 @@ export function useChannelRoster(
       previous?.queries === queries &&
       previous.ignored === ignored &&
       previous.activityFilter === activityFilter &&
+      previous.order === order &&
       previous.list.activityStatus === next.activityStatus &&
       previous.list.error === next.error &&
-      sameRoster(previous.list, next, (channel) =>
+      (sameRoster(previous.list, next, (channel) =>
         activityFilter?.(channel) ? ignoredWithActivity : ignored,
-      )
+      ) ||
+        (order !== undefined &&
+          activity !== false &&
+          sameRoster(previous.list, next, () => ignoredWithoutActivity) &&
+          orderOf(previous.list, activityFilter, order) ===
+            orderOf(next, activityFilter, order)))
     )
       return previous.list;
-    last.current = { queries, ignored, activityFilter, list: next };
+    last.current = { queries, ignored, activityFilter, order, list: next };
     return next;
-  }, [queries, ignored, activityFilter, ignoredWithActivity]);
+  }, [
+    queries,
+    ignored,
+    activityFilter,
+    order,
+    activity,
+    ignoredWithActivity,
+    ignoredWithoutActivity,
+  ]);
   return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
+}
+type Order = (a: ChannelSummary, b: ChannelSummary) => number;
+type Select = ((channel: ChannelSummary) => boolean) | undefined;
+const orders = new WeakMap<ChannelList, Map<Order, Map<Select, string>>>();
+function orderOf(list: ChannelList, select: Select, order: Order) {
+  let byOrder = orders.get(list);
+  if (!byOrder) {
+    byOrder = new Map();
+    orders.set(list, byOrder);
+  }
+  let bySelect = byOrder.get(order);
+  if (!bySelect) {
+    bySelect = new Map();
+    byOrder.set(order, bySelect);
+  }
+  let ids = bySelect.get(select);
+  if (ids === undefined) {
+    ids = (select ? list.channels.filter(select) : [...list.channels])
+      .sort(order)
+      .map((channel) => channel.id)
+      .join("\n");
+    bySelect.set(select, ids);
+  }
+  return ids;
 }
 const listIndexes = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
 function listEntry(list: ChannelList, id: string) {

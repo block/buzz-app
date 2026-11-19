@@ -467,6 +467,18 @@ it("leaves a name text before images whose removal past its bound is unknown", (
   expect(targets(view)).not.toContain(profileTarget(annLee));
 });
 
+it("leaves a name text after an image whose removal past its bound is unknown", () => {
+  // The conversation removes the image, so "@" follows "x": it binds no one.
+  const body = `unique x![a][late]@Ann\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/a.png`;
+  const full = plainText(body, { limit: 4000 });
+  const view = preview(
+    body,
+    { mentions: [ann], attachmentUrls: new Set() },
+    { text: full.slice(0, 200), full },
+  );
+  expect(targets(view)).toEqual([]);
+});
+
 it("keeps chips beside text the Markdown decodes", () => {
   const body = "R&amp;D asked @tomb";
   expect(

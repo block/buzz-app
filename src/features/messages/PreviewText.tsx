@@ -151,9 +151,9 @@ function mentionLabels(
  * and room past it for the binder to finish the longest name that can start
  * before it, with `raw`'s parsed tree when one was made. A source body is
  * projected as the conversation projects it, and the parts placed back on
- * the source. When the body was cut, a reference followed, past what was
- * removed, by an image or link the cut may have left open stays text, since
- * the whole body may remove it and join different text to the name.
+ * the source. When the body was cut, a reference beside an image or link the
+ * cut may have left unresolved, past what was removed, stays text, since the
+ * whole body may remove it and join different text to the name.
  */
 function boundParts(
   raw: string,
@@ -206,13 +206,19 @@ function boundParts(
   if (raw.length === mentions.content.length) return { parts: placed, tree };
   let offset = 0;
   const shown = placed.map((part) => {
+    const start = offset;
     offset += part.text.length;
-    // What follows the reference once the images and links removed after it
-    // are gone.
+    if (!part.target) return part;
+    // What follows and precedes the reference once the images and links
+    // removed beside it are gone.
     let next = offset;
     for (const range of projected.removed)
       if (range.start === next) next = range.end;
-    const open = part.target && /^!?\[/.test(raw.slice(next, next + 2));
+    let previous = start;
+    for (const range of [...projected.removed].reverse())
+      if (range.end === previous) previous = range.start;
+    const open =
+      /^!?\[/.test(raw.slice(next, next + 2)) || raw[previous - 1] === "]";
     return open ? { text: part.text } : part;
   });
   return { parts: shown, tree };

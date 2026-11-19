@@ -1689,7 +1689,7 @@ const bobArchived = () =>
     tags: [["-"], ["p", bob.pubkey]],
   });
 
-it("starts no archive read from an archive notification, such as a disconnect", async () => {
+it("skips the archive read while offline and runs it once on reconnect", async () => {
   const h = await archivedNamesakes(async () => [bobArchived()]);
   try {
     await h.verifyAsSam();
@@ -1697,14 +1697,16 @@ it("starts no archive read from an archive notification, such as a disconnect", 
       expect(h.archives.queries.snapshot().status).toBe("ready"),
     );
     expect(h.read).toHaveBeenCalledOnce();
-    expect(h.directory.queries.snapshot().get(alice.pubkey)?.name).toBe("Sam");
-    // A disconnect returns archives to idle; the refold must not read offline.
+    // The session's disconnect order: the directory, then the archives.
+    h.directory.connected(false);
     h.archives.stale();
-    await tick();
-    expect(h.archives.queries.snapshot().status).toBe("idle");
+    await tick(); // The queued verified flush lands offline.
     expect(h.read).toHaveBeenCalledOnce();
-    // The first picker open after reconnect rereads.
-    await h.archives.queries.ensure();
+    expect(h.archives.queries.snapshot().status).toBe("idle");
+    h.directory.connected(true);
+    await tick();
+    expect(h.read).toHaveBeenCalledTimes(2);
+    await h.archives.queries.ensure(); // A picker opens.
     expect(h.read).toHaveBeenCalledTimes(2);
   } finally {
     h.directory.dispose();
@@ -1733,6 +1735,26 @@ it("starts the archive read after publishing, so a reentrant clear stands", asyn
   } finally {
     stopArchives();
     stopDirectory();
+    h.directory.dispose();
+    h.archives.dispose();
+  }
+});
+
+it("reads archives once when reconnecting before the queued flush lands", async () => {
+  const h = await archivedNamesakes(async () => [bobArchived()]);
+  try {
+    await h.verifyAsSam();
+    await vi.waitFor(() =>
+      expect(h.archives.queries.snapshot().status).toBe("ready"),
+    );
+    h.directory.connected(false);
+    h.archives.stale();
+    h.directory.connected(true);
+    await tick(); // The queued verified flush lands online.
+    expect(h.read).toHaveBeenCalledTimes(2);
+    await h.archives.queries.ensure(); // A picker opens.
+    expect(h.read).toHaveBeenCalledTimes(2);
+  } finally {
     h.directory.dispose();
     h.archives.dispose();
   }

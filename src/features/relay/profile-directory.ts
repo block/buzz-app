@@ -165,6 +165,10 @@ export function createProfileDirectory(
   let loaded: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
+  // Offline, a collision waits: a read started now could fail and stick.
+  let online = true;
+  // A collision whose archive read was skipped offline, run on reconnect.
+  let waiting = false;
   let generation = 0;
   // Verified heads arrive one relay frame at a time, and each publish refolds
   // every profile. Coalesce them to one publish per macrotask so socket frames,
@@ -242,7 +246,9 @@ export function createProfileDirectory(
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     // After the snapshot is out: the read's synchronous `loading` may reenter.
-    if (fold(headChanged) && archives?.snapshot().status === "idle")
+    const collision = fold(headChanged);
+    waiting = collision && !online;
+    if (collision && online && archives?.snapshot().status === "idle")
       void archives.ensure();
   }
   /** Publishes the snapshot; true when a verified collision wants archives. */
@@ -662,7 +668,9 @@ export function createProfileDirectory(
     accept,
     clear,
     connected(value: boolean) {
+      online = value;
       verified?.connected(value);
+      if (value && waiting) publish();
     },
     reconnect() {
       verified?.connected(true);

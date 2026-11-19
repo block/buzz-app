@@ -108,7 +108,7 @@ it("reads the newest list once, then follows live and replayed lists", async () 
       {
         kinds: [PIN_LIST_KIND],
         authors: [relay],
-        "#d": ["c"],
+        "#h": ["c"],
         limit: 1,
         consistency: "strong",
       },
@@ -194,7 +194,7 @@ it("reads watched lists again in one read when their channels catch up", async (
     {
       kinds: [PIN_LIST_KIND],
       authors: [relay],
-      "#d": ["c", "d"],
+      "#h": ["c", "d"],
       limit: 2,
       consistency: "strong",
     },

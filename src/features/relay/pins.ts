@@ -134,7 +134,8 @@ function createPinLists(source: PinSource) {
           {
             kinds: [PIN_LIST_KIND],
             authors: [relayAuthor],
-            "#d": wanted.map(([id]) => id),
+            // NIP-CL names the channel by `h`; `#d` misses unlisted ones.
+            "#h": wanted.map(([id]) => id),
             limit: wanted.length,
             // A repair read must not be served state older than the gap.
             consistency: "strong",

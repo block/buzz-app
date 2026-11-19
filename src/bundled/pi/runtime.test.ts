@@ -4272,6 +4272,8 @@ it("holds a model request until its reload settles, then admits it against the r
     ?.tool({ op: "admit", agent: self, binding: { v: 1 } }, "gateway")
     .then((answer) => (admitted = answer));
   await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  // Admission asks for the gateway check a reload starts, not only the reconnect.
+  expect(settle).toHaveBeenCalledWith(expect.anything(), true);
   expect(admitted).toBeUndefined();
   route = { ...eligible, revision: 2 };
   settled.resolve(true);
@@ -4344,6 +4346,8 @@ it("holds a turn's bind until its reload settles, then binds against the route",
     )
     .then((answer) => (bound = answer));
   await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  // So does a bind.
+  expect(settle).toHaveBeenCalledWith(expect.anything(), true);
   expect(bound).toBeUndefined();
   route = eligible;
   settled.resolve(true);

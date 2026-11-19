@@ -884,7 +884,10 @@ preserved while private; explicitly choosing Public or View only selects the
 corresponding admission default without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Guests and readers of Guest-default channels
+without calling the editing capability. Owners and admins see the editable policy
+from the live channel summary the same way, with no read when the dialog opens;
+choosing a change reads fresh signed details before the confirmation, and saving
+verifies their version. Guests and readers of Guest-default channels
 see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
 Member-default channel instead sees “New people can participate. People already in
 the channel keep their access.” Other previews identify defaults that could not be

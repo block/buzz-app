@@ -1966,7 +1966,15 @@ export function serve({
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. The agent's `core` memory read for it is the
    * conversation's latest; a failed read shows it none if not yet shown. */
-  async function submit(opened, conversation, turn, busy, refresh, withdrawn) {
+  async function submit(
+    opened,
+    conversation,
+    turn,
+    busy,
+    refresh,
+    accept,
+    withdrawn,
+  ) {
     opened.cores.set(conversation.id, turn.core?.text);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
@@ -1991,6 +1999,9 @@ export function serve({
       turn = { ...turn, ...prompt };
     }
     if (withdrawn?.()) return;
+    const apply = await accept?.();
+    if (withdrawn?.()) return;
+    apply?.();
     // Its work carries its request: see `requestTelemetry`.
     const submission = await conversation.submit(
       {
@@ -2298,22 +2309,37 @@ export function serve({
             { ownership: { kind: "ownerless" } },
             context,
           );
+          // Recorded before it has the turn, so a host that stops before it
+          // answers leaves the next one the conversation to find the turn in,
+          // by its request, when it is asked again.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen: 0,
+            };
+          }, context);
         }
-        // Tools must recover at this source even if the host stops after
-        // acceptance, before the history watermark can advance.
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          places[key] = {
-            conversation: conversation.id,
-            context: tools,
-            seen:
-              places[key]?.conversation === conversation.id
-                ? places[key].seen
-                : 0,
-          };
-        }, context);
         opened.conversations.add(conversation.id);
-        opened.contexts.set(conversation.id, tools);
+        // The conversation's tools follow a turn only once Pi takes it, so
+        // one dropped before then leaves the running turn's.
+        const accept = async () => {
+          // Tools must recover at this source even if the host stops after
+          // acceptance, before the history watermark can advance.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen:
+                places[key]?.conversation === conversation.id
+                  ? places[key].seen
+                  : 0,
+            };
+          }, context);
+          return () => opened.contexts.set(conversation.id, tools);
+        };
         const state = await watch(opened, conversation.id);
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
@@ -2363,6 +2389,7 @@ export function serve({
               turn,
               busy,
               prompt,
+              accept,
             );
             if (!submitted) return false;
             if (session !== undefined) Object.assign(submitted, { session });
@@ -2378,6 +2405,7 @@ export function serve({
           );
           if (held) {
             opened.cores.set(conversation.id, turn.core?.text);
+            opened.contexts.set(conversation.id, tools);
             return placed({
               submission: held.id,
               conversation: conversation.id,
@@ -2410,6 +2438,7 @@ export function serve({
               turn,
               busy,
               prompt,
+              accept,
               () => waiting.interrupted,
             ));
           if (!submitted) {

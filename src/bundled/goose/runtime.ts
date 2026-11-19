@@ -635,14 +635,13 @@ export class GooseRuntime {
           delivered = Promise.resolve({ ok: true, undelivered: true });
           return;
         }
-        entry.contexts.set(
-          key,
-          topLevel
-            ? { channel, ...(solo ? { topLevel } : {}) }
-            : key === channel || (key === COMMUNITY_SESSION && dm)
-              ? { channel }
-              : { channel, root: threadReference(event)?.rootId ?? event.id },
-        );
+        // Set only once goose takes the message, so a dropped one leaves the
+        // running turn's tool defaults.
+        const context = topLevel
+          ? { channel, ...(solo ? { topLevel } : {}) }
+          : key === channel || (key === COMMUNITY_SESSION && dm)
+            ? { channel }
+            : { channel, root: threadReference(event)?.rootId ?? event.id };
         submitted = true;
         delivered = entry.sessions.deliver(key, text, shown, {
           ...(wake
@@ -691,7 +690,10 @@ export class GooseRuntime {
           ...(step ? { step } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
-          ...(accepted ? { accepted } : {}),
+          accepted: () => {
+            entry.contexts.set(key, context);
+            accepted?.();
+          },
           ...(superseded ? { superseded } : {}),
         });
       },

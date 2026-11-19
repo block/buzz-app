@@ -1310,8 +1310,9 @@ export class ClaudeRuntime {
           .filter(Boolean)
           .join("\n\n");
         // A conversation's tools default to its thread; a session shared by
-        // several threads is told which to reply in instead.
-        entry.contexts.set(key, {
+        // several threads is told which to reply in instead. Set only once
+        // Claude takes the message, so a dropped one leaves the running turn's.
+        const context = {
           ...(session ? { session } : {}),
           ...(topLevel
             ? { channel, ...(solo ? { topLevel } : {}) }
@@ -1321,7 +1322,7 @@ export class ClaudeRuntime {
                   channel,
                   root: threadReference(event)?.rootId ?? event.id,
                 }),
-        });
+        };
         submitted = true;
         delivered = entry.sessions.deliver(key, text, event.created_at, {
           current: () => !interrupted && (!current || current()),
@@ -1362,7 +1363,10 @@ export class ClaudeRuntime {
           ...(step ? { step } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
-          ...(accepted ? { accepted } : {}),
+          accepted: () => {
+            entry.contexts.set(key, context);
+            accepted?.();
+          },
           ...(superseded ? { superseded } : {}),
           pick: {
             ...(model ? { model } : {}),

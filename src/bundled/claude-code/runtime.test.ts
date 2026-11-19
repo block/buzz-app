@@ -4829,6 +4829,65 @@ it("keeps a community predecessor's reply destination after later admission fail
   }
 });
 
+it("keeps tool defaults with the running community turn when a follow-up from another channel is dropped", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("Missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let refreshing!: () => void;
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  let live = true;
+  try {
+    await f.deliver({ type: "mention", event: message("1", "Z") }, { config });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    await f.deliver(
+      { ...pluginWake("a".repeat(64)), channel: "other" },
+      { config, channelId: "other", wakeText, current: () => live },
+    );
+    // The wake is withdrawn while its prompt is built again for delivery.
+    await started;
+    live = false;
+    release();
+    await flush(10);
+    expect(worker.prompts).toHaveLength(1);
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: { text: "Still here", audience: "everyone" },
+    });
+    expect(
+      f.published.find((event) => event.content === "Still here")?.tags,
+    ).toContainEqual(["h", channel]);
+  } finally {
+    release();
+    for (const worker of f.claudes()) worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.runtime.dispose();
+  }
+});
+
 it.each(["thread", "community"] as const)(
   "includes standalone wake instructions once in %s scope",
   async (scope) => {

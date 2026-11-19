@@ -2847,6 +2847,66 @@ it("stops only the queued community request selected by the user", async () => {
   }
 });
 
+it("keeps tool defaults with the running community turn when a follow-up from another channel is dropped", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let refreshing!: () => void;
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  let live = true;
+  try {
+    await f.deliver(message("1", "first"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const worker = f.goose();
+    const sessionId = worker?.turns[0]?.sessionId;
+    if (!worker || !sessionId) throw new Error("No Goose turn");
+    await f.run(
+      { ...pluginWake("a".repeat(64)), channel: "other" },
+      {
+        config: { ...DEFAULT_CONFIG, scope: "community" },
+        channelId: "other",
+        wakeText,
+        current: () => live,
+      },
+    );
+    // The wake is withdrawn while its prompt is built again for delivery.
+    await started;
+    live = false;
+    release();
+    await flush(10);
+    await worker.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { text: "Still here", audience: "everyone" },
+    });
+    expect(
+      f.published.find((event) => event.content === "Still here")?.tags,
+    ).toContainEqual(["h", channel]);
+  } finally {
+    release();
+    f.goose()?.turns[0]?.finish();
+    f.runtime.dispose();
+  }
+});
+
 it("keeps the active Solo Canvas when a speculative community request is stopped", async () => {
   const f = setup({
     scope: "community",

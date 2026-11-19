@@ -572,6 +572,19 @@ out.sourceSeen = (await pi.rpc("place", { agent, key: "@community" })).seen;
 await pi.rpc("drop", { agent, submissions: [out.sourceRecovery] });
 await pi.rpc("abort", { agent, conversation: sourceA.conversation });
 await pi.stop();
+// A follow-up dropped before Pi takes it leaves the running turn's tool context.
+const dropAgent = "e".repeat(64);
+pi = start(async ({ request }) => request === "DROPPED" ? undefined : { text: request, steer: request });
+await pi.rpc("open", { agent: dropAgent, tools });
+const keepGate = held(), keepRunning = held();
+faux.setResponses([async (_context, options) => { keepRunning.release(); await abortable(keepGate.gate, options?.signal); return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "kept", final: true }), { stopReason: "toolUse" }); }]);
+const keep = await pi.rpc("deliver", { ...turn("KEEP", "keep"), agent: dropAgent, key: "@community", context: { channel: "keep" } });
+await keepRunning.gate;
+out.dropped = await pi.rpc("deliver", { ...turn("DROPPED", "dropped"), agent: dropAgent, key: "@community", context: { channel: "dropped" }, refresh: true });
+keepGate.release();
+await pi.rpc("wait", { agent: dropAgent, submission: keep.submission });
+out.keptTools = pi.tools.splice(0).map((tool) => tool.context);
+await pi.stop();
 console.log(JSON.stringify(out));
 `;
 
@@ -761,6 +774,8 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       context: { channel: "source-b", root: "private-root" },
     });
     expect(out.sourceSeen).toBe(100);
+    expect(out.dropped).toBe(false);
+    expect(out.keptTools).toEqual([{ channel: "keep" }]);
     if (process.platform !== "win32") {
       const mode = async (path: string) => (await stat(path)).mode & 0o777;
       expect(await mode(agents)).toBe(0o700);

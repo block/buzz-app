@@ -418,6 +418,7 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         workspaceComposition={workspaceComposition}
+        selected={selected}
         sidebarRows={rowEntries}
         dormantAssignments={regions.managed}
         compose={compose}

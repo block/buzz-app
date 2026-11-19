@@ -3141,6 +3141,112 @@ it("does not rebuild unrelated plugin rows when a row menu opens or closes", asy
   ).toEqual([]);
 });
 
+it("lists rows a labelled contribution hides in their section's Filter menu and tells it which row is open", async () => {
+  const user = userEvent.setup();
+  const seen = new Map<string, boolean>();
+  const registry = rowRegistry({
+    version: 1,
+    id: "quiet",
+    hiddenLabel: "Quiet",
+    render: (row, Default) => {
+      seen.set(row.id, row.selected);
+      return row.id === "beta" && !row.selected ? null : Default;
+    },
+  });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    registry,
+  );
+  const mounted = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  expect(seen.get("alpha")).toBe(true);
+  expect(seen.get("gamma")).toBe(false);
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Team" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  const group = await screen.findByRole("group", { name: "Quiet" });
+  expect(
+    within(group)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent),
+  ).toEqual([expect.stringContaining("beta")]);
+  fireEvent.click(within(group).getByRole("menuitem", { name: /beta/ }));
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+  );
+  mounted.rerender(h.view("beta"));
+  await screen.findByRole("button", { name: "beta" });
+  expect(seen.get("beta")).toBe(true);
+  act(() => registry.disable());
+  mounted.rerender(h.view("alpha"));
+  await screen.findByRole("button", { name: "beta" });
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Team" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  await screen.findByRole("menuitemradio", { name: "All" });
+  expect(screen.queryByRole("group", { name: "Quiet" })).toBeNull();
+  preferences.dispose();
+});
+
+it("gives plugin sort modes the open row as selected", async () => {
+  const registry = rowRegistry({
+    version: 1,
+    id: "order",
+    sortModes: [
+      {
+        id: "open-first",
+        label: "Open first",
+        compare: (a, b) =>
+          Number(b.selected) - Number(a.selected) ||
+          a.label.localeCompare(b.label),
+      },
+    ],
+  });
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      sort: { channels: "plugin:fixture0/order/open-first" },
+    }),
+  });
+  await preferences.queries.ensure();
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    registry,
+  );
+  const order = () =>
+    [...document.querySelectorAll("[data-channel-id]")].map((row) =>
+      row.getAttribute("data-channel-id"),
+    );
+  const mounted = render(h.view("gamma"));
+  await waitFor(() => expect(order()).toEqual(["gamma", "alpha", "beta"]));
+  mounted.rerender(h.view("beta"));
+  await waitFor(() => expect(order()).toEqual(["beta", "alpha", "gamma"]));
+  preferences.dispose();
+});
+
 it("decorates live host rows and closes menus only when their row is hidden", async () => {
   const registry = rowRegistry({
     version: 1,

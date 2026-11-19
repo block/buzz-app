@@ -176,6 +176,7 @@ export type LinkPreviewRenderer = Readonly<{
   component: ComponentType<LinkPreviewProps>;
 }>;
 /** Presentation for a fenced code block, chosen by its info-string language.
+ * An empty language string represents a block with no language label.
  * The host retains the frame and copy action; failure or removal restores the code. */
 export type CodeBlockRenderer = Readonly<{
   id: string;

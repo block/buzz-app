@@ -1976,6 +1976,10 @@ lists the plotted values as text.
   attribution under the chart; it is not verified. `note` adds a caveat line.
 - An invalid chart shows its error and source instead of drawing.
 
+Optional code-block plugins can also present unlabelled blocks, for example to
+detect their language. The plugin determines which blocks it handles; without a
+matching plugin, code stays plain.
+
 Code blocks draw the same way, through plugins such as Charts and Mermaid, in
 Canvas, shared notes and repository pages. Those, plus the memory panel, agent
 transcript replies and plugin READMEs, offer **Copy code block** on each code

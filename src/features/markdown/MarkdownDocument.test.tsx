@@ -124,3 +124,41 @@ it("guards size, depth and expanded table cells with the profile's syntax", () =
     }).children.some((node) => node.type === "table"),
   ).toBe(true);
 });
+
+it("offers unlabelled blocks to plugins with an empty language and restores plain rendering", () => {
+  let entries: Contribution<CodeBlockRenderer>[] = [
+    {
+      ...diagram,
+      matches: (language) => language === "",
+      component: ({ code, language }) => (
+        <figure data-language={language}>{code}</figure>
+      ),
+    },
+  ];
+  const codeBlocks = { snapshot: () => entries, subscribe: () => () => {} };
+  const draw = () => (
+    <MarkdownDocument
+      content={"```\nfn main() {}\n```"}
+      profile={DOCUMENT_PROFILE}
+      components={sharedComponents}
+      capabilities={{ codeBlocks, copy: true }}
+      scale="document"
+    />
+  );
+  const view = render(draw(), { wrapper: ToastProvider });
+  expect(screen.getByRole("figure")).toHaveAttribute("data-language", "");
+  expect(screen.getByRole("figure")).toHaveTextContent("fn main() {}");
+  expect(view.container.querySelector("[data-copy-code]")).toHaveAttribute(
+    "data-copy-code",
+    "fn main() {}",
+  );
+  expect(
+    screen.getByRole("button", { name: "Copy code block" }),
+  ).toBeInTheDocument();
+  entries = [];
+  view.rerender(draw());
+  expect(screen.queryByRole("figure")).toBeNull();
+  expect(view.container.querySelector("pre code")).toHaveTextContent(
+    "fn main() {}",
+  );
+});

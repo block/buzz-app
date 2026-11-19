@@ -428,7 +428,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
   }
 });
 
-test("a thread reads the page that holds a loaded reply's parent and opens with the reply nested", async ({
+test("a thread shows its first page while it reads the page that holds a loaded reply's parent, then nests the reply", async ({
   page,
 }) => {
   const server = await createServer({
@@ -448,22 +448,26 @@ test("a thread reads the page that holds a loaded reply's parent and opens with 
     const child = history.getByText("Nested window child", { exact: true });
     const newest = history.getByText("First root reply 302", { exact: true });
     // With no gesture the thread reads the page that holds the child's parent
-    // behind its first window, and nothing calls that parent unavailable.
+    // behind its first window. That read is held: the first page is positioned
+    // and readable, and nothing calls the parent unavailable.
     await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(2);
+    await expect(history).not.toHaveAttribute("data-positioning");
+    await expect(newest).toBeInViewport();
+    await expect(child).toBeVisible();
     await expect(
       history.getByText("Earlier reply unavailable in loaded history."),
     ).toHaveCount(0);
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const parent = history.getByText("First root reply 292", { exact: true });
-    // The thread opens at its newest reply with the child in its parent's
-    // branch, as any nested reply shows.
-    await expect(newest).toBeInViewport();
+    // The page lands behind the reader, who stays at the newest reply; the
+    // child moves into its parent's branch, as any nested reply shows.
     await expect(child).toHaveCount(0);
+    await expect(newest).toBeInViewport();
     await history.getByRole("button", { name: /^View 1 reply/ }).click();
     await expect(child).toBeVisible();
     expect(

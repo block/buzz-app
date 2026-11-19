@@ -1242,15 +1242,27 @@ it("shows a read view's window, then reads older pages for the parent of a loade
     statuses.push(`${status} ${replies.length}`);
   });
   await view.refresh();
-  // The window shows before the page that holds the parent is read.
-  expect(statuses).toContain("ready 10");
   await vi.waitFor(() =>
     expect(view.snapshot()).toMatchObject({
       status: "ready",
       canLoadMore: false,
+      seeking: undefined,
     }),
   );
+  // The window shows, and stays ready, while the page that holds the parent
+  // is read behind it at background priority.
+  expect(
+    statuses
+      .slice(statuses.indexOf("ready 10"))
+      .filter((status) => !status.startsWith("ready")),
+  ).toEqual([]);
   expect(windows(h.requests.slice(before))).toEqual([10, 50]);
+  expect(
+    h.fetcher.mock.calls
+      .filter(([, sent]) => String(sent?.body).includes("thread_window"))
+      .map(([, sent]) => new Headers(sent?.headers).get("X-Buzz-Read-Priority"))
+      .slice(-2),
+  ).toEqual(["foreground", "background"]);
   expect(view.snapshot().replies.map((row) => row.id)).toContain(parent.id);
   view.dispose();
 });
@@ -1307,7 +1319,7 @@ it("reads a read view back for a live reply to a parent outside its loaded pages
 });
 
 it("keeps a read view's rows through repeated transient failures and recovers under session recovery without an error", async () => {
-  const rows = Array.from({ length: 12 }, (_, n) => filler(n));
+  const rows = Array.from({ length: 70 }, (_, n) => filler(n));
   let down = false;
   const h = await setup((f) => {
     if (down && f.thread_window) throw new TypeError("offline");
@@ -1326,24 +1338,27 @@ it("keeps a read view's rows through repeated transient failures and recovers un
   assert.exists(recovery);
 
   down = true;
-  rows.push(filler(12));
+  rows.push(filler(70));
   vi.spyOn(Math, "random").mockReturnValue(1);
   vi.useFakeTimers();
   try {
     const attempts = () => windows(h.requests).length - 1;
     void view.refresh();
+    // An older page asked for behind the read that fails is still wanted.
+    void view.loadMore();
     // One read and its three quick retries (1, 2 and 4 s), then recovery.
     await vi.advanceTimersByTimeAsync(7000);
     expect(attempts()).toBe(4);
     expect(view.snapshot()).toMatchObject({
       status: "loading",
+      recovering: true,
       error: undefined,
     });
     expect(view.snapshot().replies).toBe(loaded);
     expect(recovery.snapshot()).toMatchObject({ recovering: true, attempt: 0 });
     // Recovery waits 1 s, then 2 s: no read starts in between, and demand
-    // for an older page waits with it.
-    void view.loadMore();
+    // for older pages, here to the oldest reply, waits with it.
+    void view.loadMore(() => 0);
     await vi.advanceTimersByTimeAsync(999);
     expect(attempts()).toBe(4);
     await vi.advanceTimersByTimeAsync(1 + 7000);
@@ -1353,12 +1368,17 @@ it("keeps a read view's rows through repeated transient failures and recovers un
     expect(attempts()).toBe(8);
     down = false;
     await vi.advanceTimersByTimeAsync(1);
-    // New rows are verified off the fake clock.
-    await vi.waitFor(() => expect(view.snapshot().replies).toHaveLength(11));
-    expect(view.snapshot()).toMatchObject({
-      status: "ready",
-      error: undefined,
-    });
+    // New rows are verified off the fake clock. The refresh shows the new
+    // reply; the demand held across the failure then reads to its frontier.
+    await vi.waitFor(() =>
+      expect(view.snapshot()).toMatchObject({
+        status: "ready",
+        canLoadMore: false,
+        recovering: undefined,
+        error: undefined,
+      }),
+    );
+    expect(view.snapshot().replies).toHaveLength(71);
     expect(recovery.snapshot()).toMatchObject({
       recovering: false,
       attempt: 0,
@@ -1366,7 +1386,7 @@ it("keeps a read view's rows through repeated transient failures and recovers un
     expect(statuses).not.toContain("error");
     // Settled: recovery holds no timer for the thread.
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(attempts()).toBe(9);
+    expect(attempts()).toBe(11);
   } finally {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -1427,6 +1447,228 @@ it("still reports a failure of a read view that a retry cannot fix", async () =>
   view.dispose();
 });
 
+it("keeps a read view ready while its read for a missing parent fails, and finishes it under session recovery", async () => {
+  const parent = filler(0);
+  const rows = [
+    parent,
+    ...Array.from({ length: 12 }, (_, n) => filler(n + 1)),
+    nested("child", 100, parent.id),
+  ];
+  let down = true;
+  const h = await setup((f) => {
+    if (down && f.until !== undefined) throw new TypeError("offline");
+    return serving(rows)(f);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  const recovery = h.session.recovery;
+  assert.exists(recovery);
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  const view = h.session.thread(channel, root.id, { reading: true });
+  try {
+    const statuses: string[] = [];
+    view.subscribe(() => statuses.push(view.snapshot().status));
+    void view.refresh();
+    await vi.waitFor(() => expect(view.snapshot().status).toBe("ready"));
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      seeking: true,
+      recovering: true,
+      error: undefined,
+    });
+    expect(view.snapshot().replies).toHaveLength(10);
+    expect(recovery.snapshot().recovering).toBe(true);
+    down = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() =>
+      expect(view.snapshot().replies.map((row) => row.id)).toContain(parent.id),
+    );
+    expect(view.snapshot().seeking).toBeUndefined();
+    expect(statuses.slice(statuses.indexOf("ready"))).not.toContain("loading");
+    expect(recovery.snapshot().recovering).toBe(false);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+});
+
+it("ends a read view's wait on recovery once nothing is left to read", async () => {
+  const child = nested("child", 100, filler(0).id);
+  const rows = [...Array.from({ length: 13 }, (_, n) => filler(n)), child];
+  const h = await setup((f) => {
+    if (f.until !== undefined) throw new TypeError("offline");
+    return serving(rows)(f);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  const recovery = h.session.recovery;
+  assert.exists(recovery);
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  const view = h.session.thread(channel, root.id, { reading: true });
+  try {
+    void view.refresh();
+    await vi.waitFor(() => expect(view.snapshot().status).toBe("ready"));
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(view.snapshot()).toMatchObject({ seeking: true, recovering: true });
+    const read = windows(h.requests).length;
+    // The reply without its parent goes: no read is left to retry.
+    h.traffic.receive([
+      signed(author, {
+        kind: 5,
+        created_at: 500,
+        content: "",
+        tags: [["e", child.id]],
+      }),
+    ]);
+    await vi.waitFor(() => expect(view.snapshot().seeking).toBeUndefined());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(view.snapshot().recovering).toBeUndefined();
+    expect(recovery.snapshot().recovering).toBe(false);
+    expect(windows(h.requests)).toHaveLength(read);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+});
+
+it("reports a relay's rejection of a read view's read, and recovers quietly from its 502", async () => {
+  let status = 0;
+  const h = await setup(serving([filler(0)]));
+  const answer = h.fetcher.getMockImplementation();
+  assert.exists(answer);
+  h.fetcher.mockImplementation(async (url, sent) =>
+    status && String(sent?.body).includes("thread_window")
+      ? new Response("{}", { status })
+      : answer(url, sent),
+  );
+  h.traffic.state({ status: "connected", routes: [] });
+  const recovery = h.session.recovery;
+  assert.exists(recovery);
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  const view = h.session.thread(channel, root.id, { reading: true });
+  try {
+    status = 404;
+    void view.refresh();
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(view.snapshot().status).toBe("error");
+    expect(recovery.snapshot().recovering).toBe(false);
+    // The read and its three quick retries, and no more.
+    const sent = h.fetcher.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetcher.mock.calls).toHaveLength(sent);
+
+    status = 502;
+    void view.refresh();
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(view.snapshot()).toMatchObject({
+      status: "loading",
+      error: undefined,
+    });
+    expect(recovery.snapshot().recovering).toBe(true);
+    status = 0;
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => expect(view.snapshot().status).toBe("ready"));
+    expect(recovery.snapshot().recovering).toBe(false);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+});
+
+it("leaves a failed read view to its establishment refresh on reconnect, and to recovery's delay without one", async () => {
+  let down = false;
+  const h = await setup((f) => {
+    if (down && f.thread_window) throw new TypeError("offline");
+    return serving([filler(0)])(f);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  h.traffic.established(channel);
+  const recovery = h.session.recovery;
+  assert.exists(recovery);
+  const view = h.session.thread(channel, root.id, { reading: true });
+  await view.refresh();
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  try {
+    const drop = async () => {
+      down = true;
+      h.traffic.state({ status: "retrying", routes: [] });
+      void view.refresh();
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(recovery.snapshot().recovering).toBe(true);
+      down = false;
+      // The socket is back: recovery retries its failed reads now.
+      h.traffic.state({ status: "connected", routes: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      return windows(h.requests).length;
+    };
+    // The channel's establishment refreshes the view: one read, not two.
+    let sent = await drop();
+    h.traffic.established(channel);
+    await vi.waitFor(() => expect(recovery.snapshot().recovering).toBe(false), {
+      interval: 0,
+    });
+    expect(windows(h.requests)).toHaveLength(sent + 1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(windows(h.requests)).toHaveLength(sent + 1);
+
+    // No establishment comes: recovery's first delay reads.
+    sent = await drop();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(windows(h.requests)).toHaveLength(sent);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(recovery.snapshot().recovering).toBe(false), {
+      interval: 0,
+    });
+    expect(windows(h.requests)).toHaveLength(sent + 1);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+});
+
+it("reads nothing for a parent a read view holds but does not show", async () => {
+  const parent = filler(20);
+  const child = nested("child", 100, parent.id);
+  const rows = [
+    ...Array.from({ length: 12 }, (_, n) => filler(n)),
+    parent,
+    child,
+  ];
+  const h = await setup(serving(rows));
+  const view = h.session.thread(channel, root.id, { reading: true });
+  await view.refresh();
+  expect(view.snapshot()).toMatchObject({ status: "ready", canLoadMore: true });
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", parent.id]],
+    }),
+  ]);
+  await vi.waitFor(() =>
+    expect(view.snapshot().replies.map((row) => row.id)).not.toContain(
+      parent.id,
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // The deletion is the answer: no older page is read, and the note may show.
+  expect(
+    view.snapshot().replies.find((row) => row.id === child.id)?.replyParentId,
+  ).toBe(parent.id);
+  expect(view.snapshot()).toMatchObject({ canLoadMore: true });
+  expect(view.snapshot().seeking).toBeUndefined();
+  expect(windows(h.requests)).toEqual([10]);
+  view.dispose();
+});
+
 it("settles session recovery when a read view with a quiet failure passes its memory limit", async () => {
   const rows = Array.from({ length: 12 }, (_, n) => filler(n));
   let down = false;
@@ -1447,7 +1689,13 @@ it("settles session recovery when a read view with a quiet failure passes its me
     await vi.advanceTimersByTimeAsync(7000);
     expect(recovery.snapshot().recovering).toBe(true);
     // Live replies alone pass the limit: no read is running to report it.
-    h.traffic.receive(Array.from({ length: 2001 }, (_, n) => filler(1000 + n)));
+    h.traffic.receive(
+      Array.from({ length: 5 }, (_, n) =>
+        message(author, channel, "x".repeat(1 << 20), 1000 + n, [
+          ["e", root.id, "", "reply"],
+        ]),
+      ),
+    );
     await vi.waitFor(() =>
       expect(view.snapshot()).toMatchObject({ status: "error", limited: true }),
     );

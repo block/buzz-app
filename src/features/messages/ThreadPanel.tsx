@@ -1001,7 +1001,11 @@ function ThreadMessages({
     if (boundary.id !== undefined) {
       // A failed read decided nothing: decide again once it recovers, unless
       // the reader has left the latest reply since.
-      if (boundary.failed && snapshot.status === "ready")
+      if (
+        boundary.failed &&
+        snapshot.status === "ready" &&
+        !snapshot.recovering
+      )
         setBoundary(
           follow.current
             ? { opening: boundary.opening }
@@ -1018,7 +1022,8 @@ function ThreadMessages({
       setBoundary({ ...boundary, id: null });
       return;
     }
-    if (snapshot.status === "error") {
+    // A read waiting on recovery may wait long: show what is loaded.
+    if (snapshot.status === "error" || snapshot.recovering) {
       setBoundary({ ...boundary, id: null, failed: true });
       return;
     }
@@ -1867,10 +1872,10 @@ function ThreadMessages({
               </span>
             </div>
           )}
-          {/* Only settled, exhausted history shows a parent is not coming. */}
+          {/* Not while the root, or history that may hold the parent, loads. */}
           {!parent &&
-            snapshot.status === "ready" &&
-            !snapshot.canLoadMore &&
+            rootId &&
+            !snapshot.seeking &&
             row.replyParentId &&
             row.replyParentId !== rootId &&
             !requestRows.has(row.replyParentId) && (

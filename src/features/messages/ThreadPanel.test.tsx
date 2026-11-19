@@ -907,6 +907,33 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
     line,
   ]);
 });
+it("shows the loaded page while the read for the first unread reply waits on recovery, and places the line once it recovers", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read: thread } = unreadReplies(h);
+  const [read, first] = [reply("read", 2), reply("first unread", 3)];
+  unread.add(first.id);
+  thread.through = 2;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first];
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.snapshot.recovering = true;
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.recovering = undefined;
+  h.snapshot.replies = [read, first];
+  h.render();
+  expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+});
 it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);

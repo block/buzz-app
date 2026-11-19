@@ -1,3 +1,4 @@
+import { ReadError, transientStatus } from "./errors";
 import { isRetryableRead, retryRead } from "./read-retry";
 import {
   canonicalChannel,
@@ -53,6 +54,10 @@ export type ThreadSnapshot = Readonly<{
   /** Rows include a closed view's resumed rows, until this view's first
    * refresh settles either way. */
   resumed?: true | undefined;
+  /** History not read yet may hold the parent of a reply shown without it. */
+  seeking?: true | undefined;
+  /** A read failed and waits on session recovery, which retries it. */
+  recovering?: true | undefined;
 }>;
 /** What a closed ordinary thread last showed. A view opened from it shows
  * these rows at once, as display only: they are never evidence, and the
@@ -246,8 +251,9 @@ export function createThreadView({
   let controller: AbortController | undefined;
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
-  /** An older page requested during a background repair, which stays ready. */
-  let older = false;
+  /** An older page asked for while a read runs or a quiet failure waits, read
+   * after it: `true`, or the frontier to read to. */
+  let older: (() => number) | boolean = false;
   /** The read that failed transiently, which session recovery retries. */
   let failed: "refresh" | "older" | undefined;
   /** Resumed rows shown beside the evidence until the first refresh settles.
@@ -323,6 +329,24 @@ export function createThreadView({
   }
   /** A fold that changed nothing keeps the snapshot and notifies no one. */
   function emit(next: ThreadSnapshot) {
+    // A parent retained but not shown, as a deleted one is, is not coming.
+    const known = new Set(next.replies.map((row) => row.id));
+    const seeking =
+      (next.direction
+        ? next.direction === "older" && next.canLoadMore
+        : next.status === "idle" || next.status === "loading") &&
+      next.replies.some(
+        (row) =>
+          row.replyParentId &&
+          row.replyParentId !== rootId &&
+          !known.has(row.replyParentId) &&
+          !remoteIds.has(row.replyParentId),
+      );
+    next = {
+      ...next,
+      seeking: seeking || undefined,
+      recovering: failed ? true : undefined,
+    };
     const keys = Object.keys(next) as (keyof ThreadSnapshot)[];
     if (keys.every((key) => next[key] === snapshot[key])) return;
     snapshot = Object.freeze(next);
@@ -473,25 +497,20 @@ export function createThreadView({
     if (!incoming.length) return;
     if (retain(union(remote, incoming))) {
       publish();
-      seek();
+      advance();
     }
   }
-  /** Older history may hold the parent of a reply shown without it: read an
-   * older page, and again after each, until the parent or the end. */
-  function seek() {
-    const { status, canLoadMore, replies } = snapshot;
-    if (!recover || mode !== "older" || status !== "ready" || !canLoadMore)
-      return;
-    const ids = new Set(replies.map((row) => row.id));
-    if (
-      replies.some(
-        (row) =>
-          row.replyParentId &&
-          row.replyParentId !== rootId &&
-          !ids.has(row.replyParentId),
-      )
-    )
-      void more();
+  /** Reads the next older page once no read runs or waits on recovery: one
+   * asked for, else, in the background, one that may hold the parent of a
+   * reply shown without it. Each page that lands advances again. */
+  function advance() {
+    if (disposed || controller || failed) return;
+    if (older) {
+      const through = older === true ? undefined : older;
+      older = false;
+      void run(false, false, through);
+    } else if (recover && snapshot.status === "ready" && snapshot.seeking)
+      void run(false, false, undefined, true);
   }
   if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
     rootId = threadReference(seed)?.rootId ?? seed.id;
@@ -703,18 +722,21 @@ export function createThreadView({
   /** Demand for an older page. It waits out a quiet failure, whose retry is
    * session recovery's. */
   async function more(through?: () => number) {
-    if (!failed) await run(false, false, through);
+    if (failed) older = through ?? (older || true);
+    else await run(false, false, through);
   }
   async function run(
     replace: boolean,
     established = false,
     through?: () => number,
+    /** For a missing parent, not a person: see `advance`. */
+    sought = false,
   ) {
     if (disposed) return;
     if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
-      else older = true;
+      else older = through ?? (older || true);
       return;
     }
     if (!canAccess()) {
@@ -723,10 +745,13 @@ export function createThreadView({
     }
     if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
     // A retry stays as quiet as the failure it follows.
-    const background = established || (replace && (!!shown || !!failed));
+    const background =
+      established || sought || (replace && (!!shown || !!failed));
     failed = undefined;
     const owned = new AbortController();
     controller = owned;
+    // A read for a missing parent yields to the reads a person waits on.
+    const yielding = sought ? { priority: "background" as const } : {};
     const startedAt = now();
     // A read after the drop can fail or replace the rows the stream kept live,
     // so only an untouched view may skip its establishment refresh.
@@ -811,7 +836,7 @@ export function createThreadView({
                 : {}),
             },
           ],
-          { signal },
+          { signal, ...yielding },
         );
       let firstWindow: ReturnType<typeof windowRead> | undefined;
       let root: readonly RelayEvent[] = [];
@@ -820,7 +845,10 @@ export function createThreadView({
         // verified root first so channel-less root aux has visibility evidence:
         // the first window's rows are read only after it.
         // Revalidate once per run, not once per page of a retained-range repair.
-        const rootRead = reader.read([rootFilter], { signal: owned.signal });
+        const rootRead = reader.read([rootFilter], {
+          signal: owned.signal,
+          ...yielding,
+        });
         // An admitting reader would drop root aux from a window answered
         // before the root; only an unadmitting one overlaps the window.
         if (unadmitted) {
@@ -1008,23 +1036,36 @@ export function createThreadView({
         canLoadMore: more && pages < MAX_PAGES,
         limited: more && pages >= MAX_PAGES,
       });
-      // Queued behind this read, whose rows show now.
-      seek();
     } catch (error) {
       if (active()) {
-        // A failed repair stays visible with Retry; the page queued behind it
-        // would clear that error.
-        older = false;
-        if (recover && canRefresh() && isRetryableRead(error))
+        // A relay's rejection is not one: the same read fails the same way.
+        if (
+          recover &&
+          canRefresh() &&
+          (error instanceof ReadError && error.status !== undefined
+            ? transientStatus(error.status)
+            : isRetryableRead(error))
+        ) {
           failed = replace ? "refresh" : "older";
-        else {
+          // The page a person asked for is still wanted once this recovers.
+          if (!replace && !sought) older = through ?? (older || true);
+          publishStatus({});
+        } else {
+          // A failed repair stays visible with Retry; the page queued behind
+          // it would clear that error.
+          older = false;
           if (targetStatus === "loading") targetStatus = "error";
           // A failed refresh shows what is read, as a fresh view would.
           if (replace && shown) {
             shown = undefined;
             publish();
           }
-          publishStatus({ status: "error", error: String(error) });
+          publishStatus({
+            status: "error",
+            error: String(error),
+            // A background read published no kind when it began.
+            ...(replace ? {} : { readKind: "older" as const }),
+          });
         }
       }
     } finally {
@@ -1037,10 +1078,7 @@ export function createThreadView({
           const established = again === "established";
           again = false;
           void run(true, established);
-        } else if (older && !disposed) {
-          older = false;
-          void run(false);
-        }
+        } else advance();
         recover?.();
       }
     }
@@ -1124,8 +1162,15 @@ export function createThreadView({
     /** For session recovery: a transient failure waits for `retry`. */
     recovery: (): RecoveryStatus =>
       failed ? "failed" : recover && controller ? "busy" : "settled",
-    retry() {
-      if (failed) void run(failed === "refresh");
+    /** `timed` is recovery's own delay. Any other retry follows a reconnect,
+     * which a view the stream dropped answers with its establishment refresh. */
+    retry(timed?: boolean) {
+      if (!failed || (dropped && !timed)) return;
+      if (failed === "refresh") return void run(true);
+      failed = undefined;
+      advance();
+      // Nothing may be left to read: the wait is over either way.
+      publishStatus({});
     },
     /** Profiles change the rows only through an owner the fold looked up. */
     ownersChanged() {

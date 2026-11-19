@@ -753,9 +753,10 @@ export class PiRuntime {
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
-    // community does not know yet: it waits, as a workflow's mention does,
-    // rather than answer a Solo chat or a DM as a thread.
-    if (!this.reads(agent.key) && this.readyReads) {
+    // community, or one still listing its channels, does not know yet: it
+    // waits, as a workflow's mention does, rather than answer a Solo chat or
+    // a DM as a thread. A community that knows it answers at once.
+    if (this.readyReads) {
       await this.readyReads(agent, signal, channel, "This turn");
       signal.throwIfAborted();
       if (current && !current()) return ignored?.();

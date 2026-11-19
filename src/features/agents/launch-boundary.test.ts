@@ -188,7 +188,7 @@ async function setup<Config>(
   const storage = memoryStorage();
   seed(storage, heads);
   const counted = countedTransport([
-    metadata(relayKey, channel, "general"),
+    metadata(relayKey, channel, "general", undefined, [["t", "stream"]]),
     roster(relayKey, channel, [owner.pubkey, agentKey.pubkey]),
     profile(owner, { name: "Owner" }),
     profile(agentKey, { name: typeId, is_agent: true }),

@@ -1042,7 +1042,7 @@ it("gives the workflow reason for its owner's workflow mention that doesn't name
   expect(host.processes).toEqual([]);
 });
 
-it("waits for a workflow mention's community, not for its owner's", async () => {
+it("waits for a workflow mention's community before its check, and for its owner's before it routes", async () => {
   const { deliver, runtime } = setup();
   const relay = keypair();
   const readyReads = vi.fn(async () => runtime["reads"](self));
@@ -1062,7 +1062,13 @@ it("waits for a workflow mention's community, not for its owner's", async () => 
   await deliver({ type: "mention", event }).run;
   expect(readyReads).toHaveBeenCalledOnce();
   await deliver({ type: "mention", event: { ...event, pubkey: alice } }).run;
-  expect(readyReads).toHaveBeenCalledOnce();
+  expect(readyReads).toHaveBeenCalledTimes(2);
+  expect(readyReads).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.anything(),
+    channel,
+    "This turn",
+  );
 });
 
 it.each([
@@ -2028,10 +2034,10 @@ it("starts a turn while Buzz reconnects in its folder, and routes one that comes
   });
   Object.assign(desktop, { resolveDirectory: folders() });
   await assign(storage);
-  const { readyReads, back } = waitingReads(runtime);
   // Taken in while Buzz is connected; it starts while Buzz reconnects.
   const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
   await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
+  const { readyReads, back } = waitingReads(runtime);
   link.status = "connecting";
   placed.resolve({ seen: 0 });
   await first.run;

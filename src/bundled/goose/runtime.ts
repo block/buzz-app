@@ -669,19 +669,18 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
-    // community does not know yet: it waits, as a workflow's mention does,
-    // rather than answer a Solo chat or a DM as a thread.
-    if (!ownerReads(this.relay(agent.key), agent.pubkey)) {
-      await readyOwnerReads(
-        this.relay(agent.key),
-        agent,
-        signal,
-        channel,
-        "This turn",
-      );
-      signal.throwIfAborted();
-      if (current && !current()) return ignored?.();
-    }
+    // community, or one still listing its channels, does not know yet: it
+    // waits, as a workflow's mention does, rather than answer a Solo chat or
+    // a DM as a thread. A community that knows it answers at once.
+    await readyOwnerReads(
+      this.relay(agent.key),
+      agent,
+      signal,
+      channel,
+      "This turn",
+    );
+    signal.throwIfAborted();
+    if (current && !current()) return ignored?.();
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
     const solo = await soloChat(
       () => this.relay(agent.key),

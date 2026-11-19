@@ -5,7 +5,7 @@ import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import type { KeyState, TypeSafeKey } from "./key";
+import type { CommunityKey, KeyState } from "./key";
 
 const KEY_STATUS: Record<KeyState, string | undefined> = {
   checking: "Checking for a saved key…",
@@ -17,18 +17,15 @@ const KEY_STATUS: Record<KeyState, string | undefined> = {
     "TypeSafe did not accept your key. Replace it to keep using TypeSafe.",
 };
 
-/** Sets or removes the TypeSafe key. The key goes straight to native storage
- * and is never shown again. */
+/** Sets or removes one community's TypeSafe key. The key goes straight to
+ * native storage and is never shown again. */
 export function TypeSafeSettings({
   typesafe,
   active,
   grouped = true,
   apple = isApplePlatform(navigator.platform),
 }: {
-  typesafe: Pick<
-    TypeSafeKey,
-    "snapshot" | "subscribe" | "save" | "clear" | "desktop"
-  >;
+  typesafe: CommunityKey;
   active(): boolean;
   grouped?: boolean;
   /** Whether the key goes to the macOS Keychain, which only Buzz can read. */
@@ -133,7 +130,7 @@ export function TypeSafeSettings({
       {confirm && (
         <AlertDialog
           title="Remove TypeSafe API key?"
-          description={`This removes the key from ${storage}. Add a key again to keep using TypeSafe.`}
+          description={`This removes this community’s key from ${storage}. Add a key again to keep using TypeSafe here.`}
           pending={busy}
           onClose={() => setConfirm(false)}
           finalFocus={() =>

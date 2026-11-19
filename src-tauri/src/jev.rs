@@ -1,9 +1,11 @@
-//! The saved TypeSafe key, which the `typesafe` decision backend sends (see
-//! `decisions.rs`). Native code owns the key: it is kept in the OS credential
+//! The saved TypeSafe keys, one per community, which the `typesafe` decision
+//! backend sends with that community's requests (see `decisions.rs`). Native
+//! code owns the keys: each is kept in the OS credential
 //! store under Buzz's own item, apart from Janet's, and it is never sent back
 //! to the webview or given to an agent process. On macOS the item is created
 //! by the Buzz binary, so only that binary reads it without a prompt; an
 //! agent's shell cannot.
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
@@ -21,24 +23,37 @@ const PREVIOUS_KEY_SERVICE: &str = if cfg!(debug_assertions) {
 } else {
     "dev.local.buzz.foundation.jev-key"
 };
-#[cfg_attr(test, allow(dead_code))]
+/// The one key saved before keys were per community. Only `adopt` reads it,
+/// to give it to the communities joined then.
 pub(crate) const KEY_ACCOUNT: &str = "typesafe";
 pub(crate) const MODEL: &str = "jev-1.13.0";
 const KEY_LIMIT: usize = 512;
 
-/// Where the key lives.
+/// The account of `community`'s key: `typesafe:` and the community's host as
+/// Builderlab names it, so every spelling of one relay shares one key.
+/// `None` when `community` is not a relay URL.
+pub(crate) fn account(community: &str) -> Option<String> {
+    crate::decisions::community_host(community).map(|host| format!("{KEY_ACCOUNT}:{host}"))
+}
+
+/// Where the keys live, each under its account.
 pub(crate) trait KeyStore: Send + Sync {
-    fn read(&self) -> Result<Option<Zeroizing<String>>, String>;
-    fn replace(&self, key: &str) -> Result<(), String>;
-    fn clear(&self) -> Result<(), String>;
+    fn read(&self, account: &str) -> Result<Option<Zeroizing<String>>, String>;
+    fn replace(&self, account: &str, key: &str) -> Result<(), String>;
+    fn clear(&self, account: &str) -> Result<(), String>;
 }
 
 pub(crate) struct JevHost {
     store: Arc<dyn KeyStore>,
-    /// `None` until read: the Keychain is asked once, then kept current by set
-    /// and clear. A failed read is not kept, and a key the service refuses is
-    /// read again, so one removed outside the app is seen on the next call.
-    key: Mutex<Option<Option<Zeroizing<String>>>>,
+    /// Each account's key once read: the Keychain is asked once per
+    /// community, then kept current by set and clear. A failed read is not
+    /// kept, and a key the service refuses is read again, so one removed
+    /// outside the app is seen on the next call.
+    keys: Mutex<HashMap<String, Option<Zeroizing<String>>>>,
+}
+
+fn account_of(community: &str) -> Result<String, String> {
+    account(community).ok_or_else(|| "That is not a community".to_string())
 }
 
 impl JevHost {
@@ -48,31 +63,45 @@ impl JevHost {
     pub(crate) fn with(store: Box<dyn KeyStore>) -> Self {
         Self {
             store: Arc::from(store),
-            key: Mutex::new(None),
+            keys: Mutex::new(HashMap::new()),
         }
     }
-    /// The saved key, or `None` when there is none. A Keychain that cannot be
-    /// read is an error, not a missing key.
-    pub(crate) async fn key(&self) -> Result<Option<Zeroizing<String>>, String> {
-        let mut key = self.key.lock().await;
-        if key.is_none() {
-            // The store can block on a consent dialog; a caller's deadline
-            // still applies while it waits.
-            let store = self.store.clone();
-            let read = tokio::task::spawn_blocking(move || store.read())
-                .await
-                .map_err(|_| "The Keychain is unavailable".to_string())??;
-            *key = Some(read);
+    /// Runs `work` on the store off the async runtime. The store can block
+    /// on a consent dialog; a caller's deadline still applies while it waits.
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&dyn KeyStore) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || work(store.as_ref()))
+            .await
+            .map_err(|_| "The Keychain is unavailable".to_string())?
+    }
+    /// `community`'s saved key, or `None` when it has none. A Keychain that
+    /// cannot be read is an error, not a missing key.
+    pub(crate) async fn key(&self, community: &str) -> Result<Option<Zeroizing<String>>, String> {
+        let account = account_of(community)?;
+        let mut keys = self.keys.lock().await;
+        if let Some(key) = keys.get(&account) {
+            return Ok(key.clone());
         }
-        Ok(key.as_ref().and_then(|k| k.clone()))
+        let read = {
+            let account = account.clone();
+            self.run(move |store| store.read(&account)).await?
+        };
+        keys.insert(account, read.clone());
+        Ok(read)
     }
-    pub(crate) async fn forget(&self) {
-        *self.key.lock().await = None;
+    pub(crate) async fn forget(&self, community: &str) {
+        if let Some(account) = account(community) {
+            self.keys.lock().await.remove(&account);
+        }
     }
-    pub(crate) async fn configured(&self) -> Result<bool, String> {
-        Ok(self.key().await?.is_some())
+    pub(crate) async fn configured(&self, community: &str) -> Result<bool, String> {
+        Ok(self.key(community).await?.is_some())
     }
-    pub(crate) async fn set(&self, value: &str) -> Result<(), String> {
+    pub(crate) async fn set(&self, community: &str, value: &str) -> Result<(), String> {
+        let account = account_of(community)?;
         let value = value.trim();
         if value.is_empty()
             || value.len() > KEY_LIMIT
@@ -80,24 +109,58 @@ impl JevHost {
         {
             return Err("That does not look like a TypeSafe API key".into());
         }
-        let mut key = self.key.lock().await;
-        let store = self.store.clone();
+        let mut keys = self.keys.lock().await;
         let saved = Zeroizing::new(value.to_owned());
-        let write = saved.clone();
-        tokio::task::spawn_blocking(move || store.replace(&write))
-            .await
-            .map_err(|_| "The Keychain is unavailable".to_string())??;
-        *key = Some(Some(saved));
+        {
+            let (account, write) = (account.clone(), saved.clone());
+            self.run(move |store| store.replace(&account, &write))
+                .await?;
+        }
+        keys.insert(account, Some(saved));
         Ok(())
     }
-    pub(crate) async fn clear(&self) -> Result<(), String> {
-        let mut key = self.key.lock().await;
-        let store = self.store.clone();
-        tokio::task::spawn_blocking(move || store.clear())
-            .await
-            .map_err(|_| "The Keychain is unavailable".to_string())??;
-        *key = Some(None);
+    pub(crate) async fn clear(&self, community: &str) -> Result<(), String> {
+        let account = account_of(community)?;
+        let mut keys = self.keys.lock().await;
+        {
+            let account = account.clone();
+            self.run(move |store| store.clear(&account)).await?;
+        }
+        keys.insert(account, None);
         Ok(())
+    }
+    /// Gives the key saved before keys were per community to each of
+    /// `communities` that has no key of its own, then deletes it, so each
+    /// community's key is then its own. Without such a key it does nothing.
+    /// The old key is deleted only once every copy is saved; until then a
+    /// later call tries again.
+    pub(crate) async fn adopt(&self, communities: &[String]) -> Result<(), String> {
+        let accounts: BTreeSet<String> = communities.iter().filter_map(|c| account(c)).collect();
+        if accounts.is_empty() {
+            return Ok(());
+        }
+        let mut keys = self.keys.lock().await;
+        let copied = {
+            let accounts = accounts.clone();
+            self.run(move |store| {
+                let Some(key) = store.read(KEY_ACCOUNT)? else {
+                    return Ok(());
+                };
+                for account in &accounts {
+                    if store.read(account)?.is_none() {
+                        store.replace(account, &key)?;
+                    }
+                }
+                store.clear(KEY_ACCOUNT)
+            })
+            .await
+        };
+        // Some copies may be saved even when a later step failed: read them
+        // again.
+        for account in &accounts {
+            keys.remove(account);
+        }
+        copied
     }
 }
 
@@ -146,12 +209,17 @@ mod platform {
         .into()
     }
     impl KeyStore for OsKeyStore {
-        fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
-            let find = |service| match credentials::read(service, KEY_ACCOUNT) {
+        fn read(&self, account: &str) -> Result<Option<Zeroizing<String>>, String> {
+            let find = |service| match credentials::read(service, account) {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(Error::Absent) => Ok(None),
                 Err(e) => Err(e),
             };
+            // Only the old device-wide key may still be under the service
+            // before 1.0.
+            if account != KEY_ACCOUNT {
+                return find(KEY_SERVICE).map_err(error)?.map_or(Ok(None), decode);
+            }
             credentials::read_or_copy(
                 || find(KEY_SERVICE),
                 || credentials::copy(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT),
@@ -159,14 +227,18 @@ mod platform {
             .map_err(error)?
             .map_or(Ok(None), decode)
         }
-        fn replace(&self, key: &str) -> Result<(), String> {
-            credentials::replace(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes()).map_err(error)
+        fn replace(&self, account: &str, key: &str) -> Result<(), String> {
+            credentials::replace(KEY_SERVICE, account, key.as_bytes()).map_err(error)
         }
-        fn clear(&self) -> Result<(), String> {
-            clear_with(|service| match credentials::delete(service, KEY_ACCOUNT) {
+        fn clear(&self, account: &str) -> Result<(), String> {
+            let delete = |service: &str| match credentials::delete(service, account) {
                 Ok(()) | Err(Error::Absent) => Ok(()),
                 Err(e) => Err(error(e)),
-            })
+            };
+            if account != KEY_ACCOUNT {
+                return delete(KEY_SERVICE);
+            }
+            clear_with(delete)
         }
     }
 }
@@ -177,36 +249,49 @@ mod platform {
     test
 ))]
 impl KeyStore for OsKeyStore {
-    fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
+    fn read(&self, _account: &str) -> Result<Option<Zeroizing<String>>, String> {
         Err("Secure storage is not available here".into())
     }
-    fn replace(&self, _key: &str) -> Result<(), String> {
+    fn replace(&self, _account: &str, _key: &str) -> Result<(), String> {
         Err("Secure storage is not available here".into())
     }
-    fn clear(&self) -> Result<(), String> {
+    fn clear(&self, _account: &str) -> Result<(), String> {
         Err("Secure storage is not available here".into())
     }
 }
 
 #[tauri::command]
-pub(crate) async fn jev_classifier_status(host: tauri::State<'_, JevHost>) -> Result<bool, String> {
-    host.configured().await
+pub(crate) async fn jev_classifier_status(
+    host: tauri::State<'_, JevHost>,
+    community: String,
+) -> Result<bool, String> {
+    host.configured(&community).await
 }
 
 #[tauri::command]
 pub(crate) async fn jev_classifier_set_key(
     host: tauri::State<'_, JevHost>,
+    community: String,
     key: String,
 ) -> Result<(), String> {
     let key = Zeroizing::new(key);
-    host.set(&key).await
+    host.set(&community, &key).await
 }
 
 #[tauri::command]
 pub(crate) async fn jev_classifier_clear_key(
     host: tauri::State<'_, JevHost>,
+    community: String,
 ) -> Result<(), String> {
-    host.clear().await
+    host.clear(&community).await
+}
+
+#[tauri::command]
+pub(crate) async fn jev_classifier_adopt(
+    host: tauri::State<'_, JevHost>,
+    communities: Vec<String>,
+) -> Result<(), String> {
+    host.adopt(&communities).await
 }
 
 #[cfg(test)]

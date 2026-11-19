@@ -14,8 +14,10 @@ struct FakeStore {
     /// Reads block this long, as a stalled `security` process does.
     stall: StdMutex<Duration>,
 }
+/// One key for every account: `jev_tests.rs` covers keeping each
+/// community's apart.
 impl KeyStore for Arc<FakeStore> {
-    fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
+    fn read(&self, _account: &str) -> Result<Option<Zeroizing<String>>, String> {
         *self.reads.lock().unwrap() += 1;
         std::thread::sleep(*self.stall.lock().unwrap());
         if *self.unreadable.lock().unwrap() {
@@ -23,11 +25,11 @@ impl KeyStore for Arc<FakeStore> {
         }
         Ok(self.key.lock().unwrap().clone().map(Zeroizing::new))
     }
-    fn replace(&self, key: &str) -> Result<(), String> {
+    fn replace(&self, _account: &str, key: &str) -> Result<(), String> {
         *self.key.lock().unwrap() = Some(key.into());
         Ok(())
     }
-    fn clear(&self) -> Result<(), String> {
+    fn clear(&self, _account: &str) -> Result<(), String> {
         *self.key.lock().unwrap() = None;
         Ok(())
     }
@@ -116,10 +118,13 @@ fn decisions(url: &str) -> DecisionsHost {
         TIMEOUT,
     )
 }
+/// A request from `wss://buzz.example.org`, whose TypeSafe key `keys` holds.
 fn request(questions: Value) -> Request {
-    serde_json::from_value(
-        json!({ "state": "The build is broken on main.", "questions": questions }),
-    )
+    serde_json::from_value(json!({
+        "state": "The build is broken on main.",
+        "questions": questions,
+        "community": "wss://buzz.example.org",
+    }))
     .unwrap()
 }
 /// One question of each type.
@@ -545,6 +550,28 @@ async fn builderlab_without_a_community_sends_nothing_and_typesafe_sends_none() 
     let (head, body) = seen.lock().unwrap()[0].clone();
     assert!(!head.contains("x-buzz-community"), "{head}");
     assert!(body.get("community").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn typesafe_without_a_community_has_no_key_and_sends_nothing() {
+    let (url, seen) = server(vec![]).await;
+    let (store, keys) = keys(Some("k"));
+    for community in [None, Some(""), Some("buzz.example.org")] {
+        let mut request = every_type();
+        request.community = community.map(Into::into);
+        assert_eq!(
+            decisions(&url)
+                .decide(&keys, Backend::Typesafe, None, request)
+                .await,
+            Decided::Failed {
+                backend: Backend::Typesafe,
+                reason: Failure::MissingCredentials
+            },
+            "{community:?}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(*store.reads.lock().unwrap(), 0);
 }
 
 #[tokio::test]

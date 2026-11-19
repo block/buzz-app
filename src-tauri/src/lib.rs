@@ -948,6 +948,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
+        jev::jev_classifier_adopt,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,

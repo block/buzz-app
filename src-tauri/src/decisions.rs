@@ -4,8 +4,9 @@
 //! owns the endpoints, credentials, limits and answer checks, so every
 //! provider returns the same checked answers or the same failure reasons.
 //!
-//! - `typesafe`: TypeSafe System One with the user's own TypeSafe key, which
-//!   only native code reads (see `jev.rs`).
+//! - `typesafe`: TypeSafe System One with the key the user saved for the
+//!   request's community, which only native code reads (see `jev.rs`). A
+//!   call without a community has no key.
 //! - `builderlab`: the build's Builderlab (`BUZZ_BUILDERLAB_URL`), with the
 //!   Builderlab sign-in the webview holds. Builds without one have no
 //!   `builderlab` endpoint. An FI build instead calls the API of its identity
@@ -73,7 +74,8 @@ pub(crate) struct Request {
     #[serde(default)]
     pub(crate) timeout_ms: Option<u64>,
     /// The Buzz community (its relay URL) the text comes from. Builderlab
-    /// bills that community and refuses a call without one.
+    /// bills that community and TypeSafe uses its key; both refuse a call
+    /// without one.
     #[serde(default)]
     pub(crate) community: Option<String>,
 }
@@ -232,7 +234,13 @@ impl DecisionsHost {
                 .map_err(|_| Failure::ServiceError)?;
             let client = client().ok_or(Failure::ServiceError)?;
             let post = match backend {
-                Backend::Typesafe => match keys.key().await {
+                // Only a community has a key.
+                Backend::Typesafe => match match request.community.as_deref() {
+                    Some(community) if crate::jev::account(community).is_some() => {
+                        keys.key(community).await
+                    }
+                    _ => Ok(None),
+                } {
                     Ok(Some(key)) => client
                         .post(&self.endpoints.typesafe)
                         .bearer_auth(key.as_str()),
@@ -286,7 +294,9 @@ impl DecisionsHost {
                 300..=399 | 401 | 403 => {
                     if backend == Backend::Typesafe {
                         // The key may have been removed or replaced elsewhere.
-                        keys.forget().await;
+                        if let Some(community) = request.community.as_deref() {
+                            keys.forget(community).await;
+                        }
                     } else if status == 401 {
                         return Err(Failure::SessionExpired);
                     }

@@ -57,7 +57,7 @@ const offeredIn = (provider: DecisionProvider, community: string) => {
 /** Chooses, for each joined community, the provider that answers its
  * decisions, and shows whether that provider can answer there: Builderlab's
  * availability follows the community's sign-in server, which communities on
- * one server share, while the TypeSafe key is one for every community.
+ * one server share, and each community has its own TypeSafe key.
  * Providers are plugins. Each community's menu offers the providers that
  * can be set up there; a chosen provider that cannot answer says why, and
  * no other answers in its place. With no communities, it lists each

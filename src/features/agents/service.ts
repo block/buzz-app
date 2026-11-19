@@ -4538,7 +4538,6 @@ export class AgentsService extends Service implements Agents {
         (signal) => {
           const client = appClient(handle, {
             signal,
-            callSignal: signal,
             check,
             relayAuthor: source.relayAuthor?.(),
             signingAuthority: source.workflowAuthority() ?? null,

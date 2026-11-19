@@ -46,3 +46,37 @@ export function publicMessageNeighbor(
   }
   return undefined;
 }
+
+/** Bubbles end a group with its avatar; compact lists start it with one. Only
+ * the group joined by the current response cue can borrow its playback. */
+export function responseAvatarAnchors(
+  rows: readonly ChannelMessage[],
+  respondingAgent: string | undefined,
+  sameGroup: (
+    previous: ChannelMessage,
+    current: ChannelMessage,
+  ) => boolean = continuesMessageGroup,
+): ReadonlySet<string> {
+  const last = publicMessageNeighbor(rows, rows.length, -1);
+  if (
+    !respondingAgent ||
+    last?.authorId !== respondingAgent ||
+    last.membership ||
+    last.workflowOwnerId
+  )
+    return new Set();
+  let first = last;
+  let index = rows.indexOf(first);
+  while (index > 0) {
+    const previous = publicMessageNeighbor(rows, index, -1);
+    if (
+      !previous ||
+      previous.threadRootId !== first.threadRootId ||
+      !sameGroup(previous, first)
+    )
+      break;
+    first = previous;
+    index = rows.indexOf(first);
+  }
+  return new Set([first.id, last.id]);
+}

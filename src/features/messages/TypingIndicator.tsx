@@ -117,6 +117,21 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
+  return useLiveConversationActivity(
+    session,
+    channelId,
+    threadRootId,
+    includeThreads,
+  ).agents;
+}
+
+/** The same scoped cue owns its visible group avatar in compact conversations. */
+export function useLiveConversationActivity(
+  session: AgentSession,
+  channelId: string,
+  threadRootId: string | undefined,
+  includeThreads = true,
+) {
   const presented = usePresentedAgents(session, channelId, threadRootId);
   const presentedRequests = usePresentedRequests(session, channelId);
   const watchChannel = !threadRootId && !includeThreads;
@@ -153,7 +168,7 @@ export function useLiveConversationAgents(
       includeThreads,
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
-    return [...details.keys()]
+    const agents = [...details.keys()]
       .filter(
         (key) =>
           !presented.has(key) &&
@@ -166,11 +181,18 @@ export function useLiveConversationAgents(
             includeThreads,
           ),
       )
-      .sort()
-      .join(",");
+      .sort();
+    const responding = agents.filter((agent) => {
+      const label = details.get(agent)?.label;
+      return label !== "Received · waiting to start" && label !== "Starting";
+    });
+    return JSON.stringify([agents, responding]);
   };
   const key = useSyncExternalStore(subscribe, getKey, getKey);
-  return useMemo(() => (key ? key.split(",") : []), [key]);
+  return useMemo(() => {
+    const [agents, responding] = JSON.parse(key) as [string[], string[]];
+    return { agents, responding };
+  }, [key]);
 }
 
 /** Agents working in one conversation, over existing stores; no reads or capture. */

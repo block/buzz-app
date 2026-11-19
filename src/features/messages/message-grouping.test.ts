@@ -1,8 +1,10 @@
 import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
+import { replyTree } from "./reply-tree";
 import {
   continuesMessageGroup,
   publicMessageNeighbor,
+  responseAvatarAnchors,
 } from "./message-grouping";
 
 const first: ChannelMessage = {
@@ -17,6 +19,56 @@ const first: ChannelMessage = {
   reactions: [],
   replyCount: 0,
 };
+
+it("assigns response playback only to the joined group's visible anchors", () => {
+  const rows = [
+    { ...first, id: "history" },
+    { ...first, id: "request", authorId: "human" },
+    first,
+    { ...first, id: "last" },
+  ];
+  expect([...responseAvatarAnchors(rows, first.authorId)]).toEqual([
+    "first",
+    "last",
+  ]);
+  expect([...responseAvatarAnchors(rows, undefined)]).toEqual([]);
+  expect([...responseAvatarAnchors(rows, "other")]).toEqual([]);
+  expect([
+    ...responseAvatarAnchors(
+      [...rows, { ...first, id: "new-request", authorId: "human" }],
+      first.authorId,
+    ),
+  ]).toEqual([]);
+  expect([
+    ...responseAvatarAnchors(
+      [first, { ...first, id: "reply", threadRootId: first.id }],
+      first.authorId,
+    ),
+  ]).toEqual(["reply"]);
+});
+
+it("keeps nested response ownership separate from the parent avatar", () => {
+  const parent = { ...first, threadRootId: "root" };
+  const nested = { ...parent, id: "nested", replyParentId: parent.id };
+  const deeper = { ...nested, id: "deeper", replyParentId: nested.id };
+  for (const rows of [
+    [parent, nested],
+    [parent, nested, deeper],
+  ]) {
+    const tree = replyTree(rows, "root");
+    const anchors = responseAvatarAnchors(
+      rows,
+      first.authorId,
+      (previous, current) =>
+        tree.parents.get(previous.id) === tree.parents.get(current.id) &&
+        !tree.children.get(previous.id)?.length &&
+        continuesMessageGroup(previous, current),
+    );
+    expect([...anchors]).toEqual(
+      rows.length === 2 ? ["nested"] : ["nested", "deeper"],
+    );
+  }
+});
 
 it("groups adjacent same-author messages through the five-minute boundary", () => {
   for (const seconds of [0, 1, 299, 300]) {

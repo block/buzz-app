@@ -1,7 +1,10 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { useComposerScope } from "./composer-overlay";
-import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
+import {
+  TypingIndicator,
+  useLiveConversationActivity,
+} from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { RelayedRunPreview } from "./RelayedRunPreview";
 import { relayedRuns } from "./activity-groups";
@@ -46,6 +49,7 @@ import { MessageContextMenus } from "./MessageActionBar";
 import {
   continuesMessageGroup,
   publicMessageNeighbor,
+  responseAvatarAnchors,
 } from "./message-grouping";
 import { calendarDay } from "../../shared/datetime";
 import type {
@@ -847,7 +851,7 @@ function Timeline({
     const request = presentation.replyRequests.get(id);
     return request ? rowsById.get(request) : undefined;
   };
-  const liveAgents = useLiveConversationAgents(
+  const { agents: liveAgents, responding } = useLiveConversationActivity(
     queries,
     channelId,
     undefined,
@@ -868,6 +872,10 @@ function Timeline({
       : undefined);
   const rows = chronologicalRows;
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
+  const responseAvatars = responseAvatarAnchors(
+    rows,
+    responding.includes(liveAgents[0] ?? "") ? liveAgents[0] : undefined,
+  );
   const intent = useRef(0);
   // Keep expansion pending with scroll restoration until the saved row arrives.
   // Any newer reader intent cancels both, even before the next history update.
@@ -2567,6 +2575,7 @@ function Timeline({
                     presentation.byRow.get(row.id),
                     "history",
                   )}
+                  responseAvatar={!inside && responseAvatars.has(row.id)}
                   stackPrevious={
                     inside ||
                     (!!previousRow &&

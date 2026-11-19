@@ -141,6 +141,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useChatAvatar } from "../profiles/use-chat-avatar";
 import { useThreadDraft } from "./draft-places";
 
 export type MessageLinkOrigin = Readonly<{
@@ -195,6 +196,8 @@ export type MessageRowProps = {
   viewer?: string | undefined;
   stackPrevious?: boolean;
   stackNext?: boolean;
+  /** This visible group anchors the conversation's current response cue. */
+  responseAvatar?: boolean;
   alignViewer?: boolean;
 
   mediaMode?: "inline" | "thread";
@@ -298,6 +301,7 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
+  responseAvatar = false,
   representedAgents,
   repliedAgents,
   stoppedRequest,
@@ -518,6 +522,13 @@ function MessageRowContent({
     row.authorId,
   );
   const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
+  const playingResponse =
+    responseAvatar && agentAuthor && !(flat ? stackPrevious : stackNext);
+  const responsePicture = useChatAvatar(
+    profile?.picture,
+    media,
+    playingResponse && !clickable,
+  );
   const owner = useProfileOwner(
     session,
     agentAuthor && !stackPrevious ? row.authorId : undefined,
@@ -1173,6 +1184,8 @@ function MessageRowContent({
       viewer={viewer}
       name={name}
       picture={picture}
+      avatarSource={profile?.picture}
+      responding={playingResponse}
       pubkey={row.authorId}
       agent={avatarShape === "squircle"}
       session={session}
@@ -1180,7 +1193,7 @@ function MessageRowContent({
       target={target}
       onOpen={openLink}
       onFocusChange={setAvatarFocused}
-      trigger={
+      trigger={(portrait) => (
         <IconButton
           size="sm"
           shape="round"
@@ -1189,7 +1202,8 @@ function MessageRowContent({
           icon={
             <>
               <Avatar
-                src={picture}
+                src={portrait}
+                fallbackSrc={picture}
                 alt=""
                 fallback={name}
                 size={avatarSize}
@@ -1204,12 +1218,13 @@ function MessageRowContent({
             </>
           }
         />
-      }
+      )}
     />
   ) : (
     <span className={styles.nestedAvatar}>
       <Avatar
-        src={picture}
+        src={responsePicture ?? picture}
+        fallbackSrc={picture}
         alt={
           presence === "unknown"
             ? ""

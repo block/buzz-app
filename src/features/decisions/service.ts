@@ -148,9 +148,6 @@ export type DecisionProvider = Readonly<{
    * URL), or without one, for a request that names no community. Defaults
    * to true. */
   offered?(community?: string): boolean;
-  /** Which setup `community` uses, such as an account. Communities with the
-   * same scope share one setup; without one, every community shares it. */
-  setupScope?(community: string): string | undefined;
   /** Its settings, shown in Settings > Decisions API for `community`, or
    * without one, for every community. */
   Settings?: ComponentType<{

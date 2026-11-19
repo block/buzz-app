@@ -50,9 +50,6 @@ export type CommunityDecisionSessions = Readonly<{
    * that server is being restored and not known yet, or undefined where no
    * Builderlab serves that community. */
   forCommunity(relay: string): BuilderlabSession | undefined;
-  /** The sign-in server that serves the community, or undefined where none
-   * does. Communities with the same server share one account. */
-  account(relay: string): string | undefined;
   /** Any community's session, or the list, changed. */
   subscribe(listener: () => void): () => void;
 }>;
@@ -97,7 +94,6 @@ export function communityDecisionSessions(
         ? PENDING
         : undefined;
     },
-    account: (relay) => covering(relay)?.id,
     subscribe(listener) {
       // Each community's server and session; either can change which
       // session answers it, so a change watches them again.
@@ -292,8 +288,6 @@ export function builderlabProvider(
       !communities ||
       (community !== undefined &&
         communities.forCommunity(community) !== undefined),
-    // Communities on one sign-in server share its account.
-    setupScope: (community) => communities?.account(community),
     Settings: ({ active, community }) =>
       native ? (
         <BuilderlabDecisionsState

@@ -111,7 +111,7 @@ it("says to turn a provider on when none is, linking to Manage plugins", async (
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
-it("shows each community's provider setup, and which communities share it", async () => {
+it("shows each community's provider setup", async () => {
   const { decisions, register, changed } = setup();
   let typesafe: DecisionProviderStatus = "ready";
   await register(TYPESAFE, () => typesafe);
@@ -119,7 +119,6 @@ it("shows each community's provider setup, and which communities share it", asyn
   await register(BUILDERLAB, inBlock, {
     offered: (community) =>
       !!community && new URL(community).host.endsWith("block.example"),
-    setupScope: () => "block-server",
     Settings: ({ community }) => (
       <p>Sign-in for {community && new URL(community).host}</p>
     ),
@@ -136,11 +135,10 @@ it("shows each community's provider setup, and which communities share it", asyn
   expect(
     screen.getAllByText(/receives the message text sent with them/),
   ).toHaveLength(1);
-  // Each community sets up its own choice; one account is shared.
+  // Each community sets up its own choice.
   expect(screen.getByText("Sign-in for block.example")).toBeVisible();
   expect(screen.getByText("Sign-in for design.block.example")).toBeVisible();
-  expect(screen.getByText("Same Builderlab account as Design.")).toBeVisible();
-  expect(screen.getByText("Same Builderlab account as Block.")).toBeVisible();
+  expect(screen.queryByText(/Same .* as/)).toBeNull();
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
   // Design's Builderlab cannot answer yet, and the row says so: TypeSafe
   // does not answer in its place.

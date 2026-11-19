@@ -487,12 +487,11 @@ it("answers each community with its own sign-in server's account, and leaves the
     subscribe: () => () => {},
   } as unknown as KnownCommunities;
   const communities = communityDecisionSessions(sessions, buildServer, known);
-  // A community no server covers has no Builderlab; communities share
-  // the account of the server that covers them.
+  // A community no server covers has no Builderlab; the others use the
+  // session of the server that covers them.
   expect(communities.forCommunity(OTHER)).toBeUndefined();
-  expect(communities.account(OTHER)).toBeUndefined();
-  expect(communities.account(BLOCK)).toBe("block.example");
-  expect(communities.account(PUBLIC)).toBe("public.example");
+  expect(communities.forCommunity(BLOCK)).toBe(block);
+  expect(communities.forCommunity(PUBLIC)).toBe(build);
   const decide = vi.fn<BuilderlabDecide>(async () => ({
     outcome: "answered",
     backend: "builderlab",
@@ -515,7 +514,6 @@ it("answers each community with its own sign-in server's account, and leaves the
   const [offered] = decisions.providers();
   expect(offered?.offered?.(BLOCK)).toBe(true);
   expect(offered?.offered?.(OTHER)).toBe(false);
-  expect(offered?.setupScope?.(BLOCK)).toBe("block.example");
   // Where it is offered it is the default, and says it cannot answer yet:
   // TypeSafe does not answer in its place.
   expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);

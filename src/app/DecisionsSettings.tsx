@@ -42,8 +42,6 @@ type CommunityState = Readonly<{
   status: Status;
   /** Provider key -> whether it can be chosen here. */
   offered: Readonly<Record<string, boolean>>;
-  /** Provider key -> its setup scope here. */
-  scope: Readonly<Record<string, string>>;
 }>;
 
 const offeredIn = (provider: DecisionProvider, community: string) => {
@@ -51,13 +49,6 @@ const offeredIn = (provider: DecisionProvider, community: string) => {
     return provider.offered?.(community) ?? true;
   } catch {
     return false;
-  }
-};
-const scopeIn = (provider: DecisionProvider, community: string) => {
-  try {
-    return provider.setupScope?.(community) ?? "";
-  } catch {
-    return "";
   }
 };
 
@@ -125,12 +116,6 @@ export function DecisionsSettings({
                   offeredIn(provider, url),
                 ]),
               ),
-              scope: Object.fromEntries(
-                registered.map((provider) => [
-                  provider.key,
-                  scopeIn(provider, url),
-                ]),
-              ),
             };
           }),
         });
@@ -153,19 +138,6 @@ export function DecisionsSettings({
     if (row.status === "needs-setup")
       return `Set up ${label(row.answering)} to use decisions here`;
     return undefined;
-  };
-  /** The other communities that share `index`'s setup of its provider. */
-  const sharing = (index: number) => {
-    const row = state.communities[index];
-    if (!row?.shown || row.shown === DECISIONS_OFF) return [];
-    return communities.filter((_, other) => {
-      const each = state.communities[other];
-      return (
-        other !== index &&
-        each?.shown === row.shown &&
-        each.scope[row.shown] === row.scope[row.shown]
-      );
-    });
   };
   const settingsOf = (
     provider: RegisteredProvider,
@@ -301,7 +273,6 @@ export function DecisionsSettings({
             const current = providers.find(
               (provider) => provider.key === row?.shown,
             );
-            const shared = sharing(index);
             const subtitle = row && note(row);
             return (
               <SettingsGroup key={url}>
@@ -359,14 +330,6 @@ export function DecisionsSettings({
                   )}
                 />
                 {current && settingsOf(current, url)}
-                {current && shared.length > 0 && (
-                  <p className="m-0 pb-4 text-body-sm text-secondary">
-                    {current.key === BUILDERLAB
-                      ? "Same Builderlab account as "
-                      : `Same ${current.label} setup as `}
-                    {shared.map((each) => each.name).join(", ")}.
-                  </p>
-                )}
               </SettingsGroup>
             );
           })}

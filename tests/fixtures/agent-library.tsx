@@ -467,7 +467,7 @@ Object.assign(window, {
       throw new Error("Missing settings proposal fixture");
     updates = [
       {
-        id: "settings",
+        id: crypto.randomUUID(),
         requester: agent.pubkey,
         requesterName: agent.name,
         owner: agent.owner,

@@ -100,6 +100,7 @@ import {
 } from "./service";
 import {
   DecisionsService,
+  DECISIONS_OFF,
   type DecisionFailure,
   type DecisionRequest,
   type DecisionResult,
@@ -464,6 +465,7 @@ async function setup({
     owners,
     inactive,
     typesafe,
+    decisions,
     /** Ends startup, as when the last plugin finishes starting. */
     settleStartup: settle,
     type,
@@ -10759,6 +10761,20 @@ it("an event heard before the saved key's status is read waits for it, then is c
   expect(jev.decide).toHaveBeenCalledOnce();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "passed" },
+  });
+});
+
+it("does not classify in a community where the user turned decisions off", async () => {
+  const jev = fakeJev();
+  const { run, emit, decisions } = await classifiedAgent(jev);
+  if (!decisions) throw new Error("no decisions");
+  decisions.setBackend(DECISIONS_OFF, "wss://relay.example.test");
+  expect(decisions.chosenIn("wss://relay.example.test")).toBe(DECISIONS_OFF);
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.decide).not.toHaveBeenCalled();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
   });
 });
 

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  DECISIONS_OFF,
   DEFAULT_DECISION_PROVIDER,
   DEFAULT_DECISION_PROVIDERS,
   statusOf,
@@ -34,7 +35,8 @@ type Status = DecisionProviderStatus | "unavailable";
 /** One community's row, as Settings shows it. */
 type CommunityState = Readonly<{
   /** The provider in its menu: the user's choice while it is on, else the
-   * one that answers. "" when neither is on. */
+   * one that answers; `DECISIONS_OFF` when the user turned decisions off
+   * there. "" when neither is on. */
   shown: string;
   /** The provider that answers now, which differs from `shown` while a
    * chosen default is not set up. */
@@ -113,9 +115,11 @@ export function DecisionsSettings({
             const chosen = decisions.chosenIn(url);
             const answering = decisions.backend(url) ?? "";
             return {
-              shown: registered.some((provider) => provider.key === chosen)
-                ? (chosen as string)
-                : answering,
+              shown:
+                chosen === DECISIONS_OFF ||
+                registered.some((provider) => provider.key === chosen)
+                  ? (chosen as string)
+                  : answering,
               answering,
               status: decisions.status(url),
               offered: Object.fromEntries(
@@ -144,6 +148,8 @@ export function DecisionsSettings({
   };
   /** What a community's row says under its name, if anything. */
   const note = (row: CommunityState) => {
+    if (row.shown === DECISIONS_OFF)
+      return "Decisions are off in this community";
     if (!row.shown) return "No provider can answer here";
     if (row.answering && row.answering !== row.shown)
       return `${label(row.shown)} can’t answer here yet, so ${label(row.answering)} answers`;
@@ -156,7 +162,7 @@ export function DecisionsSettings({
   /** The other communities that share `index`'s setup of its provider. */
   const sharing = (index: number) => {
     const row = state.communities[index];
-    if (!row?.shown) return [];
+    if (!row?.shown || row.shown === DECISIONS_OFF) return [];
     return communities.filter((_, other) => {
       const each = state.communities[other];
       return (
@@ -293,7 +299,7 @@ export function DecisionsSettings({
         >
           <InlineHeader
             title="Communities"
-            subtitle="Choose which provider answers each community’s decisions."
+            subtitle="Choose which provider answers each community’s decisions, or turn them off."
           />
           {communities.map(({ membership, name, url }, index) => {
             const row = state.communities[index];
@@ -342,6 +348,16 @@ export function DecisionsSettings({
                                 : "Not offered in this community",
                             };
                           }),
+                        },
+                        {
+                          label: "",
+                          separator: true,
+                          options: [
+                            {
+                              value: DECISIONS_OFF,
+                              label: "Off",
+                            },
+                          ],
                         },
                       ]}
                     />

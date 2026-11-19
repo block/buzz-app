@@ -206,9 +206,14 @@ export type RegisteredProvider = Contribution<DecisionProvider>;
 /** The choice for every community without its own. Settings no longer
  * writes it; a choice saved before per-community choices still applies. */
 export const DECISION_BACKEND_KEY = "buzz-decision-backend.v1";
-/** Each community's choice: a JSON object of community host -> provider. */
+/** Each community's choice: a JSON object of community host -> provider
+ * key, or `DECISIONS_OFF`. */
 export const COMMUNITY_DECISION_BACKENDS_KEY =
   "buzz-decision-backend-by-community.v1";
+/** The choice that turns decisions off in a community: no provider is
+ * asked there, and none answers in its place. Provider keys always contain
+ * a "/", so none is this. */
+export const DECISIONS_OFF = "off";
 const MAX_QUESTIONS = 32;
 const NAME_LIMIT = 64;
 const INPUT_LIMIT = 128 * 1024;
@@ -395,6 +400,8 @@ export class DecisionsService extends Service implements Decisions {
     const find = (key: string) =>
       this.sorted.find((provider) => provider.key === key);
     const key = this.chosenIn(community);
+    // Off: nothing answers, not even TypeSafe.
+    if (key === DECISIONS_OFF) return undefined;
     const chosen = key === undefined ? undefined : find(key);
     if (chosen) {
       const status = statusOf(chosen, community);
@@ -461,10 +468,14 @@ export class DecisionsService extends Service implements Decisions {
     );
   };
   /** Host-only: Settings chooses the provider for `community`, or without
-   * one, for every community without its own choice. Not part of
-   * `Decisions`. */
+   * one, for every community without its own choice; `DECISIONS_OFF` turns
+   * decisions off there. Not part of `Decisions`. */
   setBackend(key: string, community?: string): void {
-    if (!this.sorted.some((provider) => provider.key === key)) return;
+    if (
+      key !== DECISIONS_OFF &&
+      !this.sorted.some((provider) => provider.key === key)
+    )
+      return;
     const before = this.chosenIn(community);
     const host = communityKey(community);
     if (community !== undefined && host === undefined) return;

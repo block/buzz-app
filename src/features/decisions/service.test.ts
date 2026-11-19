@@ -4,6 +4,7 @@ import { flush } from "../relay/testing";
 import {
   COMMUNITY_DECISION_BACKENDS_KEY,
   DECISION_BACKEND_KEY,
+  DECISIONS_OFF,
   DEFAULT_DECISION_PROVIDER,
   DecisionsService,
   type DecisionProvider,
@@ -446,6 +447,49 @@ it("applies a choice saved before per-community choices where a community has no
   expect(service.backend("wss://other.example")).toBe("acme.helper/p");
   expect(service.backend()).toBe("acme.helper/p");
   await root.fiber.dispose();
+});
+
+it("asks no provider in a community where the user turned decisions off", async () => {
+  const storage = memory({
+    [DECISION_BACKEND_KEY]: "block.builderlab/builderlab",
+  });
+  const { root, service, plugin } = setup(storage);
+  const typesafe = vi.fn(async () => reply);
+  const builderlab = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  await plugin("block.builderlab", { id: "builderlab", decide: builderlab });
+  const off = "wss://billed.example";
+  const other = "wss://other.example";
+  const changed = vi.fn();
+  service.subscribe(changed);
+  service.setBackend(DECISIONS_OFF, off);
+  expect(changed).toHaveBeenCalledOnce();
+  // Off wins over the choice saved for every community, and nothing
+  // answers in its place, not even TypeSafe.
+  expect(service.chosenIn(off)).toBe(DECISIONS_OFF);
+  expect(service.backend(off)).toBeUndefined();
+  expect(service.status(off)).toBe("unavailable");
+  await expect(
+    service.decide({ ...request, community: off }),
+  ).resolves.toMatchObject({ outcome: "failed", reason: "unavailable" });
+  expect(typesafe).not.toHaveBeenCalled();
+  expect(builderlab).not.toHaveBeenCalled();
+  // Other communities keep their providers.
+  expect(service.backend(other)).toBe("block.builderlab/builderlab");
+  // It is kept across a reload, and stays off while providers come and go.
+  await root.fiber.dispose();
+  const reloaded = setup(storage);
+  await reloaded.plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  expect(reloaded.service.chosenIn(off)).toBe(DECISIONS_OFF);
+  expect(reloaded.service.backend(off)).toBeUndefined();
+  reloaded.root
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .decisions.retireProvider("builderlab");
+  expect(reloaded.service.chosenIn(off)).toBe(DECISIONS_OFF);
+  // Choosing a provider turns it back on.
+  reloaded.service.setBackend(DEFAULT_DECISION_PROVIDER, off);
+  expect(reloaded.service.backend(off)).toBe(DEFAULT_DECISION_PROVIDER);
+  await reloaded.root.fiber.dispose();
 });
 
 it("ignores malformed saved community choices", async () => {

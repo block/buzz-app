@@ -6,6 +6,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  DECISIONS_OFF,
   DEFAULT_DECISION_PROVIDER,
   DecisionsService,
   type DecisionProvider,
@@ -194,6 +195,42 @@ it("chooses a provider for each community, offering only those it can be set up 
   expect(decisions.chosenIn(BLOCK)).toBe(TYPESAFE);
   expect(decisions.chosenIn(FRIENDS)).toBeUndefined();
   expect(menu("Block")).toHaveTextContent("TypeSafe");
+});
+
+it("turns decisions off in one community, with no setup shown there", async () => {
+  const user = userEvent.setup();
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register(BUILDERLAB, inBlock, {
+    Settings: ({ community }) => (
+      <p>Sign-in for {community && new URL(community).host}</p>
+    ),
+  });
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  const menu = (name: string) =>
+    screen.getByRole("combobox", { name: `Decision provider for ${name}` });
+  expect(screen.getByText("Sign-in for block.example")).toBeVisible();
+  await user.click(menu("Block"));
+  await user.click(await screen.findByRole("option", { name: "Off" }));
+  expect(decisions.chosenIn(BLOCK)).toBe(DECISIONS_OFF);
+  expect(decisions.backend(BLOCK)).toBeUndefined();
+  expect(menu("Block")).toHaveTextContent("Off");
+  expect(row("Block")).toHaveTextContent("Decisions are off in this community");
+  expect(screen.queryByText("Sign-in for block.example")).toBeNull();
+  // Other communities are unchanged.
+  expect(decisions.chosenIn(FRIENDS)).toBeUndefined();
+  expect(menu("Pals")).toHaveTextContent("TypeSafe");
+  // Choosing a provider turns them back on.
+  await user.click(menu("Block"));
+  await user.click(await screen.findByRole("option", { name: /builderlab/ }));
+  expect(decisions.backend(BLOCK)).toBe(BUILDERLAB);
+  expect(row("Block")).not.toHaveTextContent("off");
 });
 
 it("changes nothing while hidden", async () => {

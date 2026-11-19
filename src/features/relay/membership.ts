@@ -43,7 +43,6 @@ export function membershipChange(
           type: body.type,
           actor: body.actor,
           target: body.actor,
-          messageId: body.target_event_id,
         })
       : undefined;
   if (

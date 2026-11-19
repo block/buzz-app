@@ -7,7 +7,7 @@ import type {
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { useListedChannel } from "../../features/relay/listed-channel";
 import { diffPreview } from "../../features/relay/membership";
-import { PIN_KIND } from "../../features/relay/pins";
+import { PIN_KIND, pinLists } from "../../features/relay/pins";
 import { useRelayConnection, useRowProfiles } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -31,10 +31,16 @@ function Launcher({
   relay,
 }: ChannelLauncherProps & { relay: RelayData }) {
   const connection = useRelayConnection(relay);
-  // Only where the relay advertises pins (NIP-11 `buzz-pins`).
+  const current = connection.scope === context.scope;
+  const pins = usePinnedMessages(
+    connection.session,
+    current && connection.session.relayAuthor ? context.channelId : undefined,
+  );
+  // Where the relay takes pins (NIP-11 `buzz-pins`), or still lists some
+  // after it stopped.
   if (
-    connection.scope !== context.scope ||
-    !connection.session.outbox?.supports(PIN_KIND)
+    !current ||
+    (!connection.session.outbox?.supports(PIN_KIND) && !pins.ids.length)
   )
     return null;
   return (
@@ -78,7 +84,11 @@ function PinnedList({
       !!channel && !channel.readOnly && !channel.cached && !channel.archived,
   );
   const [error, setError] = useState<string>();
-  const retry = () => setAttempt((value) => value + 1);
+  const retry = () =>
+    pins.status === "error"
+      ? pinLists(session).retry(channelId)
+      : setAttempt((value) => value + 1);
+  const pinnable = !!session.outbox?.supports(PIN_KIND);
   if (
     pins.status === "error" ||
     (pinned.status === "error" && !pinned.rows.length)
@@ -104,7 +114,9 @@ function PinnedList({
       <EmptyState
         icon={<PinIcon />}
         title="No pinned messages"
-        description="Pin a message from its More menu to keep it here."
+        {...(pinnable && {
+          description: "Pin a message from its More menu to keep it here.",
+        })}
       />
     );
   return (
@@ -133,7 +145,7 @@ function PinnedList({
                 </span>
                 <span className={styles.preview}>{preview(row)}</span>
               </button>
-              {canUnpin && session.outbox?.supports(PIN_KIND) && (
+              {canUnpin && pinnable && (
                 <IconButton
                   size="sm"
                   aria-label={`Unpin message from ${name}`}

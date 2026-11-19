@@ -89,7 +89,6 @@ it("keeps each pin notice apart from membership runs", () => {
     type: "message_pinned",
     actor,
     target: actor,
-    messageId: "d".repeat(64),
   });
   const notice = row("2", pinned(pinky));
   const rows = [

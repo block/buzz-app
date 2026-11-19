@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import {
   LOADING_PINS,
@@ -16,14 +16,13 @@ export function usePinnedMessages(
   channelId: string | undefined,
 ): PinSnapshot {
   const store = pinLists(source);
-  const snapshot = () => (channelId ? store.snapshot(channelId) : LOADING_PINS);
-  return useSyncExternalStore(
-    channelId
-      ? (listener) => store.subscribe(channelId, listener)
-      : noSubscribe,
-    snapshot,
-    snapshot,
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      channelId ? store.subscribe(channelId, listener) : noSubscribe(),
+    [store, channelId],
   );
+  const snapshot = () => (channelId ? store.snapshot(channelId) : LOADING_PINS);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
 export type PinnedMessages = Readonly<{
@@ -35,9 +34,12 @@ export type PinnedMessages = Readonly<{
 /** An open panel also reloads on this period, so a message erased without a
  * list change leaves it. Jittered so open panels do not read together. */
 const REFRESH_MS = 10 * 60_000;
+/** Edits and deletions reload the rows they change. */
+const OVERLAY_KINDS = [5, 9005, 40003];
 
-/** Loads the rows behind `ids` when the list changes, on `attempt`, and
- * periodically. Earlier rows stay shown while a reload runs. */
+/** Loads the rows behind `ids` when the list changes, when one of them is
+ * edited or deleted, on `attempt`, and periodically. Earlier rows the list
+ * still names stay shown while a reload runs or after it fails. */
 export function usePinnedRows(
   source: PinSource,
   channelId: string,
@@ -58,11 +60,32 @@ export function usePinnedRows(
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
+    const wanted = new Set(key ? key.split(",") : []);
+    return source.subscribeLive(
+      ({ events }) => {
+        if (
+          events.some(
+            (event) =>
+              OVERLAY_KINDS.includes(event.kind) &&
+              event.tags.some(
+                ([name, id]) => name === "e" && !!id && wanted.has(id),
+              ),
+          )
+        )
+          setTick((value) => value + 1);
+      },
+      { replay: true },
+    );
+  }, [source, key]);
+  useEffect(() => {
     void tick;
     void attempt;
     const controller = new AbortController();
     const wanted = key ? key.split(",") : [];
-    setState((prior) => ({ status: "loading", rows: prior.rows }));
+    const named = new Set(wanted);
+    const kept = (prior: PinnedMessages) =>
+      prior.rows.filter((row) => named.has(row.id));
+    setState((prior) => ({ status: "loading", rows: kept(prior) }));
     readPinnedMessages(source, channelId, wanted, controller.signal).then(
       (found) => {
         if (controller.signal.aborted) return;
@@ -76,7 +99,7 @@ export function usePinnedRows(
       },
       () => {
         if (!controller.signal.aborted)
-          setState((prior) => ({ status: "error", rows: prior.rows }));
+          setState((prior) => ({ status: "error", rows: kept(prior) }));
       },
     );
     return () => controller.abort();

@@ -46,7 +46,6 @@ it("admits a relay-signed pin notice for one message, attributed to the pinner",
     type: "message_pinned",
     actor: viewer.pubkey,
     target: viewer.pubkey,
-    messageId: target,
   });
   expect(
     foldMessages("a", relay.pubkey, [

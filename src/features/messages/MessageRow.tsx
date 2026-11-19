@@ -126,7 +126,6 @@ import {
   ListBulletsIcon,
   PinIcon,
 } from "../../shared/design-system/icons";
-import { PIN_KIND } from "../relay/pins";
 import { usePinnedMessages } from "./use-pins";
 import {
   MenuIcon,
@@ -1652,9 +1651,9 @@ function MessageRowContent({
                   )}
               </div>
             </div>
-            {session?.outbox?.supports(PIN_KIND) &&
-              !row.membership &&
-              !row.huddle && <PinnedMarker session={session} row={row} />}
+            {session?.relayAuthor && !row.membership && !row.huddle && (
+              <PinnedMarker session={session} row={row} />
+            )}
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}

@@ -149,6 +149,21 @@ const fill = (background: string, zIndex?: number) => () => (
   <div style={{ position: "absolute", inset: 0, background, zIndex }} />
 );
 
+function MessageDestinationDraft({ companion }: Pick<PageProps, "companion">) {
+  const [note, setNote] = useState("");
+  return (
+    <>
+      <p>Contributed message destination</p>
+      <input
+        aria-label="Destination draft"
+        value={note}
+        onChange={(event) => setNote(event.currentTarget.value)}
+      />
+      {companion}
+    </>
+  );
+}
+
 export const fixturePlugins: readonly BundledPlugin[] = [
   {
     manifest: {
@@ -169,18 +184,13 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           id: "message",
           title: "Message link fixture",
           companion: true,
-          component: function MessageDestination({ companion }) {
-            const [note, setNote] = useState("");
+          component: function MessageDestination({ companion, navigation }) {
+            const target = navigation?.target;
+            const messageId = target?.kind === "page" && target.route?.params;
+            if (typeof messageId !== "string")
+              return <p role="alert">This message address is invalid.</p>;
             return (
-              <>
-                <p>Contributed message destination</p>
-                <input
-                  aria-label="Destination draft"
-                  value={note}
-                  onChange={(event) => setNote(event.currentTarget.value)}
-                />
-                {companion}
-              </>
+              <MessageDestinationDraft key={messageId} companion={companion} />
             );
           },
           route: {

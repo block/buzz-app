@@ -478,10 +478,28 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   }, [parkedKey, sidebarOwner, workspace.key]);
   const workspacePages = [
     ...(workspace.parked && workspace.parked.key !== workspace.key
-      ? [{ ...workspace.parked, retained: workspace.parked.request }]
+      ? [
+          {
+            page: workspace.parked.page,
+            key: workspace.parked.key,
+            retained: workspace.parked.request,
+            fromSettings: workspace.parked.fromSettings,
+            projected: true,
+            current: false,
+          },
+        ]
       : []),
     ...(workspace.page
-      ? [{ page: workspace.page, key: workspace.key, retained: undefined }]
+      ? [
+          {
+            page: workspace.page,
+            key: workspace.key,
+            retained: workspace.restoring?.request,
+            fromSettings: workspace.restoring?.fromSettings,
+            projected: workspace.projected,
+            current: true,
+          },
+        ]
       : []),
   ];
   const presentation = workspace.page
@@ -942,29 +960,55 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               opening
             )
           ) : (
-            workspacePages.map(({ page, key, retained }) => (
-              <Activity key={key} mode={retained ? "hidden" : "visible"}>
+            workspacePages.map(
+              ({ page, key, retained, fromSettings, projected, current }) => (
                 <Presented
+                  key={key}
                   store={route.presented}
                   resolve={
-                    retained ? () => retained : route.workspaceRequestFor
+                    current ? route.workspaceRequestFor : () => undefined
                   }
                 >
-                  {(request) => (
-                    <PageView
-                      page={page}
-                      navigation={request}
-                      companion={
-                        key === companionPageKey ? companion : undefined
-                      }
-                      companionOpening={
-                        key === companionPageKey ? launcher.opening : undefined
-                      }
-                    />
-                  )}
+                  {(request) => {
+                    const hidden = !!retained && !request;
+                    // Continue the Settings cover during readmission. Suspending
+                    // the workspace here would restart its exact-message reveal.
+                    const covered = hidden && fromSettings;
+                    const view = (
+                      <PageView
+                        page={page}
+                        navigation={request ?? retained}
+                        companion={
+                          key === companionPageKey ? companion : undefined
+                        }
+                        companionOpening={
+                          key === companionPageKey
+                            ? launcher.opening
+                            : undefined
+                        }
+                      />
+                    );
+                    return (
+                      <Activity
+                        mode={hidden && !covered ? "hidden" : "visible"}
+                      >
+                        {projected ? (
+                          <div
+                            className={covered ? undefined : "contents"}
+                            hidden={covered}
+                            inert={covered}
+                          >
+                            {view}
+                          </div>
+                        ) : (
+                          view
+                        )}
+                      </Activity>
+                    );
+                  }}
                 </Presented>
-              </Activity>
-            ))
+              ),
+            )
           )}
         </AppShell>
         <Dialog

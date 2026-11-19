@@ -321,7 +321,15 @@ export function useAppNavigation(
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
     projection?: { key: string; offered: string } | undefined;
   }>(undefined);
-  const parked = useRef<typeof workspace.current>(undefined);
+  const parked = useRef<{
+    workspace: NonNullable<typeof workspace.current>;
+    fromSettings: boolean;
+  }>(undefined);
+  // Settings' own visit, kept while a join dialog presents over it.
+  const settingsView = useRef<{
+    attempt: OpenAttempt;
+    presentation: ReturnType<AppServices["navigationHost"]["request"]>;
+  }>(undefined);
   const replayingMessage = (retained: typeof workspace.current) =>
     !!retained?.owner.attempt.address &&
     !!retained.owner.page &&
@@ -332,8 +340,13 @@ export function useAppNavigation(
   // from Settings, and restore it only if the same route is offered again.
   const parkedWorkspace =
     state.status === "opening" && !failure && isMessageLink(state.entry.target)
-      ? [workspace.current, parked.current].find(replayingMessage)
+      ? [workspace.current, parked.current?.workspace].find(replayingMessage)
       : undefined;
+  const parkedFromSettings = parkedWorkspace
+    ? parked.current?.workspace === parkedWorkspace
+      ? parked.current.fromSettings
+      : !!settingsView.current
+    : false;
   const offered =
     owner.attempt.address && targetKey(owner.attempt.entry.target);
   const carriedProjection =
@@ -341,28 +354,25 @@ export function useAppNavigation(
     workspace.current.owner.page === owner.page
       ? workspace.current.projection
       : undefined;
-  const parkedProjection =
-    parked.current?.owner.page === owner.page &&
-    parked.current?.projection?.offered === offered
-      ? parked.current?.projection
+  const restoringWorkspace =
+    parked.current?.workspace.owner.page === owner.page &&
+    parked.current?.workspace.owner.attempt.entry.id ===
+      owner.attempt.entry.id &&
+    parked.current?.workspace.projection?.offered === offered
+      ? parked.current
       : undefined;
   // A page can normalize the offered route in place without remounting.
   const projection = useMemo(
     () =>
       offered && owner.page
         ? (carriedProjection ??
-          parkedProjection ?? {
+          restoringWorkspace?.workspace.projection ?? {
             key: owner.attempt.id,
             offered,
           })
         : undefined,
-    [offered, owner, carriedProjection, parkedProjection],
+    [offered, owner, carriedProjection, restoringWorkspace],
   );
-  // Settings' own visit, kept while a join dialog presents over it.
-  const settingsView = useRef<{
-    attempt: OpenAttempt;
-    presentation: ReturnType<AppServices["navigationHost"]["request"]>;
-  }>(undefined);
   useEffect(
     () => () => {
       workspace.current?.presentation.dispose();
@@ -384,7 +394,11 @@ export function useAppNavigation(
     }
     settingsView.current?.presentation.dispose();
     settingsView.current = undefined;
-    parked.current = parkedWorkspace;
+    if (parked.current?.workspace !== parkedWorkspace)
+      parked.current = parkedWorkspace && {
+        workspace: parkedWorkspace,
+        fromSettings: parkedFromSettings,
+      };
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
     if (!settings && previous?.owner === owner) return;
@@ -543,6 +557,7 @@ export function useAppNavigation(
     join,
     navigation,
     parkedWorkspace,
+    parkedFromSettings,
     projection,
   ]);
   const retained = workspace.current;
@@ -578,6 +593,8 @@ export function useAppNavigation(
     covered && retainedRequest && retained
       ? withoutJoin(retained.owner.attempt.entry.target)
       : target;
+  const workspaceProjection =
+    covered && retainedRequest ? retained?.projection : projection;
   const workspaceRequestFor = (
     presentation: ReturnType<typeof presented.get>,
   ) => (covered ? retainedRequest : requestFor(presentation));
@@ -715,11 +732,15 @@ export function useAppNavigation(
           page: parkedWorkspace.owner.page,
           request: parkedWorkspace.presentation.request,
           key: parkedWorkspace.projection.key,
+          fromSettings: parkedFromSettings,
         },
+      restoring: restoringWorkspace && {
+        request: restoringWorkspace.workspace.presentation.request,
+        fromSettings: restoringWorkspace.fromSettings,
+      },
       target: workspaceTarget,
-      key:
-        (covered && retainedRequest ? retained?.projection : projection)?.key ??
-        workspacePage?.key,
+      key: workspaceProjection?.key ?? workspacePage?.key,
+      projected: !!workspaceProjection,
       /** The retained page's request under Settings; a page's own request
        * reaches only subscribers of `presented`, through `workspaceRequestFor`. */
       request: settings ? retainedRequest : undefined,

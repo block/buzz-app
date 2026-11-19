@@ -18,6 +18,7 @@ import {
   ownerSections,
   PROMPT_SECTIONS_KEY,
 } from "./prompt-sections";
+import { fileStore } from "./state";
 import { type AgentStore, localStore } from "./store";
 
 afterEach(cleanup);
@@ -405,6 +406,39 @@ it("holds the form while a save is in flight", async () => {
   );
   expect(ownerChoices(store)).toEqual({ progress: { mode: "off" } });
   expect(choice("Progress")).toBeEnabled();
+});
+
+it("reopens on the saved choices while a save is in flight, and shows it failed", async () => {
+  const user = userEvent.setup();
+  let fail = (_: Error) => {};
+  let entered = () => {};
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  // The device's file write is held, then fails: the store shows the value
+  // as soon as it is written, and puts the saved one back.
+  const store = fileStore(new Map(), async () => {
+    entered();
+    await new Promise<void>((_, reject) => {
+      fail = reject;
+    });
+  });
+  const first = render(<BaseInstructions store={store} />);
+  await choose(user, "Progress", "Off");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  try {
+    await started;
+    first.unmount();
+    render(<BaseInstructions store={store} />);
+    expect(choice("Progress")).toHaveTextContent("Default");
+    expect(choice("Progress")).toHaveAttribute("aria-readonly", "true");
+  } finally {
+    fail(new Error("The disk is full"));
+  }
+  expect(await screen.findByText("The disk is full")).toBeInTheDocument();
+  expect(choice("Progress")).toHaveTextContent("Default");
+  expect(choice("Progress")).not.toHaveAttribute("aria-readonly", "true");
+  expect(ownerChoices(store)).toEqual({});
 });
 
 function ownerSectionsHash(id: string) {

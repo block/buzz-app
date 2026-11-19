@@ -2,7 +2,14 @@
 // section of the base prompt they can configure, as a draft with an explicit
 // Save, and every section's text to read. It applies to all the owner's
 // agents on this device.
-import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -16,6 +23,7 @@ import {
   textProblem,
 } from "../agent-harness/sections/choices";
 import {
+  committedOwnerSections,
   defaultHash,
   type OwnerSections,
   ownerSections,
@@ -99,10 +107,33 @@ const choiceNear = (from: Element) =>
   )?.querySelector<HTMLElement>('[role="combobox"]') ?? null;
 
 export function BaseInstructions({ store }: { store: AgentStore }) {
-  const [saved, setSaved] = useState(() => ownerSections(store));
+  // A save from a form closed since can still be in flight: this one
+  // starts from what is saved and holds until that save ends.
+  const [start] = useState(() => committedOwnerSections(store));
+  const [saved, setSaved] = useState(start.sections);
   const [draft, setDraft] = useState(() => drafts(saved));
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(Boolean(start.writing));
   const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    start.writing
+      ?.then(
+        () => "",
+        (reason: unknown) =>
+          reason instanceof Error ? reason.message : String(reason),
+      )
+      .then((failed) => {
+        if (!live) return;
+        const next = ownerSections(store);
+        setSaved(next);
+        setDraft(drafts(next));
+        setError(failed);
+        setSaving(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [start, store]);
   const noticeId = useId();
   const pendingFocus = useRef<HTMLElement | null>(null);
   const actionsRef = useCallback((node: HTMLDivElement | null) => {

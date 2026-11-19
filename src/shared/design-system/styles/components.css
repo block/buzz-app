@@ -1688,18 +1688,22 @@
     justify-content: flex-end;
   }
 
-  @container (max-width: 7rem) {
-    .navigation-section-heading:has(> [data-reserve-space])
-      > .navigation-section-heading-label {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-    }
+  .navigation-section-heading:has(> [data-reserve-space])
+    > .navigation-section-heading-label {
+    flex-wrap: wrap;
+  }
 
-    .navigation-section-heading:has(> [data-reserve-space])
-      > .navigation-section-heading-label
-      > :not(:first-child) {
-      justify-self: end;
-    }
+  /* Keep room for the disclosure, icon and a short title before the accessory. */
+  :where(.navigation-section-heading:has(> [data-reserve-space]))
+    > .navigation-section-heading-label
+    > :first-child {
+    min-inline-size: min(100%, 7rem);
+  }
+
+  .navigation-section-heading:has(> [data-reserve-space])
+    > .navigation-section-heading-label
+    > :not(:first-child) {
+    margin-inline-start: auto;
   }
 
   /* A disclosure heading's trigger spans the label slot, so the inset is its

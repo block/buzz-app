@@ -488,6 +488,18 @@ appTest.describe("Solo header accessories", () => {
           ),
         )
         .toBe(true);
+      await resize.press("ArrowRight");
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "32px";
+      });
+      for (const { group, title } of headers) {
+        const label = group.getByText(title, { exact: true });
+        await expect
+          .poll(() =>
+            label.evaluate((item) => item.clientWidth >= item.scrollWidth),
+          )
+          .toBe(true);
+      }
     },
   );
 });

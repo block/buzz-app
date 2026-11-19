@@ -11,14 +11,16 @@ import type {
 function HeaderAccessory({ label }: { label: string }) {
   const [marked, setMarked] = useState(false);
   return (
-    <IconButton
-      size="compact"
-      variant={marked ? "tint" : "ghost"}
-      aria-label={label}
-      aria-pressed={marked}
-      icon={<StarFilledIcon size={15} />}
-      onClick={() => setMarked(!marked)}
-    />
+    <div className="flex min-w-16 justify-end">
+      <IconButton
+        size="compact"
+        variant={marked ? "tint" : "ghost"}
+        aria-label={label}
+        aria-pressed={marked}
+        icon={<StarFilledIcon size={15} />}
+        onClick={() => setMarked(!marked)}
+      />
+    </div>
   );
 }
 

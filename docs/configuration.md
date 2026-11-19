@@ -163,11 +163,11 @@ origins. They read that URL from the process environment only, like the
 descriptor, so a URL set only in `.env.local` or `.env.production` still sets
 the frontend's default community but leaves routing off. No URL, a URL that is
 not a secure relay URL (such as a local `ws://` relay), or no entry listing it,
-leaves routing off. An explicit
-`BUZZ_AGENT_GATEWAY` always wins, so a development build can still point at a
-test gateway. Every entry is validated in every build, whether or not it is
-chosen, and two entries may not list the same community. A bad file fails the
-build with a fixed message that never echoes it.
+leaves routing off. An explicit `BUZZ_AGENT_GATEWAY` always wins, so a
+development build can still point at a test gateway. Every entry is validated
+in every build, whether or not it is chosen, and two entries may not list the
+same community. A bad file fails the build with a fixed message that never
+echoes it.
 
 Native goose forwarding removes `Authorization` before sending discovery or
 inference requests to the gateway. The gateway must authenticate callers

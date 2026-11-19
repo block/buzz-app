@@ -5155,6 +5155,96 @@
       "expect": null
     },
     {
+      "name": "an http:// URL for a listed community selects none",
+      "listed": [
+        {
+          "version": 2,
+          "gateway": "https://gateway.example",
+          "communities": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "origin": "https://relay.example"
+            }
+          ],
+          "access_path": "/v9/access",
+          "headers": {
+            "launcher_client": "x-gw-launcher-client",
+            "launcher_session": "x-gw-launcher-session",
+            "human_pubkey": "x-gw-ctx-human-pubkey",
+            "agent_pubkey": "x-gw-ctx-agent-pubkey",
+            "community_id": "x-gw-ctx-community-id",
+            "channel_id": "x-gw-ctx-channel-id",
+            "message_id": "x-gw-ctx-message-id",
+            "thread_id": "x-gw-ctx-thread-id"
+          },
+          "reserved_prefixes": [],
+          "upstreams": {}
+        }
+      ],
+      "community_url": "http://relay.example",
+      "expect": null
+    },
+    {
+      "name": "a URL with a path for a listed community selects none",
+      "listed": [
+        {
+          "version": 2,
+          "gateway": "https://gateway.example",
+          "communities": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "origin": "https://relay.example"
+            }
+          ],
+          "access_path": "/v9/access",
+          "headers": {
+            "launcher_client": "x-gw-launcher-client",
+            "launcher_session": "x-gw-launcher-session",
+            "human_pubkey": "x-gw-ctx-human-pubkey",
+            "agent_pubkey": "x-gw-ctx-agent-pubkey",
+            "community_id": "x-gw-ctx-community-id",
+            "channel_id": "x-gw-ctx-channel-id",
+            "message_id": "x-gw-ctx-message-id",
+            "thread_id": "x-gw-ctx-thread-id"
+          },
+          "reserved_prefixes": [],
+          "upstreams": {}
+        }
+      ],
+      "community_url": "https://relay.example/x",
+      "expect": null
+    },
+    {
+      "name": "a URL with userinfo for a listed community selects none",
+      "listed": [
+        {
+          "version": 2,
+          "gateway": "https://gateway.example",
+          "communities": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "origin": "https://relay.example"
+            }
+          ],
+          "access_path": "/v9/access",
+          "headers": {
+            "launcher_client": "x-gw-launcher-client",
+            "launcher_session": "x-gw-launcher-session",
+            "human_pubkey": "x-gw-ctx-human-pubkey",
+            "agent_pubkey": "x-gw-ctx-agent-pubkey",
+            "community_id": "x-gw-ctx-community-id",
+            "channel_id": "x-gw-ctx-channel-id",
+            "message_id": "x-gw-ctx-message-id",
+            "thread_id": "x-gw-ctx-thread-id"
+          },
+          "reserved_prefixes": [],
+          "upstreams": {}
+        }
+      ],
+      "community_url": "wss://u@relay.example",
+      "expect": null
+    },
+    {
       "name": "an entry matches on a community after its first",
       "listed": [
         {

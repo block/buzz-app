@@ -1204,8 +1204,9 @@ export type AgentType<Config = unknown> = {
    * `Agents.setConversationSections` applies to its agents. Without it, the
    * call rejects. */
   conversationSections?: true;
-  /** Gives a conversation's next turn the notes `Agents.note` left for it.
-   * Without it, a note for one of its agents is accepted and never shown. */
+  /** Advertises that a conversation's next turn gets the notes `Agents.note`
+   * left for it. Without it, support is unadvertised: a harness that builds
+   * its turns with `turnPrompt` still shows them, and another one never does. */
   notes?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;

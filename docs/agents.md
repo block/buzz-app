@@ -782,9 +782,12 @@ thread-scoped sessions take only notes addressed to their root. Notes are
 consumed once when the harness is ready to deliver the turn, and restored to
 the same conversation ahead of newer notes if delivery definitely never began.
 They remain in memory only, and the call returns false unless this copy runs
-the agent. Claude, Codex, Goose and Pi (`notes` on the type) show notes; for
-another harness the call still returns true, but its turns never include the
-note. A Pi turn that fails while it is handed to Pi may lose its notes.
+the agent. A turn whose outcome is unknown, such as one that fails after its
+prompt is built, does not get its notes back, so a note is never shown twice.
+Claude, Codex, Goose and Pi show notes and advertise it with `notes` on the
+type. Without the flag, support is unadvertised: a harness that builds its
+turns with `ctx.agents.harness.turnPrompt` still shows notes, and another one
+never does. The call returns true either way.
 
 A plugin with `host.files` gives one conversation of the owner's local agent
 its own working folder with

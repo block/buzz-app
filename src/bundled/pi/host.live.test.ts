@@ -581,6 +581,10 @@ const submitted = await Promise.all([r1, r2]);
 await Promise.all(submitted.map(({ submission }) => pi.rpc("wait", { agent: promptAgent, submission })));
 out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entries", { agent: promptAgent, conversation: submitted[0].conversation })).entries) };
 out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
+// Asked again, as after a host stopped, a request Pi has is answered by its
+// submission without building its prompt again.
+out.refresh.again = await pi.rpc("deliver", refreshing("R1"));
+out.refresh.first = submitted[0];
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
 // A run that answered keeps its run while its afterRun hooks work; a request
@@ -1089,6 +1093,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.refresh.entries).not.toContain("Old Interest instructions");
     expect(out.refresh.seen).toBe(200);
     expect(out.refresh.dropped).toBe(false);
+    expect(out.refresh.again).toEqual({
+      submission: out.refresh.first.submission,
+      conversation: out.refresh.first.conversation,
+    });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
     expect(out.command).toMatch(

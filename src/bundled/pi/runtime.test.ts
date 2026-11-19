@@ -659,7 +659,7 @@ it("ends a turn's prompt with its conversation's instructions", async () => {
   expect(conversationInstructions).toHaveBeenCalledWith(channel, root.id);
 });
 
-it("gives a turn the notes plugins left for its conversation, taken at the handover", async () => {
+it("gives a turn the notes plugins left for its conversation, taken when Pi builds its prompt", async () => {
   let refreshed: unknown;
   const { host, deliver, agent } = setup({
     deliver: async (params, process) => {
@@ -681,10 +681,12 @@ it("gives a turn the notes plugins left for its conversation, taken at the hando
   // Keyed as its session is: the wake's thread.
   expect(notes.mock.calls).toEqual([[channel, root.id]]);
   const [delivered] = host.requests("deliver");
-  expect(String(delivered?.params.text)).toMatch(
+  // Only the prompt Pi builds, after it checks for an earlier submission,
+  // has them.
+  expect(String(delivered?.params.text)).not.toContain("Build 7 is green");
+  expect(String((refreshed as { text: string }).text)).toMatch(
     /CI failed: lint[\s\S]*\n\nBuild 7 is green\n\nDeploy is paused\n\n<owner-instructions/,
   );
-  expect(refreshed).toMatchObject({ text: delivered?.params.text });
   expect(restoreNotes).not.toHaveBeenCalled();
 });
 
@@ -735,7 +737,12 @@ it.each([
 );
 
 it("puts a turn's notes back when Pi did not take it, and leaves them when it never reached Pi", async () => {
-  const f = setup({ deliver: () => false });
+  const f = setup({
+    deliver: async (params, process) => {
+      await process.tool({ agent: self, request: params.request }, "prompt");
+      return false;
+    },
+  });
   const notes = vi.fn(() => ["CI failed: lint"]);
   const restoreNotes = vi.fn();
   Object.assign(f.agent, { notes, restoreNotes });
@@ -747,6 +754,39 @@ it("puts a turn's notes back when Pi did not take it, and leaves them when it ne
   await f.deliver(pluginWake(root.id), { current: () => false }).run;
   expect(notes).toHaveBeenCalledTimes(1);
   expect(f.host.requests("deliver")).toHaveLength(1);
+});
+
+it("leaves notes queued for a turn Pi answers or fails before building its prompt, and keeps those of a turn whose outcome is unknown", async () => {
+  let mode: "held" | "unavailable" | "lost" = "held";
+  const f = setup({
+    deliver: async (params, process) => {
+      // A Retry of a request Pi has already is answered by its submission.
+      if (mode === "held") return { submission: 1, conversation: CONVERSATION };
+      if (mode === "unavailable") throw new Error("No model is available");
+      await process.tool({ agent: self, request: params.request }, "prompt");
+      throw new Error("Storage failed");
+    },
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  const notes = vi.fn(() => ["CI failed: lint"]);
+  const restoreNotes = vi.fn();
+  Object.assign(f.agent, { notes, restoreNotes });
+  const run = async (id: string) => {
+    const turn = f.deliver({ type: "mention", event: reply(id, "@Pi look") });
+    await turn.run;
+    await f.settled(turn);
+  };
+  await run("2");
+  mode = "unavailable";
+  await run("3");
+  expect(f.host.requests("deliver")).toHaveLength(2);
+  expect(notes).not.toHaveBeenCalled();
+  // Pi may have it: putting them back could give them twice.
+  mode = "lost";
+  await run("4");
+  expect(f.host.requests("deliver")).toHaveLength(3);
+  expect(notes).toHaveBeenCalledTimes(1);
+  expect(restoreNotes).not.toHaveBeenCalled();
 });
 
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
@@ -1374,9 +1414,8 @@ it("takes a plugin's wake in its thread's conversation as the plugin's, and repo
     context: { channel, root: root.id },
     request: `plugin/${WAKE_ID}`,
   });
-  // Only an Attention wake saves its destination and refreshes its prompt.
+  // Only an Attention wake saves its destination.
   expect(delivered?.params).not.toHaveProperty("reply");
-  expect(delivered?.params).not.toHaveProperty("refresh");
   const text = String(delivered?.params.text);
   expect(text).toContain('<plugin-wake plugin="github">');
   expect(text).toContain("neither your owner nor anyone in the channel");

@@ -20,7 +20,7 @@ it.each(["team", "dm", "solo"] as const)(
       freshness: "unknown" as const,
       manual: "none" as const,
     };
-    const row = sidebarRow(channel, "workspace", unread);
+    const row = sidebarRow(channel, "workspace", unread, true);
     expect(row).toEqual({
       id: "chat",
       kind,
@@ -28,6 +28,7 @@ it.each(["team", "dm", "solo"] as const)(
       sectionKey: "workspace",
       channel,
       unread,
+      selected: true,
     });
     expect(row.channel).toBe(channel);
     expect(row.unread).toBe(unread);
@@ -97,6 +98,9 @@ it.each([
     { sortModes: [{ id: "one", label: "One", compare: null }] },
   ],
   ["non-function renderer", "example.plugin", { render: false }],
+  ["blank hidden label", "example.plugin", { hiddenLabel: "  " }],
+  ["long hidden label", "example.plugin", { hiddenLabel: "x".repeat(65) }],
+  ["non-string hidden label", "example.plugin", { hiddenLabel: 1 }],
   [
     "incompatible owner id",
     "MixedCase",

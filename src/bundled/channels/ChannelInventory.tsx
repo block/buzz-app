@@ -334,6 +334,9 @@ export function ChannelInventory({
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
   const pluginHiddenRows = useRef(new Map<string, object>());
+  const [hiddenLabels, setHiddenLabels] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -901,6 +904,8 @@ export function ChannelInventory({
       ),
     ),
   );
+  const sortSelected =
+    preserveSidebar || composingMessage ? undefined : current?.id;
   const sortedSections = useMemo(
     () =>
       rowSortModes.length
@@ -919,6 +924,7 @@ export function ChannelInventory({
                     kind: "channel",
                     channelId: channel.id,
                   }),
+                channel.id === sortSelected,
               ),
             }));
             const sorted = sortSidebarRows(
@@ -931,7 +937,14 @@ export function ChannelInventory({
               : { ...section, rows: sorted.map(({ channel }) => channel) };
           })
         : sections,
-    [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
+    [
+      sections,
+      rowSortModes,
+      sectionSort,
+      rowUnread,
+      queries.unread,
+      sortSelected,
+    ],
   );
   const unfoldedSections = useSidebarFilters(
     sortedSections
@@ -1356,6 +1369,7 @@ export function ChannelInventory({
         pluginRowSectionKey(channel, sectionKey),
         rowUnread.get(channel.id) ??
           queries.unread.snapshot({ kind: "channel", channelId: channel.id }),
+        channel.id === sortSelected,
       ),
     ))
       actions.push(
@@ -1473,8 +1487,10 @@ export function ChannelInventory({
   // Hidden-state callbacks run in child layout effects, before parent effects.
   currentRowMenu.current = rowMenu;
   const setRowHidden = useCallback(
-    (id: string, hidden: boolean) => {
+    (id: string, hidden: boolean, label?: string) => {
       const registration = {};
+      const labelled = hidden ? label : undefined;
+      setHiddenLabels((current) => withLabel(current, id, labelled));
       if (hidden) {
         pluginHiddenRows.current.set(id, registration);
         const menu = currentRowMenu.current;
@@ -1490,8 +1506,10 @@ export function ChannelInventory({
       } else pluginHiddenRows.current.delete(id);
       return () => {
         // An exiting placement must not clear the live placement's registration.
-        if (pluginHiddenRows.current.get(id) === registration)
+        if (pluginHiddenRows.current.get(id) === registration) {
           pluginHiddenRows.current.delete(id);
+          setHiddenLabels((current) => withLabel(current, id, undefined));
+        }
       };
     },
     [closeRowMenu, sidebar.list],
@@ -2013,6 +2031,7 @@ export function ChannelInventory({
                         }
                         channels={{
                           rows: section.hiddenRows,
+                          hidden: labelledRows(section.rows, hiddenLabels),
                           selected: preserveSidebar ? undefined : current?.id,
                           select,
                         }}
@@ -2693,4 +2712,28 @@ export function ChannelInventory({
       </>
     ),
   });
+}
+
+function withLabel(
+  current: ReadonlyMap<string, string>,
+  id: string,
+  label: string | undefined,
+) {
+  if (current.get(id) === label) return current;
+  const next = new Map(current);
+  if (label === undefined) next.delete(id);
+  else next.set(id, label);
+  return next;
+}
+
+function labelledRows(
+  rows: readonly ChannelSummary[],
+  labels: ReadonlyMap<string, string>,
+) {
+  const groups = new Map<string, ChannelSummary[]>();
+  for (const row of rows) {
+    const label = labels.get(row.id);
+    if (label) groups.set(label, [...(groups.get(label) ?? []), row]);
+  }
+  return [...groups].map(([label, rows]) => ({ label, rows }));
 }

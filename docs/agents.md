@@ -112,6 +112,12 @@ Return `undefined` only for a positively unrouted turn. Throw on incomplete
 ancestry or unconfirmed task publication; rejection stops admission without a
 fallback to the source session. The plugin owns task ancestry and shared binding
 publication. It must confirm that binding before returning a new route.
+
+An agent type declares `invocationRouting: true` when it resolves
+`Delivery.routeConversation` before selecting the provider session. Codex
+and Claude declare this capability. A signed invocation intent addressed to
+an agent whose type lacks this capability remains retryable in Buzz. The
+provider starts after a compatible type and its router are available.
 Local host receipts do not establish cross-device task identity. Existing admitted
 invocations keep their previous placement. Older plugins without `route` keep
 the existing behavior.

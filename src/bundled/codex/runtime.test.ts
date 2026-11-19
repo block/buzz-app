@@ -8599,6 +8599,39 @@ it("keeps New disabled during an open and lets Stop cancel that open", async () 
   expect(guest.spawn).not.toHaveBeenCalled();
 });
 
+it("carries the first invocation context into connected Codex execution", async () => {
+  const guest = fixture();
+  const target = guestTarget(guest);
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => target,
+  );
+  const placement = { root, parent: "d".repeat(64) };
+  const routeConversation = vi
+    .fn<NonNullable<Delivery["routeConversation"]>>()
+    .mockResolvedValue(placement)
+    .mockResolvedValueOnce({
+      ...placement,
+      turnContext: "Use only the task role",
+    });
+  try {
+    await f.runtime.run({ ...f.delivery("Do the task"), routeConversation });
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    expect(JSON.stringify(guest.starts()[0]?.params)).toContain(
+      "Use only the task role",
+    );
+    expect(routeConversation).toHaveBeenCalledOnce();
+    await guest.complete();
+  } finally {
+    await f.runtime.retire(pubkey);
+  }
+});
+
 it("retries a refused first turn but requires New when an accepted remote rollout is missing", async () => {
   const guest = fixture();
   const target = guestTarget(guest);

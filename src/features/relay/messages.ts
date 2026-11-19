@@ -19,7 +19,7 @@ import {
   type ChannelMessage,
 } from "./contracts";
 import { messageAuthor } from "./fold";
-import { threadReference } from "./thread-reference";
+import { isThreadContent, threadReference } from "./thread-reference";
 import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
@@ -148,7 +148,8 @@ export function createMessages(
     const optedIn = invocationScope?.(channelId, rootId);
     if (!optedIn) return [];
     const inChannel = (event: EventData | undefined) => {
-      if (event?.kind !== 9 || !hasEventProof(event)) return false;
+      if (!event || !isThreadContent(event) || !hasEventProof(event))
+        return false;
       const channels = event.tags.filter(([name]) => name === "h");
       return channels.length === 1 && channels[0]?.[1] === channelId;
     };

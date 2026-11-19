@@ -1,7 +1,8 @@
 import { interestPaused } from "./attention";
-import type {
-  AgentSessionAssociation,
-  AgentSessionSource,
+import {
+  hasInvocationIntent,
+  type AgentSessionAssociation,
+  type AgentSessionSource,
 } from "./session-admission";
 import { onAutomatic } from "./recommended";
 // The agent runner: one queue per agent, its rate limit, mention and watch
@@ -3234,6 +3235,29 @@ export class AgentRunners {
     };
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
+      if (
+        trigger.type === "mention" &&
+        !(type.invocationRouting && this.host.routeConversation)
+      ) {
+        const { event } = trigger;
+        const thread = threadReference(event);
+        const channelId =
+          job.channelId ?? event.tags.find(([tag]) => tag === "h")?.[1];
+        if (
+          thread &&
+          channelId &&
+          hasInvocationIntent({
+            agent: agent.key,
+            owner: agent.owner,
+            invocationId: event.id,
+            event,
+            source: { channelId, root: thread.rootId },
+          })
+        )
+          throw new Error(
+            "Invocation routing is unavailable for this agent. Restore it and retry.",
+          );
+      }
       // Before any type code (its models included) runs for this turn.
       const routing = await this.gatewayRouting(
         agent,

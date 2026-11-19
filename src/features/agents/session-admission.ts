@@ -56,13 +56,16 @@ type AdmissionRequest = Omit<
   "sessionKey" | "intent" | "association" | "adopted"
 >;
 
-function hasInvocationIntent({
+export function hasInvocationIntent({
   agent,
   event,
   owner,
   source,
   invocationId,
-}: AdmissionRequest) {
+}: Pick<
+  AdmissionRequest,
+  "agent" | "event" | "owner" | "source" | "invocationId"
+>) {
   if (
     event?.kind !== 9 ||
     event.id !== invocationId ||

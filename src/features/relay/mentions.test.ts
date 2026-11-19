@@ -12,7 +12,6 @@ import { mentionConformance } from "../../bundled/mentions/mention-rules.conform
 import {
   flush,
   keypair,
-  message,
   metadata,
   roster,
   scriptedTransport,
@@ -185,9 +184,14 @@ it.each([false, true])(
   },
 );
 
-it.each(["reply", "forward"] as const)(
-  "signs invocation intent for an opted-in owned recipient in a %s and keeps it on retry",
-  async (kind) => {
+it.each([
+  ["reply", 9, 9],
+  ["forward", 9, 9],
+  ["reply", 40002, 9],
+  ["forward", 9, 40002],
+] as const)(
+  "signs invocation intent for an opted-in owned recipient in a %s to kinds %i/%i and keeps it on retry",
+  async (kind, rootKind, parentKind) => {
     const origin = "https://relay.example.test";
     const local = localAgentsFixture([
       {
@@ -209,11 +213,24 @@ it.each(["reply", "forward"] as const)(
       metadata(relay, "c", "General", undefined, [["t", "stream"]]),
     );
     h.live().state({ status: "connected", routes: [] });
-    const root = eventDto(message(viewer, "c", "Discussion", 1700000001));
+    const root = eventDto(
+      signed(viewer, {
+        kind: rootKind,
+        content: "Discussion",
+        created_at: 1700000001,
+        tags: [["h", "c"]],
+      }),
+    );
     const parent = eventDto(
-      message(namesake, "c", "Earlier reply", 1700000002, [
-        ["e", root.id, "", "reply"],
-      ]),
+      signed(namesake, {
+        kind: parentKind,
+        content: "Earlier reply",
+        created_at: 1700000002,
+        tags: [
+          ["h", "c"],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
     );
     h.live().receive([root, parent], { phase: "live", channelId: "c" });
     h.publish.mockRejectedValueOnce(new PublishRejected("try again"));

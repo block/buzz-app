@@ -1063,6 +1063,8 @@ export type AgentType<Config = unknown> = {
   readonly supportsGuardedWake?: true;
   /** Carries Delivery.session into tool context and sessionContext into the prompt. */
   sessionAdmission?: true;
+  /** Resolves Delivery.routeConversation before selecting the provider session. */
+  invocationRouting?: true;
   /** Huddles supplies a running agent owned by the current viewer.
    * Full-duplex voice on the existing room conversation; abort closes the pipe. */
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;

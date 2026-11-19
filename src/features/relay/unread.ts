@@ -1141,6 +1141,8 @@ export function createUnread({
     const kind = category(entry, dm);
     // A queued or running lookup may still make this reply thread attention.
     // A read reply is never looked up, so it is undecided but not pending.
+    // A broadcast is never undecided: its lookup can still raise it from
+    // ineligible to thread attention, but its unread state never waits.
     const open = undecided(entry, dm);
     if (open) want(entry, dm);
     const pending =
@@ -1920,12 +1922,15 @@ export function createUnread({
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
-    // Activity groups unread thread replies by root, so fetch a root the
-    // sampled window dropped for a followed thread or an unread reply in it.
+    // Activity groups unread thread replies by root, and a thread read mark
+    // reads a broadcast only by its root, so fetch a root the sampled window
+    // dropped for a followed thread or for an unread reply in it that lights
+    // activity or shows in the timeline.
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
-        (activityEvidence(entry) && isUnread(entry, reads.state(), dm)))
+        ((activityEvidence(entry) || entry.broadcast) &&
+          isUnread(entry, reads.state(), dm)))
         ? threadRootId
         : undefined;
     const structuralRecovery = structuralRootId !== undefined;

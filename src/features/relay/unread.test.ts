@@ -511,16 +511,28 @@ it("promotes mentions and participating-thread replies, broadcasts only in the v
   expect(
     h.session.unread.activity("room").items?.map((item) => item.rootId),
   ).toEqual([root.id]);
-  // Its parent lookup finds no conversation of the viewer's.
-  await vi.waitFor(() =>
-    expect(
-      h.session.unread.attention("room", otherBroadcast.id).pending,
-    ).toBeUndefined(),
-  );
+  // Its parent lookup asks for the viewer's replies and finds none. A
+  // broadcast never reports `pending`, so wait for the lookup itself.
+  const lookup = () =>
+    h.query.mock.calls.findIndex(([filters]) =>
+      filters.some(
+        (filter) => filter.authors && filter["#e"]?.includes(otherRoot.id),
+      ),
+    );
+  await vi.waitFor(() => expect(lookup()).toBeGreaterThanOrEqual(0));
+  await h.query.mock.results[lookup()]?.value;
+  await flush();
   const other = h.session.unread.attention("room", otherBroadcast.id);
   expect(other).toMatchObject({ status: "ineligible", unread: true });
   expect(other.category).toBeUndefined();
-  expect(h.snapshot()).toMatchObject({ observedCount: 7, attentionCount: 3 });
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 7,
+    attentionCount: 3,
+    row: { observedCount: 7, attentionCount: 3, threadCount: 1 },
+  });
+  expect(
+    h.session.unread.activity("room").items?.map((item) => item.rootId),
+  ).toEqual([root.id]);
   expect(h.session.unread.attention("room", broadcast.id)).toMatchObject({
     status: "eligible",
     category: "thread",

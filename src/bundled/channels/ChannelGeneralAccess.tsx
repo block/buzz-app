@@ -187,7 +187,9 @@ function ChannelGeneralAccessEditor({
     lifetime.current = controller;
     setBase(undefined);
     setChoice(undefined);
+    setLoading(!summary);
     setPending(false);
+    setError("");
     setStatus("");
     busy.current = false;
     return () => controller.abort();

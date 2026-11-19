@@ -188,8 +188,9 @@ only. Existing Public access is displayed as Public; reducing it confirms that
 the picker cannot restore it. Its capability retains signed fresh-read, save and
 uncertain-write recovery behavior. With the session's `channelDetails` and a
 `channel` summary, current access shows from that summary without a read; a
-plugin-implemented capability always reads its own details. Switching to Private also warns that people
-who already joined keep access until removed, without naming a host screen. Pass
+capability without `summaryAccess` reads its own details. Switching to Private
+also warns that people who already joined keep access until removed, without
+naming a host screen. Pass
 `mayHaveGuestMembers: false` only when signed roles verify there are no Guests;
 this suppresses the View only reader warning, never the Public member warning.
 Copy link uses `shareLink` and grants no access. With `memberActions`, it is hidden

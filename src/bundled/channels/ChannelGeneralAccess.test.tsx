@@ -137,6 +137,7 @@ it("renders a channel summary without reading, and reads fresh details only to c
     visibility: "public" as const,
     joinRole: "guest" as const,
     viewerRole: "admin" as const,
+    channelType: "stream" as const,
   };
   const { rerender } = render(
     <ChannelGeneralAccess
@@ -181,9 +182,15 @@ it("renders a channel summary without reading, and reads fresh details only to c
   );
 });
 it.each([
-  { viewerRole: "member" as const },
-  { viewerRole: "admin" as const, archived: true as const },
+  { viewerRole: "member" as const, channelType: "stream" as const },
+  {
+    viewerRole: "admin" as const,
+    archived: true as const,
+    channelType: "stream" as const,
+  },
   { viewerRole: "owner" as const, channelType: "dm" as const },
+  // Without a known channel type, details would refuse editing.
+  { viewerRole: "owner" as const },
 ])("a summary without edit authority locks the choice: %o", (extra) => {
   const h = harness(true);
   render(
@@ -200,6 +207,32 @@ it.each([
     screen.getByRole("region", { name: "General access" }),
   ).toHaveTextContent("Only people you add");
   expect(h.load).not.toHaveBeenCalled();
+});
+it("a reused instance moving from a failed read to a channel summary clears the read's state", async () => {
+  const h = harness(true);
+  h.load.mockRejectedValueOnce(new Error("Relay offline"));
+  const { rerender } = render(
+    <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Relay offline");
+  rerender(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="beta"
+      channel={{
+        id: "beta",
+        name: "Beta",
+        visibility: "private",
+        viewerRole: "admin",
+        channelType: "stream",
+      }}
+    />,
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("combobox", { name: "General access" }),
+  ).toBeEnabled();
+  expect(h.load).toHaveBeenCalledOnce();
 });
 it("a capability without a summary rule reads its own access even with a channel summary", async () => {
   const h = harness();

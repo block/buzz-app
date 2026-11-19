@@ -40,7 +40,11 @@ const editable = (
   type: string | undefined,
   archived: boolean,
   role: string | undefined,
-) => type !== "dm" && !archived && (role === "owner" || role === "admin");
+) =>
+  !!type &&
+  type !== "dm" &&
+  !archived &&
+  (role === "owner" || role === "admin");
 
 /** Access from the live channel summary, which folds the same signed metadata
  * and roster role. Display only: changes still read fresh details. */

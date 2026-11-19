@@ -236,7 +236,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         { id: "voice", label: "Voice", isOverride: Boolean(voice) },
         {
           id: "sessions",
-          label: "Sessions",
+          label: "Session scope",
           isOverride: scope !== defaults.scope,
           unchangedKey: scope,
         },

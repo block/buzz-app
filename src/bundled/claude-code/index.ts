@@ -261,7 +261,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
         {
           id: "sessions",
-          label: "Sessions",
+          label: "Session scope",
           isOverride: scope !== DEFAULT_CONFIG.scope,
           unchangedKey: scope,
         },

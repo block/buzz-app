@@ -13,7 +13,7 @@ export const settingLabels: Record<SettingGroup, string> = {
   model: "Model and thinking",
   instructions: "Instructions",
   workspace: "Workspace",
-  scope: "Sessions",
+  scope: "Session scope",
 };
 const names = Object.keys(groups) as SettingGroup[];
 const same = (a: Config, b: Config, group: SettingGroup) =>

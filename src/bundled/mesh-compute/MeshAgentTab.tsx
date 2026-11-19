@@ -120,7 +120,7 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
         }
       />
       <Select
-        label="Sessions"
+        label="Session scope"
         variant="field"
         value={draft.scope}
         groups={SCOPES}

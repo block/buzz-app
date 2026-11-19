@@ -97,7 +97,7 @@ it("adopts and carries an agent's instructions and workspace, nothing else", () 
     { id: "voice", label: "Voice", isOverride: false },
     {
       id: "sessions",
-      label: "Sessions",
+      label: "Session scope",
       isOverride: false,
       unchangedKey: "thread",
     },
@@ -116,7 +116,7 @@ it("adopts and carries an agent's instructions and workspace, nothing else", () 
     { id: "voice", label: "Voice", isOverride: true },
     {
       id: "sessions",
-      label: "Sessions",
+      label: "Session scope",
       isOverride: true,
       unchangedKey: "channel",
     },

@@ -1479,7 +1479,7 @@ export function createTabs({
               />
             </Field>
             <Select
-              label="Sessions"
+              label="Session scope"
               variant="preference"
               value={draft.scope}
               groups={SCOPES}

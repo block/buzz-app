@@ -383,7 +383,13 @@ export function createPresence(
         if (!subject.profiles) profiles.delete(key);
         if (!subject.listeners.size) {
           subjects.delete(key);
-          if (selected.delete(key) && subject.status !== "unknown") {
+          // The viewer's own status changes by publication, which skips an
+          // unmounted subject, so only other authors' evidence is retained.
+          if (
+            selected.delete(key) &&
+            subject.status !== "unknown" &&
+            key !== transport?.viewer
+          ) {
             retained.set(key, {
               status: subject.status,
               expires: subject.expires,

@@ -166,6 +166,14 @@ it("retains unmounted evidence only within its lease, demand limit and connectio
     expect(changed).toHaveBeenCalled();
     for (const release of full) release();
 
+    // The viewer's own status changes by publication, so it is not retained.
+    h.read.mockImplementationOnce(async () => new Map([[key(1), "online"]]));
+    remove = h.owner.subscribe(key(1), () => {});
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.owner.status(key(1))).toBe("online");
+    remove();
+    expect(h.owner.status(key(1))).toBe("unknown");
+
     h.read.mockImplementationOnce(async () => new Map([[key(4), "online"]]));
     remove = h.owner.subscribe(key(4), () => {});
     await vi.advanceTimersByTimeAsync(10000);

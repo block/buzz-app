@@ -376,7 +376,7 @@ it("hands focus to the section when the removed provider was the only one", asyn
   expect(screen.getByRole("region", { name: "Decisions API" })).toHaveFocus();
 });
 
-it("shows a provider removed from a community's menu as unavailable there", async () => {
+it("shows decisions off where the chosen provider's plugin is off, until it returns", async () => {
   const { decisions, register, remove } = setup();
   await register(TYPESAFE, () => "ready");
   await register("acme.helper/helper", () => "ready");
@@ -388,11 +388,19 @@ it("shows a provider removed from a community's menu as unavailable there", asyn
       memberships={memberships}
     />,
   );
+  const menu = () =>
+    screen.getByRole("combobox", { name: "Decision provider for Block" });
   remove("acme.helper/helper");
-  // A chosen provider that is not a default never moves to another.
-  expect(row("Block")).toHaveTextContent("No provider can answer here");
+  // A chosen provider never moves to another: decisions are off there.
+  expect(row("Block")).toHaveTextContent("Decisions are off in this community");
+  expect(menu()).toHaveTextContent("Off");
   expect(decisions.backend(BLOCK)).toBeUndefined();
   expect(decisions.backend(FRIENDS)).toBe(TYPESAFE);
+  // The choice is kept, so it returns with its plugin.
+  expect(decisions.chosenIn(BLOCK)).toBe("acme.helper/helper");
+  await act(() => register("acme.helper/helper", () => "ready"));
+  expect(menu()).toHaveTextContent("helper");
+  expect(row("Block")).not.toHaveTextContent("off");
 });
 
 it("keeps rendering when the community list has one that is not a relay", async () => {

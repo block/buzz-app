@@ -34,12 +34,10 @@ const BUILDERLAB = DEFAULT_DECISION_PROVIDERS[0];
 type Status = DecisionProviderStatus | "unavailable";
 /** One community's row, as Settings shows it. */
 type CommunityState = Readonly<{
-  /** The provider in its menu: the user's choice while it is on, else the
-   * one that answers; `DECISIONS_OFF` when the user turned decisions off
-   * there. "" when neither is on. */
+  /** The provider in its menu: the one that answers, or `DECISIONS_OFF`
+   * when none does. */
   shown: string;
-  /** The provider that answers now, or "" when none does. It is `shown`,
-   * except while decisions are off or the chosen provider is not on. */
+  /** The provider that answers now, or "" when none does. */
   answering: string;
   status: Status;
   /** Provider key -> whether it can be chosen here. */
@@ -113,14 +111,12 @@ export function DecisionsSettings({
         return JSON.stringify({
           providers: registered.map((provider) => statusOf(provider)),
           communities: communities.map(({ url }): CommunityState => {
-            const chosen = decisions.chosenIn(url);
             const answering = decisions.backend(url) ?? "";
             return {
-              shown:
-                chosen === DECISIONS_OFF ||
-                registered.some((provider) => provider.key === chosen)
-                  ? (chosen as string)
-                  : answering,
+              // Decisions are off wherever no provider answers: turned off
+              // there, or the chosen provider's plugin is off. The choice
+              // itself is kept, so it returns with its plugin.
+              shown: answering || DECISIONS_OFF,
               answering,
               status: decisions.status(url),
               offered: Object.fromEntries(
@@ -151,7 +147,6 @@ export function DecisionsSettings({
   const note = (row: CommunityState) => {
     if (row.shown === DECISIONS_OFF)
       return "Decisions are off in this community";
-    if (!row.answering) return "No provider can answer here";
     if (row.offered[row.answering] === false)
       return `${label(row.answering)} isn’t offered in this community`;
     if (row.status === "checking") return "Checking…";

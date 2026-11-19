@@ -1647,8 +1647,8 @@
 
 :root[data-emoji-size="huge"],
 [data-emoji-size-preview="huge"] {
-  --size-emoji-display: calc(var(--type-rem) * 6);
-  --size-emoji-line: calc(var(--type-rem) * 6.5);
+  --size-emoji-display: calc(var(--type-rem) * 8);
+  --size-emoji-line: calc(var(--type-rem) * 8.5);
 }
 
 :root[data-color-mode="dark"],

@@ -96,6 +96,7 @@ import {
   type AgentSettingsProposal,
   type AgentSettingsProposalSupport,
   compactionProposalProblem,
+  settingsProposalMatches,
   settingsProposalProblem,
 } from "./settings-proposal";
 import { nativeRelayInfo } from "../relay/native";
@@ -2752,6 +2753,21 @@ export class AgentsService extends Service implements Agents {
           if (Object.keys(change).length === 0 && !pending)
             throw new Error("Propose at least one change");
           this.updateKind(identity, change);
+          let draft = change;
+          if (change.settings && !change.type) {
+            const current = this.view(identity, this.recordOf(identity));
+            if (
+              !current.configProblem &&
+              settingsProposalMatches(current.config, change.settings)
+            ) {
+              const { settings: _, ...otherChanges } = change;
+              if (!pending && Object.keys(otherChanges).length === 0)
+                throw new Error(
+                  "The proposed settings match the saved settings.",
+                );
+              draft = otherChanges;
+            }
+          }
           if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
@@ -2763,7 +2779,7 @@ export class AgentsService extends Service implements Agents {
             agent: identity.pubkey,
             agentName: identity.name,
             agentType: identity.type,
-            ...change,
+            ...draft,
           };
         };
         // Its picture uploads only for a valid request, which is then

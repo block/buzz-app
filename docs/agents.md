@@ -142,7 +142,7 @@ key from `agent_types`, new instructions, or a new picture. On supported
 local harnesses the draft can also include model, thinking effort, session scope,
 workspace, and the Auto-compact threshold. Use a token count string such as `"150000"` for `compactAt`, or `""` to restore the harness default. Codex additionally accepts Huddle voice and its apps
 and plugins preference. For a Codex agent using an execution adapter, the target runtime checks the model and thinking overrides when it starts a turn. Its Huddle voice proposal can select the target’s default. For other harnesses, agents using an execution adapter cannot receive model or thinking proposals. The Edit dialog compares the saved and proposed runtime settings above the editable controls, with a separate preview for a harness change. Absent fields stay as
-they are. Save applies the reviewed values. Closing the dialog discards the
+they are. Settings that all match the saved values are omitted when queuing a draft. A settings-only proposal with matching values returns a message to the requester and skips owner review. Save applies the reviewed values. Closing the dialog discards the
 request. A type change carries what the new type adopts, as a manual one does. A proposed picture
 is a local PNG, JPEG, GIF or WebP file that the tool uploads to the community as
 the requesting agent once the request is valid, stripped of metadata as the

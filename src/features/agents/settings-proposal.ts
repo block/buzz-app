@@ -1,6 +1,13 @@
-import type { SessionScope } from "../agent-harness/session-scope";
-import { withCompactAt } from "./compact-at";
-import { offRecommended, type RecommendedCandidate } from "./recommended";
+import {
+  sessionScope,
+  type SessionScope,
+} from "../agent-harness/session-scope";
+import { compactAt, withCompactAt } from "./compact-at";
+import {
+  offRecommended,
+  onRecommended,
+  type RecommendedCandidate,
+} from "./recommended";
 import type { Agent } from "./service";
 
 export type AgentSettingsProposal = Readonly<{
@@ -60,6 +67,36 @@ export function compactionProposalProblem(
     return `${target.title} does not offer an Auto-compact threshold`;
   if (protectedAgent && support === "unprotected")
     return "Protected agents cannot set an Auto-compact threshold in this harness.";
+}
+
+/** A model or effort override also turns off Recommended. */
+export function settingsProposalMatches(
+  config: unknown,
+  {
+    model,
+    effort,
+    scope,
+    workspace,
+    voice,
+    apps,
+    compactAt: threshold,
+  }: AgentSettingsProposal,
+) {
+  const saved = (config ?? {}) as AgentSettingsProposal;
+  const workspacePath = (value: unknown) =>
+    (typeof value === "string" && value.trim()) || "~/.buzz";
+  return (
+    ((model === undefined && effort === undefined) || !onRecommended(saved)) &&
+    (model === undefined || model === (saved.model ?? "")) &&
+    (effort === undefined || effort === (saved.effort ?? "")) &&
+    (scope === undefined || scope === sessionScope(saved.scope)) &&
+    (workspace === undefined ||
+      workspacePath(workspace) === workspacePath(saved.workspace)) &&
+    (voice === undefined || voice === (saved.voice ?? "")) &&
+    (apps === undefined || apps === (saved.apps === true)) &&
+    (threshold === undefined ||
+      compactAt(threshold) === compactAt(saved.compactAt))
+  );
 }
 
 /** Seed the normal Settings form. The form owns validation and its Save. */

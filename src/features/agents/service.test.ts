@@ -22696,6 +22696,25 @@ it("keeps self and sibling settings proposals out of agent state until the owner
   const siblingOpened = service.find(sibling);
   if (!siblingOpened) throw new Error("Missing sibling");
   const proposerConfig = service.find(bot)?.config;
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: sibling,
+      scope: "thread",
+      workspace: "~/.buzz",
+      apps: false,
+      compactAt: "",
+    }),
+  ).rejects.toThrow("The proposed settings match the saved settings");
+  expect(service.updateRequests()).toEqual([]);
+  await callTool(client, {}, "agent_update", {
+    agent: sibling,
+    name: "Reviewer",
+    scope: "thread",
+  });
+  const [rename] = service.updateRequests();
+  expect(rename).toMatchObject({ name: "Reviewer" });
+  expect(rename?.settings).toBeUndefined();
+  if (rename) service.dismissUpdate(rename.id);
   const siblingConfig = { scope: "community", compactAt: "150000" };
   await callTool(client, {}, "agent_update", {
     agent: sibling,

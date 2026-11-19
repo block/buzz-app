@@ -19,6 +19,7 @@ import {
   UsesLine,
 } from "../../features/agents/AISettings";
 import {
+  bounded,
   followRecommended,
   recommendedCandidates,
   withRecommended,
@@ -318,16 +319,12 @@ export function AgentCreateDialog({
     setError("");
     try {
       // The pick was ready when found; it may have been signed out since.
-      if (picked && pick.type.recommends) {
-        const ready = await pick.type
-          .recommends(pick.candidate)
-          .catch(() => false);
-        if (!ready) {
-          setAsked((count) => count + 1);
-          setError(`${pick.type.title} is no longer set up on this computer.`);
-          setPending(false);
-          return;
-        }
+      // A check that fails or takes too long counts as not ready.
+      if (picked && !(await bounded(pick.type.recommends?.(pick.candidate)))) {
+        setAsked((count) => count + 1);
+        setError(`${pick.type.title} isn’t ready on this computer.`);
+        setPending(false);
+        return;
       }
       const picture =
         (await avatarRef.current?.prepare()) ??

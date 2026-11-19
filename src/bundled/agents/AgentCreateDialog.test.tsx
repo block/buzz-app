@@ -41,6 +41,7 @@ import {
   emojiAvatarScale,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
+import { CHECK_MS } from "../../features/agents/recommended";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import {
   BuilderlabLogoIcon,
@@ -2520,7 +2521,7 @@ describe("Recommended setup", () => {
       await sign(false);
       await user.click(createButton());
       expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-        "Claude is no longer set up on this computer.",
+        "Claude isn’t ready on this computer.",
       );
       expect(agents.create).not.toHaveBeenCalled();
       // The pick is asked again, and there is none now.
@@ -2528,6 +2529,30 @@ describe("Recommended setup", () => {
         await within(dialog).findByText("One thing to set up first"),
       ).toBeInTheDocument();
       expect(createButton()).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("gives up on a readiness check that stalls, leaving the dialog usable", async () => {
+      let stalled = false;
+      const slow = harness("claude-code", "Claude", () =>
+        stalled ? new Promise<boolean>(() => {}) : true,
+      );
+      const { agents, dialog, user } = setup([slow]);
+      await inspectModel(user, dialog, "Model C · High");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      stalled = true;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      onTestFinished(() => void vi.useRealTimers());
+      submitForm(dialog);
+      await act(async () => {});
+      expect(within(dialog).getByLabelText("Name")).toBeDisabled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CHECK_MS);
+      });
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "Claude isn’t ready on this computer.",
+      );
+      expect(within(dialog).getByLabelText("Name")).toBeEnabled();
+      expect(agents.create).not.toHaveBeenCalled();
     });
 
     it("leaves Goose and Codex as they were, picked or chosen under Custom", async () => {

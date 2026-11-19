@@ -1,4 +1,10 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import type { RelaySession } from "../../features/relay/session";
 import type {
@@ -41,7 +47,7 @@ import {
 import { useConversationTabs } from "./useConversationTabs";
 import { ConversationTab as ConversationReader } from "./ConversationTab";
 import { panelOpening } from "../../features/panels/service";
-import { dockUsesOverlay, useCoveredByDock } from "./useCoveredByDock";
+import { coveringDock, useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
 
 export type { PageTabOptions, PageTabsProps, PageTabTarget };
@@ -372,13 +378,17 @@ export function PageTabs({
   const latestRequest = primaryTarget?.messageId
     ? undefined
     : workspace?.latestRequest;
-  const { selectMain, setPaneOpen } = tabState;
-  useLayoutEffect(() => {
-    if (!latestRequest || latestRequest.aborted) return;
-    selectMain(undefined);
+  const revealLatest = useEffectEvent(() => {
+    tabState.selectMain(undefined);
     // The coverage observer may still be measuring a newly mounted workspace.
-    if (dockUsesOverlay(split.ref.current)) setPaneOpen(false);
-  }, [latestRequest, selectMain, setPaneOpen, split.ref]);
+    const dock = showingPanel ? coveringDock(split.ref.current) : undefined;
+    if (!dock) return;
+    if (dock.contains(document.activeElement)) secondary.closePane();
+    else tabState.setPaneOpen(false);
+  });
+  useLayoutEffect(() => {
+    if (latestRequest && !latestRequest.aborted) revealLatest();
+  }, [latestRequest]);
   const primaryChannel =
     primaryTarget &&
     channels.find((channel) => channel.id === primaryTarget.channelId);

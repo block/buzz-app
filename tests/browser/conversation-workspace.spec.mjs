@@ -118,11 +118,15 @@ test("reselect uncovers the transcript and keeps the narrow reply dock available
   await expect(side).toBeVisible();
   await expect(region).toHaveCount(0);
 
-  await reselect(page);
+  await side.focus();
+  await expect(side).toBeFocused();
+  // A plugin command can issue a request without taking focus from the dock.
+  await jump(page).evaluate((button) => button.click());
   await expectBottom(page, region);
   const toggle = page.getByRole("button", { name: "Toggle tab pane" });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await toggle.click();
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(side).toBeVisible();
 });
 

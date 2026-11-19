@@ -9,8 +9,10 @@ const panelDock = (board: HTMLElement | null) =>
 const isOverlay = (dock: HTMLElement | null | undefined) =>
   !!dock && getComputedStyle(dock).position === "absolute";
 
-export const dockUsesOverlay = (board: HTMLElement | null) =>
-  isOverlay(panelDock(board));
+export function coveringDock(board: HTMLElement | null) {
+  const dock = panelDock(board);
+  return isOverlay(dock) ? dock : undefined;
+}
 
 /**
  * Focus the board's dock where Space and Enter do nothing: the first live, in

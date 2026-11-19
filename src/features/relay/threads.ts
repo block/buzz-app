@@ -214,6 +214,8 @@ export function createThreadView({
   let selectionStaged: readonly RelayEvent[] = [];
   let selectionController: AbortController | undefined;
   let selectionRevision = 0;
+  // A selected reply stays in the rows after a retarget back to the root.
+  let selectedReply = false;
   // Strict reads require transport-supplied binding authority. Missing scope is
   // a configuration error, not evidence of an old relay that permits fallback.
   let mode: "probe" | "older" | "legacy" = canonicalChannel.test(channelId)
@@ -707,6 +709,7 @@ export function createThreadView({
       selectionRevision++;
       messageId = id;
       exact = true;
+      if (id !== rootId) selectedReply = true;
       targetStatus = "ready";
       publish(
         controller
@@ -1121,11 +1124,10 @@ export function createThreadView({
     purge,
     /** What a later view of this thread may show at once: a settled ordinary
      * view of a root. `keep` leaves an earlier resume in place: a read runs,
-     * rows are still resumed, or a retarget moved this view to a reply. A
-     * retarget to the root keeps the root's rows, so they still resume. */
+     * rows are still resumed, or a retarget selected a reply, which can sit
+     * outside the root's window. A retarget only to the root keeps its rows. */
     resume(): ThreadResume | "keep" | undefined {
-      if (controller || shown || (exact && messageId !== rootId) || failed)
-        return "keep";
+      if (controller || shown || selectedReply || failed) return "keep";
       const { status, root, replies, direction, canLoadMore, limited } =
         snapshot;
       if (

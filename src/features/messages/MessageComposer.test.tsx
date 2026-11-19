@@ -13093,13 +13093,23 @@ it.each([
     "the editor is focused",
     "focused",
   ],
+  [
+    "keeps its text behind the conflict for",
+    "one of its controls is focused",
+    "control",
+  ],
 ] as const)(
   "%s a draft saved in another window when %s",
   (_outcome, _when, focus) => {
     const h = mount();
     h.fill("first half");
     if (focus === "blurred") act(() => h.input().blur());
-    else {
+    else if (focus === "control") {
+      // Leaving the editor for one of its controls saves the draft.
+      const send = screen.getByRole("button", { name: "Send message" });
+      act(() => send.focus());
+      expect(send).toHaveFocus();
+    } else {
       saveInFocus(h.input());
       expect(h.input()).toHaveFocus();
     }
@@ -13116,7 +13126,7 @@ it.each([
           new StorageEvent("storage", { storageArea: localStorage, key }),
         );
       });
-      if (focus !== "focused") {
+      if (focus === "blurred" || focus === "background") {
         expect(h.input()).toHaveValue("Finished elsewhere");
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         return;
@@ -13141,6 +13151,17 @@ it("follows a draft changed elsewhere in a focused editor that was never typed i
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount();
   act(() => h.input().focus());
+  expect(h.input()).toHaveFocus();
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  expect(h.input()).toHaveValue("Saved elsewhere");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("follows a draft changed elsewhere in a focused editor the user emptied", () => {
+  const h = mount();
+  h.fill("Typed here");
+  h.fill("");
+  saveInFocus(h.input());
   expect(h.input()).toHaveFocus();
   act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
   expect(h.input()).toHaveValue("Saved elsewhere");
@@ -13207,6 +13228,32 @@ it("compares before local edits and Send even if the storage event has not arriv
   expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
   await h.user.click(screen.getByRole("button", { name: "Load saved draft" }));
   expect(h.input()).toHaveValue("Saved elsewhere");
+});
+
+it("holds a conflict raised by the send-start guard through an unrelated write", async () => {
+  const h = mount();
+  h.fill("Local body");
+  localStorage.setItem(
+    'buzz-view.v1:["scope","draft:channel"]',
+    JSON.stringify("Saved elsewhere"),
+  );
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  // The typed text was saved before the guard ran and focus has left the
+  // composer, so only the shown conflict keeps it.
+  act(() => (document.activeElement as HTMLElement).blur());
+  expect(document.body).toHaveFocus();
+  act(() => writeView("scope", "draft:other", "Unrelated"));
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  expect(h.input()).toHaveValue("Local body");
+  expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
+  await h.user.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(h.input()).toHaveValue("Local body");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "Local body",
+  });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("saves a content-free conflict trace and preserves Keep my draft", async () => {
@@ -13306,52 +13353,75 @@ it("leaves active message-edit content alone and reconciles the draft on return"
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
-// Leaving the edit returns focus to the editor, so the typed draft is offered
-// back with the conflict, not replaced.
-it("offers a draft changed elsewhere when leaving a message edit begun over a typed, saved draft", () => {
-  const { session } = mount({}, undefined, first.pubkey);
-  cleanup();
-  const row = editableMessage();
-  let scope: ReturnType<typeof useMessageEditScope>;
-  function Probe() {
-    scope = useMessageEditScope();
-    return null;
-  }
-  render(
-    <MessageEditScope>
-      <Probe />
-      <MessageComposer
-        session={session}
-        scope="scope"
-        channelId="channel"
-        channelName="General"
-        editMessages={[row]}
-      />
-    </MessageEditScope>,
-    { wrapper: ToastProvider },
-  );
-  const input = screen.getByRole<ComposerInputElement>("textbox");
-  act(() => {
-    input.focus();
-    input.value = "Typed and saved";
-  });
-  fireEvent.input(input);
-  act(() => input.blur());
-  expect(readView("scope", "draft:channel", null)).toMatchObject({
-    text: "Typed and saved",
-  });
-  act(() => scope?.current?.(row));
-  expect(input).toHaveAccessibleName("Edit message");
-  act(() => writeView("scope", "draft:channel", "Draft saved elsewhere"));
-  expect(input).toHaveValue("Original message");
-  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
-  expect(input).toHaveFocus();
-  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
-  expect(input).toHaveValue("Typed and saved");
-  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
-  expect(input).toHaveValue("Draft saved elsewhere");
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-});
+// The draft was hidden during the edit. Leaving it returns focus to the editor,
+// which does not make saved text the user's to keep; unsaved text still is.
+it.each([
+  ["loads", "saved"],
+  ["offers", "unsaved"],
+] as const)(
+  "%s a draft changed elsewhere when leaving a message edit begun over a typed, %s draft",
+  (_outcome, draft) => {
+    const { session } = mount({}, undefined, first.pubkey);
+    cleanup();
+    const row = editableMessage();
+    let scope: ReturnType<typeof useMessageEditScope>;
+    function Probe() {
+      scope = useMessageEditScope();
+      return null;
+    }
+    render(
+      <MessageEditScope>
+        <Probe />
+        <MessageComposer
+          session={session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          editMessages={[row]}
+        />
+      </MessageEditScope>,
+      { wrapper: ToastProvider },
+    );
+    const input = screen.getByRole<ComposerInputElement>("textbox");
+    const type = (text: string) => {
+      act(() => {
+        input.focus();
+        input.value = text;
+      });
+      fireEvent.input(input);
+    };
+    type("Typed and saved");
+    act(() => input.blur());
+    expect(readView("scope", "draft:channel", null)).toMatchObject({
+      text: "Typed and saved",
+    });
+    if (draft === "unsaved") {
+      const fail = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw Error("full");
+        });
+      try {
+        type("Typed and not saved");
+        act(() => input.blur());
+      } finally {
+        fail.mockRestore();
+      }
+    }
+    act(() => scope?.current?.(row));
+    expect(input).toHaveAccessibleName("Edit message");
+    act(() => writeView("scope", "draft:channel", "Draft saved elsewhere"));
+    expect(input).toHaveValue("Original message");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(input).toHaveFocus();
+    if (draft === "unsaved") {
+      expect(input).toHaveValue("Typed and not saved");
+      fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+    }
+    expect(input).toHaveValue("Draft saved elsewhere");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  },
+);
 
 it.each([
   ["without", undefined],

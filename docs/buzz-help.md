@@ -98,6 +98,10 @@ if that desktop app is up and running.
   shows what it did.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in.
+- **Drafts.** Every message box open on a conversation shares its draft. A box
+  you aren't working in follows a draft edited, sent or cleared elsewhere. If
+  that could lose your work, **This draft changed elsewhere** offers **Keep my
+  draft** or **Load saved draft**.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.

@@ -1,4 +1,27 @@
-import { parseDiff, type FileData, type DiffType } from "react-diff-view";
+import parser, {
+  type File as FileData,
+  type FileType as DiffType,
+} from "gitdiff-parser";
+export type { File as FileData } from "gitdiff-parser";
+
+// Preserve the previous parser's unidiff normalization, including its
+// timestamped path handling, while retaining Buzz's strict validation below.
+function parseDiff(text: string): FileData[] {
+  const source = text.trimStart();
+  if (source.startsWith("diff --git")) return parser.parse(source);
+  const lines = source.split("\n");
+  const oldPath = (lines[0] ?? "").split(" ").slice(1, -3).join(" ");
+  const newPath = (lines[1] ?? "").split(" ").slice(1, -3).join(" ");
+  return parser.parse(
+    [
+      `diff --git a/${oldPath} b/${newPath}`,
+      "index 1111111..2222222 100644",
+      `--- a/${oldPath}`,
+      `+++ b/${newPath}`,
+      ...lines.slice(2),
+    ].join("\n"),
+  );
+}
 
 export function parsePatch(content: string): FileData[] | undefined {
   // Legacy send-diff caps UTF-8 payloads at 60 KiB. Unbounded relay content

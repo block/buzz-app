@@ -196,6 +196,14 @@ channel. Without plugin-managed actions, the channel/chat link remains the defau
 Other omitted overrides preserve chat/channel behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
 
+## Code block renderers
+
+`ctx.conversation.registerCodeBlock({ id, title, matches, component, action? })`
+adds a fenced code renderer. `matches(language)` receives the fence's language
+label, or an empty string for an unlabelled fence. The renderer and optional
+action receive `{ code, language }`. Buzz keeps the default plain code block
+when no plugin matches and copies the original code.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

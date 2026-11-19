@@ -100,7 +100,7 @@ export function codeLanguage(pre: ExtraProps["node"]) {
 }
 
 /** A fenced block's `pre`: the plain code with an optional copy action, or,
- * when a registry is given and the fence names a language, a plugin's
+ * when a registry is given and a renderer matches, a plugin's
  * presentation with the plain code as its fallback. */
 export function CodeFence({
   node,
@@ -130,8 +130,8 @@ export function CodeFence({
       {copy && <CodeActions code={code} className={classes.actions} />}
     </pre>
   );
-  const language = codeLanguage(node);
-  return language && registry ? (
+  const language = codeLanguage(node) ?? "";
+  return registry ? (
     <CodeBlock
       registry={registry}
       language={language}

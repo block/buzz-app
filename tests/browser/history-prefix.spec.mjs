@@ -1,6 +1,7 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { anchor, expectAnchor, settle, wheel, edge } from "./timeline.mjs";
+import { dumpGeometry, mark, recordGeometry } from "./debug-geometry.mjs";
 
 // Real layout/virtualizer measurements are needed: history is inserted after
 // a retained opening row, and the identified reader must keep its viewport Y.
@@ -17,6 +18,8 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await server?.close();
 });
+test.beforeEach(async ({ page }) => recordGeometry(page));
+test.afterEach(async ({ page }, testInfo) => dumpGeometry(page, testInfo));
 
 async function open(page) {
   await page.goto(
@@ -26,6 +29,7 @@ async function open(page) {
   await settle(page);
 }
 async function prepend(page, start) {
+  await mark(page, `prepend ${start}`);
   await page.evaluate(() => window.prependHistory());
   await expect(page.locator("[data-history-start]")).toHaveAttribute(
     "data-history-start",
@@ -39,8 +43,11 @@ test("older pages behind a retained first row preserve reading and are not new a
 }) => {
   await open(page);
   await page.locator("[data-message-scroller]").hover();
+  await mark(page, "wheel");
   await wheel(page, -300);
+  await mark(page, "wheel done");
   const reading = await anchor(page);
+  await mark(page, `anchor ${JSON.stringify(reading)}`);
   for (const start of [61, 41, 21]) {
     await prepend(page, start);
     await expectAnchor(page, reading);

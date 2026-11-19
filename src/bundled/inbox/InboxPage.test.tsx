@@ -5598,37 +5598,45 @@ it.each(["page", "preview"] as const)(
   },
 );
 
-it.each(["page", "preview"] as const)(
-  "keeps manual unread activity in muted channels in the %s",
-  async (surface) => {
-    const h = fixture({ withMutes: true });
-    const root = h.root;
-    if (!root) throw new Error("Missing fixture root");
-    const preferences = h.session.sidebarPreferences;
-    await preferences.ensure();
-    render(
-      <>
-        {surface === "page" ? h.view : previewAt(h)}
-        <InboxBadge relay={h.relay} />
-      </>,
-    );
-    await screen.findByText("A thread update");
-    await markRead(h, "room");
-    await act(async () => {
-      await preferences.setMute("room", true);
-    });
-    expect(screen.queryByText("A thread update")).not.toBeInTheDocument();
-    await act(async () => {
-      await h.session.unread.markUnreadLocal({
-        kind: "thread",
-        channelId: "room",
-        rootId: root.id,
-      });
-    });
-    expect(await screen.findByText("A thread update")).toBeVisible();
-    expect(screen.getByRole("img", { name: "1 unread" })).toBeVisible();
-  },
-);
+it("hides an ordinary Activity-row Mark as unread after its channel is muted", async () => {
+  const h = fixture({ withMutes: true });
+  const preferences = h.session.sidebarPreferences;
+  await preferences.ensure();
+  const page = render(
+    <>
+      {h.view}
+      <InboxBadge relay={h.relay} />
+    </>,
+  );
+  await screen.findByText("A thread update");
+  await chooseFilter("Threads");
+  await markRead(h, "room");
+  const row = rows()[0];
+  if (!row) throw new Error("Missing ordinary thread row");
+  await waitFor(() => expect(row).not.toHaveAttribute("data-unread"));
+  fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Mark as unread" }),
+  );
+  await waitFor(() => expect(row).toHaveAttribute("data-unread"));
+  expect(screen.getByRole("img", { name: "1 unread" })).toBeVisible();
+
+  await act(async () => {
+    await preferences.setMute("room", true);
+  });
+  expect(screen.queryByText("A thread update")).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "1 unread" })).toBeNull();
+
+  page.unmount();
+  render(
+    <>
+      {previewAt(h)}
+      <InboxBadge relay={h.relay} />
+    </>,
+  );
+  expect(screen.queryByText("A thread update")).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "1 unread" })).toBeNull();
+});
 
 it("opens a muted mention at the mention rather than an ordinary reply", async () => {
   const h = fixture({ withMutes: true });

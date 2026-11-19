@@ -22,6 +22,10 @@ deliberately.
 - `bestie.ts`: the Bestie tools (`bestie_get`, `bestie_set`, `bestie_clear`),
   which read and change the owner's Bestie through
   `src/features/solo/default-agent.ts`.
+- `sections.ts`: the sidebar section tools (`sections_list`, `section_create`,
+  `section_rename`, `section_remove`, `section_assign`). The host backs them
+  with the session's sidebar preferences (`src/features/relay/sidebar-agent-sections.ts`),
+  in an agent's own run only.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

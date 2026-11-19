@@ -65,6 +65,14 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
+  const sectionsOf = agent.sections
+    ? () => {
+        check();
+        const found = agent.sections?.();
+        if (!found) throw new Error("Your community is not connected.");
+        return found;
+      }
+    : undefined;
   const handoff = agent.handoff;
   const threadsApart = agent.threadsApart;
   const plugins = agent.plugins;
@@ -381,6 +389,17 @@ export function appClient(
         clear: () => bestie().clear(),
       },
     }),
+    ...(sectionsOf
+      ? {
+          sections: {
+            list: () => sectionsOf().list(),
+            create: (name) => sectionsOf().create(name),
+            rename: (id, name) => sectionsOf().rename(id, name),
+            remove: (id) => sectionsOf().remove(id),
+            assign: (channel, section) => sectionsOf().assign(channel, section),
+          },
+        }
+      : {}),
   };
   if (options.nativeCall && options.callSignal) {
     nativeToolClient(client, {

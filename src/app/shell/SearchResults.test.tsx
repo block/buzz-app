@@ -730,13 +730,13 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
   }
 });
 
-it("counts a reply that mentions you, even muted, and tiers Thread only for threads you're in", async () => {
+it("counts a reply that mentions you, even muted, tiers Thread only for threads you're in, and opens the thread a row shows", async () => {
   const relay = keypair(),
     viewer = keypair(),
     larry = keypair();
   const discovery = [
     profile(larry, { name: "Larry" }),
-    ...["muted-reply", "aside", "mixed"].flatMap((id) => [
+    ...["muted-reply", "aside", "mixed", "two-threads"].flatMap((id) => [
       metadata(relay, id, id),
       roster(relay, id, [viewer.pubkey, larry.pubkey]),
     ]),
@@ -786,6 +786,10 @@ it("counts a reply that mentions you, even muted, and tiers Thread only for thre
   const mutedRoot = message(larry, "muted-reply", "muted root", 10);
   const asideRoot = message(larry, "aside", "aside root", 10);
   const mixedRoot = message(viewer, "mixed", "my root", 10);
+  // A mention in one thread, then a newer reply in another you're in.
+  const mentionRoot = message(viewer, "two-threads", "my root", 10);
+  const ownRoot = message(viewer, "two-threads", "my other root", 10);
+  const open = vi.fn();
   const rowsOf = (group: string) =>
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
   try {
@@ -798,10 +802,10 @@ it("counts a reply that mentions you, even muted, and tiers Thread only for thre
         input={createRef()}
         pages={[]}
         openNewMessage={() => {}}
-        openConversation={() => {}}
+        openConversation={open}
       />,
     );
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(3));
+    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
     assert(live);
     const callbacks = live;
     act(() =>
@@ -809,6 +813,8 @@ it("counts a reply that mentions you, even muted, and tiers Thread only for thre
         mutedRoot,
         asideRoot,
         mixedRoot,
+        mentionRoot,
+        ownRoot,
         message(larry, "muted-reply", "are you around", 12, [
           reply(mutedRoot),
           ...mention,
@@ -819,14 +825,35 @@ it("counts a reply that mentions you, even muted, and tiers Thread only for thre
         ]),
         message(larry, "mixed", "top-level news", 14),
         message(larry, "mixed", "answering you", 15, [reply(mixedRoot)]),
+        message(larry, "two-threads", "need you here", 16, [
+          reply(mentionRoot),
+          ...mention,
+        ]),
+        message(larry, "two-threads", "newer, in yours", 17, [reply(ownRoot)]),
       ]),
     );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(3));
-    const rows = rowsOf("Unread").map((row) => row.textContent ?? "");
-    expect(rows[0]).toMatch(/^muted-reply.*Larry: are you around.*Mentioned$/);
-    expect(rows[1]).toMatch(/^mixed.*Larry: answering you.*Thread$/);
-    expect(rows[2]).toMatch(/^aside/);
-    expect(rows[2]).not.toMatch(/(Mentioned|Thread)$/);
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(4));
+    const rows = rowsOf("Unread");
+    const text = rows.map((row) => row.textContent ?? "");
+    expect(text.slice(0, 2).sort()).toEqual([
+      expect.stringMatching(/^muted-reply.*Larry: are you around.*Mentioned$/),
+      expect.stringMatching(/^two-threads.*Larry: need you here.*Mentioned$/),
+    ]);
+    expect(text[2]).toMatch(/^mixed.*Larry: answering you.*Thread$/);
+    expect(text[3]).toMatch(/^aside/);
+    expect(text[3]).not.toMatch(/(Mentioned|Thread)$/);
+    // A thread-only row opens the thread its mention is in, not the newest.
+    const row = (name: string) =>
+      rows.find((option) => option.textContent?.startsWith(name));
+    fireEvent.click(row("two-threads") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith(
+      "two-threads",
+      mentionRoot.id,
+      mentionRoot.id,
+    );
+    // A mixed row still opens its conversation.
+    fireEvent.click(row("mixed") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("mixed");
   } finally {
     cleanup();
     owner.dispose();

@@ -191,8 +191,8 @@ export function useUnreadThreadOnly(unread: UnreadCapability, targets: string) {
 
 export type UnreadReason = Readonly<{
   /** The newest unread message that mentions the viewer, top-level or a
-   * reply. */
-  mention?: MentionActivityItem | undefined;
+   * reply, with a reply's thread (`rootId`). */
+  mention?: (MentionActivityItem & { rootId?: string }) | undefined;
   /** The newest thread the viewer is in with unread replies. A thread that
    * counts only for a mention or broadcast is not one. */
   thread?: ThreadActivityItem | undefined;
@@ -220,10 +220,10 @@ export function useUnreadReasons(unread: UnreadCapability, ids: string) {
           const { items, mentions } = unread.activity(channelId);
           const mention = [
             ...(mentions ?? []),
-            ...(items ?? []).flatMap(({ mention }) =>
-              mention ? [mention] : [],
+            ...(items ?? []).flatMap(({ mention, rootId }) =>
+              mention ? [{ ...mention, rootId }] : [],
             ),
-          ].reduce<MentionActivityItem | undefined>(
+          ].reduce<UnreadReason["mention"]>(
             (newest, item) =>
               !newest ||
               item.createdAt > newest.createdAt ||

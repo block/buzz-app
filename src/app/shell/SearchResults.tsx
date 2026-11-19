@@ -1684,14 +1684,17 @@ export function SearchResults({
   const unread = unreadChannels.map((channel): SearchDestination => {
     const reason = reasons.get(channel.id);
     const mention = reason?.mention;
-    // A mixed channel opens to its conversation, but its row still shows
-    // the reply that earned it the Thread tier.
-    const thread = !mention && !unreadThreads.has(channel.id) && reason?.thread;
+    // The row shows the reply that earned it the Thread tier.
+    const thread = !mention && reason?.thread;
+    const threadOnly = unreadThreads.has(channel.id);
+    // A channel unread only through threads opens the thread its row shows;
+    // a mixed one opens to its conversation.
+    const root = threadOnly
+      ? (mention || thread || undefined)?.rootId
+      : undefined;
     const row = suggestion(channel);
     const latest =
-      unreadThreads.has(channel.id) || thread
-        ? undefined
-        : latestUnread.get(channel.id);
+      threadOnly || thread ? undefined : latestUnread.get(channel.id);
     // Only a group conversation names who wrote it.
     const shown =
       latest?.preview.trim() &&
@@ -1708,6 +1711,9 @@ export function SearchResults({
             : undefined;
     return {
       ...row,
+      ...(root && {
+        run: choose(row.key, () => openConversation(channel.id, root, root)),
+      }),
       ...(shown && { detail: shown }),
       ...(thread && {
         detailIcon: ThreadIcon,

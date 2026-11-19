@@ -1830,7 +1830,8 @@ test.describe("top-level mention activity", () => {
   });
 });
 
-// The Solo sidebar opens the same exact target through its buzz://message link.
+// A Solo chat's row sits in the unified sidebar beside channels and opens the
+// same exact target from its Activity.
 const soloChannel = "33333333-3333-4333-8333-333333333333";
 test.describe("Solo Activity", () => {
   test.use({
@@ -1852,8 +1853,8 @@ test.describe("Solo Activity", () => {
     await page.goto(app.origin);
     await newChat(page);
     const chat = page
-      .getByRole("navigation", { name: "Solo conversations" })
-      .locator(`[data-solo-channel-id="${soloChannel}"]`);
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator(`[data-solo-destination-id="${soloChannel}"]`);
     await expect(chat).toBeVisible();
     const root = app.append(
       "primary",

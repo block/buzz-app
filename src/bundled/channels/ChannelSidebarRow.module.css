@@ -46,17 +46,9 @@
     opacity: 1;
     pointer-events: auto;
   }
-  /* Rows with a badge or share control reserve the action's width at rest.
-     On other rows the action overlays the label without changing its width. */
-  .row:has([data-solo-row-action]):not(
-    :has(
-      [data-solo-shared],
-      [data-channel-working],
-      [data-channel-priority],
-      [data-channel-activity],
-      [data-channel-temporary]
-    )
-  ) {
+  /* Keep badges in their usual column until the trailing menu appears.
+     Move the badge visually so the title's layout stays fixed. */
+  .row:has([data-solo-row-action]):not(:has([data-solo-shared])) {
     & [data-solo-row-action] {
       position: absolute;
       inset-inline-end: var(--channel-row-fill-end, 0%);
@@ -65,15 +57,18 @@
         :hover,
         :has(:focus-visible),
         :has([data-solo-row-action][aria-expanded="true"])
-      )
-      .select
-      [class~="navigation-item-label"] {
-      --title-fade-end: calc(var(--solo-row-action-size) - var(--space-2));
-      mask-image: linear-gradient(
-        to left,
-        transparent var(--title-fade-end),
-        black calc(var(--title-fade-end) + var(--space-2))
-      );
+      ) {
+      & .badges {
+        position: relative;
+        inset-inline-end: var(--solo-row-action-size);
+      }
+      & .select [class~="navigation-item-label"] {
+        mask-image: linear-gradient(
+          to left,
+          transparent var(--solo-row-action-size),
+          black calc(var(--solo-row-action-size) + var(--space-2))
+        );
+      }
     }
   }
 }

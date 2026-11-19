@@ -68,18 +68,9 @@ test("working badges align in their rows and clear the Solo actions button", asy
     await page.setViewportSize({ width, height: 950 });
     await setAppearance(page, mode, scale);
     await page.mouse.move(0, 0);
-    const restingWidth = await titleWidth();
-    await chat.hover({ position: { x: 24, y: 14 } });
-    await expect(action).toHaveCSS("opacity", "1");
-    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
-    await expect.poll(titleWidth).toBe(restingWidth);
-    await page.mouse.move(0, 0);
-    await chat.focus();
-    await page.keyboard.press("Tab");
-    await expect(action).toBeFocused();
-    await expect(action).toHaveCSS("opacity", "1");
-    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
-    await expect.poll(titleWidth).toBe(restingWidth);
+    await chat.blur();
+    await action.blur();
+    await expect(action).toHaveCSS("opacity", "0");
     for (const row of rows) {
       await expect
         .poll(() =>
@@ -87,9 +78,7 @@ test("working badges align in their rows and clear the Solo actions button", asy
             const marker = element
               .querySelector("[data-channel-working]")
               .getBoundingClientRect();
-            const rect = element
-              .querySelector("button[data-channel-id]")
-              .getBoundingClientRect();
+            const rect = element.getBoundingClientRect();
             // The end token is a calc expression; resolve it through the painted pseudo-element.
             const fillEnd = parseFloat(
               getComputedStyle(element, "::before").right,
@@ -112,6 +101,18 @@ test("working badges align in their rows and clear the Solo actions button", asy
         )
         .toEqual({ center: 0, inset: 0.625 });
     }
+    const restingWidth = await titleWidth();
+    await chat.hover({ position: { x: 24, y: 14 } });
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
+    await expect.poll(titleWidth).toBe(restingWidth);
+    await page.mouse.move(0, 0);
+    await chat.focus();
+    await page.keyboard.press("Tab");
+    await expect(action).toBeFocused();
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
+    await expect.poll(titleWidth).toBe(restingWidth);
   }
 });
 

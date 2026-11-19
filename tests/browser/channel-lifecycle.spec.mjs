@@ -547,6 +547,7 @@ test("pending toast in narrow navigation preserves visible recovery after uncert
   await expect(
     failure.getByRole("button", { name: "Archive channel", exact: true }),
   ).toHaveCount(0);
+  await failure.hover();
   await failure.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(failure).toHaveCount(0);
   // Recovery must leave the page usable, not silently inert under a hidden modal.
@@ -856,6 +857,7 @@ test.describe("remote archive focus", () => {
             exact: true,
           });
           await expect(success).toBeVisible();
+          await success.hover();
           await success
             .getByRole("button", { name: "Dismiss notification", exact: true })
             .click();

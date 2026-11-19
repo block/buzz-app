@@ -2183,7 +2183,7 @@ Plugins can add actions to your avatar menu. Profile-related actions may appear 
 
 ### App notifications
 
-Desktop toast notifications appear in the top-right corner. Hover the stack to
+Desktop toast notifications appear at the top right, below the app headers. Hover the stack to
 expand it and pause timed notifications; F6 focuses notifications for keyboard
 access. Dismissible notices show their close button on hover or keyboard focus.
 Recovery notices remain until resolved or dismissed where allowed.

@@ -240,7 +240,10 @@ test("keyboard focus pauses expiry and leaving resumes it, with and without F6",
     ).toBeFocused();
     await page.clock.runFor(6000);
     await expect(toast).toBeVisible();
-    await page.keyboard.press("Tab");
+    // Leave for an in-page control; tabbing past the final portal control can
+    // move focus into browser chrome, where document visibility pauses expiry.
+    await show.focus();
+    await expect(show).toBeFocused();
     await expect(
       toast.getByRole("button", { name: "Undo", exact: true }),
     ).not.toBeFocused();
@@ -475,6 +478,103 @@ test("touch dismisses a linked notice without opening its destination", async ({
     await expect(
       page.getByRole("dialog", { name: "Example dialog", exact: true }),
     ).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+// Intrinsic button widths and enlarged text require a real layout engine.
+test("long recovery actions reflow without squeezing the message", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page
+    .getByRole("textbox", { name: "Toast title", exact: true })
+    .fill("Changes weren’t saved");
+  await page
+    .getByRole("textbox", { name: "Action label", exact: true })
+    .fill("Retry saving spelling correction");
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--type-scale", "1.4"),
+  );
+  await page.getByRole("button", { name: "Show toast", exact: true }).click();
+  const card = page.getByRole("dialog", {
+    name: "Changes weren’t saved",
+    exact: true,
+  });
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() =>
+        card
+          .locator(".buzz-toast-heading")
+          .evaluate((el) => el.getBoundingClientRect().width),
+      )
+      .toBeGreaterThan(180);
+    await expect
+      .poll(() => card.evaluate((el) => el.scrollWidth <= el.clientWidth))
+      .toBe(true);
+    const heading = await card.locator(".buzz-toast-heading").boundingBox();
+    const action = await card
+      .getByRole("button", { name: "Retry saving spelling correction" })
+      .boundingBox();
+    if (!heading || !action)
+      throw new Error("Toast content has no layout bounds");
+    expect(action.y).toBeGreaterThanOrEqual(heading.y + heading.height);
+  }
+});
+
+// A touch tap emits compatibility mouse events; the viewport must not grow
+// into an invisible full-screen layer when Sonner marks the stack expanded.
+test("touch-primary stacks leave controls below them tappable", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    ...(baseURL ? { baseURL } : {}),
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${viewer}#/design/components/toast`);
+    expect(
+      await page.evaluate(
+        () => matchMedia("(hover: none) and (pointer: coarse)").matches,
+      ),
+    ).toBe(true);
+    await page
+      .getByRole("button", { name: "Show recovery stack", exact: true })
+      .tap();
+    const stack = page.locator("[data-sonner-toaster]");
+    for (const id of [6, 5, 4, 3]) {
+      await stack
+        .getByRole("button", { name: `Resolve ${id}`, exact: true })
+        .tap();
+    }
+    await expect(stack.getByRole("dialog")).toHaveCount(2);
+    await stack.getByText("Recovery 2", { exact: true }).tap();
+    await expect
+      .poll(() => stack.evaluate((el) => el.getBoundingClientRect().height))
+      .toBeLessThan(500);
+    await page.evaluate(() => {
+      const button = document.createElement("button");
+      button.textContent = "Underlying control";
+      button.style.cssText =
+        "position:fixed;bottom:8px;left:8px;width:calc(100% - 16px);height:40px";
+      button.onclick = () => {
+        button.textContent = "Control activated";
+      };
+      document.body.append(button);
+    });
+    await page
+      .getByRole("button", { name: "Underlying control", exact: true })
+      .tap();
+    await expect(
+      page.getByRole("button", { name: "Control activated", exact: true }),
+    ).toBeVisible();
+    await expect(stack.getByRole("dialog")).toHaveCount(2);
   } finally {
     await context.close();
   }

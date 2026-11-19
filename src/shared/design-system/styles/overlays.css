@@ -586,7 +586,7 @@
   right: env(safe-area-inset-right, 0px);
 }
 .buzz-toast-viewport[data-sonner-toaster][data-y-position="top"] {
-  top: env(safe-area-inset-top, 0px);
+  top: calc(env(safe-area-inset-top, 0px) + var(--buzz-toast-top-offset, 0px));
 }
 .buzz-toast-viewport[data-sonner-toaster] [data-sonner-toast] {
   top: var(--buzz-toast-inset);
@@ -596,9 +596,16 @@
   touch-action: pan-y;
 }
 /* Keep every recovery reachable when expanded, including short windows. */
-.buzz-toast-viewport[data-sonner-toaster]:has([data-expanded="true"]) {
-  height: calc(100dvh - 2 * var(--buzz-toast-inset));
-  overflow-y: auto;
+@media (hover: hover) and (pointer: fine) {
+  .buzz-toast-viewport[data-sonner-toaster]:has([data-expanded="true"]) {
+    height: calc(
+      100dvh -
+      var(--buzz-toast-top-offset, 0px) -
+      2 *
+      var(--buzz-toast-inset)
+    );
+    overflow-y: auto;
+  }
 }
 .buzz-toast-viewport
   [data-sonner-toast][data-expanded="false"]:nth-child(n + 4) {
@@ -618,9 +625,14 @@
     flex-direction: column;
     gap: var(--space-3);
     height: auto;
-    max-height: calc(100dvh - 2 * var(--buzz-toast-inset));
+    max-height: calc(
+      100dvh -
+      var(--buzz-toast-top-offset, 0px) -
+      2 *
+      var(--buzz-toast-inset)
+    );
     overflow-y: auto;
-    pointer-events: auto;
+    pointer-events: none;
   }
   .buzz-toast-viewport[data-sonner-toaster]
     [data-sonner-toast][data-mounted="true"] {
@@ -658,8 +670,8 @@ html[data-keyboard-navigation]
   --floating-radius: calc(var(--radius-container) - var(--space-2));
   --floating-inset: var(--space-4);
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-4);
@@ -686,6 +698,8 @@ html[data-keyboard-navigation]
     outline-offset: 2px;
   }
   .buzz-toast-heading {
+    flex: 1 1 12rem;
+    min-width: 0;
     display: flex;
     align-items: start;
     gap: var(--space-2);
@@ -731,17 +745,20 @@ html[data-keyboard-navigation]
     color: var(--text-warning);
   }
   .buzz-toast-details {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    flex-basis: 100%;
+    order: 3;
   }
   .buzz-toast-actions {
-    grid-column: 2;
-    grid-row: 1;
+    order: 2;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: var(--space-2);
     max-width: 100%;
+  }
+  .buzz-toast-actions > .buzz-button {
+    max-width: 100%;
+    white-space: normal;
   }
   .buzz-toast > .buzz-toast-open ~ .buzz-toast-details,
   .buzz-toast > .buzz-toast-open ~ .buzz-toast-actions > * {

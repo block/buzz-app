@@ -18,17 +18,21 @@ import { IconButton } from "./IconButton";
 
 const ToastHost = createContext("");
 
-/** How far each mounted docked surface reaches up from the window's bottom. */
-const clearances = new Map<object, number>();
+/** Space reserved by mounted surfaces at either window edge. */
+const clearances = new Map<object, { edge: "top" | "bottom"; value: number }>();
 /** Each mounted toast host's always-present Sonner section. */
 const viewports = new Set<HTMLElement>();
 // Scoped to the toast host, not the root: a root custom property restyles the
 // whole document, and the next layout read in that commit pays for it.
 let publishQueued = false;
 const writeClearance = (viewport: HTMLElement) => {
-  const value = `${Math.max(0, ...clearances.values())}px`;
-  if (viewport.style.getPropertyValue("--buzz-toast-clearance") !== value)
-    viewport.style.setProperty("--buzz-toast-clearance", value);
+  for (const edge of ["top", "bottom"] as const) {
+    const value = `${Math.max(0, ...[...clearances.values()].filter((entry) => entry.edge === edge).map((entry) => entry.value))}px`;
+    const property =
+      edge === "top" ? "--buzz-toast-top-clearance" : "--buzz-toast-clearance";
+    if (viewport.style.getPropertyValue(property) !== value)
+      viewport.style.setProperty(property, value);
+  }
 };
 // Publish once a commit's effects settle, so a surface replaced by one of the
 // same height (switching channels) writes nothing.
@@ -49,17 +53,27 @@ const attachViewport = (viewport: HTMLElement | null) => {
   };
 };
 
-/** Keeps the toast stack above a surface docked at the bottom of the window,
- * such as a composer, while it is mounted, so notices never cover its
- * controls. A hidden surface takes no room. */
-export function useToastClearance(ref: RefObject<HTMLElement | null>) {
+/** Reserves space for mounted edge controls. Bottom remains the default for
+ * existing composer callers; top keeps the shell header clear. Hidden surfaces
+ * take no room. */
+export function useToastClearance(
+  ref: RefObject<HTMLElement | null>,
+  edge: "top" | "bottom" = "bottom",
+) {
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     const key = {};
     const measure = () => {
-      const { top, height } = element.getBoundingClientRect();
-      clearances.set(key, height ? window.innerHeight - top : 0);
+      const { top, bottom, height } = element.getBoundingClientRect();
+      clearances.set(key, {
+        edge,
+        value: height
+          ? edge === "top"
+            ? bottom
+            : window.innerHeight - top
+          : 0,
+      });
       publishClearance();
     };
     measure();
@@ -75,7 +89,7 @@ export function useToastClearance(ref: RefObject<HTMLElement | null>) {
       clearances.delete(key);
       publishClearance();
     };
-  }, [ref]);
+  }, [ref, edge]);
 }
 type Tone = "error" | "warning" | "info" | "success";
 

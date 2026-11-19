@@ -1132,6 +1132,7 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
     await expect.poll(order).toEqual(alphaOrder);
 
     await failRecent(2);
+    await notifications.getByRole("dialog").hover();
     await notifications
       .getByRole("button", { name: "Dismiss notification" })
       .click();

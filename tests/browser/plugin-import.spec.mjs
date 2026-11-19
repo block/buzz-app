@@ -2361,6 +2361,65 @@ async function installedDocumentReader(page, app) {
   });
 }
 
+test("document formatting floats over scrollable content", async ({
+  page,
+  app,
+}) => {
+  const reader = await installedDocumentReader(page, app);
+  await page.locator("html").evaluate((root) => {
+    root.style.fontSize = "125%";
+  });
+
+  // Guide supplies a toolbar slot and Reference uses the editor's own anchor.
+  for (const [name, width] of [
+    ["Guide", 1280],
+    ["Reference", 480],
+  ]) {
+    await page.setViewportSize({ width, height: 720 });
+    await reader.getByRole("tab", { name, exact: true }).click();
+    const panel = reader.getByRole("tabpanel", { name, exact: true });
+    await panel.getByRole("button", { name: `Edit ${name}` }).click();
+    const scroll = panel.getByRole("region", { name: "Document scroll area" });
+    const toolbar = panel.getByRole("group", { name: "Document formatting" });
+    const overlap = async () =>
+      scroll.evaluate(
+        (area, bounds) => {
+          const rect = area.getBoundingClientRect();
+          return (
+            bounds &&
+            bounds.y > rect.top &&
+            bounds.y + bounds.height <= rect.bottom &&
+            bounds.y + bounds.height <= innerHeight &&
+            bounds.x >= rect.left &&
+            bounds.x + bounds.width <= rect.right
+          );
+        },
+        await toolbar.boundingBox(),
+      );
+
+    await expect(toolbar).toHaveCSS("position", "absolute");
+    await expect.poll(overlap).toBe(true);
+    await scroll.evaluate((area) => {
+      area.scrollTop = area.scrollHeight;
+    });
+    await expect.poll(overlap).toBe(true);
+    const end = panel
+      .getByRole("textbox", { name: "Document body" })
+      .getByText("const line39 = 39;", { exact: false });
+    await expect(end).toBeVisible();
+    const toolbarTop = (await toolbar.boundingBox()).y;
+    const lastLineBottom = await end.evaluate((code) => {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      return range.getBoundingClientRect().bottom;
+    });
+    expect(lastLineBottom).toBeLessThan(toolbarTop);
+    await toolbar.getByRole("button", { name: "Bold", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(toolbar.getByRole("button", { name: "Italic" })).toBeFocused();
+  }
+});
+
 // Browser-only boundary: an external blob module uses the host React tree,
 // host styles, focus targets and durable split across a real document reload.
 test("installed documents reuse host Markdown, workspace tabs and persisted split", async ({

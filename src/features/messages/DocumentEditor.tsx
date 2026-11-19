@@ -164,27 +164,31 @@ export function DocumentEditor({
     setLink(next);
     onLinkOpenChange(true);
   };
-  const toolbar = (
-    <fieldset className={styles.editorToolbar} aria-label="Document formatting">
-      <ComposerFormattingTools
-        persistent
-        markdownMode="document"
-        disabled={disabled || !editing}
-        activeFormats={formats}
-        toggleFormat={(format) => input.current?.toggleFormat(format)}
-        editLink={() => editLink()}
+  const showFormatting = editing && !source;
+  const toolbar = showFormatting && (
+    <div className={styles.toolbarAnchor}>
+      <fieldset
+        className={styles.editorToolbar}
+        aria-label="Document formatting"
       >
-        {null}
-      </ComposerFormattingTools>
-    </fieldset>
+        <ComposerFormattingTools
+          persistent
+          markdownMode="document"
+          disabled={disabled}
+          activeFormats={formats}
+          toggleFormat={(format) => input.current?.toggleFormat(format)}
+          editLink={() => editLink()}
+        >
+          {null}
+        </ComposerFormattingTools>
+      </fieldset>
+    </div>
   );
   return (
     <div
       className={`${styles.stack} ${editing && source ? styles.sourceEditor : ""}`}
+      data-formatting={showFormatting || undefined}
     >
-      {editing &&
-        !source &&
-        (toolbarTarget ? createPortal(toolbar, toolbarTarget) : toolbar)}
       <section className={styles.editorBody} aria-label="Document content">
         <div hidden={!editing}>
           {source ? (
@@ -273,6 +277,8 @@ export function DocumentEditor({
         </div>
         {!editing && children}
       </section>
+      {toolbar &&
+        (toolbarTarget ? createPortal(toolbar, toolbarTarget) : toolbar)}
       {editing && linkOpen && link && (
         <ComposerLinkDialog
           edit={link}

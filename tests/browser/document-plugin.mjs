@@ -13,9 +13,17 @@ export function documentPlugin(ctx) {
     const [saved, setSaved] = React.useState(0);
     const [toolbarTarget, setToolbarTarget] = React.useState(null);
     const editor = React.useRef(null);
-    return h(
-      "article",
-      { style: { padding: "var(--space-panel-inset)", overflow: "auto" } },
+    const scrollArea = h(
+      "section",
+      {
+        "aria-label": "Document scroll area",
+        style: {
+          flex: 1,
+          minHeight: 0,
+          padding: "var(--space-panel-inset)",
+          overflow: "auto",
+        },
+      },
       h("input", {
         "aria-label": `${name} draft`,
         "data-tab-focus": "",
@@ -41,7 +49,6 @@ export function documentPlugin(ctx) {
           },
           "Replace document",
         ),
-      h("div", { ref: setToolbarTarget }),
       h(ctx.conversation.ui.DocumentEditor, {
         key: editing ? "edit" : "read",
         ref: editor,
@@ -54,7 +61,7 @@ export function documentPlugin(ctx) {
         onLinkOpenChange: setLinkOpen,
         maxLength: 32768,
         onSave: () => setSaved((saved) => saved + 1),
-        toolbarTarget,
+        toolbarTarget: name === "Guide" ? toolbarTarget : null,
         destinations: [
           {
             label: "Reference document",
@@ -68,6 +75,25 @@ export function documentPlugin(ctx) {
         }),
       }),
       h("p", { role: "status" }, `Saved ${saved}`),
+    );
+    return h(
+      "article",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          minWidth: 0,
+        },
+      },
+      scrollArea,
+      name === "Guide" &&
+        editing &&
+        !source &&
+        h("div", {
+          ref: setToolbarTarget,
+          style: { margin: "0 var(--space-4) var(--space-4)" },
+        }),
     );
   }
   function Documents() {

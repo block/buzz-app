@@ -810,6 +810,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         file_download,
         media_download,
+        relay::open_downloads_folder,
         media_copy_image,
         media_lift_subject,
         subject_lift::media_lift_subject_supported,
@@ -1479,6 +1480,7 @@ mod tests {
         let capabilities = [
             include_str!("../capabilities/default.json"),
             include_str!("../capabilities/desktop-window.json"),
+            include_str!("../capabilities/downloads-folder.json"),
             include_str!("../capabilities/huddle.json"),
         ]
         .concat();

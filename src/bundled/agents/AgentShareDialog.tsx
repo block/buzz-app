@@ -19,6 +19,10 @@ import {
   sharedAgents,
 } from "../../features/agents/shared-agents";
 import type { EventData } from "../../features/relay/events";
+import {
+  OpenDownloadsButton,
+  notifyDownloadSaved,
+} from "../../features/messages/DownloadNotice";
 import { downloadNativeFile } from "../../features/messages/native-download";
 import type { UploadedAttachment } from "../../features/relay/attachments";
 import type { RelaySession } from "../../features/relay/session";
@@ -211,6 +215,7 @@ export function AgentShareDialog({
   onClose(): void;
 }) {
   const notify = useToastNotification();
+  const [hasDownload, setHasDownload] = useState(false);
   // `null` while the catalog is read; `undefined` once read with no head.
   const [head, setHead] = useState<EventData | undefined | null>(null);
   const [pending, setPending] = useState<
@@ -379,10 +384,14 @@ export function AgentShareDialog({
           : await file(as);
       if (!snapshot) return;
       const path = await saveFile(snapshot, fileName(agent.name, as));
-      notify(
-        `${as === "png" ? "Saved an agent card for" : "Saved"} ${agent.name}${path ? ` to ${path}` : ""}.`,
-        "success",
-      );
+      const title = `${as === "png" ? "Saved an agent card for" : "Saved"} ${agent.name}`;
+      if (path)
+        notifyDownloadSaved(
+          notify,
+          () => setHasDownload(true),
+          `${title} to ${path}.`,
+        );
+      else notify(`${title}.`, "success");
       if (as === "png") preview(false);
     } catch (reason) {
       setError(`Couldn’t export ${agent.name}. ${message(reason)}`);
@@ -512,6 +521,7 @@ export function AgentShareDialog({
         // Dismissing the preview goes back to sharing.
         if (!open) previewing ? preview(false) : onClose();
       }}
+      headerActions={hasDownload && <OpenDownloadsButton />}
       leadingActions={
         !previewing && (
           <SplitButton

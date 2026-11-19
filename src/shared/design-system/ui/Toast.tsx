@@ -337,7 +337,12 @@ export function useToastNotification() {
   return (
     title: string,
     tone: "success" | "error" | "info",
-    action?: { label: string; onClick(): void; timeout?: number },
+    action?: {
+      label: string;
+      onClick(): void;
+      timeout?: number;
+      variant?: "link";
+    },
   ) =>
     String(
       toast.custom(
@@ -351,7 +356,8 @@ export function useToastNotification() {
           >
             {action && (
               <Button
-                size="compact"
+                variant={action.variant ?? "subtle"}
+                size={action.variant === "link" ? "text" : "compact"}
                 onClick={() => {
                   toast.dismiss(id);
                   action.onClick();

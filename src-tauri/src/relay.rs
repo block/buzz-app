@@ -2190,6 +2190,23 @@ pub(crate) async fn media_lift_subject(
     Ok(tauri::ipc::Response::new(png))
 }
 
+/// Open the same OS-owned destination as media_download and file_download.
+#[tauri::command]
+pub(crate) async fn open_downloads_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<()> {
+    use tauri::Manager as _;
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|_| "Downloads unavailable")?;
+    if !directory.is_dir() {
+        return Err("Downloads folder unavailable".into());
+    }
+    tauri_plugin_opener::open_path(directory, None::<&str>)
+        .map_err(|_| "Could not open Downloads".into())
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
 /// The host, not the webview, owns the save path and collision policy.
 #[tauri::command]

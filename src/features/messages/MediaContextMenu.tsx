@@ -31,7 +31,7 @@ import {
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
 import { downloadNativeMedia } from "./native-download";
-import { useMediaActionNotification } from "./MediaActionAnnouncements";
+import { useMediaActionNotifications } from "./MediaActionAnnouncements";
 
 type Target = {
   source: string;
@@ -62,7 +62,7 @@ export function MediaContextMenu({
   children: ReactElement<HTMLAttributes<HTMLElement>>;
 }) {
   const active = useConversationPresentation();
-  const notify = useMediaActionNotification();
+  const { notify, downloadSaved } = useMediaActionNotifications();
   const dismiss = useToastDismiss();
   const downloading = useRef(new Set<string>());
   const [target, setTarget] = useState<Target>();
@@ -84,7 +84,7 @@ export function MediaContextMenu({
   const current = active && target?.source === source && target?.url === url;
   const run = async (
     action: () => Promise<void>,
-    success: string,
+    onSuccess: () => void,
     failure: string,
     downloadSource?: string,
   ) => {
@@ -96,7 +96,7 @@ export function MediaContextMenu({
       : undefined;
     try {
       await action();
-      notify(success, "success");
+      onSuccess();
     } catch {
       notify(failure, "error");
     } finally {
@@ -220,7 +220,7 @@ export function MediaContextMenu({
                         return Promise.reject(new Error("Image unavailable"));
                       return copyImageToClipboard(target.image);
                     },
-                    "Image copied",
+                    () => notify("Image copied", "success"),
                     "Couldn’t copy image. Try again.",
                   )
                 }
@@ -235,7 +235,11 @@ export function MediaContextMenu({
               onClick={() =>
                 void run(
                   () => writeClipboardText(target.url),
-                  `${kind === "image" ? "Image" : "Video"} URL copied`,
+                  () =>
+                    notify(
+                      `${kind === "image" ? "Image" : "Video"} URL copied`,
+                      "success",
+                    ),
                   "Couldn’t copy URL. Try again.",
                 )
               }
@@ -251,7 +255,7 @@ export function MediaContextMenu({
                 onClick={() =>
                   void run(
                     () => downloadNativeMedia(target.source, name),
-                    "Saved to Downloads",
+                    downloadSaved,
                     "Couldn’t download. Try again.",
                     target.source,
                   )

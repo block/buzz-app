@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   PanelHeader,
@@ -7,6 +7,7 @@ import {
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons";
 import { useModalBoundary } from "./useModalBoundary";
+import { OpenDownloadsButton } from "./DownloadNotice";
 import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
 import {
   type readReviewOrigin,
@@ -51,6 +52,7 @@ export function MediaReviewFrame({
   restoreFocus?: RefObject<HTMLElement | null> | undefined;
   close(): void;
 }) {
+  const [hasDownload, setHasDownload] = useState(false);
   const backdrop = useRef<HTMLDivElement>(null);
   const { dismiss } = useReviewEntrance(
     frame,
@@ -152,6 +154,7 @@ export function MediaReviewFrame({
             actions={
               <>
                 {actions}
+                {hasDownload && <OpenDownloadsButton />}
                 <IconButton
                   size="compact"
                   type="button"
@@ -164,14 +167,16 @@ export function MediaReviewFrame({
             }
           />
         </div>
-        <div
-          className={`${styles.mediaReviewStage} dark`}
-          data-color-mode="dark"
-          data-review-stage=""
-        >
-          <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
-        </div>
-        {sidebar}
+        <MediaActionAnnouncements onDownloadSaved={() => setHasDownload(true)}>
+          <div
+            className={`${styles.mediaReviewStage} dark`}
+            data-color-mode="dark"
+            data-review-stage=""
+          >
+            {children}
+          </div>
+          {sidebar}
+        </MediaActionAnnouncements>
       </section>
     </div>,
     document.body,

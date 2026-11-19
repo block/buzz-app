@@ -205,6 +205,7 @@ it.each<Kind>(["video", "audio", "voice note"])(
 );
 
 it("shows native media menu download results until unmounted", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   vi.mocked(isTauri).mockReturnValue(true);
   let publish!: (event: { payload: string | null }) => void;
   const registered = held();
@@ -224,6 +225,15 @@ it("shows native media menu download results until unmounted", async () => {
   act(() => publish({ payload: `${"a".repeat(64)}.mp4` }));
   expect(
     await screen.findByRole("dialog", { name: "Saved to Downloads" }),
+  ).toBeVisible();
+  const openFolder = screen.getByRole("button", { name: "Open Downloads" });
+  vi.mocked(invoke).mockRejectedValueOnce(
+    new Error("file manager unavailable"),
+  );
+  fireEvent.click(openFolder);
+  expect(invoke).toHaveBeenCalledWith("open_downloads_folder");
+  expect(
+    await screen.findByText("Couldn’t open the Downloads folder."),
   ).toBeVisible();
   act(() => publish({ payload: null }));
   expect(

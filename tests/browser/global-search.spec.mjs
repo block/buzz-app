@@ -140,6 +140,7 @@ test("changing search scope returns focus to the input without clearing the quer
   page,
   app,
 }) => {
+  const query = "primary alpha message 0";
   await page.goto(app.origin);
   await button(page, "Search Buzz").click();
   const hint = page
@@ -157,8 +158,8 @@ test("changing search scope returns focus to the input without clearing the quer
     name: "Search this conversation",
   });
   await expect(scopedInput).toBeFocused();
-  await page.keyboard.type("hello");
-  await expect(scopedInput).toHaveValue("hello");
+  await page.keyboard.type(query);
+  await expect(scopedInput).toHaveValue(query);
 
   const chip = scoped.getByRole("button", {
     name: /Remove .* search scope/,
@@ -168,15 +169,14 @@ test("changing search scope returns focus to the input without clearing the quer
   const global = page.getByRole("dialog", { name: "Search Buzz" });
   const input = global.getByRole("combobox", { name: "Search Buzz" });
   await expect(input).toBeFocused();
-  await expect(input).toHaveValue("hello");
-  // Relevance can put an inline setting or plugin first.
-  const first = global
-    .locator("[data-search-result], .search-control-row")
-    .first();
-  await expect(first).toHaveAttribute("aria-selected", "true");
+  await expect(input).toHaveValue(query);
+  const result = global
+    .locator("[data-search-result]")
+    .filter({ hasText: query });
+  await expect(result).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute(
     "aria-activedescendant",
-    await first.getAttribute("id"),
+    await result.getAttribute("id"),
   );
 });
 

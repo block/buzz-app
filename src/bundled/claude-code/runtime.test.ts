@@ -97,6 +97,7 @@ function setup(
     signal?: AbortSignal;
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    dm?: boolean;
     /** Solo chats the owner's device is still creating. */
     pending?: Set<string>;
     named?: Delivery["named"];
@@ -204,7 +205,11 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType: options.solo?.has(channel) ? "solo" : "stream",
+            channelType: options.solo?.has(channel)
+              ? "solo"
+              : options.dm
+                ? "dm"
+                : "stream",
             members: [],
             ...(options.pending?.has(channel) ? { pending: true } : {}),
           },
@@ -3208,6 +3213,32 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn, a
       ["e", mention("2").id, "", "reply"],
     ],
   ]);
+  runtime.dispose();
+});
+
+it("keeps a DM turn's results in its thread when a new top-level message steers it", async () => {
+  const mention = (id: string) =>
+    message(id, `@Claude ${id}`, {
+      created_at: 100 + Number(id),
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const { runtime, claudes, deliver } = setup([], { hold: true, dm: true });
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.prompts).toHaveLength(2);
+  const steer = claude?.prompts[1] ?? "";
+  expect(steer).toContain(`pass \`reply: "${mention("2").id}"\``);
+  expect(steer).toContain(
+    `If you are still working on an earlier request, ordinary replies about that work still go to \`reply: "${mention("1").id}"\`.`,
+  );
   runtime.dispose();
 });
 

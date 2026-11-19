@@ -459,6 +459,44 @@ it("steers a conversation that is still working instead of queueing", async () =
   await expect(second).resolves.toEqual({ ok: true });
 });
 
+it("keeps the running turn's thread for its results when another thread steers it", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const first = pool.deliver("c", "first", 1, { activityScope: "A" });
+  await flush();
+  const process = claudes()[0];
+  if (!process) throw new Error("no process");
+  const other = pool.deliver("c", "plain", 2, {
+    steer: "steer",
+    activityScope: "B",
+  });
+  const same = pool.deliver("c", "plain", 3, {
+    steer: "again",
+    activityScope: "A",
+  });
+  await flush();
+  expect(process.prompts).toEqual([
+    "first",
+    'steer\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.',
+    "again",
+  ]);
+  process.finish();
+  await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
+  // The next turn on the same process names its own thread.
+  const next = pool.deliver("c", "next", 4, { activityScope: "B" });
+  await flush();
+  const late = pool.deliver("c", "plain", 5, {
+    steer: "late",
+    activityScope: "A",
+  });
+  await flush();
+  expect(process.prompts.slice(3)).toEqual([
+    "next",
+    'late\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+  ]);
+  process.finish();
+  await expect(Promise.all([next, late])).resolves.toHaveLength(2);
+});
+
 const interruptsOf = (process: { received: Record<string, unknown>[] }) =>
   process.received.filter(
     (message) =>

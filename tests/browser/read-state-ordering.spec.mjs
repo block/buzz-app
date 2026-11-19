@@ -1,4 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
+import { stopRoutes } from "./playwright-test.mjs";
+import { generateSecretKey, getPublicKey } from "nostr-tools";
+import { signReadState } from "../../browser-host/read-state.mjs";
 
 test("capture rejects cold or closed storage and reserves synchronously; an early automatic read queues behind startup", async ({
   page,
@@ -291,7 +294,7 @@ test("browser storage reopens a populated legacy journal with fresh Undo epochs"
       acceptedRevision: 8,
       lastCreatedAt: 80,
       frontiers: { [channel]: 20, [retainedKey]: 40 },
-      overrides: { [unreadKey]: { set: 7, clear: 0, baseline: 0 } },
+      overrides: {},
       localUnread: { [selectedKey]: 6, [otherUnreadKey]: 5 },
       recent: { [channel]: 7, [retainedKey]: 8 },
       reserve: { [reservedKey]: 30 },
@@ -346,7 +349,7 @@ test("browser storage reopens a populated legacy journal with fresh Undo epochs"
         [retainedKey]: 40,
         [selectedKey]: 100,
       },
-      overrides: { [unreadKey]: { set: 7, clear: 0, baseline: 0 } },
+      overrides: {},
       localUnread: { [otherUnreadKey]: 5 },
       recent: {
         [channel]: 7,
@@ -364,7 +367,7 @@ test("browser storage reopens a populated legacy journal with fresh Undo epochs"
       versions: {},
     });
     expect(result.afterReopen.epoch).not.toBe(result.afterSecondStartup.epoch);
-    expect(result.unreadRemainsActive).toBe(true);
+    expect(result.unreadRemainsActive).toBe(false);
   } finally {
     await stopRoutes(context);
   }

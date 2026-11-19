@@ -125,9 +125,6 @@ test("a unified Solo row describes and opens shared access", async ({
   const outer = page.locator("[data-channel-sidebar-row]").filter({ has: row });
   const action = outer.locator("[data-solo-row-action]");
   await expect(outer.locator("[data-channel-working]")).toBeVisible();
-  await page.mouse.move(0, 0);
-  await shared.blur();
-  await expect(action).toHaveCSS("opacity", "0");
 
   const geometry = () =>
     outer.evaluate((element) => {
@@ -148,32 +145,58 @@ test("a unified Solo row describes and opens shared access", async ({
         titleWidth: rect(".navigation-item-label").width,
       };
     });
-  await expect
-    .poll(geometry)
-    .toMatchObject({ sharedEndGap: 0, badgeInset: 0.625 });
-  const { titleWidth } = await geometry();
-  await shared.hover();
-  await expect(action).toHaveCSS("opacity", "1");
-  await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
-  await expect
-    .poll(async () => (await geometry()).badgeClearance)
-    .toBeGreaterThanOrEqual(0);
-  await expect
-    .poll(async () => (await geometry()).sharedClearance)
-    .toBeGreaterThanOrEqual(0);
+  for (const [mode, width, scale] of [
+    ["light", 1440, 1],
+    ["dark", 900, 2],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.evaluate(
+      ({ mode, scale }) => {
+        localStorage.setItem("buzz-appearance.v1", mode);
+        localStorage.setItem("buzz-font-scale.v1", String(scale));
+        window.dispatchEvent(
+          new StorageEvent("storage", { key: null, storageArea: localStorage }),
+        );
+      },
+      { mode, scale },
+    );
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(page.locator("html")).toHaveCSS(
+      "--buzz-text-scale",
+      String(scale),
+    );
+    await page.mouse.move(0, 0);
+    await shared.blur();
+    await action.blur();
+    await expect(action).toHaveCSS("opacity", "0");
 
-  await page.mouse.move(0, 0);
-  await shared.focus();
-  await page.keyboard.press("Tab");
-  await expect(action).toBeFocused();
-  await expect(action).toHaveCSS("opacity", "1");
-  await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
-  await expect
-    .poll(async () => (await geometry()).badgeClearance)
-    .toBeGreaterThanOrEqual(0);
-  await expect
-    .poll(async () => (await geometry()).sharedClearance)
-    .toBeGreaterThanOrEqual(0);
+    await expect
+      .poll(geometry)
+      .toMatchObject({ sharedEndGap: 0, badgeInset: 0.625 });
+    const { titleWidth } = await geometry();
+    await shared.hover();
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
+    await expect
+      .poll(async () => (await geometry()).badgeClearance)
+      .toBeGreaterThanOrEqual(0);
+    await expect
+      .poll(async () => (await geometry()).sharedClearance)
+      .toBeGreaterThanOrEqual(0);
+
+    await page.mouse.move(0, 0);
+    await shared.focus();
+    await page.keyboard.press("Tab");
+    await expect(action).toBeFocused();
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
+    await expect
+      .poll(async () => (await geometry()).badgeClearance)
+      .toBeGreaterThanOrEqual(0);
+    await expect
+      .poll(async () => (await geometry()).sharedClearance)
+      .toBeGreaterThanOrEqual(0);
+  }
 });
 // The row owns status/action geometry. Compare painted centers on desktop;
 // on touch, status flows immediately before the actual actions (Shared or menu).

@@ -69,13 +69,15 @@ export function usePinnedRows(
         ([tag, value]) => tag === name && !!value && values.has(value),
       );
     const channel = new Set([channelId]);
+    // Removing a reaction never changes a row's text.
+    const reaction = new Set(["7"]);
     return source.subscribeLive(
       ({ events }) => {
         if (
           wanted.size &&
           events.some((event) =>
             DELETION_KINDS.includes(event.kind)
-              ? tagged(event, "h", channel)
+              ? tagged(event, "h", channel) && !tagged(event, "k", reaction)
               : event.kind === EDIT_KIND && tagged(event, "e", wanted),
           )
         )

@@ -125,6 +125,15 @@ it("reloads a pinned row when it is edited live", async () => {
     ],
   });
   act(() => s.deliver([deletion("other")]));
+  // Nor does removing a reaction in this channel.
+  act(() =>
+    s.deliver([
+      {
+        ...deletion("c"),
+        tags: [...deletion("c").tags, ["k", "7"]],
+      },
+    ]),
+  );
   expect(vi.mocked(s.value.read).mock.calls.length).toBe(reads);
   act(() => s.deliver([deletion("c")]));
   await waitFor(() => expect(result.current.rows[0]?.content).toBe("1"));

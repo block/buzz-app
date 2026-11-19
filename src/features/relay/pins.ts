@@ -86,7 +86,8 @@ type Entry = {
 
 const READ_CHUNK = 100;
 const OVERLAY_LIMIT = 500;
-/** Overlay pages read per chunk of pins before folding what arrived. */
+/** Overlay pages read per chunk of pins. Past it, older edits and deletions
+ * are not applied: an accepted bound against a flood of overlays. */
 const OVERLAY_PAGES = 20;
 
 const stores = new WeakMap<PinSource, ReturnType<typeof createPinLists>>();
@@ -229,8 +230,8 @@ export function pinLists(source: PinSource) {
 }
 
 /** Pinned messages by id, with their edits and deletions applied as the
- * timeline applies them. Reads are strong: a reload follows an observed list
- * change, edit or deletion, and must not be served older state. An id the relay no longer returns is absent from the
+ * timeline applies them. Reads are strong, since a reload may follow an
+ * observed list change, edit or deletion and must not be served older state. An id the relay no longer returns is absent from the
  * map: deleted or erased. A failed read rejects; callers must not treat it as
  * a deletion. */
 export async function readPinnedMessages(
@@ -261,9 +262,10 @@ export async function readPinnedMessages(
           )),
         ];
         // Newest first, every page over every pin: a reference settles
-        // nothing until folding checks who may change that message.
-        const seen = new Set<string>();
-        let until: number | undefined;
+        // nothing until folding checks who may change that message. The
+        // relay's keyset cursor (until, then ids after before_id at a tie)
+        // advances even through one second holding a full page.
+        let cursor: { until: number; before_id: string } | undefined;
         for (let pages = 0; pages < OVERLAY_PAGES; pages++) {
           const page = await source.readPage(
             [
@@ -272,18 +274,19 @@ export async function readPinnedMessages(
                 "#e": chunk,
                 limit: OVERLAY_LIMIT,
                 consistency: "strong",
-                ...(until === undefined ? {} : { until }),
+                ...cursor,
               },
             ],
             settings,
           );
-          const fresh = page.events.filter((event) => !seen.has(event.id));
-          for (const event of fresh) seen.add(event.id);
-          read.push(...fresh);
+          read.push(...page.events);
           // Fullness is the relay's count: visibility may drop some events.
-          if (page.relayCount < OVERLAY_LIMIT || !fresh.length) break;
-          // Inclusive, so events sharing the oldest second are not skipped.
-          until = Math.min(...fresh.map((event) => event.created_at));
+          // A full page with none visible gives no cursor and ends paging.
+          const last = [...page.events].sort(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )[page.events.length - 1];
+          if (page.relayCount < OVERLAY_LIMIT || !last) break;
+          cursor = { until: last.created_at, before_id: last.id };
         }
         return read;
       }),

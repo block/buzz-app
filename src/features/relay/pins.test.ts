@@ -308,10 +308,87 @@ it("pages edits newest first over every pin, whoever references them", async () 
   const overlay = { kinds: [5, 9005, 40003], "#e": [one, two], limit: 500 };
   expect(overlays).toEqual([
     { ...overlay, consistency: "strong" },
-    { ...overlay, consistency: "strong", until: 1000 },
+    {
+      ...overlay,
+      consistency: "strong",
+      until: 1000,
+      before_id: newer[0]?.id,
+    },
   ]);
   expect(rows.get(one)?.content).toBe("one 499");
   expect(rows.get(two)?.content).toBe("two edited");
+});
+
+// The relay's order and keyset cursor (created_at DESC, id ASC).
+const relayPage = (corpus: readonly EventData[], filter: ReadFilter) =>
+  [...corpus]
+    .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+    .filter(
+      (event) =>
+        filter.until === undefined ||
+        event.created_at < filter.until ||
+        (event.created_at === filter.until &&
+          (filter.before_id === undefined || event.id > filter.before_id)),
+    )
+    .slice(0, filter.limit);
+
+it("pages through one second holding more than a full page", async () => {
+  const author = "c".repeat(64),
+    other = "d".repeat(64);
+  const edit = (
+    pubkey: string,
+    target: string,
+    created_at: number,
+    content: string,
+  ) =>
+    event({
+      pubkey,
+      kind: 40003,
+      created_at,
+      content,
+      tags: [
+        ["h", "c"],
+        ["e", target],
+      ],
+    });
+  const corpus = [
+    ...Array.from({ length: 501 }, (_, index) =>
+      edit(author, one, 1000, `one ${index}`),
+    ),
+    edit(other, two, 900, "corrected by other"),
+  ];
+  const pages: ReadFilter[] = [];
+  const s = source(async ([filter]) =>
+    filter?.ids
+      ? [
+          event({ id: one, pubkey: author, kind: 9, tags: [["h", "c"]] }),
+          event({ id: two, pubkey: other, kind: 9, tags: [["h", "c"]] }),
+        ]
+      : [],
+  );
+  const value: PinSource = {
+    ...s.value,
+    async readPage([filter], settings) {
+      assert.exists(filter);
+      if (filter.ids)
+        return {
+          events: await s.value.read([filter], settings),
+          relayCount: 0,
+        };
+      pages.push(filter);
+      const page = relayPage(corpus, filter);
+      return { events: page, relayCount: page.length };
+    },
+  };
+  const rows = await readPinnedMessages(
+    value,
+    "c",
+    [one, two],
+    new AbortController().signal,
+  );
+  expect(pages).toHaveLength(2);
+  expect(pages[1]?.until).toBe(1000);
+  expect(rows.get(two)?.content).toBe("corrected by other");
 });
 
 it("pages past filtered full pages and a second shared by two pages", async () => {
@@ -356,12 +433,7 @@ it("pages past filtered full pages and a second shared by two pages", async () =
         };
       assert.exists(filter);
       pages.push(filter);
-      const page = corpus
-        .filter(
-          (event) =>
-            filter.until === undefined || event.created_at <= filter.until,
-        )
-        .slice(0, filter.limit);
+      const page = relayPage(corpus, filter);
       return {
         events: page.filter((event) => event.id !== hidden),
         relayCount: page.length,

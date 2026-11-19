@@ -4,7 +4,7 @@ import { MeshGoose } from "./meshGoose";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
 import { EmbeddedActivity } from "./EmbeddedActivity";
@@ -277,6 +277,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setupOnly?: boolean;
     disabled?: boolean;
   }) {
+    const sharingDisclosure = useId();
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
       ctx.relay.snapshot,
@@ -566,11 +567,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     return (
       <ConsumerComputeView
+        headerDescription={
+          isTauri() && status && !otherCommunity ? (
+            <span id={sharingDisclosure}>
+              Members of {community?.name ?? "this community"} can run prompts
+              on this machine. Sharing resumes when Buzz reconnects after
+              relaunch.
+            </span>
+          ) : undefined
+        }
         headerControl={
           isTauri() && status && !otherCommunity ? (
             <div className={styles.sharingControl}>
               <Switch
                 aria-label="Share compute"
+                aria-describedby={sharingDisclosure}
                 checked={shareOn}
                 onCheckedChange={(next) => {
                   if (next) void share();

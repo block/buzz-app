@@ -270,9 +270,7 @@ it("returns focus to the workspace title after a failed order save", async () =>
     await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
     const error = await screen.findByRole("alert");
     await user.click(within(error).getByRole("button", { name: "Dismiss" }));
-    expect(
-      screen.getByRole("button", { name: "Home", exact: true }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^Home$/ })).toHaveFocus();
   } finally {
     store.dispose();
   }

@@ -542,13 +542,23 @@ appTest.describe("Solo header accessories", () => {
       await page.evaluate(() => {
         document.documentElement.style.fontSize = "32px";
       });
-      for (const { group, title } of headers) {
+      for (const { group, title, accessory, activity } of headers) {
         const label = group.getByText(title, { exact: true });
+        await label.hover();
         await expect
           .poll(() =>
             label.evaluate((item) => item.clientWidth >= item.scrollWidth),
           )
           .toBe(true);
+        const signal = await group
+          .getByRole("button", { name: accessory })
+          .boundingBox();
+        const time = await group
+          .getByText(activity, { exact: true })
+          .boundingBox();
+        expect(
+          Math.abs(signal.y + signal.height / 2 - time.y - time.height / 2),
+        ).toBeLessThan(1);
       }
     },
   );

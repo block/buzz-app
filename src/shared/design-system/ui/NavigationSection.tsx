@@ -43,6 +43,7 @@ export function NavigationSectionHeading({
   disclosure = false,
   revealActions = false,
   reserveActionSpace = false,
+  accessory,
   metadata,
   children,
 }: {
@@ -50,41 +51,56 @@ export function NavigationSectionHeading({
   disclosure?: boolean;
   revealActions?: boolean;
   reserveActionSpace?: boolean;
+  accessory?: ReactNode;
   metadata?: ReactNode;
   children?: ReactNode;
 }) {
   const hasMetadata = metadata != null && typeof metadata !== "boolean";
   const swap = hasMetadata && !!actions && revealActions;
+  const trailing = (hasMetadata || actions) && (
+    <div
+      className="navigation-section-heading-actions"
+      data-has-metadata={hasMetadata || undefined}
+      data-navigation-reveal={(!hasMetadata && revealActions) || undefined}
+      data-reserve-space={(!hasMetadata && reserveActionSpace) || undefined}
+    >
+      {hasMetadata && (
+        <div
+          className="navigation-section-heading-metadata"
+          data-navigation-reveal-rest={swap || undefined}
+        >
+          {metadata}
+        </div>
+      )}
+      {actions && (
+        <div
+          className="navigation-section-heading-buttons"
+          data-navigation-reveal={swap || undefined}
+        >
+          {actions}
+        </div>
+      )}
+    </div>
+  );
   return (
     <div
       className="navigation-section-heading"
       data-disclosure={disclosure || undefined}
     >
-      <div className="navigation-section-heading-label">{children}</div>
-      {(hasMetadata || actions) && (
+      <div className="navigation-section-heading-label">
+        {children}
+        {!hasMetadata && accessory}
+      </div>
+      {hasMetadata ? (
         <div
-          className="navigation-section-heading-actions"
-          data-has-metadata={hasMetadata || undefined}
-          data-navigation-reveal={(!hasMetadata && revealActions) || undefined}
-          data-reserve-space={hasMetadata || reserveActionSpace || undefined}
+          className="navigation-section-heading-trailing"
+          data-reserve-space=""
         >
-          {hasMetadata && (
-            <div
-              className="navigation-section-heading-metadata"
-              data-navigation-reveal-rest={swap || undefined}
-            >
-              {metadata}
-            </div>
-          )}
-          {actions && (
-            <div
-              className="navigation-section-heading-buttons"
-              data-navigation-reveal={swap || undefined}
-            >
-              {actions}
-            </div>
-          )}
+          {accessory}
+          {trailing}
         </div>
+      ) : (
+        trailing
       )}
     </div>
   );

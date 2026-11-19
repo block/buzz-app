@@ -736,6 +736,18 @@ export function SoloWorkspaces({
             reserveActionSpace={
               accessory != null && typeof accessory !== "boolean"
             }
+            accessory={
+              accessory != null &&
+              typeof accessory !== "boolean" && (
+                // Keep the accessory above the primary button's full-header hit area.
+                <div
+                  className="relative flex shrink-0 items-center"
+                  data-solo-workspace-accessory=""
+                >
+                  {accessory}
+                </div>
+              )
+            }
             actions={
               metadata != null && typeof metadata !== "boolean" ? (
                 <>
@@ -770,15 +782,6 @@ export function SoloWorkspaces({
             >
               {primary}
             </WorkspaceDragHandle>
-            {accessory != null && typeof accessory !== "boolean" && (
-              // Keep the accessory above the primary button's full-header hit area.
-              <div
-                className="relative flex shrink-0 items-center"
-                data-solo-workspace-accessory=""
-              >
-                {accessory}
-              </div>
-            )}
           </NavigationSectionHeading>
         )}
       </ChatActionsMenu>

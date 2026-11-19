@@ -1651,7 +1651,8 @@
     align-items: center;
   }
 
-  .navigation-section-heading-actions {
+  .navigation-section-heading-actions,
+  .navigation-section-heading-trailing {
     display: flex;
     flex: none;
     align-items: center;
@@ -1663,8 +1664,12 @@
     display: none;
   }
 
-  .navigation-section-heading-actions[data-reserve-space] {
+  .navigation-section-heading > [data-reserve-space] {
     margin-inline-start: auto;
+  }
+
+  .navigation-section-heading-trailing {
+    gap: var(--space-1);
   }
 
   .navigation-section-heading-actions[data-has-metadata] {
@@ -1678,7 +1683,9 @@
     padding-inline-end: 0;
   }
 
-  .navigation-section-heading[data-disclosure]:has(> [data-has-metadata]) {
+  .navigation-section-heading[data-disclosure]:has(
+    > .navigation-section-heading-trailing
+  ) {
     column-gap: var(--space-1);
   }
 
@@ -1847,6 +1854,7 @@
     ),
     [data-context-menu-present]
       > .navigation-section-heading
+      > .navigation-section-heading-trailing
       > [data-has-metadata]
   ) {
     > [data-navigation-reveal] {

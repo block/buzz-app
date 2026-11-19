@@ -123,6 +123,11 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           revealActions
           metadata={props.headerMetadata}
           reserveActionSpace={accessory != null}
+          accessory={
+            accessory != null && (
+              <div className="flex shrink-0 items-center">{accessory}</div>
+            )
+          }
           actions={
             <>
               {newTask && (
@@ -169,9 +174,6 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
               }}
             />
           </div>
-          {accessory != null && (
-            <div className="flex shrink-0 items-center">{accessory}</div>
-          )}
         </NavigationSectionHeading>
       </NavigationCard>
     </div>

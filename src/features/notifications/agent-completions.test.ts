@@ -246,9 +246,80 @@ describe("agent completion notifications", () => {
     const sent = h.work.sending("Here it is");
     h.work.finish({ ok: true });
     sent(false);
+    expect(h.desktop).not.toHaveBeenCalled();
+    h.stop();
+  });
+
+  it("alerts for a reply whose publication can't be confirmed", () => {
+    const h = setup(false);
+    const sent = h.work.sending("Here it is");
+    // The runner records an unconfirmed publication as a reply.
+    h.work.reply("uncertain");
+    sent(undefined);
+    h.work.finish({ ok: true });
+    expect(h.desktop).toHaveBeenCalledOnce();
+    h.stop();
+  });
+
+  it("stops waiting once nothing is in flight, so a later message doesn't alert", () => {
+    const h = setup(false);
+    h.work.finish({ ok: true });
     say(h.work, "after");
     expect(h.desktop).not.toHaveBeenCalled();
     h.stop();
+  });
+
+  it("alerts for a run that posted before the binding began", () => {
+    const activity = createLocalAgentActivity();
+    const work = activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+      soloChat: true,
+    });
+    work.started();
+    say(work, "picked-up");
+    // The component binds again mid-run.
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => false,
+      active: () => active("other"),
+      target: (item) => completionTarget(item, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    work.finish({ ok: true });
+    expect(desktop).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it("keeps waiting for a reply in flight across a new binding", () => {
+    const activity = createLocalAgentActivity();
+    const work = activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+      soloChat: true,
+    });
+    work.started();
+    const sent = work.sending("Here it is");
+    work.finish({ ok: true });
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => false,
+      active: () => active("other"),
+      target: (item) => completionTarget(item, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    work.reply("late");
+    sent(true);
+    expect(desktop).toHaveBeenCalledOnce();
+    stop();
   });
 
   it("alerts when a done first turn's own reply confirms its Solo chat", () => {

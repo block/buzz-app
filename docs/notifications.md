@@ -64,11 +64,12 @@ checks, not that an OS banner was displayed or read.
   template mentions and other recipients; DM and relevant-reply policies still
   apply. This does not change notification settings or suppress all workflows.
 - Local agent completions alert only for relay-verified Solo chats. A run that
-  ends in an error always alerts; one that finishes alerts only if it published
-  a message in that Solo chat, so a watch, timer or plugin wake that ends without
-  posting makes no sound. A reply still being published when the run finishes
-  counts once it lands. A retry doesn't count the replies of the attempt it
-  replaced. Their agent replies do not also produce a mention alert. When Buzz is focused elsewhere,
+  ends in an error always alerts; one that finishes alerts only if it posted in
+  that Solo chat, so a watch, timer or plugin wake that ends without posting
+  makes no sound. A reply still being published when the run finishes counts
+  once it lands, and so does one whose publication can't be confirmed. A retry
+  doesn't count the replies of the attempt it replaced. An agent's replies in a
+  Solo chat don't also produce a mention alert. When Buzz is focused elsewhere,
   the existing app toast says the agent is done, names the Solo chat, and offers
   **View**; when another app is focused, the native banner uses the same completion
   framing: “Agent is done” and “View in Chat.” A focused, visibly active matching

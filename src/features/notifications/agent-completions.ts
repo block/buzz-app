@@ -95,15 +95,17 @@ type Seen = Readonly<{
   state: LocalWorkState;
   solo: boolean;
   startedAt: number;
-  /** Publications this run inherited from an earlier attempt. */
-  inherited: ReadonlySet<string>;
   /** A quiet `done` whose message was still being published. */
   awaiting?: true;
 }>;
 
+/** A quiet `done` Solo run with a message still awaiting acknowledgement. */
+const awaitingReply = (work: LocalWork) =>
+  work.state === "done" && !!work.soloChat && !work.posted && !!work.publishing;
+
 /** One completion observer over the app-owned local work lifecycle. A run that
  * ends in error always alerts; one that ends done alerts only once it has
- * published a message here, so a wake that ended quietly makes no sound. */
+ * posted here, so a wake that ended quietly makes no sound. */
 export function bindAgentCompletionNotifications(
   activity: LocalAgentSource,
   options: {
@@ -114,19 +116,17 @@ export function bindAgentCompletionNotifications(
     foreground(work: LocalWork, target: OpenTarget): void;
   },
 ) {
-  const seen = (work: LocalWork, before?: Seen): Seen => ({
+  const seen = (work: LocalWork, awaiting = false): Seen => ({
     state: work.state,
     solo: !!work.soloChat,
     startedAt: work.startedAt,
-    inherited:
-      before?.startedAt === work.startedAt
-        ? before.inherited
-        : new Set(work.publishedMessageIds),
+    ...(awaiting ? { awaiting: true } : {}),
   });
-  const published = (work: LocalWork, run: Seen) =>
-    !!work.publishedMessageIds?.some((id) => !run.inherited.has(id));
+  // Binding again mid-run keeps waiting for a reply already in flight.
   let previous = new Map(
-    activity.work().map((work) => [keyOf(work), seen(work)] as const),
+    activity
+      .work()
+      .map((work) => [keyOf(work), seen(work, awaitingReply(work))] as const),
   );
   let disposed = false;
   const stop = activity.subscribeWork(() => {
@@ -134,8 +134,7 @@ export function bindAgentCompletionNotifications(
     for (const work of activity.work()) {
       const key = keyOf(work);
       const before = previous.get(key);
-      const run = seen(work, before);
-      next.set(key, run);
+      next.set(key, seen(work));
       const completedNow =
         (running(before?.state) && completed(work.state)) ||
         (!before?.solo && !!work.soloChat && completed(work.state));
@@ -146,8 +145,8 @@ export function bindAgentCompletionNotifications(
         before.startedAt === work.startedAt &&
         work.state === "done";
       if (!(completedNow || stillAwaiting) || !work.soloChat) continue;
-      if (work.state === "done" && !published(work, run)) {
-        if (work.publishing) next.set(key, { ...run, awaiting: true });
+      if (work.state === "done" && !work.posted) {
+        if (work.publishing) next.set(key, seen(work, true));
         continue;
       }
       const target = options.target(work);

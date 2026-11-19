@@ -577,9 +577,9 @@ and are asked to sign in again in Buzz.
   instructions to the shared Canvas** to share ordinary instructions with
   everyone who can view the channel’s Canvas. Folders and worktree settings
   stay in the workspace.
-  **Archive inactive chats** shows how many chats have had no messages for
-  14 days. It skips the open chat, running agent work and queued or sending
-  messages. **Undo** restores the archived chats.
+  In the standard sidebar, use **Filter → Active in the last** from the
+  workspace’s **…** menu to show recent conversations. Open older conversations
+  from **Filter**, or choose **All** to show them in the sidebar again.
   Plugins can add tasks, Lead conversations and workspace actions.
   When starting a chat, type **#** to choose a workspace and load its settings.
   Folders are optional unless **Work in a new worktree** is on.

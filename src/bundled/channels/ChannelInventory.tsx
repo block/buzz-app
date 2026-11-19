@@ -1940,58 +1940,22 @@ export function ChannelInventory({
                         menuActions={
                           section.key.startsWith("group:")
                             ? (dismiss, trigger) => (
-                                <>
-                                  <MenuItem
-                                    onClick={() => {
-                                      dismiss();
-                                      requestAnimationFrame(() => {
-                                        if (mounted.current)
-                                          setWorkspaceSettings({
-                                            id: section.key.slice(6),
-                                            name: section.title,
-                                            icon: section.icon,
-                                            trigger,
-                                          });
-                                      });
-                                    }}
-                                  >
-                                    Workspace settings
-                                  </MenuItem>
-                                  {handoff && (
-                                    <MenuItem
-                                      disabled={
-                                        !queries.channelLifecycle.available ||
-                                        !!handoff.inactiveRun ||
-                                        handoff.inactiveRuns.length > 0 ||
-                                        !!handoff.lifecycleDialog
-                                      }
-                                      onClick={() => {
-                                        dismiss();
-                                        const id = section.key.slice(6);
-                                        requestAnimationFrame(() => {
-                                          if (mounted.current)
-                                            handoff.archiveInactive({
-                                              action: "archive",
-                                              workspaceId: id,
-                                              ids: sidebarChannels
-                                                .filter(
-                                                  (channel) =>
-                                                    channel.channelType ===
-                                                      "solo" &&
-                                                    preferences.data
-                                                      ?.assignments[
-                                                      channel.id
-                                                    ] === id,
-                                                )
-                                                .map(({ id }) => id),
-                                            });
+                                <MenuItem
+                                  onClick={() => {
+                                    dismiss();
+                                    requestAnimationFrame(() => {
+                                      if (mounted.current)
+                                        setWorkspaceSettings({
+                                          id: section.key.slice(6),
+                                          name: section.title,
+                                          icon: section.icon,
+                                          trigger,
                                         });
-                                      }}
-                                    >
-                                      Archive inactive chats
-                                    </MenuItem>
-                                  )}
-                                </>
+                                    });
+                                  }}
+                                >
+                                  Workspace settings
+                                </MenuItem>
                               )
                             : undefined
                         }

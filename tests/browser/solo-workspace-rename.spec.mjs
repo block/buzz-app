@@ -76,6 +76,16 @@ test("workspace settings rename preserves filing in ordinary and composed headin
       });
       await expect(settings).toBeVisible();
       await expect(
+        page.getByRole("menuitem", {
+          name: "Archive inactive chats",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      if (!composed)
+        await expect(
+          page.getByRole("menuitem", { name: "Filter", exact: true }),
+        ).toBeVisible();
+      await expect(
         page.getByRole("menuitem", { name: "Rename workspace", exact: true }),
       ).toHaveCount(0);
       await settings.click();

@@ -588,7 +588,8 @@ it("keeps each context message's meaningful tags, not its bookkeeping", () => {
   expect(prompt).not.toContain(signature);
 });
 
-it("bounds each context message's tags as it does its content", () => {
+it("bounds each context message's content and tags together", () => {
+  const content = "y".repeat(3900);
   const prompt = turnPrompt({
     agent,
     event: event("3", "now"),
@@ -596,15 +597,17 @@ it("bounds each context message's tags as it does its content", () => {
     scope: "channel",
     topLevel: true,
     context: [
-      event("2", "earlier", {
+      event("2", content, {
         tags: [
           ["p", bob],
-          ["t", "x".repeat(5000)],
+          ["t", "x".repeat(100)],
           ["t", "release"],
         ],
       }),
     ],
     total: 2,
   });
-  expect(prompt).toContain(`"content":"earlier","tags":[["p","${bob}"]]}`);
+  expect(prompt).toContain(
+    `"content":"${content}","tags":[["p","${bob}"]],"tags_omitted":true}`,
+  );
 });

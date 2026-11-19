@@ -18,9 +18,9 @@ import {
 } from "../../features/agent-harness/plugin-wake";
 import {
   type AuthorNames,
+  contentFields,
   eventBody,
   quoted,
-  tagsField,
   withNames,
 } from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
@@ -189,8 +189,7 @@ export function turnPrompt(input: TurnInput) {
                 id: message.id,
                 pubkey,
                 created_at: message.created_at,
-                content: message.content.slice(0, CONTENT_LIMIT),
-                ...tagsField(message.tags),
+                ...contentFields(message.content, message.tags),
               },
               input.names?.(pubkey),
             );

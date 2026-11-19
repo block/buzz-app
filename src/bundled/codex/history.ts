@@ -1,8 +1,8 @@
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import {
+  contentFields,
   editedTags,
   quoted,
-  tagsField,
   withNames,
 } from "../../features/agent-harness/turn-records";
 import { attestedOwner } from "../../features/agents/owner-attestation";
@@ -108,8 +108,8 @@ export async function conversationHistory(
           id: message.id,
           pubkey: message.authorId,
           created_at: message.createdAt,
-          content: (message.sourceContent ?? message.content).slice(0, 4000),
-          ...tagsField(
+          ...contentFields(
+            message.sourceContent ?? message.content,
             editedTags(
               raw.get(message.id)?.tags ?? [],
               raw.get(message.attachmentSourceId ?? message.id)?.tags ?? [],

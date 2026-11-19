@@ -66,17 +66,26 @@ export const editedTags = (
   ...emoji.filter(([name]) => name === "emoji"),
 ];
 
-/** A context record's `tags`, when it has any to read: those that fit in the
- * 4000 characters its content may have. */
-export const tagsField = (tags: readonly (readonly string[])[]) => {
+/** A context record's content and the tags that fit beside it in the 4000
+ * characters a message may take, saying when some didn't. */
+export const contentFields = (
+  content: string,
+  tags: readonly (readonly string[])[],
+) => {
+  const text = content.slice(0, 4000);
+  const readable = readableTags(tags);
   const fit: (readonly string[])[] = [];
-  let room = 4000;
-  for (const tag of readableTags(tags)) {
+  let room = 4000 - text.length;
+  for (const tag of readable) {
     room -= JSON.stringify(tag).length;
     if (room < 0) break;
     fit.push(tag);
   }
-  return fit.length ? { tags: fit } : {};
+  return {
+    content: text,
+    ...(fit.length ? { tags: fit } : {}),
+    ...(fit.length < readable.length ? { tags_omitted: true } : {}),
+  };
 };
 
 /** The event a turn is for, then what it asks of the agent. */

@@ -3768,6 +3768,7 @@ export class AgentsService extends Service implements Agents {
       const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
       if (!connectionSource)
         throw new Error("The agent's community is not connected");
+      const current = this.runners.attentionCommandCurrent(key);
       const spawn = host.spawn.bind(host);
       return spawnAgentCommand(
         {
@@ -3795,8 +3796,10 @@ export class AgentsService extends Service implements Agents {
             };
           },
           check: () => {
-            if (!handle.attention.enabled())
-              throw new Error("Attention is off");
+            if (!current())
+              throw new Error(
+                "This agent can no longer run the Attention command",
+              );
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
               connectionSource.connection

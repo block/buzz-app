@@ -19731,7 +19731,7 @@ it.each(["command"])(
   },
 );
 
-it.each(["starting", "running", "refused"])(
+it.each(["starting", "running", "refused", "refused after notification"])(
   "reconciles a command watch after a %s harness switch",
   async (state) => {
     const { service, plugin, ctx, native, watching } = await setup();
@@ -19782,11 +19782,28 @@ it.each(["starting", "running", "refused"])(
       await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
       const watch = service.find(bot)?.attention["watch/saved"];
 
-      if (state === "refused") {
-        native.setType.mockRejectedValueOnce(new Error("Switch refused"));
-        await expect(
+      if (state === "refused" || state === "refused after notification") {
+        const entered = runnerGate();
+        const change = runnerGate();
+        native.setType.mockImplementationOnce(async () => {
+          entered.resolve();
+          await change.promise;
+        });
+        const result = expect(
           service.retype(bot, "example/replacement"),
         ).rejects.toThrow("Switch refused");
+        await entered.promise;
+        try {
+          if (state === "refused after notification")
+            await service.saveTeam({
+              name: "Crew",
+              instructions: "",
+              members: [bot],
+            });
+        } finally {
+          change.reject(new Error("Switch refused"));
+          await result;
+        }
         await settle();
         expect(service.find(bot)?.type).toBe("example/echo");
         expect(kill).not.toHaveBeenCalled();

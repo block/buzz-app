@@ -147,6 +147,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_upload_chunk",
         "relay_upload",
         "relay_upload_cancel",
+        "open_downloads_folder",
         "media_download",
         "media_cache_clear",
         "media_cache_forget",
@@ -346,14 +347,17 @@ fn native_command_permissions_isolate_webviews() {
     assert!(invoke(main.as_ref(), "relay_agent_authorize", local_origin).is_err());
     assert!(invoke(main.as_ref(), "relay_agent_history_decode", local_origin).is_err());
     for command in application_commands {
-        assert!(
+        let supported = command != "open_downloads_folder"
+            || cfg!(any(target_os = "macos", target_os = "windows"));
+        assert_eq!(
             invoke(main.as_ref(), command, local_origin).is_ok(),
+            supported,
             "{command}"
         );
         assert_eq!(
             invoke(huddle.as_ref(), command, local_origin).is_ok(),
-            matches!(command, "media_download" | "clipboard_write_text"),
-            "huddle must only acquire bounded download and text copy: {command}"
+            supported && matches!(command, "media_download" | "open_downloads_folder" | "clipboard_write_text"),
+            "huddle must only acquire bounded download, Downloads folder opening and text copy: {command}"
         );
         assert!(invoke(huddle.as_ref(), command, "https://example.org").is_err());
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

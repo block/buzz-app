@@ -414,7 +414,10 @@ Quitting Buzz also turns it off.
   These actions also work in fullscreen viewers. URLs use the original media
   address; access still depends on the recipient's community permissions.
   Desktop menu downloads show **Starting download…**, then confirm when saved to
-  Downloads or report a failure. Browser downloads use the browser's
+  Downloads or report a failure. After saving a file or media attachment on
+  macOS or Windows, choose **Open Downloads** in the confirmation to open the folder in
+  your file manager. Fullscreen media viewers also offer **Open Downloads**
+  beside the close button after a save. Browser downloads use the browser's
   settings, and image copying requires browser clipboard support.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent

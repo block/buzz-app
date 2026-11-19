@@ -1,25 +1,37 @@
 import {
   createContext,
-  useCallback,
+  useMemo,
   useContext,
   useState,
   type ReactNode,
 } from "react";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { notifyDownloadSaved } from "./DownloadNotice";
 
-const Announce = createContext<((text: string) => void) | null>(null);
+const ViewerFeedback = createContext<{
+  announce(text: string): void;
+  onDownloadSaved(): void;
+} | null>(null);
 
 export function MediaActionAnnouncements({
   children,
+  onDownloadSaved,
 }: {
+  onDownloadSaved: () => void;
   children: ReactNode;
 }) {
   const [notice, setNotice] = useState({ text: "", sequence: 0 });
-  const announce = useCallback((text: string) => {
-    setNotice((previous) => ({ text, sequence: previous.sequence + 1 }));
-  }, []);
+  const feedback = useMemo(
+    () => ({
+      announce(text: string) {
+        setNotice((previous) => ({ text, sequence: previous.sequence + 1 }));
+      },
+      onDownloadSaved,
+    }),
+    [onDownloadSaved],
+  );
   return (
-    <Announce value={announce}>
+    <ViewerFeedback value={feedback}>
       {children}
       {/* The modal hides the toast host from assistive technology. Keep the
           live region mounted and explicit so nested menus leave it exposed. */}
@@ -31,15 +43,20 @@ export function MediaActionAnnouncements({
       >
         {notice.text && <span key={notice.sequence}>{notice.text}</span>}
       </span>
-    </Announce>
+    </ViewerFeedback>
   );
 }
 
-export function useMediaActionNotification() {
+export function useMediaActionNotifications() {
   const notify = useToastNotification();
-  const announce = useContext(Announce);
-  return (title: string, tone: Parameters<typeof notify>[1]) => {
-    announce?.(title);
-    return notify(title, tone);
+  const viewer = useContext(ViewerFeedback);
+  const notifyAction: typeof notify = (title, tone, action) => {
+    viewer?.announce(title);
+    return notify(title, tone, action);
+  };
+  return {
+    notify: notifyAction,
+    downloadSaved: () =>
+      notifyDownloadSaved(notifyAction, viewer?.onDownloadSaved),
   };
 }

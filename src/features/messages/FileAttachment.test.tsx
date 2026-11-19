@@ -7,19 +7,27 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { createRef } from "react";
+import { MediaReviewFrame } from "./MediaReviewFrame";
 import userEvent from "@testing-library/user-event";
 import { downloadNativeMedia } from "./native-download";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { FileAttachment, formatFileSize } from "./FileAttachment";
 
-vi.mock("./native-download", () => ({ downloadNativeMedia: vi.fn() }));
+vi.mock(import("./native-download"), async (original) => ({
+  ...(await original()),
+  downloadNativeMedia: vi.fn(),
+}));
 
 const proxySource = "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ffile";
 
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -199,28 +207,43 @@ it("keeps preview and native download as separate keyboard actions", async () =>
   expect(await screen.findByText("Saved to Downloads")).toBeInTheDocument();
 });
 
-it("downloads authenticated native documents through the host without navigating", async () => {
-  vi.mocked(downloadNativeMedia).mockResolvedValue(undefined);
-  const open = vi.fn(() => false);
-  render(
-    <FileAttachment
-      attachment={{
-        url: "https://relay.test/media/file",
-        kind: "file",
-        name: "report.pdf",
-      }}
-      source={nativeSource}
-      onOpenLink={open}
-    />,
-  );
-  const link = screen.getByRole("button", { name: "Download report.pdf" });
-  expect(link).not.toHaveAttribute("href");
-  expect(screen.getByText("Download file")).toBeInTheDocument();
-  fireEvent.click(link);
-  expect(open).not.toHaveBeenCalled();
-  expect(downloadNativeMedia).toHaveBeenCalledWith(nativeSource, "report.pdf");
-  await screen.findByText("Saved to Downloads");
-});
+it.each(["Win32", "Linux x86_64"])(
+  "downloads a document through the native %s host without navigating",
+  async (platform) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    vi.mocked(downloadNativeMedia).mockResolvedValue(undefined);
+    const open = vi.fn(() => false);
+    render(
+      <FileAttachment
+        attachment={{
+          url: "https://relay.test/media/file",
+          kind: "file",
+          name: "report.pdf",
+        }}
+        source={nativeSource}
+        onOpenLink={open}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const link = screen.getByRole("button", { name: "Download report.pdf" });
+    expect(link).not.toHaveAttribute("href");
+    expect(screen.getByText("Download file")).toBeInTheDocument();
+    fireEvent.click(link);
+    expect(open).not.toHaveBeenCalled();
+    expect(downloadNativeMedia).toHaveBeenCalledWith(
+      nativeSource,
+      "report.pdf",
+    );
+    await waitFor(() => expect(link).toHaveTextContent("Saved to Downloads"));
+    if (platform === "Win32") {
+      expect(
+        await screen.findByRole("button", { name: "Open Downloads" }),
+      ).toBeVisible();
+    } else {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    }
+  },
+);
 
 it.each([
   `buzz-media://evil.test/${encodeURIComponent(`https://relay.test/media/${"a".repeat(64)}`)}`,
@@ -276,6 +299,52 @@ const file = {
   name: "report.pdf",
   size: 1024,
 };
+
+it("only enables Open Downloads in the viewer that saved the file", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const first = heldDownload();
+  vi.mocked(downloadNativeMedia)
+    .mockReturnValueOnce(first.promise)
+    .mockResolvedValue(undefined);
+  function viewer(name: string) {
+    return (
+      <MediaReviewFrame
+        key={name}
+        title={name}
+        label={name}
+        isVideo={false}
+        frame={createRef()}
+        video={createRef()}
+        origin={undefined}
+        close={() => {}}
+        commentsOpen
+        sidebar={
+          <FileAttachment
+            attachment={{ ...file, name }}
+            source={nativeSource}
+            onOpenLink={() => false}
+          />
+        }
+      >
+        Media
+      </MediaReviewFrame>
+    );
+  }
+  const view = render(viewer("first.pdf"), { wrapper: ToastProvider });
+  fireEvent.click(screen.getByRole("button", { name: "Download first.pdf" }));
+  try {
+    expect(downloadNativeMedia).toHaveBeenCalledWith(nativeSource, "first.pdf");
+    view.rerender(viewer("second.pdf"));
+  } finally {
+    await act(async () => first.resolve());
+  }
+  const current = within(screen.getByRole("dialog", { name: "second.pdf" }));
+  expect(current.queryByRole("button", { name: "Open Downloads" })).toBeNull();
+  fireEvent.click(current.getByRole("button", { name: "Download second.pdf" }));
+  expect(
+    await current.findByRole("button", { name: "Open Downloads" }),
+  ).toBeVisible();
+});
 
 it("preserves focus and blocks repeat saves while pending, then announces success", async () => {
   vi.useFakeTimers();

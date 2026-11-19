@@ -1135,7 +1135,6 @@ export class AgentRunners {
     this.transitions.add(pubkey);
     for (const other of held) other.transitioning = true;
     try {
-      this.host.transitionChanged?.();
       if (!(await this.claimForRetype(runner)))
         throw new Error(
           "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",

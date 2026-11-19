@@ -19731,17 +19731,17 @@ it.each(["command"])(
   },
 );
 
-it.each(["starting", "running"])(
-  "restarts an unchanged %s command after changing the agent's harness",
+it.each(["starting", "running", "refused"])(
+  "reconciles a command watch after a %s harness switch",
   async (state) => {
-    const { service, plugin, ctx, watching } = await setup();
+    const { service, plugin, ctx, native, watching } = await setup();
     const kill = vi.fn(async () => {});
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       exit = resolve;
     });
     const starting = runnerGate();
-    if (state === "running") starting.resolve();
+    if (state !== "starting") starting.resolve();
     const spawn = vi.fn(heldCommand).mockImplementationOnce(async () => {
       await starting.promise;
       return { ...(await heldCommand()), exited, kill };
@@ -19781,6 +19781,18 @@ it.each(["starting", "running"])(
       });
       await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
       const watch = service.find(bot)?.attention["watch/saved"];
+
+      if (state === "refused") {
+        native.setType.mockRejectedValueOnce(new Error("Switch refused"));
+        await expect(
+          service.retype(bot, "example/replacement"),
+        ).rejects.toThrow("Switch refused");
+        await settle();
+        expect(service.find(bot)?.type).toBe("example/echo");
+        expect(kill).not.toHaveBeenCalled();
+        expect(spawn).toHaveBeenCalledTimes(1);
+        return;
+      }
 
       await service.retype(bot, "example/replacement");
 

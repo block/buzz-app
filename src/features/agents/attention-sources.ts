@@ -59,7 +59,7 @@ type SourceObject = AttentionObject & { value: SourceWatch };
 export class AttentionSources {
   private registrations = new Map<
     string,
-    { object: SourceObject; stop: AbortController | undefined }
+    { object: SourceObject; type: string; stop: AbortController | undefined }
   >();
   constructor(
     private host: {
@@ -107,15 +107,21 @@ export class AttentionSources {
     for (const [key, { agent, object }] of wanted) {
       const registration = this.registrations.get(key) ?? {
         object,
+        type: agent.type,
         stop: undefined,
       };
       this.registrations.set(key, registration);
-      if (suspended(agent.key)) {
+      if (registration.type !== agent.type) {
         registration.stop?.abort();
         registration.stop = undefined;
-        continue;
+        registration.type = agent.type;
       }
-      if (registration.stop || this.host.completed(agent.key, object)) continue;
+      if (
+        suspended(agent.key) ||
+        registration.stop ||
+        this.host.completed(agent.key, object)
+      )
+        continue;
       const stop = new AbortController();
       registration.stop = stop;
       const current = () => this.registrations.get(key) === registration;
@@ -123,7 +129,7 @@ export class AttentionSources {
       const emit = (text: string) => {
         if (stop.signal.aborted || finished)
           throw new Error("This source watch is no longer running");
-        // A temporary suspension stops new output. Accepted output belongs to
+        // A harness change stops new output from the old producer. Accepted output belongs to
         // the registration and remains valid until the watch is invalidated.
         if (text.trim()) this.host.emit(agent.key, object, text, current);
       };

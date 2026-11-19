@@ -2332,7 +2332,7 @@ test("a policy's automatic install is noted once and labelled in Settings", asyn
   }
 });
 
-async function installedDocumentReader(page, app) {
+async function installedDocumentReader(page, app, { clipGuide = false } = {}) {
   await nativeImports(
     page,
     [
@@ -2340,7 +2340,7 @@ async function installedDocumentReader(page, app) {
         path: "documents",
         revision: "documents",
         manifest: { id: "example.documents", name: "Documents", apiVersion: 1 },
-        code: `export const inject = ["react", "pages", "conversation", "panels", "relay"]; export const apply = ${documentPlugin.toString()};`,
+        code: `export const inject = ["react", "pages", "conversation", "panels", "relay"]; export const apply = (ctx) => (${documentPlugin.toString()})(ctx, ${clipGuide});`,
       },
     ],
     {},
@@ -2365,7 +2365,7 @@ test("document formatting floats over scrollable content", async ({
   page,
   app,
 }) => {
-  const reader = await installedDocumentReader(page, app);
+  const reader = await installedDocumentReader(page, app, { clipGuide: true });
   await page.locator("html").evaluate((root) => {
     root.style.fontSize = "125%";
   });
@@ -2384,6 +2384,41 @@ test("document formatting floats over scrollable content", async ({
     );
     await panel.getByRole("button", { name: `Edit ${name}` }).click();
     const toolbar = panel.getByRole("group", { name: "Document formatting" });
+    if (name === "Guide") {
+      const wrapper = panel.getByRole("region", { name: "Guide width limit" });
+      await expect(wrapper).toHaveCSS("overflow-y", "auto");
+      expect(
+        await wrapper.evaluate((el) => el.scrollHeight - el.clientHeight),
+      ).toBe(0);
+      await expect.soft(wrapper).toHaveCSS("scroll-padding-block-end", "auto");
+    }
+    expect
+      .soft(
+        await scroll.evaluate((area) =>
+          parseFloat(getComputedStyle(area).scrollPaddingBlockEnd),
+        ),
+        `${name} formatting clearance on the pane`,
+      )
+      .toBeGreaterThan(parseFloat(originalPadding));
+    if (name === "Guide") {
+      const wrapper = panel.getByRole("region", { name: "Guide width limit" });
+      await wrapper.evaluate((el) => {
+        el.style.maxHeight = "200px";
+      });
+      await expect(scroll).toHaveCSS(
+        "scroll-padding-block-end",
+        originalPadding,
+      );
+      await expect(wrapper).not.toHaveCSS("scroll-padding-block-end", "auto");
+      await wrapper.evaluate((el) => {
+        el.style.maxHeight = "";
+      });
+      await expect(wrapper).toHaveCSS("scroll-padding-block-end", "auto");
+      await expect(scroll).not.toHaveCSS(
+        "scroll-padding-block-end",
+        originalPadding,
+      );
+    }
     const overlap = async () =>
       scroll.evaluate(
         (area, bounds) => {
@@ -2419,19 +2454,30 @@ test("document formatting floats over scrollable content", async ({
     expect(lastLineBottom).toBeLessThan(toolbarTop);
 
     const editor = panel.getByRole("textbox", { name: "Document body" });
+    const selectionHeadBottom = (collapsed) =>
+      editor.evaluate(async (field, collapsed) => {
+        await new Promise(requestAnimationFrame);
+        const selection = field.ownerDocument.getSelection();
+        if (
+          selection?.isCollapsed !== collapsed ||
+          !selection.focusNode ||
+          !field.contains(selection.focusNode)
+        )
+          throw new Error("Expected the selection head in the document editor");
+        const head = field.ownerDocument.createRange();
+        head.setStart(selection.focusNode, selection.focusOffset);
+        const bounds = head.getBoundingClientRect();
+        if (!bounds.height)
+          throw new Error("Expected a measurable selection head");
+        return bounds.bottom;
+      }, collapsed);
     await editor.getByRole("heading", { name, exact: true }).click();
     const initialScroll = await scroll.evaluate((area) => area.scrollTop);
     const obscured = [];
     for (let line = 0; line < 32; line++) {
       await page.keyboard.press("Enter");
       await page.keyboard.type("Typing line");
-      const caretBottom = await editor.evaluate(async (field) => {
-        await new Promise(requestAnimationFrame);
-        const selection = field.ownerDocument.getSelection();
-        if (!selection?.isCollapsed || !field.contains(selection.anchorNode))
-          throw new Error("Expected the typing caret in the document editor");
-        return selection.getRangeAt(0).getBoundingClientRect().bottom;
-      });
+      const caretBottom = await selectionHeadBottom(true);
       if (caretBottom > (await toolbar.boundingBox()).y) obscured.push(line);
     }
     expect(await scroll.evaluate((area) => area.scrollTop)).toBeGreaterThan(
@@ -2439,6 +2485,25 @@ test("document formatting floats over scrollable content", async ({
     );
     expect
       .soft(obscured, `${name} lines behind the formatting bar`)
+      .toEqual([]);
+
+    await editor.getByText("Typing line", { exact: true }).first().click();
+    const rangeStart = await scroll.evaluate((area) => area.scrollTop);
+    const hiddenSelectionHeads = [];
+    for (let line = 0; line < 28; line++) {
+      await page.keyboard.press("Shift+ArrowDown");
+      const bottom = await selectionHeadBottom(false);
+      if (bottom > (await toolbar.boundingBox()).y)
+        hiddenSelectionHeads.push(line);
+    }
+    expect(await scroll.evaluate((area) => area.scrollTop)).toBeGreaterThan(
+      rangeStart,
+    );
+    expect
+      .soft(
+        hiddenSelectionHeads,
+        `${name} selection heads behind the formatting bar`,
+      )
       .toEqual([]);
 
     await toolbar.getByRole("button", { name: "Bold", exact: true }).focus();

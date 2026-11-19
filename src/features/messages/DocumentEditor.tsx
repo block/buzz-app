@@ -32,20 +32,31 @@ const scrollReservations = new WeakMap<
   { editors: number; restore(): void }
 >();
 
-function documentScroller(editor: HTMLElement) {
-  const rootScroller = editor.ownerDocument.scrollingElement;
-  let scroller: Element | null = editor.parentElement;
-  while (
-    scroller &&
-    scroller !== rootScroller &&
-    !["auto", "scroll", "overlay"].includes(
-      getComputedStyle(scroller).overflowY,
-    )
+function* documentScrollContainers(editor: HTMLElement) {
+  const root = editor.ownerDocument.scrollingElement;
+  for (
+    let pane = editor.parentElement;
+    pane && pane !== root;
+    pane = pane.parentElement
   ) {
-    scroller = scroller.parentElement;
+    if (
+      ["auto", "scroll", "overlay"].includes(getComputedStyle(pane).overflowY)
+    )
+      yield pane;
   }
-  scroller ??= rootScroller;
-  return scroller instanceof HTMLElement ? scroller : null;
+  if (root instanceof HTMLElement) yield root;
+}
+
+function documentScroller(editor: HTMLElement) {
+  let nearest: HTMLElement | null = null;
+  for (const pane of documentScrollContainers(editor)) {
+    nearest ??= pane;
+    // Horizontal clipping can compute to overflow-y: auto on a wrapper
+    // that grows with its content and never scrolls vertically.
+    if (pane.clientHeight > 0 && pane.scrollHeight > pane.clientHeight)
+      return pane;
+  }
+  return nearest;
 }
 
 function reserveToolbarScrollSpace(editor: HTMLElement, scroller: HTMLElement) {
@@ -140,7 +151,7 @@ export function DocumentEditor({
   onSourceChange,
 }: DocumentEditorProps) {
   const stack = useRef<HTMLDivElement>(null);
-  const editorScroller = useRef<HTMLElement>(null);
+  const updateEditorScroller = useRef<() => HTMLElement | null>(null);
   const toolbarSurface = useRef<HTMLFieldSetElement>(null);
   const input = useRef<ComposerInputElement>(null);
   const sourceInput = useRef<HTMLTextAreaElement>(null);
@@ -232,16 +243,43 @@ export function DocumentEditor({
   };
   const showFormatting = editing && !source;
   useLayoutEffect(() => {
-    if (!showFormatting || !stack.current) return;
-    const scroller = documentScroller(stack.current);
-    if (!scroller) return;
-    editorScroller.current = scroller;
-    const release = reserveToolbarScrollSpace(stack.current, scroller);
+    const editor = stack.current;
+    if (!showFormatting || !editor) return;
+    let scroller: HTMLElement | null = null;
+    let release: (() => void) | undefined;
+    const update = () => {
+      const next = documentScroller(editor);
+      if (next !== scroller) {
+        release?.();
+        scroller = next;
+        release = next ? reserveToolbarScrollSpace(editor, next) : undefined;
+      }
+      return scroller;
+    };
+    updateEditorScroller.current = update;
+    update();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(update);
+    observer?.observe(editor);
+    if (observer)
+      for (const pane of documentScrollContainers(editor))
+        observer.observe(pane);
     return () => {
-      editorScroller.current = null;
-      release();
+      observer?.disconnect();
+      updateEditorScroller.current = null;
+      release?.();
     };
   }, [showFormatting]);
+  const revealAboveToolbar = (bottom: number) => {
+    const toolbar = toolbarSurface.current;
+    if (!toolbar) return;
+    const overlap = bottom - toolbar.getBoundingClientRect().top;
+    if (overlap <= 0) return;
+    const scroller = updateEditorScroller.current?.();
+    if (scroller) scroller.scrollTop += Math.ceil(overlap);
+  };
   const toolbar = showFormatting && (
     <div className={styles.toolbarAnchor}>
       <fieldset
@@ -312,16 +350,39 @@ export function DocumentEditor({
                   }
                 }}
                 onFormatsChange={setFormats}
-                onScrollCaret={(bottom) => {
-                  const toolbar = toolbarSurface.current;
-                  const scroller = editorScroller.current;
-                  if (!toolbar || !scroller) return;
-                  const overlap = bottom - toolbar.getBoundingClientRect().top;
-                  if (overlap > 0) scroller.scrollTop += Math.ceil(overlap);
-                }}
+                onScrollCaret={revealAboveToolbar}
                 onEditLink={editLink}
                 onKeyDown={(event) => {
                   if (disabled || !editing) return;
+                  if (
+                    event.shiftKey &&
+                    !event.defaultPrevented &&
+                    ["ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(
+                      event.key,
+                    )
+                  ) {
+                    const field = event.currentTarget;
+                    const owner = field.ownerDocument;
+                    // Native range extension can move into the obscured area
+                    // before reaching the browser's scroll threshold.
+                    owner.defaultView?.requestAnimationFrame(() => {
+                      if (
+                        input.current !== field ||
+                        owner.activeElement !== field
+                      )
+                        return;
+                      const selection = owner.getSelection();
+                      if (
+                        selection?.isCollapsed !== false ||
+                        !selection.focusNode ||
+                        !field.contains(selection.focusNode)
+                      )
+                        return;
+                      const head = owner.createRange();
+                      head.setStart(selection.focusNode, selection.focusOffset);
+                      revealAboveToolbar(head.getBoundingClientRect().bottom);
+                    });
+                  }
                   if (
                     !event.defaultPrevented &&
                     (event.metaKey || event.ctrlKey) &&

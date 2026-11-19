@@ -1,5 +1,5 @@
 // A single installed module: no app imports or second React/Markdown runtime.
-export function documentPlugin(ctx) {
+export function documentPlugin(ctx, clipGuide = false) {
   const React = ctx.react;
   const h = React.createElement;
   function Reader({ name, session }) {
@@ -13,6 +13,31 @@ export function documentPlugin(ctx) {
     const [saved, setSaved] = React.useState(0);
     const [toolbarTarget, setToolbarTarget] = React.useState(null);
     const editor = React.useRef(null);
+    const documentEditor = h(ctx.conversation.ui.DocumentEditor, {
+      key: editing ? "edit" : "read",
+      ref: editor,
+      value: content,
+      onChange: setContent,
+      editing,
+      source,
+      onSourceChange: setSource,
+      linkOpen,
+      onLinkOpenChange: setLinkOpen,
+      maxLength: 32768,
+      onSave: () => setSaved((saved) => saved + 1),
+      toolbarTarget: name === "Guide" ? toolbarTarget : null,
+      destinations: [
+        {
+          label: "Reference document",
+          href: "buzz://plugin?id=example.documents&document=reference",
+        },
+      ],
+      children: h(ctx.conversation.ui.Markdown, {
+        session,
+        content,
+        scale: "document",
+      }),
+    });
     const scrollArea = h(
       "section",
       {
@@ -50,31 +75,16 @@ export function documentPlugin(ctx) {
           },
           "Replace document",
         ),
-      h(ctx.conversation.ui.DocumentEditor, {
-        key: editing ? "edit" : "read",
-        ref: editor,
-        value: content,
-        onChange: setContent,
-        editing,
-        source,
-        onSourceChange: setSource,
-        linkOpen,
-        onLinkOpenChange: setLinkOpen,
-        maxLength: 32768,
-        onSave: () => setSaved((saved) => saved + 1),
-        toolbarTarget: name === "Guide" ? toolbarTarget : null,
-        destinations: [
-          {
-            label: "Reference document",
-            href: "buzz://plugin?id=example.documents&document=reference",
-          },
-        ],
-        children: h(ctx.conversation.ui.Markdown, {
-          session,
-          content,
-          scale: "document",
-        }),
-      }),
+      clipGuide && name === "Guide"
+        ? h(
+            "section",
+            {
+              "aria-label": "Guide width limit",
+              style: { overflowX: "hidden" },
+            },
+            documentEditor,
+          )
+        : documentEditor,
       h("p", { role: "status" }, `Saved ${saved}`),
     );
     return h(

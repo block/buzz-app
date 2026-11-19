@@ -255,7 +255,8 @@ The formatting bar floats along the bottom of the editor. To position it in
 your own pane, pass a `toolbarTarget` at the bottom edge of the content. The
 bar opens above that slot over the content. Put the editor inside the pane's
 scroll container. During formatted editing, the editor reserves scroll padding
-on the nearest vertical scroll container so the caret can scroll above the bar.
+on the nearest ancestor that can scroll vertically so the caret and keyboard
+selection can stay above the bar.
 Use the host's controls and link dialog directly. Optional `destinations`
 are loaded choices for the existing link dialog; their URLs still pass the host
 link validator. Typing `[[` opens that dialog only when `destinations` is nonempty;

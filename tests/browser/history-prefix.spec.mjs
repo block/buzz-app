@@ -44,7 +44,15 @@ test("older pages behind a retained first row preserve reading and are not new a
   await open(page);
   await page.locator("[data-message-scroller]").hover();
   await mark(page, "wheel");
-  await wheel(page, -300);
+  // Linux WebKit animates a wheel scroll, and a row measurement's scroll
+  // correction can stop it short. Read beyond the timeline's follow threshold.
+  const fromEnd = () =>
+    page
+      .locator("[data-message-scroller]")
+      .evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+  for (let i = 0; i < 4 && (await fromEnd()) < 200; i++)
+    await wheel(page, -300);
+  expect(await fromEnd()).toBeGreaterThanOrEqual(200);
   await mark(page, "wheel done");
   const reading = await anchor(page);
   await mark(page, `anchor ${JSON.stringify(reading)}`);

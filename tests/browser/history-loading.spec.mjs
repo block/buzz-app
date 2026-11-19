@@ -644,11 +644,26 @@ test.describe("pages inside one second", () => {
         await expect
           .poll(() => history(page).evaluate((e) => e.scrollHeight))
           .toBeGreaterThan(height);
+        // A Virtua correction's scrollend can arrive before the input's own
+        // scroll, which Linux WebKit can deliver after later renders. Wait for
+        // the scrollend that follows the input's upward movement.
         await history(page).evaluate((e) => {
+          const start = e.scrollTop;
+          let corrected = 0;
           e.dataset.scrollEnded = "";
-          e.addEventListener("scrollend", () => delete e.dataset.scrollEnded, {
-            once: true,
+          e.addEventListener("virtua-scroll-correction", ({ detail }) => {
+            corrected += detail.after - detail.before;
           });
+          const moved = () => {
+            if (start + corrected - e.scrollTop < 150) return;
+            e.removeEventListener("scroll", moved);
+            e.addEventListener(
+              "scrollend",
+              () => delete e.dataset.scrollEnded,
+              { once: true },
+            );
+          };
+          e.addEventListener("scroll", moved);
         });
         if (input === "drag")
           await history(page).evaluate((e) => {

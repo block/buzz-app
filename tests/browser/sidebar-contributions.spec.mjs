@@ -669,7 +669,7 @@ appTest.describe("Solo header accessories", () => {
       if (hasTouch) {
         // A real tap detects an always-visible action stealing the accessory's hit target.
         appTest(
-          "keeps accessories tappable beside header activity",
+          "keeps accessories and Actions tappable beside header activity",
           async ({ page, app }) => {
             await admitNewTask(page);
             await page.goto(
@@ -696,6 +696,16 @@ appTest.describe("Solo header accessories", () => {
                 box.y + box.height / 2,
               );
               await expect.soft(mark).toHaveAttribute("aria-pressed", "true");
+              const actions = group.getByRole("button", {
+                name: `Actions for ${title}`,
+              });
+              const actionsBox = await actions.boundingBox();
+              await page.touchscreen.tap(
+                actionsBox.x + actionsBox.width / 2,
+                actionsBox.y + actionsBox.height / 2,
+              );
+              await expect(actions).toHaveAttribute("aria-expanded", "true");
+              await page.keyboard.press("Escape");
             }
           },
         );

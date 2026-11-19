@@ -1834,15 +1834,15 @@
     opacity: 0;
   }
 
+  :where(.navigation-section-heading-actions[data-has-metadata])
+    > .navigation-section-heading-buttons[data-navigation-reveal] {
+    pointer-events: none;
+  }
+
   .navigation-section-heading-trailing:not([data-reserve-space])
     .navigation-section-heading-buttons[data-navigation-reveal] {
     max-width: 0;
     overflow: hidden;
-  }
-
-  .navigation-section-heading-actions[data-has-metadata]
-    > .navigation-section-heading-buttons[data-navigation-reveal] {
-    pointer-events: none;
   }
 
   :is(

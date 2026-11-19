@@ -37,7 +37,6 @@ export interface HeadPersistence {
 }
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
-const HEAD_META = "head-meta";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -46,13 +45,30 @@ const MAX_AGE = 24 * 60 * 60 * 1000;
 type HeadMeta = { key: string; bytes: number; savedAt: number };
 type Record = SavedHead & HeadMeta & { scope: string };
 
-function putHeadMeta(store: IDBObjectStore, { key, bytes, savedAt }: HeadMeta) {
-  store.put({ key, bytes, savedAt });
+// History keys are strings. Array keys let us load the metadata on its own
+// without changing the database version that older builds open.
+const historyKeys = () => IDBKeyRange.upperBound([], true);
+const metadataKeys = () => IDBKeyRange.lowerBound([]);
+
+function putHeadMeta(
+  store: IDBObjectStore,
+  { key, bytes, savedAt, scope, channelId }: Record,
+) {
+  store.put({
+    key: [key],
+    scope,
+    channelId,
+    // Older builds can clear these rows by scope. Their writes expire every
+    // metadata row, so an older same-key write also invalidates the budget.
+    savedAt: Number.NEGATIVE_INFINITY,
+    bytes: 0,
+    head: { key, bytes, savedAt } satisfies HeadMeta,
+  });
 }
 
 function deleteHead(store: IDBObjectStore, key: string) {
   store.delete(key);
-  store.transaction.objectStore(HEAD_META).delete(key);
+  store.delete([key]);
 }
 
 export function createHeadPersistence(
@@ -67,28 +83,16 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 3);
+      const request = indexedDB.open(DB, 2);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
         reject(new Error("Cache open timed out"));
       }, 1500);
-      request.onupgradeneeded = (event) => {
+      request.onupgradeneeded = () => {
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
-        const meta = request.result.createObjectStore(HEAD_META, {
-          keyPath: "key",
-        });
-        if (event.oldVersion === 0) return;
-        // Backfill in the upgrade transaction so the first save sees the full budget.
-        const rows = meta.transaction.objectStore(STORE).openCursor();
-        rows.onsuccess = () => {
-          const row = rows.result;
-          if (!row) return;
-          putHeadMeta(meta, row.value);
-          row.continue();
-        };
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -140,10 +144,7 @@ export function createHeadPersistence(
     const db = await database();
     if (closed) throw new Error("Cache closed");
     return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(
-        name === STORE && mode === "readwrite" ? [STORE, HEAD_META] : name,
-        mode,
-      );
+      const tx = db.transaction(name, mode);
       let result: T;
       let ended = false;
       const timeout = setTimeout(() => {
@@ -246,7 +247,7 @@ export function createHeadPersistence(
       ),
     read: () =>
       transact("readonly", (store, done, then) =>
-        then(store.getAll(), (rows: Record[]) =>
+        then(store.getAll(historyKeys()), (rows: Record[]) =>
           done(
             rows
               .filter(
@@ -271,10 +272,10 @@ export function createHeadPersistence(
           key: `${scope}:${head.channelId}`,
           bytes,
         };
-        const meta = store.transaction.objectStore(HEAD_META);
         store.put(row);
-        putHeadMeta(meta, row);
-        then(meta.getAll(), (rows: HeadMeta[]) => {
+        putHeadMeta(store, row);
+        const size = store.count();
+        const pruneHeads = (rows: HeadMeta[]) => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
@@ -289,6 +290,20 @@ export function createHeadPersistence(
               deleteHead(store, entry.key);
           }
           done(undefined);
+        };
+        const metadata = metadataKeys();
+        then(store.getAll(metadata), (rows: { head: HeadMeta }[]) => {
+          // New writes keep one metadata row per head. An older writer drops
+          // all metadata, and an older point delete can leave an extra row.
+          if (size.result === 2 * rows.length) {
+            pruneHeads(rows.map((row) => row.head));
+            return;
+          }
+          then(store.getAll(historyKeys()), (heads: Record[]) => {
+            store.delete(metadata);
+            for (const head of heads) putHeadMeta(store, head);
+            pruneHeads(heads);
+          });
         });
       }),
     remove: (channelId) =>
@@ -299,7 +314,7 @@ export function createHeadPersistence(
     retain: (ids) =>
       transact("readwrite", (store, done, then) => {
         const allowed = new Set(ids);
-        then(store.getAll(), (rows: Record[]) => {
+        then(store.getAll(historyKeys()), (rows: Record[]) => {
           for (const row of rows)
             if (row.scope === scope && !allowed.has(row.channelId))
               deleteHead(store, row.key);
@@ -317,7 +332,7 @@ export function createHeadPersistence(
         STARTUP,
       );
       await transact("readwrite", (store, done, then) =>
-        then(store.getAll(), (rows: Record[]) => {
+        then(store.getAll(historyKeys()), (rows: Record[]) => {
           for (const row of rows)
             if (row.scope === scope) deleteHead(store, row.key);
           done(undefined);

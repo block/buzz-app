@@ -49,7 +49,7 @@ for (const cachedStartup of [false, true]) {
       // fresh preferences; the cached case intentionally restores immediately.
       await page.evaluate(async (keep) => {
         const db = await new Promise((resolve, reject) => {
-          const request = indexedDB.open("buzz-channel-heads-v1");
+          const request = indexedDB.open("buzz-channel-heads-v1", 2);
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });

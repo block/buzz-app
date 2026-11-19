@@ -34,9 +34,20 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-    const db = await openV2();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("heads", "readwrite");
+    const writeV2 = async (names, write) => {
+      const db = await openV2();
+      try {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(names, "readwrite");
+          write(tx);
+          tx.oncomplete = resolve;
+          tx.onabort = () => reject(tx.error);
+        });
+      } finally {
+        db.close();
+      }
+    };
+    await writeV2("heads", (tx) => {
       for (let i = 0; i < 64; i++) {
         const row = head(i);
         const scope = scopes[i % 2];
@@ -47,10 +58,7 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
           bytes: JSON.stringify(row).length,
         });
       }
-      tx.oncomplete = resolve;
-      tx.onabort = () => reject(tx.error);
     });
-    db.close();
 
     let stores = viewers.map((viewer) => createHeadPersistence(viewer, relay));
     const snapshot = () => Promise.all(stores.map((store) => store.read()));
@@ -102,34 +110,36 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
       for (const store of stores) store.close();
       stores = viewers.map((viewer) => createHeadPersistence(viewer, relay));
       const reopened = await snapshot();
+      // A version 2 point delete removes the history but leaves its metadata.
+      await writeV2("heads", (tx) => {
+        tx.objectStore("heads").delete(`${scopes[1]}:channel-59`);
+      });
+      const replacement = head(66);
+      await stores[1].write(replacement);
+      saving = true;
+      await stores[1].write(replacement);
+      saving = false;
+      const refilled = await snapshot();
       await Promise.all(
         stores.map((store) => store.writeProfiles(["profile"])),
       );
       for (const store of stores) store.close();
 
-      const legacy = await openV2();
-      try {
+      await writeV2(["heads", "startup"], (tx) => {
         // The shipped version 2 clear removes these startup keys and all
         // stored heads for the selected viewer and community.
-        await new Promise((resolve, reject) => {
-          const tx = legacy.transaction(["heads", "startup"], "readwrite");
-          const startup = tx.objectStore("startup");
-          startup.delete(scopes[0]);
-          startup.delete(`${scopes[0]}:profiles`);
-          const heads = tx.objectStore("heads");
-          // An older point delete can leave metadata in the other scope.
-          heads.delete(`${scopes[1]}:channel-61`);
-          const rows = heads.getAll();
-          rows.onsuccess = () => {
-            for (const row of rows.result)
-              if (row.scope === scopes[0]) heads.delete(row.key);
-          };
-          tx.oncomplete = resolve;
-          tx.onabort = () => reject(tx.error);
-        });
-      } finally {
-        legacy.close();
-      }
+        const startup = tx.objectStore("startup");
+        startup.delete(scopes[0]);
+        startup.delete(`${scopes[0]}:profiles`);
+        const heads = tx.objectStore("heads");
+        // Leave an orphan in the other scope for the current clear to remove.
+        heads.delete(`${scopes[1]}:channel-61`);
+        const rows = heads.getAll();
+        rows.onsuccess = () => {
+          for (const row of rows.result)
+            if (row.scope === scopes[0]) heads.delete(row.key);
+        };
+      });
       stores = viewers.map((viewer) => createHeadPersistence(viewer, relay));
       const afterLegacyClear = await snapshot();
       const profiles = await Promise.all(
@@ -150,6 +160,7 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
         aborted,
         fullHeadReads,
         reopened,
+        refilled,
         afterLegacyClear,
         profiles,
         remaining,
@@ -173,10 +184,15 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
     result.initialized[0].slice(0, -1),
   );
   expect(result.reopened[1]).toEqual(result.initialized[1].slice(1));
+  expect(result.refilled[0]).toEqual(result.reopened[0]);
+  expect(result.refilled[1][0].channelId).toBe("channel-66");
+  expect(result.refilled[1].slice(1)).toEqual(
+    result.reopened[1].filter((row) => row.channelId !== "channel-59"),
+  );
   expect(result.fullHeadReads).toBe(0);
   expect(result.afterLegacyClear).toEqual([
     [],
-    result.reopened[1].filter((row) => row.channelId !== "channel-61"),
+    result.refilled[1].filter((row) => row.channelId !== "channel-61"),
   ]);
   expect(result.profiles).toEqual([[], ["profile"]]);
   expect(result.remaining).toBe(0);

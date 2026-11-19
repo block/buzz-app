@@ -195,13 +195,6 @@ export function useSidebarView(
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
   const attempt = useRef(() => {});
-  const preparations = useRef(new Set<(location: string) => boolean>());
-  const beforeReveal = useCallback((prepare: (location: string) => boolean) => {
-    preparations.current.add(prepare);
-    return () => {
-      preparations.current.delete(prepare);
-    };
-  }, []);
   // Only an explicit reveal of the current destination may reclaim the viewport.
   const revealAgain = useCallback(() => {
     if (latestLocation.current === undefined) return;
@@ -219,8 +212,6 @@ export function useSidebarView(
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;
-      for (const prepare of preparations.current)
-        if (!prepare(reveal.current.location)) return;
       const top = revealCurrent(list.current);
       if (top === false) return;
       moved.current = scroll(list.current, top) ?? moved.current;
@@ -300,7 +291,6 @@ export function useSidebarView(
       toggle,
       retryReveal,
       revealAgain,
-      beforeReveal,
     }),
     [
       savedLocation,
@@ -310,7 +300,6 @@ export function useSidebarView(
       toggle,
       retryReveal,
       revealAgain,
-      beforeReveal,
     ],
   );
 }

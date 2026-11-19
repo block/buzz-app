@@ -514,6 +514,9 @@ and are asked to sign in again in Buzz.
   one to remove it (the last agent stays selected). Rows stay in place while you
   toggle; reopen to refresh their order. Search ranks matching choices by
   relevance, including exact names.
+  Collapsed Solo sections and workspaces stay closed when you open or move a
+  chat, click **In Solo**, or refresh. Use the heading or its chevron to open
+  the group. **In Solo** scrolls to the chat when its row is visible.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your personal workspace IDs with

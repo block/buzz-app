@@ -101,7 +101,6 @@ function mount(
           toggle,
           retryReveal,
           revealAgain,
-          beforeReveal: () => () => {},
         }}
       />
     );
@@ -1195,7 +1194,7 @@ it("returns focus to the Destination after cancelling the existing rename editor
 });
 
 it.each([true, false])(
-  "preserves restored collapse but prepares a new destination before revealing (restored=%s)",
+  "keeps the region collapsed through navigation, reconnect and In Work (restored=%s)",
   async (restored) => {
     vi.stubGlobal(
       "ResizeObserver",
@@ -1229,6 +1228,10 @@ it.each([true, false])(
       },
     };
     await h.navigate(target);
+    const channel = h.session.channels
+      .list()
+      .channels.find(({ id }) => id === "owned");
+    assert(channel);
     writeView(h.scope, "channel-sidebar", {
       collapsed: ["solo-region:example/work"],
       location: restored ? "conversation:owned" : "conversation:chat",
@@ -1238,6 +1241,13 @@ it.each([true, false])(
       const sidebar = useSidebarView(h.scope, true, "conversation:owned");
       return (
         <ToastProvider>
+          <SoloHeading
+            session={h.session}
+            scope={h.scope}
+            channel={channel}
+            onLifecycle={() => {}}
+            onMove={() => {}}
+          />
           <nav ref={sidebar.list} data-testid="region-viewport">
             <SoloRegions
               session={h.session}
@@ -1262,18 +1272,22 @@ it.each([true, false])(
     }
     render(<View />);
     const heading = screen.getByLabelText("Work");
-    expect(screen.getByTestId("region-viewport").scrollTop).toBe(
-      restored ? 0 : 160,
-    );
-    if (restored) expect(heading.parentElement).not.toHaveAttribute("open");
-    else expect(heading.parentElement).toHaveAttribute("open");
-    if (!restored) fireEvent.click(heading);
+    expect(heading.parentElement).not.toHaveAttribute("open");
+    expect(screen.getByTestId("region-viewport").scrollTop).toBe(0);
     await act(() => h.reconnect());
     expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
       "open",
     );
-    act(() => h.service.reveal("owned"));
+    const reveal = screen.getByRole("button", { name: "In Work" });
+    fireEvent.click(reveal);
+    expect(visibleAtReveal).toEqual([]);
+    expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
+      "open",
+    );
+    fireEvent.click(screen.getByLabelText("Work"));
+    fireEvent.click(reveal);
     expect(visibleAtReveal).toEqual([true]);
+    expect(screen.getByTestId("region-viewport").scrollTop).toBe(160);
     expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
   },
 );

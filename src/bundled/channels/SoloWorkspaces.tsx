@@ -116,7 +116,6 @@ export function SoloWorkspaces({
   drafts?: readonly {
     id: string;
     projectId?: string | undefined;
-    selected: boolean;
     content: ReactNode;
   }[];
   onConverted?: ((id: string) => void) | undefined;
@@ -176,7 +175,6 @@ export function SoloWorkspaces({
         key === "solo" ? [""] : key.startsWith("group:") ? [key.slice(6)] : [],
       )
     : localCollapsed;
-  const toggleWorkspaceSection = workspaceComposition?.toggle;
   // Extra chats each workspace shows past the cap, remembered like collapse.
   const [expanded, setExpanded] = useState<Record<string, number>>(() => {
     const saved = readView<unknown>(scope, expandedKey, {});
@@ -234,13 +232,12 @@ export function SoloWorkspaces({
       )?.id ?? "";
     // Resolve against current visibility when focus is restored, including when
     // collapse was requested after the asynchronous save began.
-    const target =
-      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed
-        ? `project-${project}`
-        : rowFocus;
+    const closed =
+      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed;
+    const target = CSS.escape(closed ? `project-${project}` : rowFocus);
     document
       .querySelector<HTMLElement>(
-        `[data-solo-menu-id="${target}"]:not([inert] *) button`,
+        `[data-solo-menu-id="${target}"]:not([inert] *) ${closed ? 'button[aria-controls^="workspace-"]' : "button"}`,
       )
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
@@ -310,25 +307,6 @@ export function SoloWorkspaces({
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
-  const activeDraft = drafts.find((draft) => draft.selected);
-  const draftProject = activeDraft
-    ? ids.has(activeDraft.projectId ?? "")
-      ? (activeDraft.projectId ?? "")
-      : ""
-    : undefined;
-  useEffect(() => {
-    if (draftProject === undefined) return;
-    if (toggleWorkspaceSection) {
-      toggleWorkspaceSection(workspaceSectionKey(draftProject), true);
-      return;
-    }
-    setCollapsed((current) => {
-      if (!current.includes(draftProject)) return current;
-      const next = current.filter((id) => id !== draftProject);
-      writeView(scope, collapsedKey, next);
-      return next;
-    });
-  }, [draftProject, scope, toggleWorkspaceSection]);
   const projects = [
     ...groups.map((group) => ({
       ...group,
@@ -357,7 +335,6 @@ export function SoloWorkspaces({
     }
     setProjectError("");
     const saving = preferences.assign(id, projectId);
-    toggle(projectId ?? "", true);
     hold([id]);
     setRowFocus(id);
     void saving.catch(() => {
@@ -1100,7 +1077,6 @@ export function SoloWorkspaces({
               throw new Error("Workspaces are unavailable. Try again.");
             return preferences.createAndAssign(creatingFor.id, section);
           }}
-          onCreated={(id) => toggle(id, true)}
         />
       )}
     </>

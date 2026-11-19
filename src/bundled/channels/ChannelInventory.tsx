@@ -545,13 +545,12 @@ export function ChannelInventory({
   const selectedSection =
     target.kind === "conversation"
       ? sections.find(({ rows }) =>
-          rows.some(({ id }) => id === target.channelId),
+          rows.some(
+            ({ id, channelType }) =>
+              id === target.channelId && channelType !== "solo",
+          ),
         )?.key
-      : currentDraft && !currentDraft.region
-        ? currentDraft.project
-          ? `group:${currentDraft.project}`
-          : "solo"
-        : undefined;
+      : undefined;
   const ordinarySelection =
     selectedSection && !composedChatSections.has(selectedSection)
       ? selectedSection
@@ -978,7 +977,11 @@ export function ChannelInventory({
     [queries, regions.managed],
   );
   const focusChannelPlacement = (channelId: string) => {
-    sidebar.toggle(channelSectionKey(channelId), true);
+    if (
+      queries.channels.list().channels.find(({ id }) => id === channelId)
+        ?.channelType !== "solo"
+    )
+      sidebar.toggle(channelSectionKey(channelId), true);
     setRowFocus(channelId);
   };
   const moveChannel = (
@@ -1417,14 +1420,14 @@ export function ChannelInventory({
         (candidate) => candidate.dataset.channelId === channelId,
       );
       if (row) return row;
-      const sectionKey = hiddenRowSections.current.get(channelId);
-      return sectionKey
-        ? list?.querySelector<HTMLElement>(
-            `[data-sidebar-section="${CSS.escape(sectionKey)}"] details > summary`,
-          )
-        : undefined;
+      const filteredSection = hiddenRowSections.current.get(channelId);
+      const sectionKey = filteredSection ?? channelSectionKey(channelId);
+      if (!filteredSection && !sidebar.collapsed.includes(sectionKey)) return;
+      return list?.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(sectionKey)}"] :is(details > summary, button[aria-controls^="workspace-"])`,
+      );
     },
-    [sidebar.list],
+    [channelSectionKey, sidebar.collapsed, sidebar.list],
   );
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>
@@ -2529,7 +2532,10 @@ export function ChannelInventory({
                   : {}),
               });
             }}
-            onCreated={(id) => sidebar.toggle(`group:${id}`, true)}
+            onCreated={(id) => {
+              if (creatingFor.channel.channelType !== "solo")
+                sidebar.toggle(`group:${id}`, true);
+            }}
             finalFocus={() =>
               creatingFor.surface
                 ? false

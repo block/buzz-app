@@ -144,9 +144,12 @@ manual scroll through the scroll owner's `revealAgain`; ordinary retries never
 re-arm viewport ownership. Missing plugins use generic recovery copy, and catalog
 loading does not imply that a plugin is uninstalled.
 
-Reveal requests expand the host frame and let the source open the path. After
-commit, the host uses the existing sidebar reveal retry. Recovery rows use the
-same destination marker. Removing a focused row restores focus to a remaining row,
+Navigation and the header chip keep manually collapsed Solo regions and
+workspaces closed. The header chip scrolls to a visible destination using the
+existing sidebar reveal. The host still delivers an explicit chip request to the
+source, which should also preserve manual collapse. The legacy workspace
+`reveal` prop no longer changes disclosure. Recovery rows use the same
+destination marker. Removing a focused row restores focus to a remaining row,
 then the region heading; removing the region restores focus to the Solo heading.
 
 Focused tests live beside `solo-navigation.ts` and `SoloRegions.tsx`. Browser and

@@ -430,7 +430,7 @@ it("expands Team when navigation selects one of its conversations", async () => 
   }
 });
 
-it("expands fallback Solo when navigation selects an ordinary chat", async () => {
+it("keeps a manually collapsed Solo section closed when navigation selects a chat", async () => {
   vi.useFakeTimers();
   try {
     const f = fixture(true);
@@ -453,6 +453,8 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
     expect(panel).toHaveAttribute("hidden");
 
     await act(() => f.open(conversationTarget(scope, id)));
+    expect(panel).toHaveAttribute("hidden");
+    fireEvent.click(summary as HTMLElement);
     expect(panel).not.toHaveAttribute("hidden");
   } finally {
     vi.useRealTimers();

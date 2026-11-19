@@ -282,6 +282,9 @@ export function BaseInstructions({
                   {mode !== "off" && (
                     <Field
                       label={`${mode === "default" ? "Default text" : "Your text"} for ${title}`}
+                      labelVisibility={
+                        mode === "default" ? "hidden" : "visible"
+                      }
                       description={
                         mode === "default" ? "Choose Custom to edit." : count
                       }

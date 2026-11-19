@@ -127,7 +127,7 @@ it("titles a session by its first prompt without Buzz's turn mark", () => {
   });
 });
 
-it("reads the agent's sessions in the folders its conversations were given too, each once, from one goose", async () => {
+it("reads the agent's sessions in the folders its conversations were given too, each once", async () => {
   const saved = (sessionId: string, cwd: string): FakeSession => ({
     sessionId,
     title: `Grok · #general · ${sessionId}`,
@@ -156,7 +156,57 @@ it("reads the agent's sessions in the folders its conversations were given too, 
     "home",
     "there",
   ]);
-  expect(fake.processes).toHaveLength(1);
+  // The workspace's shared listing, and the agent's own of its folders.
+  expect(fake.processes).toHaveLength(2);
+});
+
+it("exports a workspace's sessions once while several agents with folders read it", async () => {
+  const saved = (sessionId: string, cwd: string, pubkey: string) => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd,
+    updatedAt: "2026-06-15T08:00:00Z",
+    conversation: [user(ask(pubkey)), reply(start + 1, tokens(1, 2, 3, 0.5))],
+  });
+  const goose = fakeSpawn({
+    home: "/home/test",
+    history: [
+      saved("mine", "/home/test/.buzz", agent),
+      saved("theirs", "/home/test/.buzz", other),
+      saved("my-folder", "/repos/mine", agent),
+      saved("their-folder", "/repos/theirs", other),
+    ],
+  });
+  const history = new GooseHistory(goose);
+  const read = (pubkey: string, folder: string) =>
+    readUsage(
+      history,
+      pubkey,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+      [folder],
+    ).then((sessions) => sessions.map((session) => session.id).sort());
+  expect(
+    await Promise.all([
+      read(agent, "/repos/mine"),
+      read(other, "/repos/theirs"),
+    ]),
+  ).toEqual([
+    ["mine", "my-folder"],
+    ["their-folder", "theirs"],
+  ]);
+  const exported = goose.geese.flatMap((one) =>
+    one.received
+      .filter((message) => message.method === "_goose/unstable/session/export")
+      .map((message) => (message.params as { sessionId: string }).sessionId),
+  );
+  expect(exported.sort()).toEqual([
+    "mine",
+    "my-folder",
+    "their-folder",
+    "theirs",
+  ]);
 });
 
 it("reads the agent's sessions in its workspace through goose, every page", async () => {

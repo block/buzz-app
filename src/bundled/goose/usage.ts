@@ -181,7 +181,10 @@ async function refresh(
 }
 
 /** The agent's goose sessions used since `since`, in `workspace` and in the
- * `folders` its conversations were given. */
+ * `folders` its conversations were given. Every agent shares the workspace's
+ * listing; an agent with folders also reads its own, of those folders only,
+ * so a workspace's sessions are exported once however many agents have
+ * folders. */
 export async function readUsage(
   history: GooseHistory,
   agent: string,
@@ -191,16 +194,38 @@ export async function readUsage(
   folders: readonly string[] = [],
 ): Promise<SessionUsage[]> {
   signal.throwIfAborted();
+  const read = (key: string, paths: readonly string[]) =>
+    listing(history, key, paths, since, signal);
+  const states = await Promise.all([
+    read(workspace, [workspace]),
+    ...(folders.length
+      ? [read(JSON.stringify([workspace, agent]), folders)]
+      : []),
+  ]);
+  // By id: a folder may be the workspace itself.
+  const sessions = new Map<string, SessionUsage>();
+  for (const state of states)
+    for (const { owner, session } of state.reads.values())
+      if (owner === agent && session && session.lastAt >= since)
+        sessions.set(session.id, session);
+  return [...sessions.values()].sort((a, b) => b.lastAt - a.lastAt);
+}
+
+/** The listing kept under `key`, of goose's sessions in `paths`, once the read
+ * under way, or a new one, brings it up to date. */
+async function listing(
+  history: GooseHistory,
+  key: string,
+  paths: readonly string[],
+  since: number,
+  signal: AbortSignal,
+): Promise<Workspace> {
   const workspaces = cache.get(history) ?? new Map<string, Workspace>();
   cache.set(history, workspaces);
-  // An agent with folders of its own shares its listing with no other.
-  const listing = folders.length
-    ? JSON.stringify([workspace, agent])
-    : workspace;
-  let state = workspaces.get(listing);
+  let state = workspaces.get(key);
   if (!state) {
     state = { reads: new Map() };
-    workspaces.set(listing, state);
+    workspaces.set(key, state);
   }
   const current = state;
   let reading = current.reading;
@@ -211,13 +236,7 @@ export async function readUsage(
     const started: NonNullable<Workspace["reading"]> = {
       readers: 0,
       stop,
-      done: refresh(
-        history,
-        [workspace, ...folders],
-        current,
-        since,
-        stop.signal,
-      ).finally(() => {
+      done: refresh(history, paths, current, since, stop.signal).finally(() => {
         if (current.reading === started) current.reading = undefined;
       }),
     };
@@ -238,9 +257,5 @@ export async function readUsage(
       shared.readers -= 1;
     }
   }
-  return [...current.reads.values()]
-    .flatMap(({ owner, session }) =>
-      owner === agent && session && session.lastAt >= since ? [session] : [],
-    )
-    .sort((a, b) => b.lastAt - a.lastAt);
+  return current;
 }

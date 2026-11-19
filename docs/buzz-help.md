@@ -516,7 +516,7 @@ and are asked to sign in again in Buzz.
   relevance, including exact names.
   Collapsed Solo sections and workspaces stay closed when you open or move a
   chat, click **In Solo**, or refresh. Use the heading or its chevron to open
-  the group. **In Solo** scrolls to the chat when its row is visible.
+  the group. **In Solo** scrolls to a visible chat row or its closed section heading.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your personal workspace IDs with

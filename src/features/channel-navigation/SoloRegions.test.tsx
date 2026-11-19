@@ -1203,15 +1203,18 @@ it.each([true, false])(
         disconnect() {}
       },
     );
-    // Synthetic layout distinguishes a visible header proxy from the opened offscreen row.
+    // The heading and row have different offsets in the scrollport.
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         const hidden = !!this.closest("[hidden]");
-        const row = this.matches('[aria-current="page"]') && !hidden;
+        const row = this.matches('[aria-current="page"]');
+        const top = this.matches("nav")
+          ? 0
+          : (row ? 200 : 60) - (this.closest("nav")?.scrollTop ?? 0);
         return {
-          top: row ? 200 : 0,
-          bottom: row ? 220 : 20,
+          top,
+          bottom: top + 20,
           height: hidden ? 0 : 20,
         } as DOMRect;
       },
@@ -1236,7 +1239,6 @@ it.each([true, false])(
       collapsed: ["solo-region:example/work"],
       location: restored ? "conversation:owned" : "conversation:chat",
     });
-    const visibleAtReveal: boolean[] = [];
     const View = () => {
       const sidebar = useSidebarView(h.scope, true, "conversation:owned");
       return (
@@ -1254,40 +1256,32 @@ it.each([true, false])(
               scope={h.scope}
               target={target}
               navigator={h.navigator}
-              sidebar={{
-                ...sidebar,
-                revealAgain: () => {
-                  visibleAtReveal.push(
-                    !screen
-                      .getByRole("button", { name: "Owned", hidden: true })
-                      .closest("[hidden]"),
-                  );
-                  sidebar.revealAgain();
-                },
-              }}
+              sidebar={sidebar}
             />
           </nav>
         </ToastProvider>
       );
     };
     render(<View />);
+    const viewport = screen.getByTestId("region-viewport");
     const heading = screen.getByLabelText("Work");
     expect(heading.parentElement).not.toHaveAttribute("open");
-    expect(screen.getByTestId("region-viewport").scrollTop).toBe(0);
+    expect(viewport.scrollTop).toBe(0);
     await act(() => h.reconnect());
     expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
       "open",
     );
     const reveal = screen.getByRole("button", { name: "In Work" });
+    viewport.scrollTop = 400;
+    fireEvent.scroll(viewport);
     fireEvent.click(reveal);
-    expect(visibleAtReveal).toEqual([]);
+    expect(viewport.scrollTop).toBe(20);
     expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
       "open",
     );
     fireEvent.click(screen.getByLabelText("Work"));
     fireEvent.click(reveal);
-    expect(visibleAtReveal).toEqual([true]);
-    expect(screen.getByTestId("region-viewport").scrollTop).toBe(160);
+    expect(viewport.scrollTop).toBe(160);
     expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
   },
 );

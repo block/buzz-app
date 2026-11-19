@@ -253,12 +253,12 @@ function RegionFrame({
   const { active } = destination;
   useLayoutEffect(() => {
     if (!revealRequest) return;
-    if (open && revealRequest === current) revealAgain();
+    if (revealRequest === current) revealAgain();
     setRevealRequest(undefined);
-  }, [open, current, revealAgain, revealRequest]);
+  }, [current, revealAgain, revealRequest]);
   const reveal = useEffectEvent((id: string, explicit: boolean) => {
     if (!region.channels.some((channel) => channel.id === id)) return false;
-    if (open && explicit && id === current) setRevealRequest(id);
+    if (explicit && id === current) setRevealRequest(id);
     return true;
   });
   useLayoutEffect(() => service.subscribeReveal(reveal, true), [service]);

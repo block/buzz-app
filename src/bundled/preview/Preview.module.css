@@ -1,0 +1,75 @@
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-standard);
+}
+
+.address {
+  flex: 1;
+  min-width: 0;
+}
+
+.address input {
+  width: 100%;
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-danger);
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  display: grid;
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, 4fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+  container-type: inline-size;
+}
+
+.pigeon {
+  grid-row: 2;
+  margin: 0 auto;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-ligatures: none;
+  line-height: 1;
+  white-space: pre;
+  /* Scale the entire 73-column illustration, independently of the form. */
+  zoom: 0.45;
+}
+
+@supports (zoom: calc(100cqi / 73ch)) {
+  .pigeon {
+    zoom: min(0.8, calc(100cqi / 73ch));
+  }
+}
+
+.fallback {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-panel-inset);
+  background: var(--surface-inset);
+  text-align: center;
+}

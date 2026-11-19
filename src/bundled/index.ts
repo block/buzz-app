@@ -27,6 +27,8 @@ import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
 import * as terminal from "./terminal";
+import previewManifest from "./preview/manifest.json";
+import * as preview from "./preview";
 import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import agentsManifest from "./agents/manifest.json";
@@ -163,6 +165,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...activityManifest, apiVersion: 1 },
     module: activity,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...previewManifest, apiVersion: 1 },
+    module: preview,
+    enabledByDefault: false,
   },
   {
     manifest: { ...terminalManifest, apiVersion: 1 },

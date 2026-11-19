@@ -521,6 +521,8 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
             "../../../src/bundled/agent-activity/manifest.json"
         ))
         .expect("agent activity manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/preview/manifest.json"))
+            .expect("bundled preview manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/terminal/manifest.json"))
             .expect("terminal manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/profiles/manifest.json"))

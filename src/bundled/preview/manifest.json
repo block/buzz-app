@@ -1,0 +1,10 @@
+{
+  "id": "buzz.preview",
+  "name": "Preview",
+  "apiVersion": 1,
+  "description": "Open local prototypes beside the conversation.",
+  "discovery": {
+    "category": "developer-tools-and-integrations",
+    "tags": ["code"]
+  }
+}

@@ -103,7 +103,7 @@ export function createProfileDirectory(
       sink: VerifiedProfileSink,
     ): (() => void) | undefined;
   },
-  archives?: Pick<IdentityArchives, "snapshot" | "subscribe">,
+  archives?: Pick<IdentityArchives, "snapshot" | "subscribe" | "ensure">,
 ) {
   let limit = PROFILE_CACHE_BASE;
   // DM partners: eviction takes them last, so a large roster cannot turn a
@@ -316,6 +316,13 @@ export function createProfileDirectory(
         count(verifiedNames, verifiedUsernames, name, username);
         if (!archived(id)) count(activeNames, activeUsernames, name, username);
       }
+    // Only a verified collision needs the lazy archive read; it refolds on arrival.
+    if (
+      archives?.snapshot().status === "idle" &&
+      ([...verifiedNames.values()].some((n) => n > 1) ||
+        [...verifiedUsernames].some(([u, n]) => u !== undefined && n > 1))
+    )
+      void archives.ensure();
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
       const [names, usernames] = archived(id)

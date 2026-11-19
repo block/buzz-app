@@ -559,17 +559,24 @@ it("does not count an archived identity as a namesake of an active one", async (
       }),
     );
   let archived: readonly string[] = [];
+  let status: "idle" | "ready" = "idle";
   const listeners = new Set<() => void>();
+  const setArchived = (ids: readonly string[]) => {
+    status = "ready";
+    archived = ids;
+    for (const listener of listeners) listener();
+  };
+  const ensure = vi.fn(async () => {
+    await tick(); // A real archive read answers asynchronously.
+    setArchived([bob.pubkey, carol.pubkey]);
+  });
   const archives = {
-    snapshot: () => ({ status: "ready" as const, archived }),
+    snapshot: () => ({ status, archived }),
+    ensure,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-  };
-  const setArchived = (ids: readonly string[]) => {
-    archived = ids;
-    for (const listener of listeners) listener();
   };
   let sink: VerifiedProfileSink | undefined;
   const directory = createProfileDirectory(
@@ -603,7 +610,9 @@ it("does not count an archived identity as a namesake of an active one", async (
       directory.queries.snapshot().get(key.pubkey)?.name;
     const suffixed = (key: { pubkey: string }) =>
       `Sam (${key.pubkey.slice(0, 10)})`;
-    setArchived([bob.pubkey, carol.pubkey]);
+    // The collision reads archives, and their arrival refolds the labels.
+    expect(ensure).toHaveBeenCalledOnce();
+    await tick();
     expect(name(alice)).toBe("Sam");
     expect(name(bob)).toBe(suffixed(bob));
     expect(name(carol)).toBe(suffixed(carol));
@@ -611,6 +620,47 @@ it("does not count an archived identity as a namesake of an active one", async (
     expect(name(alice)).toBe(suffixed(alice));
     expect(name(bob)).toBe(suffixed(bob));
     expect(name(carol)).toBe(suffixed(carol));
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("reads no archives for a directory without verified namesakes", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  const ensure = vi.fn(async () => {});
+  let sink: VerifiedProfileSink | undefined;
+  const directory = createProfileDirectory(
+    { read: async () => [] },
+    undefined,
+    undefined,
+    {
+      authority: { ...authority, multipleIssuers: false },
+      subscribe(_filter, next) {
+        sink = next;
+        return () => {};
+      },
+    },
+    {
+      snapshot: () => ({ status: "idle", archived: [] }),
+      subscribe: () => () => {},
+      ensure,
+    },
+  );
+  try {
+    directory.accept(
+      [alice, bob].map((key) =>
+        eventDto(signed(key, { kind: 0, tags: [], content: "{}" })),
+      ),
+    );
+    await directory.ensure([alice.pubkey, bob.pubkey]);
+    assert(sink);
+    sink.event(projection());
+    sink.eose();
+    await tick(); // Verified changes publish on the next macrotask.
+    expect(
+      directory.queries.snapshot().get(alice.pubkey)?.verified,
+    ).toBeTruthy();
+    expect(ensure).not.toHaveBeenCalled();
   } finally {
     directory.dispose();
   }

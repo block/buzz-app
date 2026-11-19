@@ -280,7 +280,7 @@ async function followMediaCommentLink({ page, app, context }, width, floating) {
     undefined,
     [["imeta", "url https://primary.example/media/photo.png", "m image/png"]],
   );
-  const comment = app.append(
+  app.append(
     "primary",
     "alpha",
     `See <buzz://message?channel=alpha&id=${linked.id}&thread=${linked.id}>`,
@@ -300,10 +300,10 @@ async function followMediaCommentLink({ page, app, context }, width, floating) {
     name: "Thread messages",
     exact: true,
   });
-  // The opened thread focuses the comment once it loads; move the tab after
-  // that, or the late reveal takes focus from it.
+  // Opening the thread focuses its composer once the thread has loaded.
+  // Move the tab after that, or the late focus takes it from the tab.
   await expect(
-    threads.locator(`[data-message-id="${comment.id}"]`),
+    inbox.getByRole("textbox", { name: "Reply to thread" }),
   ).toBeFocused();
   await side.getByRole("tab", { name: "Image post", exact: true }).focus();
   await page.keyboard.press("Alt+Shift+ArrowLeft");

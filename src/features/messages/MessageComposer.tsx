@@ -1889,16 +1889,14 @@ function Composer({
       else if (
         dirty.current ||
         sendAttempt.current ||
+        // Loading closes an open link dialog and discards what it holds.
+        linkEdit ||
         // Text typed here is never replaced under the user: storage can lose
         // a save that read back, and another window can write mid-typing. The
         // user is here while focus is in this composer, its controls included.
         // A composer holding nothing has nothing to offer back.
         (edited.current &&
-          !(
-            empty &&
-            !valueRef.current.forward &&
-            !valueRef.current.gifs?.length
-          ) &&
+          !(empty && !valueRef.current.forward) &&
           !hidden &&
           form.current?.contains(document.activeElement) &&
           document.hasFocus())
@@ -3826,6 +3824,9 @@ function Composer({
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
+        // A change saved elsewhere during an attempt that did not send is a
+        // conflict even if its notification arrives after the attempt ends.
+        reconcileDraft();
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);

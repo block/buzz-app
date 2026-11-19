@@ -13085,6 +13085,106 @@ it("holds a conflict raised around a failed send until the user resolves it", as
   expect(screen.queryByText(/changed elsewhere/)).not.toBeInTheDocument();
 });
 
+it("keeps the draft when a failed Solo send's storage event arrives after the failure", async () => {
+  const h = mount();
+  const channel = {
+    id: "channel",
+    channelType: "solo",
+    members: [first.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  const library = { status: "ready", identities: [first] };
+  let fail = () => {};
+  const refreshMembership = vi.fn(
+    () =>
+      new Promise<typeof channel>((_resolve, reject) => {
+        fail = () => reject(new Error("Membership not confirmed"));
+      }),
+  );
+  h.retarget({
+    soloConversation: true,
+    session: {
+      ...h.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+      },
+      channelWrites: { refreshMembership, addAgents: vi.fn() },
+    } as unknown as RelaySession,
+  });
+  h.fill("Unsent body");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const body = h.input().value;
+  expect(body).toContain("Unsent body");
+  h.submit();
+  await waitFor(() => expect(refreshMembership).toHaveBeenCalledOnce());
+  // The user switches windows and edits the shared draft there. This window
+  // has not handled the storage event when the membership refresh rejects.
+  act(() => (document.activeElement as HTMLElement).blur());
+  expect(document.body).toHaveFocus();
+  const key = 'buzz-view.v1:["scope","draft:channel"]';
+  localStorage.setItem(key, JSON.stringify("Edited in another window"));
+  await act(async () => fail());
+  expect(await screen.findByText("Membership not confirmed")).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => {
+    window.dispatchEvent(
+      new StorageEvent("storage", { storageArea: localStorage, key }),
+    );
+  });
+  expect(h.input()).toHaveValue(body);
+  expect(screen.getByText(/changed elsewhere/)).toBeVisible();
+  expect(readView("scope", "draft:channel", "")).toBe(
+    "Edited in another window",
+  );
+  await h.user.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(h.input()).toHaveValue(body);
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: expect.stringContaining("Unsent body"),
+  });
+  expect(screen.queryByText(/changed elsewhere/)).not.toBeInTheDocument();
+});
+
+it("keeps an open link dialog and the draft under it when the draft changes in another window", () => {
+  const h = mount();
+  h.fill("docs");
+  const editor = h.input();
+  act(() => editor.setSelectionRange(0, 4));
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  const url = screen.getByRole("textbox", { name: "URL" });
+  fireEvent.change(url, { target: { value: "http://example.com/docs" } });
+  act(() => url.focus());
+  expect(url).toHaveFocus();
+  const key = 'buzz-view.v1:["scope","draft:channel"]';
+  act(() => {
+    localStorage.setItem(key, JSON.stringify("Saved in another window"));
+    window.dispatchEvent(
+      new StorageEvent("storage", { storageArea: localStorage, key }),
+    );
+  });
+  expect(screen.getByRole("dialog", { name: "Add link" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "URL" })).toHaveValue(
+    "http://example.com/docs",
+  );
+  expect(editor).toHaveValue("docs");
+  // The link edit finishes on the draft it was opened for; the choice between
+  // the two drafts is then the user's.
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.input().innerHTML).toContain("http://example.com/docs");
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  expect(readView("scope", "draft:channel", "")).toBe(
+    "Saved in another window",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(JSON.stringify(readView("scope", "draft:channel", null))).toContain(
+    "http://example.com/docs",
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it.each([
   ["follows", "the editor is not focused", "blurred"],
   ["follows", "its window is not focused", "background"],
@@ -13162,6 +13262,57 @@ it("follows a draft changed elsewhere in a focused editor the user emptied", () 
   h.fill("Typed here");
   h.fill("");
   saveInFocus(h.input());
+  expect(h.input()).toHaveFocus();
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  expect(h.input()).toHaveValue("Saved elsewhere");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps a staged forward in a focused composer with no typed text when the draft changes elsewhere", () => {
+  writeView("scope", "draft:channel", {
+    text: "",
+    recipients: [],
+    forward: {
+      version: 1,
+      origin: "https://another.example",
+      channelId: "private",
+      id: "c".repeat(64),
+    },
+  });
+  const h = mount();
+  const forward = () =>
+    screen.queryByRole("button", { name: "Remove forwarded message" });
+  expect(forward()).toBeInTheDocument();
+  // Typed in and emptied again: only the forward is left.
+  h.fill("note");
+  h.fill("");
+  saveInFocus(h.input());
+  expect(h.input()).toHaveFocus();
+  expect(readView("scope", "draft:channel", null)).toMatchObject({
+    text: "",
+    forward: { id: "c".repeat(64) },
+  });
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  expect(forward()).toBeInTheDocument();
+  expect(h.input()).toHaveValue("");
+  expect(screen.getByText(/changed elsewhere/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(readView("scope", "draft:channel", null)).toMatchObject({
+    text: "",
+    forward: { id: "c".repeat(64) },
+  });
+  expect(forward()).toBeInTheDocument();
+});
+
+it("follows a draft changed elsewhere in the focused follow-up a send left with remembered agents", async () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  h.fill("First message");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  // The follow-up holds the remembered agent, which the user did not type.
+  expect(h.input()).toHaveValue("@Honey ");
   expect(h.input()).toHaveFocus();
   act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
   expect(h.input()).toHaveValue("Saved elsewhere");

@@ -323,3 +323,27 @@ show an upgrade explanation if supporting older hosts.
 - Editing `manifest.host` and expecting `plugin_reload` to apply it; it refuses until the owner approves the update in Settings.
 - Invalid ids (uppercase, underscores in the plugin id, a page id starting with `-`), or an unknown manifest key, which rejects the whole folder.
 - Expecting React state to survive a reload, or a plugin added by drag and drop to be reloadable.
+
+The same person-profile component advertises `supportsPersonFields: true` when it accepts `renderPersonFields({ section, pubkey, verifiedUsername, communityOrigin, renderRow })`. This optional hook contributes rows inside the existing Personal info (`section: "personal"`) Team (`section: "team"`), or Location (`section: "location"`) group without replacing time-zone controls or changing stored profile data. `verifiedUsername` is available only for a currently checked community verification. Providers must check their community scope before looking up a username; a username alone is not a cross-community identity. Return a component for asynchronous lookup and own its request cleanup. Use `renderRow(title, value)` for the shared row presentation. An optional third argument, a community-verified username, makes the row navigate to that person after an exact verified identity lookup; unavailable or ambiguous identities show inline feedback. The Team group is shown only when a provider contributes content. The hook is never called for agent profiles and is inert when omitted.
+
+### Profile data providers
+
+Inject `profileProviders` and call `ctx.profileProviders.register({ id, matches,
+refresh })`. `matches(subject)` scopes the provider to a community. `subject`
+contains `{ community, viewer, pubkey, username }`; the username comes from the
+currently checked community identity. `refresh(subject, signal)` runs only for
+the signed-in viewer and returns version-1 display data (`source_label`, HTTPS
+`source_url`, `fields`, optional `city`, `timezone`, `picture`, `coordinates`).
+Each field has `key`, `section` (`personal`, `team`, `location`), `label`, `value`,
+and an optional verified-community username for a profile link.
+
+The host saves the result under the provider's contribution key in kind-0
+`profile_extensions`, retaining other metadata. The host coordinates foreground
+profile edits, rate-limits successful refreshes to once per day, and preserves
+photo choices. Providers own directory authentication and fetch/parsing, and must
+respect cancellation. They never fetch other people's directory records.
+
+Full profiles, hover location/time, and Edit Profile read the saved display data
+only while its owning provider is enabled. This is user-published display data;
+it does not modify verified identity. Field order follows the provider array within
+host-owned groups. Layout, typography, controls, and verification stay host-owned.

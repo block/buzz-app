@@ -1,3 +1,5 @@
+import { useContext } from "react";
+import { ProfileProvidersContext } from "../../features/profiles/provider-context";
 import { PluginUpdatesMenu } from "../PluginUpdates";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -150,6 +152,11 @@ export function ProfileButton({
     }, 15000);
     return () => clearTimeout(timer);
   }, [statusChange]);
+  const profileProviders = useContext(ProfileProvidersContext);
+  const providerEntries = useSyncExternalStore(
+    profileProviders?.subscribe ?? noSubscription,
+    profileProviders?.snapshot ?? noProviders,
+  );
   // The selected session owns community identity; never copy it into local defaults.
   const profiles =
     selected && connection.viewer === viewer ? session?.profiles : undefined;
@@ -195,20 +202,38 @@ export function ProfileButton({
     read.catch(() => {});
     // Local time is shared by default. This fresh read triggers it; a strong
     // read just before publishing supplies what is published.
-    if (selected)
-      void shareDeviceTimeZone({
-        community: selected,
-        viewer,
-        communities,
-        read,
-        inspect: () => communityApi.inspectProfile(selected, session),
-        signal: controller.signal,
-        zone: deviceTimeZone(),
-        publish: (profile, existing) =>
-          communityApi.publishProfile(selected, profile, existing),
-      });
-    return () => controller.abort();
+    const sync = () => {
+      if (selected)
+        void shareDeviceTimeZone({
+          providers: profileProviders,
+          session,
+          community: selected,
+          viewer,
+          communities,
+          read,
+          inspect: () => communityApi.inspectProfile(selected, session),
+          signal: controller.signal,
+          zone: deviceTimeZone(),
+          publish: (profile, existing, preserveExisting) =>
+            communityApi.publishProfile(
+              selected,
+              profile,
+              existing,
+              preserveExisting,
+            ),
+        });
+    };
+    sync();
+    const refresh = providerEntries.length
+      ? setInterval(sync, 3600000)
+      : undefined;
+    return () => {
+      if (refresh !== undefined) clearInterval(refresh);
+      controller.abort();
+    };
   }, [
+    profileProviders,
+    providerEntries,
     communities,
     profiles,
     viewer,
@@ -594,3 +619,7 @@ export function ProfileButton({
     </>
   );
 }
+
+const emptyProviders: readonly import("../../features/profiles/providers").ProfileProvider[] =
+  [];
+const noProviders = () => emptyProviders;

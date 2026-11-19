@@ -292,6 +292,29 @@ it("restores a signed community profile and preserves extra fields when publishi
   ).rejects.toThrow("not confirmed");
 });
 
+it("signs metadata updates without normalizing existing profile fields", async () => {
+  respond = (_path, body) => ({
+    body: { accepted: true, event_id: (body as { id: string }).id },
+  });
+  const existing = {
+    name: "alice",
+    display_name: "Alice Lee",
+    about: "  Kept  ",
+    picture: "",
+    profile_extensions: { example: { value: "Team" } },
+  };
+  await publishProfile(
+    community,
+    { name: "Alice Lee", about: "  Kept  ", picture: "" },
+    existing,
+    true,
+  );
+  const published = requests.find((r) => r.path === "/events")?.body as {
+    content: string;
+  };
+  expect(JSON.parse(published.content)).toEqual(existing);
+});
+
 it("signs the NIP-43 leave request for the community and classifies the relay's answer", async () => {
   respond = (path, body) =>
     path === "/events"

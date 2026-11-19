@@ -2864,6 +2864,24 @@ export function relayBrokerPlugin({
             };
           }
           if (profile) {
+            if (filters?.preserveExisting === true) {
+              const existing = filters.existing;
+              if (
+                !existing ||
+                typeof existing !== "object" ||
+                Array.isArray(existing)
+              )
+                return json(res, 400, {
+                  error: "Profile metadata is unavailable",
+                });
+              filters.name = String(
+                existing.display_name ?? existing.name ?? "",
+              );
+              filters.picture =
+                typeof existing.picture === "string" ? existing.picture : "";
+              filters.about =
+                typeof existing.about === "string" ? existing.about : "";
+            }
             if (
               typeof filters?.name !== "string" ||
               !filters.name.trim() ||
@@ -2879,18 +2897,21 @@ export function relayBrokerPlugin({
                   "Profile needs a name, an optional HTTPS picture URL, and a description of 500 characters or fewer",
               });
             // Preserve fields this small editor does not expose.
-            const content = {
-              ...(filters.existing ?? {}),
-              name: filters.name.trim(),
-              display_name: filters.name.trim(),
-              picture: filters.picture,
-              about:
-                filters.about === undefined
-                  ? typeof filters.existing?.about === "string"
-                    ? filters.existing.about
-                    : ""
-                  : filters.about.trim(),
-            };
+            const content =
+              filters.preserveExisting === true
+                ? filters.existing
+                : {
+                    ...(filters.existing ?? {}),
+                    name: filters.name.trim(),
+                    display_name: filters.name.trim(),
+                    picture: filters.picture,
+                    about:
+                      filters.about === undefined
+                        ? typeof filters.existing?.about === "string"
+                          ? filters.existing.about
+                          : ""
+                        : filters.about.trim(),
+                  };
             if (Buffer.byteLength(JSON.stringify(content)) > 16000)
               return json(res, 400, { error: "Profile too large" });
             filters = finalizeEvent(

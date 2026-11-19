@@ -36,10 +36,11 @@ for (const fullName of [true, false]) {
   });
 }
 
-// Display-only supplied data exercises the real profile layout without a provider service.
-test("renders supplied profile fields and city map without a profile provider", async ({
+// This browser case covers the real profile panel consuming ordinary profile
+// metadata through the enabled provider context. Cache/lifecycle cases are unit tests.
+test("renders saved provider fields without a managed relay event", async ({
   page,
-}, info) => {
+}) => {
   await page.goto("/tests/fixtures/profiles.html?managed-profile");
   await page
     .getByRole("button", { name: "View Viewer profile", exact: true })
@@ -54,5 +55,4 @@ test("renders supplied profile fields and city map without a profile provider", 
   await expect(
     panel.getByText("viewer@example.org", { exact: true }),
   ).toBeVisible();
-  await panel.screenshot({ path: info.outputPath("supplied-profile.png") });
 });

@@ -1,3 +1,4 @@
+import { ProfileProvidersContext } from "../features/profiles/provider-context";
 import { navigationOwner } from "./shell/presentation";
 import { resolveSidebarContext } from "../features/sidebar/contracts";
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
@@ -95,30 +96,32 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <AgentAvatarArtworkProvider>
-      <ModalWindowDragProvider
-        value={isTauri() ? modalWindowDragHandlers : undefined}
-      >
-        <LaunchWindowControls />
-        {services.identity ? (
-          <Welcome
-            identity={services.identity}
-            communities={services.communities}
-            invites={services.invites}
-            federatedIdentity={services.firstRunFederatedIdentity}
-          >
-            <LaunchSignIn identity={services.federatedIdentity}>
-              <ConnectedApp services={services} />
-              {!launching && (
-                <LegacyCommunityImport communities={services.communities} />
-              )}
-            </LaunchSignIn>
-          </Welcome>
-        ) : (
-          <ConnectedApp services={services} />
-        )}
-      </ModalWindowDragProvider>
-    </AgentAvatarArtworkProvider>
+    <ProfileProvidersContext.Provider value={services.profileProviders}>
+      <AgentAvatarArtworkProvider>
+        <ModalWindowDragProvider
+          value={isTauri() ? modalWindowDragHandlers : undefined}
+        >
+          <LaunchWindowControls />
+          {services.identity ? (
+            <Welcome
+              identity={services.identity}
+              communities={services.communities}
+              invites={services.invites}
+              federatedIdentity={services.firstRunFederatedIdentity}
+            >
+              <LaunchSignIn identity={services.federatedIdentity}>
+                <ConnectedApp services={services} />
+                {!launching && (
+                  <LegacyCommunityImport communities={services.communities} />
+                )}
+              </LaunchSignIn>
+            </Welcome>
+          ) : (
+            <ConnectedApp services={services} />
+          )}
+        </ModalWindowDragProvider>
+      </AgentAvatarArtworkProvider>
+    </ProfileProvidersContext.Provider>
   );
 }
 

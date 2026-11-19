@@ -1,3 +1,4 @@
+import { useManagedProfile } from "../../features/profiles/profile-source";
 import { ProfileHeaderTime } from "../../features/profiles/ProfileHeaderTime";
 import { createPortal } from "react-dom";
 import { ProfileInfoBento } from "./ProfileInfoBento";
@@ -708,7 +709,8 @@ function ProfileDetails({
   }, [fullPhoto]);
   const reducedMotion = useReducedMotion();
   const [keyboardPhoto, setKeyboardPhoto] = useState(false);
-  const managed = managedProfile;
+  const providerManaged = useManagedProfile(session, pubkey);
+  const managed = managedProfile ?? providerManaged;
   const providerFields = (section: "personal" | "team" | "location") =>
     !displayAgent &&
     renderPersonFields?.({

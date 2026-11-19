@@ -17,6 +17,10 @@ import {
 const viewer = keypair();
 const community = "https://community.example.org";
 const zone = "Asia/Kolkata";
+const standardCommunities = () =>
+  ({
+    relay: { snapshot: () => ({ session: undefined }) },
+  }) as unknown as Communities;
 
 afterEach(resetSharedTimeZones);
 
@@ -26,6 +30,8 @@ function share(
     zone?: string | undefined;
     signal?: AbortSignal;
     communities?: Communities;
+    session?: import("../relay/session").RelaySession;
+    providers?: import("./providers").ProfileProviders;
     /** The strong read's events; the background read's by default. */
     strong?: () => Promise<EventData[]>;
   } = {},
@@ -43,7 +49,7 @@ function share(
     shared: shareDeviceTimeZone({
       community,
       viewer: viewer.pubkey,
-      communities: {} as Communities,
+      communities: standardCommunities(),
       read: events,
       inspect,
       publish,
@@ -52,6 +58,43 @@ function share(
     }),
   };
 }
+
+it("shares the ordinary device zone in an unverified community with an unrelated provider enabled", async () => {
+  const refresh = vi.fn();
+  const session = {
+    viewer: viewer.pubkey,
+    scope: `${community}:${viewer.pubkey}`,
+    profiles: {},
+    directMessages: { verified: vi.fn(async () => ({ profiles: new Map() })) },
+  };
+  const { shared, publish } = share(
+    Promise.resolve([profile(viewer, { name: "Mic" })]),
+    {
+      session: session as unknown as import("../relay/session").RelaySession,
+      communities: {
+        relay: { snapshot: () => ({ session }) },
+      } as unknown as Communities,
+      providers: {
+        register: () => {},
+        subscribe: () => () => {},
+        snapshot: () => [
+          {
+            id: "directory",
+            key: "example/directory",
+            matches: () => false,
+            refresh,
+          },
+        ],
+      },
+    },
+  );
+  expect(await shared).toBe(true);
+  expect(publish).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ tz: zone }),
+  );
+  expect(refresh).not.toHaveBeenCalled();
+});
 
 it("adds the device zone to an existing profile that never had one, keeping its fields", async () => {
   const { publish, shared } = share(
@@ -162,7 +205,7 @@ it("publishes nothing after a failed strong read and tries again on the next rea
 });
 
 it("stands aside for a profile save that is running or started after it began", async () => {
-  const communities = {} as Communities;
+  const communities = standardCommunities();
   // A save running when the share begins.
   beginProfileSave(communities);
   const running = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
@@ -215,7 +258,7 @@ it("retries after a run abandoned during its strong read", async () => {
 });
 
 it("lets a save wait for a write it has handed to the writer", async () => {
-  const communities = {} as Communities;
+  const communities = standardCommunities();
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
   const { publish, shared } = share(
@@ -294,7 +337,7 @@ it("remembers on this device that a community was settled, across launches", asy
       await next.shareDeviceTimeZone({
         community,
         viewer: viewer.pubkey,
-        communities: {} as Communities,
+        communities: standardCommunities(),
         read: Promise.resolve(events),
         inspect: async () => profileFromEvent(events[0]),
         publish,

@@ -2089,3 +2089,19 @@ without coordinates, a location remains an Apple Maps link. The UI does not fetc
 directory data, resolve coordinates or save profile metadata. Expanded photos stay
 inside the profile pane and restore its scroll position when closed. Linked people
 open in a separate tab while preserving the original profile.
+
+### Directory-managed profile fields
+
+An enabled profile plugin can refresh your own directory details and save them
+to your community profile. Other people read those saved details without a
+directory lookup. Turning the plugin off hides its fields for you and stops your
+refresh; it does not remove already published fields. These are user-published
+details, separate from verified names. Edit Profile
+places these read-only fields under “Managed by” with a link to their source.
+Your photo and About remain editable. Communities without a managed timezone
+keep the timezone picker and “Show on profile” checkbox.
+
+Profile location cards may show a world map with current daylight and nighttime
+when the community supplies location coordinates. Select the pin to open Apple
+Maps. Enlarging a profile photo centers it within the profile pane; close it to
+resume scrolling.

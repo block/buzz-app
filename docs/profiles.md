@@ -209,3 +209,31 @@ without coordinates, a location remains an Apple Maps link. The UI does not fetc
 directory data, resolve coordinates or save profile metadata. Expanded photos stay
 inside the profile pane and restore its scroll position when closed. Linked people
 open in a separate tab while preserving the original profile.
+
+## Managed directory details
+
+Enabled profile plugins refresh only the signed-in person's directory record and
+save selected display fields in their ordinary community profile metadata. Other
+viewers read those saved fields without contacting the directory. This requires
+no extra relay event type. These are user-published details, not server-verified
+identity claims; the existing verified-name path remains separate.
+
+Provider fields appear in Personal info, Team and Location. Edit Profile groups
+them under “Managed by <source>” with a link to the directory. Photo and About
+remain editable. The host preserves explicit photo choices and imports a missing
+default once. Communities without a provider retain the normal timezone editor.
+
+A successful self-refresh is cached on this device for 24 hours. The host checks
+while connected and skips unchanged records. Lookup failures preserve saved
+fields. Concurrent foreground edits take precedence. Disabling a plugin hides
+its fields locally and stops its refresh; it does not delete published metadata.
+People who have not run the plugin will not yet have its saved fields.
+
+The full profile groups directory fields into cards and shows a daylight map when
+the saved provider data includes optional `coordinates: { latitude, longitude }`
+(decimal degrees, bounded to ±90/±180). Coordinate lookup belongs to the provider;
+without coordinates the location remains an Apple Maps link. The client does not
+geocode directory locations or infer coordinates from timezones. Lead portraits
+resolve the verified community username and read the current Buzz profile photo.
+Expanded photos stay centered in the visible profile pane and lock its scrolling
+until dismissed, restoring the prior scroll position.

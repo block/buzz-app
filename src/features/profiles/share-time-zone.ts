@@ -1,3 +1,4 @@
+import { syncManagedProfile } from "./profile-source";
 import { profileFromEvent } from "../communities/api";
 import {
   profileSaveGeneration,
@@ -81,7 +82,8 @@ export function shareDeviceTimeZone(
   const previous = running.get(key);
   const current = (async () => {
     await previous;
-    return attemptShare(options);
+    const managed = await syncManagedProfile(options);
+    return managed ?? attemptShare(options);
   })();
   running.set(key, current);
   void current.finally(() => {
@@ -100,6 +102,8 @@ async function attemptShare({
   signal,
   zone,
 }: {
+  providers?: import("./providers").ProfileProviders | undefined;
+  session?: import("../relay/session").RelaySession | undefined;
   community: string;
   viewer: string;
   /** The app's communities, whose profile saves this write stands aside for. */
@@ -111,6 +115,7 @@ async function attemptShare({
   publish(
     profile: PersonalProfile,
     existing: Record<string, unknown>,
+    preserveExisting?: boolean,
   ): Promise<void>;
   signal?: AbortSignal;
   /** This device's zone, from `deviceTimeZone()`. */

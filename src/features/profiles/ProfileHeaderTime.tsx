@@ -1,3 +1,4 @@
+import { useManagedProfile } from "./profile-source";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import { ProfileLocalTime } from "./ProfileLocalTime";
@@ -7,7 +8,7 @@ import type { ManagedProfile } from "./managed-profile";
 export function ProfileHeaderTime({
   session,
   pubkey,
-  managed,
+  managed: supplied,
 }: {
   session: RelaySession;
   pubkey: string;
@@ -17,6 +18,8 @@ export function ProfileHeaderTime({
     session.profiles.subscribe,
     () => session.profiles.snapshot().get(pubkey)?.tz,
   );
+  const providerManaged = useManagedProfile(session, pubkey);
+  const managed = supplied ?? providerManaged;
   const location =
     managed?.fields.find((field) => field.key === "location")?.value ||
     managed?.city;

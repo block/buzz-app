@@ -1,3 +1,4 @@
+import { ProfileProvidersService } from "../features/profiles/providers";
 import { ArtifactStorageService } from "../features/artifact-storage/service";
 import { provideArtifactStoreSync } from "../features/relay/artifact-store-sync";
 import { createAdminAccess } from "../bundled/admin-access";
@@ -105,6 +106,7 @@ export function createServices() {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
   });
+  const profileProviders = new ProfileProvidersService(ctx);
   new PluginDevelopmentService(ctx, () => plugins);
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
@@ -437,6 +439,7 @@ export function createServices() {
   ctx.effect(() => communityUnreads.dispose);
   let disposal: Promise<void> | undefined;
   return {
+    profileProviders,
     identity,
     browser,
     notifications,

@@ -165,7 +165,18 @@ export async function nativeCommunityRequest(
   if (route === "profile") {
     const profile = body as PersonalProfile & {
       existing?: Record<string, unknown>;
+      preserveExisting?: boolean;
     };
+    if (profile?.preserveExisting === true) {
+      const existing = profile.existing;
+      if (!existing || typeof existing !== "object" || Array.isArray(existing))
+        throw new Error("Profile metadata is unavailable");
+      // Validate the fields that will actually be signed, without normalizing them.
+      profile.name = String(existing.display_name ?? existing.name ?? "");
+      profile.picture =
+        typeof existing.picture === "string" ? existing.picture : "";
+      profile.about = typeof existing.about === "string" ? existing.about : "";
+    }
     if (
       !profile ||
       typeof profile.name !== "string" ||
@@ -177,18 +188,22 @@ export async function nativeCommunityRequest(
         (typeof profile.about !== "string" || profile.about.length > 500))
     )
       throw new Error("Check your profile name, picture and description");
-    const content = JSON.stringify({
-      ...profile.existing,
-      name: profile.name.trim(),
-      display_name: profile.name.trim(),
-      picture: profile.picture,
-      about: (
-        profile.about ??
-        (typeof profile.existing?.about === "string"
-          ? profile.existing.about
-          : "")
-      ).trim(),
-    });
+    const content = JSON.stringify(
+      profile.preserveExisting === true
+        ? profile.existing
+        : {
+            ...profile.existing,
+            name: profile.name.trim(),
+            display_name: profile.name.trim(),
+            picture: profile.picture,
+            about: (
+              profile.about ??
+              (typeof profile.existing?.about === "string"
+                ? profile.existing.about
+                : "")
+            ).trim(),
+          },
+    );
     if (new TextEncoder().encode(content).length > 16000)
       throw new Error("Profile too large");
     const event = await nativeRelaySigner(community).signEvent({

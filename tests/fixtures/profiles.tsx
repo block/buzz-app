@@ -1,3 +1,4 @@
+import { ProfileProvidersContext } from "../../src/features/profiles/provider-context";
 import { eventDto } from "../../src/features/relay/events";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -149,6 +150,19 @@ const directoryData = {
     },
   ],
 };
+const fixtureProviders = [
+  {
+    id: "directory",
+    key: "example/directory",
+    matches: () => managedProbe,
+    refresh: async () => directoryData,
+  },
+];
+const providerRegistry = {
+  register: () => {},
+  snapshot: () => fixtureProviders,
+  subscribe: () => () => {},
+};
 
 let data = [
   signed(viewer, {
@@ -158,6 +172,13 @@ let data = [
       name: "Viewer",
       about: "Human profile",
       picture,
+      ...(managedProbe
+        ? {
+            profile_extensions: {
+              "example/directory": { username: "viewer", data: directoryData },
+            },
+          }
+        : {}),
     }),
   }),
   profile(mic, {
@@ -485,8 +506,7 @@ const manager = createPluginManager(context, {
         ...bundledPlugins.filter(
           ({ manifest }) => manifest.id === "buzz.profiles",
         ),
-        ...(managedProbe ||
-        new URLSearchParams(location.search).has("specialized-profile")
+        ...(new URLSearchParams(location.search).has("specialized-profile")
           ? [
               {
                 manifest: {
@@ -519,19 +539,11 @@ const manager = createPluginManager(context, {
                           return Native ? (
                             <Native
                               {...props}
-                              managedProfile={
-                                managedProbe &&
-                                profilePanelKey(props.target) === viewer.pubkey
-                                  ? directoryData
-                                  : undefined
-                              }
                               renderPersonInfo={(content) => (
                                 <>
-                                  {!managedProbe && (
-                                    <button type="button">
-                                      Extra profile action
-                                    </button>
-                                  )}
+                                  <button type="button">
+                                    Extra profile action
+                                  </button>
                                   {content}
                                 </>
                               )}
@@ -647,7 +659,9 @@ if (!element) throw new Error("Missing root");
 createRoot(element).render(
   <StrictMode>
     <ToastProvider>
-      <Fixture />
+      <ProfileProvidersContext.Provider value={providerRegistry}>
+        <Fixture />
+      </ProfileProvidersContext.Provider>
     </ToastProvider>
   </StrictMode>,
 );

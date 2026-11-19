@@ -961,6 +961,7 @@ it("refreshes the viewer through the real session after roster setup, not a stal
           ...strong.existing,
           tz: new Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
+        undefined,
       ),
     );
     expect(inspect).toHaveBeenCalledExactlyOnceWith(

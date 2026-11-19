@@ -1217,6 +1217,31 @@ async function postSplit(h, path, bytes, at) {
 }
 
 const profileName = "café €🛩";
+test("metadata-only profile publication preserves raw names and About text", async () => {
+  const h = await harness(success);
+  const existing = {
+    name: "alice",
+    display_name: "Alice Lee",
+    picture: "",
+    about: "  Kept  ",
+    profile_extensions: { example: { value: "Team" } },
+  };
+  try {
+    const response = await h.post("profile", {
+      name: "Alice Lee",
+      picture: "",
+      existing,
+      preserveExisting: true,
+    });
+    expect(response.status).toBe(200);
+    const published = h.calls.find((call) => call.url.endsWith("/events"));
+    expect(verifyEvent(published.body)).toBe(true);
+    expect(JSON.parse(published.body.content)).toEqual(existing);
+  } finally {
+    await h.close();
+  }
+});
+
 const profileBody = Buffer.from(
   JSON.stringify({ name: profileName, picture: "" }),
 );

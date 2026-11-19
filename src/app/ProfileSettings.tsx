@@ -1,3 +1,13 @@
+import { ArrowUpRightIcon } from "../shared/design-system/icons";
+import { Field } from "../shared/design-system/ui/Field";
+import { Input } from "../shared/design-system/ui/Input";
+import {
+  managedProfileTimeZone,
+  useManagedProfile,
+  managedProfileFields,
+  managedProfileHeading,
+  profilePhotoChoice,
+} from "../features/profiles/profile-source";
 import { useProfileGeneration } from "../features/relay/react";
 import { ProfileBackdrop } from "../features/profiles/ProfileBackdrop";
 import hero from "../features/profiles/ProfileHero.module.css";
@@ -217,10 +227,21 @@ export function ProfileSettings({
     (!!community && loadStatus !== "ready" && loadStatus !== "error");
   const previewReady =
     client.status === "ready" && (!community || loaded !== null);
-  const persisted =
-    community && loaded?.exists ? loaded.profile : client.profile;
-  latestPersisted.current = persisted;
   const session = selectedProfileSession(communities, communityId);
+  const managed = useManagedProfile(session, client.viewer ?? "");
+  const storedProfile =
+    community && loaded?.exists ? loaded.profile : client.profile;
+  const managedPicture =
+    community &&
+    loaded?.exists &&
+    !storedProfile.picture &&
+    loaded.existing.managed_photo_initialized !== true
+      ? managed?.picture
+      : undefined;
+  const persisted = managedPicture
+    ? { ...storedProfile, picture: managedPicture }
+    : storedProfile;
+  latestPersisted.current = persisted;
   const thumbnailMedia = session?.media;
   const viewer = session?.viewer;
   const verified = useSyncExternalStore(
@@ -255,7 +276,11 @@ export function ProfileSettings({
   // A profile without a `tz` key gets this device's zone by default, so the
   // control shows that zone as shared and any save writes it; unchecking
   // records the opt-out.
-  const tzByDefault = !!community && !!loaded && !("tz" in loaded.existing);
+  const managedTimeZone = managedProfileTimeZone(managed);
+  const managedHeading = managedProfileHeading(managed);
+  const managedFields = managedProfileFields(managed);
+  const tzByDefault =
+    !managedTimeZone && !!community && !!loaded && !("tz" in loaded.existing);
   const persistedTz =
     community && loaded
       ? tzByDefault
@@ -369,6 +394,7 @@ export function ProfileSettings({
               </section>
               <SettingsGroup layout="form">
                 <form
+                  className="grid gap-4"
                   onSubmit={(event) => {
                     event.preventDefault();
                     if (
@@ -424,13 +450,18 @@ export function ProfileSettings({
                           await communityApi.publishProfile(
                             community.id,
                             next,
-                            tzChanged
-                              ? withTimeZone(latest.existing, tz)
-                              : // Any save shares the default zone the box
-                                // shows, unless a zone arrived since.
-                                tzByDefault
-                                ? withDeviceTimeZone(latest.existing, tz)
-                                : latest.existing,
+                            profilePhotoChoice(
+                              community.id,
+                              tzChanged
+                                ? withTimeZone(latest.existing, tz)
+                                : // Any save shares the default zone the box
+                                  // shows, unless a zone arrived since.
+                                  tzByDefault
+                                  ? withDeviceTimeZone(latest.existing, tz)
+                                  : latest.existing,
+                              next.picture,
+                              !!managedPicture && draft?.picture === "",
+                            ),
                           );
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);
@@ -476,6 +507,7 @@ export function ProfileSettings({
                   <ProfileFields
                     profile={profile}
                     showAvatar={false}
+                    showUsername={!managedHeading}
                     disabled={saving || !previewReady}
                     verifiedName={lockedName}
                     onChange={(next) => {
@@ -484,7 +516,7 @@ export function ProfileSettings({
                       setError("");
                     }}
                   />
-                  {community && (
+                  {community && !managedTimeZone && (
                     <TimeZoneField
                       value={tz}
                       fallback={persistedTz}
@@ -543,6 +575,50 @@ export function ProfileSettings({
                   )}
                 </form>
               </SettingsGroup>
+              {managedHeading &&
+                (managedFields.length > 0 || verifiedName?.username) && (
+                  <section
+                    aria-labelledby="managed-profile-heading"
+                    className="grid gap-4"
+                  >
+                    <div className="flex items-center gap-2">
+                      <h3
+                        id="managed-profile-heading"
+                        className="m-0 text-body-lg"
+                      >
+                        {managedHeading.title}
+                      </h3>
+                      {managedHeading.url && (
+                        <a
+                          href={managedHeading.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Open your managed profile in a browser"
+                          title="Open your managed profile"
+                        >
+                          <ArrowUpRightIcon size={16} aria-hidden="true" />
+                        </a>
+                      )}
+                    </div>
+                    <SettingsGroup layout="form">
+                      <div className="grid gap-4">
+                        {verifiedName?.username && (
+                          <Field label="Username">
+                            <Input
+                              value={`@${verifiedName.username}`}
+                              disabled
+                            />
+                          </Field>
+                        )}
+                        {managedFields.map((field) => (
+                          <Field key={field.key} label={field.label}>
+                            <Input value={field.value} disabled />
+                          </Field>
+                        ))}
+                      </div>
+                    </SettingsGroup>
+                  </section>
+                )}
             </div>
           </LoadingRegion>
         )}

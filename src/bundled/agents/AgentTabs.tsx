@@ -56,10 +56,7 @@ export function AgentTabs(props: {
   );
   const historyPanel = useRef<HTMLDivElement>(null);
   const [focusHistory, setFocusHistory] = useState(false);
-  const openVersionHistory = () => {
-    setFocusHistory(true);
-    choose("agent:management");
-  };
+  const openVersionHistory = () => choose("agent:management", true);
   const supplied = agentSections({
     ...props,
     openVersionHistory,
@@ -93,14 +90,23 @@ export function AgentTabs(props: {
     draft.dirty || Boolean(props.settingsHost.pendingSave),
     draft.saving,
   );
-  const [pendingTab, setPendingTab] = useState<string>();
+  // Focus intent travels with the navigation it belongs to.
+  const [pendingTab, setPendingTab] = useState<{
+    value: string;
+    focus: boolean;
+  }>();
   const panelPrefix = useId();
   const selected =
     sections.find((section) => section.value === tab) ?? sections[0];
-  const choose = (value: string) => {
-    if (value === selected?.value || draft.saving) return;
-    if (draft.dirty || props.settingsHost.pendingSave) setPendingTab(value);
-    else setTab(value);
+  const choose = (value: string, focus = false) => {
+    if (value === selected?.value) return setFocusHistory(focus);
+    if (draft.saving) return;
+    if (draft.dirty || props.settingsHost.pendingSave)
+      setPendingTab({ value, focus });
+    else {
+      setTab(value);
+      setFocusHistory(focus);
+    }
   };
   const requestSettings = useEffectEvent(() => choose("agent:management"));
   useEffect(() => {
@@ -149,7 +155,7 @@ export function AgentTabs(props: {
     <AgentSaveState value={reportDraft}>
       <Tabs
         value={selected?.value ?? ""}
-        onValueChange={choose}
+        onValueChange={(value) => choose(value)}
         items={sections.map(({ value, label }) => ({
           value,
           label,
@@ -199,7 +205,8 @@ export function AgentTabs(props: {
           onKeep={() => setPendingTab(undefined)}
           onDiscard={() => {
             props.onDiscard?.();
-            setTab(pendingTab);
+            setTab(pendingTab.value);
+            setFocusHistory(pendingTab.focus);
             setPendingTab(undefined);
           }}
         />

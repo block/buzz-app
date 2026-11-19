@@ -564,3 +564,70 @@ it("restores Settings on the first commit without briefly selecting Identity", (
   render(<Probe />);
   expect(selected).toEqual(["Settings"]);
 });
+
+it("forgets a recovery focus request when its navigation is kept", async () => {
+  const user = userEvent.setup();
+  const { props } = editingFixture(false);
+  const expected = {
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    d: "settings",
+    type: "buzz.agent.settings" as const,
+  };
+  const head = {
+    kind: 45010,
+    id: "broken",
+    pubkey: props.agent.pubkey,
+    sig: "",
+    created_at: 1,
+    tags: [
+      ["ar", "1"],
+      ["h", expected.channel],
+      ["d", expected.d],
+      ["type", expected.type],
+      ["op", "create"],
+      ["title", "Agent settings"],
+    ],
+    content: JSON.stringify({
+      version: 1,
+      agentType: props.agent.type,
+      settings: { scope: "community" },
+    }),
+  };
+  const history = {
+    read: async () => [],
+    sides: [{ side: "settings", expected, head, version: 1 }],
+    settings: {
+      agentType: props.agent.type,
+      schema: { scope: ["thread", "channel"] },
+    },
+  };
+  const recovering = {
+    ...props,
+    agent: {
+      ...props.agent,
+      configProblem:
+        'These agent settings aren\'t compatible with this version of Buzz: Setting "scope" has an unsupported value',
+    },
+    agents: {
+      ...props.agents,
+      configHistory: () => history,
+    } as unknown as Agents,
+    settingsContent: (
+      <button type="button" aria-label="Previous versions">
+        History
+      </button>
+    ),
+  };
+  const view = render(
+    <AgentTabs {...recovering} settingsHost={{ pendingSave: vi.fn() }} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Previous Versions" }));
+  await user.click(await screen.findByRole("button", { name: "Keep editing" }));
+  view.rerender(<AgentTabs {...recovering} />);
+  const settings = screen.getByRole("tab", { name: "Settings" });
+  await user.click(settings);
+  expect(settings).toHaveAttribute("aria-selected", "true");
+  expect(settings).toHaveFocus();
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.getByRole("tab", { name: "Settings" })).toHaveFocus();
+});

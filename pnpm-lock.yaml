@@ -47,6 +47,9 @@ importers:
       '@pydantic/genai-prices':
         specifier: 0.1.13
         version: 0.1.13
+      '@shikijs/langs':
+        specifier: 4.6.0
+        version: 4.6.0
       '@tabler/icons':
         specifier: 3.46.0
         version: 3.46.0

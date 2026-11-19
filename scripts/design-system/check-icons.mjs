@@ -28,6 +28,7 @@ const nonIconDependencies = new Set([
   "@playwright/test",
   "@pierre/diffs", // Diff renderer and syntax highlighting, not an icon catalog.
   "@pydantic/genai-prices", // LLM price data for Usage estimates.
+  "@shikijs/langs", // Syntax grammars for diff highlighting, not an icon catalog.
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",

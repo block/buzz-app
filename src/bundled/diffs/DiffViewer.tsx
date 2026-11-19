@@ -1,13 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  getFiletypeFromFileName,
+  getHighlighterIfLoaded,
   parsePatchFiles,
   preloadHighlighter,
   type FileDiffMetadata,
 } from "@pierre/diffs";
 import { FileDiff as ReactFileDiff } from "@pierre/diffs/react";
-import type { FileData } from "./parse";
-import { languageFor } from "../file-viewer/highlight";
+import { bundledLanguages } from "./grammars";
+import { gitPatch, type FileData } from "./parse";
 import styles from "./Diffs.module.css";
+
+const theme = { light: "pierre-light", dark: "pierre-dark" } as const;
+
+/** The grammar that highlights a file: "text" keeps the diff view without
+ * tokens. @pierre/diffs stores partial patches compactly, so absolute line
+ * numbers do not measure highlighting cost; bound the supplied content. */
+function languageFor(file: FileData, name: string) {
+  const changes = file.hunks.flatMap((hunk) => hunk.changes);
+  if (
+    changes.length > 500 ||
+    changes.reduce((size, change) => size + change.content.length, 0) > 12_000
+  )
+    return "text";
+  const language = getFiletypeFromFileName(name);
+  return Object.hasOwn(bundledLanguages, language) ? language : "text";
+}
+
+const languages = (files: FileDiffMetadata[]) => [
+  ...new Set(files.map((file) => file.lang ?? "text")),
+];
 
 function RawDiff({ content }: { content: string }) {
   return (
@@ -38,24 +60,11 @@ export function DiffViewer({
 }) {
   if (!files) return <RawDiff content={content} />;
   if (!files.length) return <p className="text-body-sm">No diff content</p>;
-  // @pierre/diffs stores partial patches compactly: absolute line numbers do not
-  // measure highlighting cost. Bound the supplied content instead.
-  if (
-    files.some((file) => {
-      const changes = file.hunks.flatMap((hunk) => hunk.changes);
-      return (
-        file.isBinary ||
-        !file.hunks.length ||
-        changes.length > 500 ||
-        changes.some((change) => change.content.length > 2_000) ||
-        changes.reduce((size, change) => size + change.content.length, 0) >
-          12_000
-      );
-    })
-  )
+  if (files.some((file) => file.isBinary || !file.hunks.length))
     return <RawDiff content={content} />;
   return (
     <ParsedDiff
+      key={content}
       content={content}
       files={files}
       filePath={filePath}
@@ -77,7 +86,10 @@ function ParsedDiff({
 }) {
   const parsed = useMemo(() => {
     try {
-      const entries = parsePatchFiles(content).flatMap((patch) => patch.files);
+      // Both parsers read the same Git-headed text, so their names agree.
+      const entries = parsePatchFiles(gitPatch(content)).flatMap(
+        (patch) => patch.files,
+      );
       if (
         entries.length !== files.length ||
         entries.some(
@@ -89,12 +101,19 @@ function ParsedDiff({
         )
       )
         return undefined;
-      return entries;
+      return entries.map((entry, index) => ({
+        ...entry,
+        lang: languageFor(files[index] as FileData, entry.name),
+      }));
     } catch {
       return undefined;
     }
   }, [content, files]);
-  const [ready, setReady] = useState(false);
+  // A highlighter that already holds these grammars renders at once.
+  const [ready, setReady] = useState(
+    () =>
+      !!parsed && !!getHighlighterIfLoaded({ theme, langs: languages(parsed) }),
+  );
   const [failed, setFailed] = useState(false);
   const [themeType, setThemeType] = useState<"light" | "dark">(() =>
     document.documentElement.dataset.colorMode === "dark" ? "dark" : "light",
@@ -102,13 +121,9 @@ function ParsedDiff({
   useEffect(() => {
     if (!parsed) return;
     let active = true;
-    setReady(false);
-    setFailed(false);
     void preloadHighlighter({
-      themes: ["pierre-light", "pierre-dark"],
-      langs: [
-        ...new Set(parsed.map((file) => languageFor(file.name) ?? "text")),
-      ],
+      themes: [theme.light, theme.dark],
+      langs: languages(parsed),
       preferredHighlighter: "shiki-js",
     }).then(
       () => {
@@ -181,13 +196,12 @@ function PierreFile({
       <ReactFileDiff
         fileDiff={file}
         options={{
-          theme: { light: "pierre-light", dark: "pierre-dark" },
+          theme,
           themeType,
           diffStyle: viewType,
           diffIndicators: "classic",
           disableFileHeader: hideHeader,
           overflow: "scroll",
-          tokenizeMaxLength: 12_000,
           tokenizeMaxLineLength: 2_000,
           onPostRender: (node) => {
             if (node.shadowRoot?.querySelector("[data-error-wrapper]"))

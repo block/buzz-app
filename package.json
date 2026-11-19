@@ -49,6 +49,7 @@
     "@noble/curves": "2.0.1",
     "@pierre/diffs": "1.6.4",
     "@pydantic/genai-prices": "0.1.13",
+    "@shikijs/langs": "4.6.0",
     "@tabler/icons": "3.46.0",
     "@tabler/icons-react": "3.46.0",
     "@tanstack/react-router": "^1.168.10",

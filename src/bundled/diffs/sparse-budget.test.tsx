@@ -65,26 +65,53 @@ it.each([
   },
 );
 
+const tokens = '[style*="--diffs-token"]';
+const shadow = (container: HTMLElement) =>
+  container.querySelector("diffs-container")?.shadowRoot;
+
 it.each([
-  ["line count", `@@ -1,501 +1,501 @@\n${" val n = 1\n".repeat(501)}`],
-  ["line length", `@@ -1 +1 @@\n ${"x".repeat(2001)}\n`],
+  ["line count", `@@ -1,501 +1,501 @@\n${" val n = 1\n".repeat(501)}`, 501],
   [
     "character count",
     `@@ -1,13 +1,13 @@\n${` ${"x".repeat(1000)}\n`.repeat(13)}`,
+    13,
   ],
 ])(
-  "keeps patches over the %s budget raw before highlighting",
-  (_name, hunks) => {
+  "renders patches over the %s budget as a diff without highlighting",
+  async (_name, hunks, lines) => {
     const content = header + hunks;
     const files = parsePatch(content);
     expect(files).toHaveLength(1);
     const { container } = render(
       <DiffViewer content={content} files={files} />,
     );
-    expect(screen.getByRole("region", { name: "Raw diff" }).textContent).toBe(
-      content,
+    await vi.waitFor(() =>
+      expect(
+        shadow(container)?.querySelectorAll("pre [data-line]"),
+      ).toHaveLength(lines),
     );
-    expect(container.querySelector("diffs-container")).toBeNull();
-    expect(pierre.preloadHighlighter).not.toHaveBeenCalled();
+    expect(shadow(container)?.querySelector(tokens)).toBeNull();
+    expect(screen.queryByRole("region", { name: "Raw diff" })).toBeNull();
+    // No grammar loads for a file that will not be tokenized.
+    expect(pierre.preloadHighlighter).toHaveBeenCalledWith(
+      expect.objectContaining({ langs: ["text"] }),
+    );
   },
 );
+
+it("leaves only a line over the length budget unhighlighted", async () => {
+  const content = `${header}@@ -1,2 +1,2 @@\n val n = 1\n val ${"x".repeat(2001)} = 2\n`;
+  const { container } = render(
+    <DiffViewer content={content} files={parsePatch(content)} />,
+  );
+  // The short line's tokens show that highlighting ran for this file.
+  await vi.waitFor(() =>
+    expect(
+      shadow(container)?.querySelector(`pre [data-line="1"] ${tokens}`),
+    ).toBeTruthy(),
+  );
+  const long = shadow(container)?.querySelector('pre [data-line="2"]');
+  expect(long?.textContent).toContain("x".repeat(2001));
+  expect(long?.querySelector(tokens)).toBeNull();
+  expect(screen.queryByRole("region", { name: "Raw diff" })).toBeNull();
+});

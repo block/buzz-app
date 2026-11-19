@@ -200,7 +200,7 @@ it("reads crafted HTML whose anchors have no text as an empty paste, not an erro
   });
 });
 
-it("pastes text whose picture rides beside it, and attaches every other file", () => {
+it("pastes text first: files attach only without text, or when the text is just their names", () => {
   const paste = (
     flavors: { html?: string | undefined; plain?: string | undefined },
     ...files: File[]

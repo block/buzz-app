@@ -10734,6 +10734,8 @@ it("forgets a kept edit once it is saved, leaving a failed save to the outbox", 
     "c".repeat(64),
   );
   h.setDelivery("failed");
+  // Save clears the record; the failed outbox edit alone would also block a reopen.
+  expect(readView("scope", "edit:channel", null)).toBeNull();
   expect(h.input()).toHaveValue("Rewritten message");
   h.retarget({ channelId: "other" });
   h.retarget({ channelId: "channel" });

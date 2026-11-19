@@ -3,6 +3,8 @@ import { anchor, expectAnchor, open, settle, wheel } from "./timeline.mjs";
 
 test.use({
   pluginFixtures: true,
+  readState: true,
+  threadUnread: true,
   historyCounts: { alpha: 20, beta: 20 },
   viewport: { width: 1200, height: 650 },
 });
@@ -58,6 +60,28 @@ test("a workspace opens at the end on selection and reselect, and restores readi
   await readEarlier(page, region);
   await reselect(page);
   await expectBottom(page, region);
+
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 1");
+  await region
+    .locator(`[data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const side = page.locator("[data-panel-workspace]");
+  const main = page.getByRole("tablist", { name: "Transcript fixture tabs" });
+  await side
+    .getByRole("tab", { name: root.content })
+    .press("Alt+Shift+ArrowLeft");
+  const moved = main.getByRole("tab", { name: root.content });
+  await expect(moved).toHaveAttribute("aria-selected", "true");
+  await reselect(page);
+  await expect(
+    main.getByRole("tab", { name: "Transcript fixture" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(moved).toBeVisible();
+  await expectBottom(page, region);
+
   await readEarlier(page, region);
   const alpha = await anchor(page);
 

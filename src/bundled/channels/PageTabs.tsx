@@ -369,6 +369,13 @@ export function PageTabs({
       : 1,
   );
   const primaryTarget = workspace?.target;
+  const latestRequest = primaryTarget?.messageId
+    ? undefined
+    : workspace?.latestRequest;
+  const { selectMain } = tabState;
+  useLayoutEffect(() => {
+    if (latestRequest && !latestRequest.aborted) selectMain(undefined);
+  }, [latestRequest, selectMain]);
   const primaryChannel =
     primaryTarget &&
     channels.find((channel) => channel.id === primaryTarget.channelId);
@@ -514,11 +521,7 @@ export function PageTabs({
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
                             intro={workspace.intro}
-                            latestRequest={
-                              primaryTarget?.messageId
-                                ? undefined
-                                : workspace.latestRequest
-                            }
+                            latestRequest={latestRequest}
                             active={
                               secondary.selectedMain === "conversation" &&
                               !covered

@@ -46,6 +46,10 @@ function prose(node: TextNode): string {
   return (node.children ?? []).map(prose).join(separator);
 }
 
+/** A scanned tree's prose, flattened and bounded as `plainText` reads it. */
+export const treeText = (tree: TextNode, limit = 200) =>
+  shortText(prose(tree), limit);
+
 type PreviewOptions = Readonly<{
   storedPreview?: boolean;
   /** The most characters kept; 200 unless given. */
@@ -73,8 +77,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
   if (opener >= 0) bounded = `${bounded.slice(0, opener)}[Spoiler]`;
   const original = scanMarkdown(bounded);
   if (original.tooDeep) return "";
-  if (!bounded.includes("||"))
-    return shortText(prose(original.tree), options.limit ?? 200);
+  if (!bounded.includes("||")) return treeText(original.tree, options.limit);
   const prepared = prepareMarkdown(bounded);
   if (prepared.kind === "plain") return "";
   // Protect only authored spoiler delimiters, using the renderer's source
@@ -90,7 +93,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
     source = source.slice(0, offset) + delimiter + source.slice(offset + 2);
   const { tree, tooDeep } = scanMarkdown(source);
   if (!tooDeep) remarkSpoilers(delimiter, truncated)(tree);
-  return tooDeep ? "" : shortText(prose(tree), options.limit ?? 200);
+  return tooDeep ? "" : treeText(tree, options.limit);
 }
 
 /** Bounded CommonMark text, not rendered HTML or a fetch of linked/attached content. */

@@ -185,6 +185,7 @@ export type ProjectedAttachmentLinkName = Readonly<{
 export function projectMarkdownAttachments(
   content: string,
   attachmentUrls: ReadonlySet<string>,
+  scan = scanMarkdown(content),
 ): {
   content: string;
   seams: readonly number[];
@@ -192,7 +193,7 @@ export function projectMarkdownAttachments(
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
 } {
-  const { tooDeep, definitions, images, links } = scanMarkdown(content);
+  const { tooDeep, definitions, images, links } = scan;
   if (tooDeep)
     return {
       content,

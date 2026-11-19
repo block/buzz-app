@@ -1,14 +1,17 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
-import { plainText, sourceEnd } from "../notifications/content";
+import { plainText, sourceEnd, treeText } from "../notifications/content";
 import { profileKey } from "../profiles/target";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { projectMarkdownAttachments } from "../relay/message-content";
+import {
+  projectMarkdownAttachments,
+  scanMarkdown,
+} from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import { recentResults } from "./markdown-preparation";
+import { prepareMarkdown, recentResults } from "./markdown-preparation";
 import { normalizeWrappedLinks } from "./message-link-parts";
 import type { AgentLibrary } from "../agents/library";
 import {
@@ -26,6 +29,7 @@ export type PreviewMentions = Pick<
 > & { attachmentUrls?: ReadonlySet<string> | undefined };
 
 type Part = ReturnType<typeof renderedProfileMentionParts>[number];
+type Tree = ReturnType<typeof scanMarkdown>["tree"];
 
 /** Every identity a preview may name, for reading their profiles. */
 export const mentionedIds = (mentioned: PreviewMentions) => [
@@ -146,10 +150,11 @@ function mentionLabels(
 /**
  * The conversation's parts of `mentions`, on `raw`: its body up to `end`
  * and room past it for the binder to finish the longest name that can start
- * before it. A source body is projected as the conversation projects it, and
- * the parts placed back on the source. When the body was cut, a reference
- * directly before an image or link the cut may have left open stays text,
- * since the whole body may remove it and join different text to the name.
+ * before it, with `raw`'s parsed tree when one was made. A source body is
+ * projected as the conversation projects it, and the parts placed back on
+ * the source. When the body was cut, a reference directly before an image or
+ * link the cut may have left open stays text, since the whole body may
+ * remove it and join different text to the name.
  */
 function boundParts(
   raw: string,
@@ -159,16 +164,24 @@ function boundParts(
     attachmentUrls: ReadonlySet<string> | undefined;
   },
   labels: Labels,
-): Part[] | undefined {
+): { parts: Part[]; tree: Tree | undefined } | undefined {
   const urls = mentions.attachmentUrls;
+  const scan =
+    urls && (raw.includes("![") || urls.size) ? scanMarkdown(raw) : undefined;
   const projected =
-    urls && (raw.includes("![") || urls.size)
-      ? projectMarkdownAttachments(raw, urls)
-      : undefined;
+    urls && scan ? projectMarkdownAttachments(raw, urls, scan) : undefined;
   const body = projected?.content ?? raw;
   const seams = (projected?.seams ?? mentions.attachmentSeams ?? []).filter(
     (seam) => seam < body.length,
   );
+  // Unprojected, the binder's parse of `raw` is the one flattening reads.
+  let tree = scan?.tooDeep ? undefined : scan?.tree;
+  const prepared = projected
+    ? undefined
+    : prepareMarkdown(body, (bodyScan) => {
+        tree = bodyScan.tree;
+      });
+  if (prepared && prepared.content !== raw) tree = undefined;
   const parts = rawParts(
     body,
     renderedProfileMentionParts(
@@ -179,9 +192,11 @@ function boundParts(
         ...(seams.length ? { attachmentSeams: seams } : {}),
       },
       undefined,
+      [],
+      prepared,
     ),
   );
-  if (!parts || !projected) return parts;
+  if (!parts || !projected) return parts && { parts, tree };
   const edits: Edit[] = [];
   let removed = 0;
   for (const { start, end } of projected.removed) {
@@ -189,9 +204,9 @@ function boundParts(
     removed += end - start;
   }
   const placed = place(raw, parts, edits);
-  if (raw.length === mentions.content.length) return placed;
+  if (raw.length === mentions.content.length) return { parts: placed, tree };
   let offset = 0;
-  return placed.map((part) => {
+  const shown = placed.map((part) => {
     offset += part.text.length;
     const end = offset;
     const open =
@@ -200,6 +215,7 @@ function boundParts(
       !projected.removed.some((range) => range.start === end);
     return open ? { text: part.text } : part;
   });
+  return { parts: shown, tree };
 }
 
 // Private-use marks around a reference's interior, then its index. The
@@ -209,19 +225,68 @@ const INDEX = 0xe100;
 const flatSpaces = (value: string) =>
   value.replace(/[\p{Cc}\p{Bidi_Control}]/gu, " ").replace(/\s+/gu, " ");
 
+/** A reference as it reads flattened, its interior's spaces collapsed. */
+const flatChip = (text: string) => {
+  const chars = [...text];
+  return `${chars[0]}${flatSpaces(chars.slice(1, -1).join(""))}${chars.at(-1)}`;
+};
+
+/** Whether `text` can show a chip for `labels`: one reads as its name, or
+ * with a namesake qualifier, which may differ in case. */
+const mayName = (text: string, labels: Labels) =>
+  / \([a-f0-9]{64}\)/i.test(text) ||
+  labels.some(({ names }) =>
+    names.some((name) => text.includes(flatChip(`@${name}`))),
+  );
+
+/** Puts each marked reference in the text node of `tree` that holds it
+ * verbatim, so flattening the tree reads its marks where it reads. A
+ * reference no such node holds is left unmarked, as text. */
+function markTree(
+  tree: Tree,
+  source: string,
+  marked: readonly { at: number; length: number; text: string }[],
+) {
+  const pending = [tree];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    pending.push(...(node.children ?? []));
+    const [start, end] = [
+      node.position?.start.offset,
+      node.position?.end.offset,
+    ];
+    if (
+      node.type !== "text" ||
+      start === undefined ||
+      end === undefined ||
+      node.value !== source.slice(start, end)
+    )
+      continue;
+    let value = node.value;
+    for (const { at, length, text } of [...marked].reverse())
+      if (at >= start && at + length <= end)
+        value =
+          value.slice(0, at - start) + text + value.slice(at + length - start);
+    node.value = value;
+  }
+}
+
 /**
  * The conversation's `parts` of a body, flattened as preview text is. Each
- * reference's interior is marked before flattening, keeping its first and
- * last characters so the Markdown around it parses alike. A reference keeps
- * its place only where its marks and characters come through whole and in
- * order; Markdown, code or a spoiler that changes it leaves it literal.
- * The body is cut where flattening cuts it before marking, so marks cannot
- * move the cut; a reference the cut splits is text.
+ * reference's interior is marked, keeping its first and last characters. A
+ * reference keeps its place only where its marks and characters come through
+ * whole and in order; Markdown, code or a spoiler that changes it leaves it
+ * literal. With the body's parsed `tree`, the marks go into its prose text
+ * in place and the tree is flattened without parsing again. Otherwise the body is cut where flattening cuts it, marked so the Markdown
+ * around each reference parses alike, and flattened; marks cannot move the
+ * cut. A reference past `end` is text.
  */
 function flatParts(
   parts: Part[],
   end: number,
   truncated: boolean,
+  tree: Tree | undefined,
 ): Part[] | undefined {
   const body = parts.map((part) => part.text).join("");
   const free: string[] = [];
@@ -232,22 +297,33 @@ function flatParts(
   if (!OPEN || !CLOSE) return undefined;
   const marks = new RegExp(`${OPEN}[\uE100-\uF8FF]?|${CLOSE}`, "gu");
   const references: Part[] = [];
+  const marked: { at: number; length: number; text: string }[] = [];
   let offset = 0;
-  const marked = parts
-    .map((part) => {
-      const at = offset;
-      offset += part.text.length;
-      if (at >= end) return "";
-      if (!part.target || offset > end) return part.text.slice(0, end - at);
-      const chars = [...part.text];
-      const index = String.fromCharCode(INDEX + references.push(part) - 1);
-      return `${chars[0]}${OPEN}${index}${chars.slice(1, -1).join("")}${CLOSE}${chars.at(-1)}`;
-    })
-    .join("");
-  const flat = plainText(marked, {
-    limit: Number.POSITIVE_INFINITY,
-    presliced: { truncated },
-  });
+  for (const part of parts) {
+    const at = offset;
+    offset += part.text.length;
+    if (!part.target || offset > end) continue;
+    const chars = [...part.text];
+    const index = String.fromCharCode(INDEX + references.push(part) - 1);
+    const text = `${chars[0]}${OPEN}${index}${chars.slice(1, -1).join("")}${CLOSE}${chars.at(-1)}`;
+    marked.push({ at, length: part.text.length, text });
+  }
+  let flat: string;
+  if (tree && !body.includes("||")) {
+    markTree(tree, body, marked);
+    flat = treeText(tree, Number.POSITIVE_INFINITY);
+  } else {
+    let source = "";
+    let from = 0;
+    for (const { at, length, text } of marked) {
+      source += body.slice(from, at) + text;
+      from = at + length;
+    }
+    flat = plainText(source + body.slice(from, end), {
+      limit: Number.POSITIVE_INFINITY,
+      presliced: { truncated },
+    });
+  }
   const shown: Part[] = [];
   let plain = "";
   let next = 0;
@@ -262,8 +338,7 @@ function flatParts(
       if (flat.startsWith(rest, at + 2)) {
         plain = plain.slice(0, -1);
         if (plain) shown.push({ text: plain });
-        // As it reads flattened, with its spaces collapsed.
-        shown.push({ ...part, text: `${chars[0]}${interior}${chars.at(-1)}` });
+        shown.push({ ...part, text: flatChip(part.text) });
         plain = "";
         next = index + 1;
         at += 2 + rest.length;
@@ -294,6 +369,7 @@ function previewParts(
   full: string,
   text: string,
   start: number,
+  tree: Tree | undefined,
 ): Part[] | undefined {
   const opened = start > 0 ? "…" : "";
   if (!text.startsWith(opened)) return undefined;
@@ -304,7 +380,7 @@ function previewParts(
       ? shown.length - 1
       : -1;
   if (length < 0) return undefined;
-  const flat = flatParts(parts, end, truncated);
+  const flat = flatParts(parts, end, truncated, tree);
   if (!flat) return undefined;
   const source = flat.map((part) => part.text).join("");
   // `full`'s own closing "…" is not body text.
@@ -315,7 +391,12 @@ function previewParts(
   )
     length--;
   const [from, to] = [start, start + length];
-  if (!source.startsWith(full.slice(0, to))) return undefined;
+  // The tree includes the binder's room past `end`, which can change how
+  // the text before it reads: then flatten as `full` was, from `end`.
+  if (!source.startsWith(full.slice(0, to)))
+    return tree
+      ? previewParts(parts, end, truncated, full, text, start, undefined)
+      : undefined;
   const cut: Part[] = opened ? [{ text: opened }] : [];
   let offset = 0;
   for (const part of flat) {
@@ -353,17 +434,18 @@ function windowParts(
   for (const limit of [2 * (start + text.length) + 256, whole]) {
     const end = pointEnd(content, Math.min(whole, limit));
     const raw = content.slice(0, pointEnd(content, end + longest + QUALIFIED));
-    const parts = boundParts(raw, mentions, labels);
+    const bound = boundParts(raw, mentions, labels);
     const early = end < whole;
-    if (!parts || (!early && !parts.some((part) => part.target)))
+    if (!bound || (!early && !bound.parts.some((part) => part.target)))
       return undefined;
     const cut = previewParts(
-      parts,
+      bound.parts,
       end,
       content.length > end,
       full,
       text,
       start,
+      bound.tree,
     );
     if (cut || !early) return cut;
   }
@@ -408,6 +490,7 @@ export function PreviewText({
     if (!shown.near || edited || labels === "[]") return [{ text }];
     const message = { content, attachmentSeams: seams, attachmentUrls: urls };
     const parsed: Labels = JSON.parse(labels);
+    if (!mayName(text, parsed)) return [{ text }];
     // Binding reads no further than `readEnd`; past it only the length counts.
     const key = JSON.stringify([
       labels,

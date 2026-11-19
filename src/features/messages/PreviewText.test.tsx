@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render } from "@testing-library/react";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { afterEach, expect, it, vi } from "vitest";
 import { messagePreview, plainText } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
@@ -20,6 +21,11 @@ vi.mock("./profile-mentions", async (original) => {
     ...actual,
     renderedProfileMentionParts: vi.fn(actual.renderedProfileMentionParts),
   };
+});
+
+vi.mock("mdast-util-from-markdown", async (original) => {
+  const actual = await original<typeof import("mdast-util-from-markdown")>();
+  return { ...actual, fromMarkdown: vi.fn(actual.fromMarkdown) };
 });
 
 afterEach(cleanup);
@@ -421,4 +427,30 @@ it("binds a preview only once it comes near the screen", () => {
     rect.mockRestore();
     vi.unstubAllGlobals();
   }
+});
+
+it("parses a preview's body once to bind and flatten it", () => {
+  const body =
+    "once **hey** @tomb, see `code` and [a link](https://example.org)";
+  const text = messagePreview(body);
+  const parse = vi.mocked(fromMarkdown);
+  parse.mockClear();
+  const view = preview(body, { mentions: [tomb] }, { text });
+  expect(chips(view)).toEqual(["tomb"]);
+  expect(view).toHaveTextContent(text.replace("@", ""));
+  expect(parse).toHaveBeenCalledTimes(1);
+});
+
+it("does not bind a preview whose shown text names no one", () => {
+  const binder = vi.mocked(renderedProfileMentionParts);
+  binder.mockClear();
+  const body = `@tomb ${"far away words ".repeat(40)}`;
+  const full = plainText(body, { limit: 4000 });
+  const view = preview(
+    body,
+    { mentions: [tomb] },
+    { text: `…${full.slice(300, 400)}`, full, start: 300 },
+  );
+  expect(chips(view)).toEqual([]);
+  expect(binder).not.toHaveBeenCalled();
 });

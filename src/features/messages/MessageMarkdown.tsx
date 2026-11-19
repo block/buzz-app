@@ -74,14 +74,14 @@ type InlinePart = {
   target?: string | undefined;
   literal?: boolean;
 };
-type ProtectedContent = {
+export type ProtectedContent = {
   content: string;
   prefix: string;
   parts: InlinePart[];
 };
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
-function protectInlineContent(
+export function protectInlineContent(
   row: Pick<
     ChannelMessage,
     | "content"
@@ -227,7 +227,7 @@ function protectInlineContent(
   return { content, prefix, parts };
 }
 
-const placeholderPattern = (protectedContent: ProtectedContent) =>
+export const placeholderPattern = (protectedContent: ProtectedContent) =>
   new RegExp(
     `[\uE000\uFFFC]${protectedContent.prefix.slice(1)}(\\d+)[\uE002\uFFFC]`,
     "g",

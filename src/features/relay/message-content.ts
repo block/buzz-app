@@ -124,16 +124,11 @@ function resolvedNodeUrl(
 }
 
 /** Seams are the stripped body's offsets where removed text once separated its
- * neighbors; only interior ones can join text that was not adjacent. `removed`
- * are the merged source ranges taken out, in order. */
+ * neighbors; only interior ones can join text that was not adjacent. */
 function stripRanges(
   content: string,
   ranges: readonly { start: number; end: number }[],
-): {
-  content: string;
-  seams: readonly number[];
-  removed: readonly { start: number; end: number }[];
-} {
+): { content: string; seams: readonly number[] } {
   const merged: Array<{ start: number; end: number }> = [];
   for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
     const previous = merged.at(-1);
@@ -158,7 +153,6 @@ function stripRanges(
     seams: Object.freeze(
       seams.filter((seam) => seam > 0 && seam < stripped.length),
     ),
-    removed: Object.freeze(merged),
   };
 }
 
@@ -185,20 +179,17 @@ export type ProjectedAttachmentLinkName = Readonly<{
 export function projectMarkdownAttachments(
   content: string,
   attachmentUrls: ReadonlySet<string>,
-  scan = scanMarkdown(content),
 ): {
   content: string;
   seams: readonly number[];
-  removed: readonly { start: number; end: number }[];
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
 } {
-  const { tooDeep, definitions, images, links } = scan;
+  const { tooDeep, definitions, images, links } = scanMarkdown(content);
   if (tooDeep)
     return {
       content,
       seams: Object.freeze([]),
-      removed: Object.freeze([]),
       urls: Object.freeze([]),
       names: Object.freeze([]),
     };

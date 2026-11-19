@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { afterEach, expect, it, vi } from "vitest";
+import { eventMentions, searchText } from "../../app/shell/useSearchMessages";
 import { messagePreview, plainText } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
@@ -13,6 +14,7 @@ import {
   PreviewText,
   withMentionedIds,
 } from "./PreviewText";
+import { preparedMarkdown } from "./markdown-preparation";
 import { renderedProfileMentionParts } from "./profile-mentions";
 
 vi.mock("./profile-mentions", async (original) => {
@@ -336,46 +338,6 @@ it("reads named identities before the optional mentioned ones, within budget", (
   expect(withMentionedIds(many, mentioned)).toEqual(many);
 });
 
-it("binds a source body's search preview after removing its attachments, as its conversation does", () => {
-  const body = "unique @Ann Lee![x](https://example.org/a.png)x";
-  const text = plainText(body, { limit: 4000 });
-  const view = preview(
-    body,
-    { mentions: [ann, annLee], attachmentUrls: new Set() },
-    { text },
-  );
-  expect(targets(view)).toEqual([profileTarget(ann)]);
-  expect(view).toHaveTextContent("unique Ann Lee[Image]x");
-});
-
-it("binds only what a preview can show, with room to finish a name", () => {
-  const binder = vi.mocked(renderedProfileMentionParts);
-  binder.mockClear();
-  const body = `@tomb ${"**word** ".repeat(12_000)}`;
-  const view = preview(
-    body,
-    { mentions: [tomb] },
-    { text: messagePreview(body) },
-  );
-  expect(chips(view)).toEqual(["tomb"]);
-  const bound = binder.mock.calls[0]?.[0].content ?? "";
-  expect(bound.length).toBeLessThan(4096 + 100);
-  expect(body.startsWith(bound)).toBe(true);
-});
-
-it("leaves a name text before an image its bound leaves open", () => {
-  // Whole, the image goes and "x" joins the name: the conversation binds Ann.
-  const body = `${"x ".repeat(1950)}@Ann Lee![x](https://example.org/${"a".repeat(400)}.png)x`;
-  const text = plainText(body, { limit: 4000 });
-  const view = preview(
-    body,
-    { mentions: [ann, annLee], attachmentUrls: new Set() },
-    { text },
-  );
-  expect(targets(view)).toEqual([]);
-  expect(view).toHaveTextContent(text);
-});
-
 it("keeps chips beside authored mark characters and collapsed spaces", () => {
   const marked = "odd \uE011 glyph and \uE010\uE100 then @tomb here";
   expect(
@@ -429,10 +391,11 @@ it("binds a preview only once it comes near the screen", () => {
   }
 });
 
-it("parses a preview's body once to bind and flatten it", () => {
+it("shares its conversation's preparation and flattens the bound body once", () => {
   const body =
     "once **hey** @tomb, see `code` and [a link](https://example.org)";
   const text = messagePreview(body);
+  preparedMarkdown(body);
   const parse = vi.mocked(fromMarkdown);
   parse.mockClear();
   const view = preview(body, { mentions: [tomb] }, { text });
@@ -440,6 +403,113 @@ it("parses a preview's body once to bind and flatten it", () => {
   expect(view).toHaveTextContent(text.replace("@", ""));
   expect(parse).toHaveBeenCalledTimes(1);
 });
+
+it("flattens a long body only to the blank line past what its preview shows", () => {
+  const first = `@tomb ${"**word** ".repeat(100)}\n\n`;
+  const body = `${first}${"**word** ".repeat(1_500)}`;
+  const text = messagePreview(body);
+  preparedMarkdown(body);
+  const parse = vi.mocked(fromMarkdown);
+  parse.mockClear();
+  const view = preview(body, { mentions: [tomb] }, { text });
+  expect(chips(view)).toEqual(["tomb"]);
+  expect(parse).toHaveBeenCalledTimes(1);
+  expect(String(parse.mock.calls[0]?.[0]).length).toBeLessThan(
+    first.length + 50,
+  );
+});
+
+it("leaves a preview text when its body is longer than previews bind", () => {
+  const body = `@tomb ${"**word** ".repeat(2_000)}`;
+  const text = messagePreview(body);
+  const view = preview(body, { mentions: [tomb] }, { text });
+  expect(chips(view)).toEqual([]);
+  expect(view).toHaveTextContent(text);
+});
+
+it.each([
+  [
+    "inline HTML that closes far past the preview",
+    `${"word ".repeat(30)}<span title="@tomb ${"x ".repeat(400)}">hi</span>\n\nmore`,
+  ],
+  [
+    "inline HTML split by a CRLF line break",
+    `<span title="@tomb ${"x ".repeat(350)}\r\n${"x ".repeat(300)}">hi</span>\r\n\r\nmore`,
+  ],
+  [
+    "a body nested too deeply far past the preview",
+    `@tomb ${"word ".repeat(150)}\n\n${"lorem\n\n".repeat(800)}\n\n${">".repeat(101)} x`,
+  ],
+  [
+    "a reference defined far past the preview",
+    `[@tomb] hi ${"word ".repeat(150)}\n\n${"lorem\n\n".repeat(800)}\n\n[@tomb]: https://example.org`,
+  ],
+])("binds a name in %s as its conversation does", (_, body) => {
+  const text = messagePreview(body);
+  expect(text).toContain("@tomb");
+  expect(chips(preview(body, { mentions: [tomb] }, { text }))).toEqual([]);
+});
+
+it("binds a body with attachments and a repaired link past the preview as its conversation does", () => {
+  const body = `@tomb ${"word ".repeat(150)}\n\n![i](https://example.org/a.png) after\n\n[docs]\\(https://example.org/a)`;
+  const event = { kind: 9, content: body, tags: [["p", tomb]] };
+  const full = searchText(event);
+  const view = render(
+    <PreviewText
+      text={full.slice(0, 120)}
+      full={full}
+      mentions={eventMentions(event)}
+      session={session}
+      channelId="room"
+    />,
+  ).container;
+  expect(chips(view)).toEqual([]);
+});
+
+/** A search hit's preview of `body`, read as search reads the event. */
+const searched = (body: string, tags: string[][], length: number) => {
+  const event = { kind: 9, content: body, tags };
+  const full = searchText(event);
+  return render(
+    <PreviewText
+      text={full.slice(0, length)}
+      full={full}
+      mentions={eventMentions(event)}
+      session={session}
+      channelId="room"
+    />,
+  ).container;
+};
+
+const attachment = `https://example.org/${"a".repeat(2800)}`;
+it.each([
+  ["unique @Ann Lee![x](https://example.org/a.png)x", [ann]],
+  [
+    `${"x ".repeat(1950)}@Ann Lee![x](https://example.org/${"a".repeat(400)}.png)x`,
+    [ann],
+  ],
+  [
+    `unique @Ann Lee![a](https://example.org/a.png)![b][late]x\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/b.png`,
+    [ann],
+  ],
+  [
+    `unique x![a][late]@Ann\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/a.png`,
+    [],
+  ],
+  [`${"word ".repeat(290)}R and D unique @Ann Lee<${attachment}>x`, [ann]],
+  [`${"word ".repeat(290)}R&amp;D unique @Ann Lee<${attachment}>x`, [ann]],
+])(
+  "binds a search hit's body with its attachments removed, as its conversation does: %#",
+  (body, expected) => {
+    const tags = [
+      ["p", ann],
+      ["p", annLee],
+      ["imeta", `url ${attachment}`],
+    ];
+    const view = searched(body, tags, 4000);
+    expect(targets(view)).toEqual(expected.map((id) => profileTarget(id)));
+  },
+);
 
 it("does not bind a preview whose shown text names no one", () => {
   const binder = vi.mocked(renderedProfileMentionParts);
@@ -453,30 +523,6 @@ it("does not bind a preview whose shown text names no one", () => {
   );
   expect(chips(view)).toEqual([]);
   expect(binder).not.toHaveBeenCalled();
-});
-
-it("leaves a name text before images whose removal past its bound is unknown", () => {
-  // The conversation removes both images, joining "x": it binds Ann.
-  const body = `unique @Ann Lee![a](https://example.org/a.png)![b][late]x\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/b.png`;
-  const full = plainText(body, { limit: 4000 });
-  const view = preview(
-    body,
-    { mentions: [ann, annLee], attachmentUrls: new Set() },
-    { text: full.slice(0, 200), full },
-  );
-  expect(targets(view)).not.toContain(profileTarget(annLee));
-});
-
-it("leaves a name text after an image whose removal past its bound is unknown", () => {
-  // The conversation removes the image, so "@" follows "x": it binds no one.
-  const body = `unique x![a][late]@Ann\n\n${"some prose here ".repeat(320)}\n\n[late]: https://example.org/a.png`;
-  const full = plainText(body, { limit: 4000 });
-  const view = preview(
-    body,
-    { mentions: [ann], attachmentUrls: new Set() },
-    { text: full.slice(0, 200), full },
-  );
-  expect(targets(view)).toEqual([]);
 });
 
 it("keeps chips beside text the Markdown decodes", () => {

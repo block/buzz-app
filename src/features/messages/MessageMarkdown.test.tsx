@@ -1094,6 +1094,7 @@ it("renders tagged agent library names and profile names with the same agent ico
     const html = render(`@${name} can you also join`, options);
     expect(html).toContain('data-mention-kind="agent"');
     expect(html).toContain(`aria-label="View ${name} profile"`);
+    expect(html).toContain('role="img" aria-label="agent @"');
     expect(html).toContain(
       renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
     );

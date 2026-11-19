@@ -46,40 +46,33 @@ function prose(node: TextNode): string {
   return (node.children ?? []).map(prose).join(separator);
 }
 
-/** A scanned tree's prose, flattened and bounded as `plainText` reads it. */
-export const treeText = (tree: TextNode, limit = 200) =>
-  shortText(prose(tree), limit);
-
 type PreviewOptions = Readonly<{
   storedPreview?: boolean;
   /** The most characters kept; 200 unless given. */
   limit?: number;
-  /** Content its caller already cut at `sourceEnd`, and whether that cut
-   * anything, so text added to it does not move the cut. */
-  presliced?: Readonly<{ truncated: boolean }>;
 }>;
-
-/** Where flattening cuts a source: on a whole code point, never between a
- * surrogate pair. */
-export const sourceEnd = (content: string) =>
-  /[\uD800-\uDBFF]/.test(content.charAt(4095)) ? 4095 : 4096;
 
 /** Flattened, bounded prose; empty when nothing displayable remains.
  * Stored previews have lost code/escape provenance and may have been cut. */
 export function plainText(content: string, options: PreviewOptions = {}) {
-  const end = sourceEnd(content);
-  const truncated = options.presliced?.truncated ?? content.length > end;
-  let bounded = options.presliced ? content : content.slice(0, end);
+  // Cut the source on a whole code point, never between a surrogate pair.
+  const end = /[\uD800-\uDBFF]/.test(content.charAt(4095)) ? 4095 : 4096;
+  let bounded = content.slice(0, end);
   // Old flattened text cannot distinguish a real closing delimiter from
   // literal pipes inside the hidden text. Hide everything after its first
   // possible opener; newly saved redacted previews contain no such delimiter.
   const opener = options.storedPreview ? bounded.indexOf("||") : -1;
   if (opener >= 0) bounded = `${bounded.slice(0, opener)}[Spoiler]`;
-  const original = scanMarkdown(bounded);
-  if (original.tooDeep) return "";
-  if (!bounded.includes("||")) return treeText(original.tree, options.limit);
-  const prepared = prepareMarkdown(bounded);
+  // Read the body as its conversation renders it, wrapped links repaired.
+  let scan: ReturnType<typeof scanMarkdown> | undefined;
+  const prepared = prepareMarkdown(bounded, (made) => {
+    scan = made;
+  });
   if (prepared.kind === "plain") return "";
+  const original = scan ?? scanMarkdown(prepared.content);
+  if (original.tooDeep) return "";
+  if (!prepared.content.includes("||"))
+    return shortText(prose(original.tree), options.limit ?? 200);
   // Protect only authored spoiler delimiters, using the renderer's source
   // rules. A collision-free text token survives Markdown decoding without
   // turning escaped pipes, code or table grammar into hidden content.
@@ -91,9 +84,23 @@ export function plainText(content: string, options: PreviewOptions = {}) {
   let source = prepared.content;
   for (const offset of [...prepared.spoilerDelimiters].reverse())
     source = source.slice(0, offset) + delimiter + source.slice(offset + 2);
+  return spoilerText(source, delimiter, {
+    truncated: content.length > end,
+    limit: options.limit,
+  });
+}
+
+/** Flattened, bounded prose of `source`, where `delimiter` stands for each
+ * authored spoiler delimiter; empty when it nests too deeply. */
+export function spoilerText(
+  source: string,
+  delimiter: string,
+  options: Readonly<{ truncated?: boolean; limit?: number | undefined }> = {},
+) {
   const { tree, tooDeep } = scanMarkdown(source);
-  if (!tooDeep) remarkSpoilers(delimiter, truncated)(tree);
-  return tooDeep ? "" : treeText(tree, options.limit);
+  if (tooDeep) return "";
+  remarkSpoilers(delimiter, options.truncated ?? false)(tree);
+  return shortText(prose(tree), options.limit ?? 200);
 }
 
 /** Bounded CommonMark text, not rendered HTML or a fetch of linked/attached content. */

@@ -14,6 +14,7 @@ import {
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
 import { imetaAttachmentUrls } from "../../features/relay/fold";
+import { projectMarkdownAttachments } from "../../features/relay/message-content";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
@@ -65,20 +66,31 @@ export function eventText(event: { kind: number; content: string }) {
   return typeof body?.content === "string" ? body.content : "Agent message";
 }
 
-/** An indexed event's text as it reads, without Markdown syntax and with
- * spoilers hidden, for snippets and previews. */
-export function searchText(event: { kind: number; content: string }) {
-  return plainText(eventText(event), { limit: 4000 });
-}
-
-/** An indexed event's body and signed mentions, read from its tags as a
- * message reads them: `p` recipients and two-field `mention` references,
- * with the attachments its conversation projects out of the body. */
-export function eventMentions(event: {
+type IndexedEvent = {
   kind: number;
   content: string;
   tags: readonly (readonly string[])[];
-}): PreviewMentions {
+};
+
+/** An indexed event's body as its conversation shows it, with its images
+ * and attachment links projected out the same way. */
+function eventBody(event: IndexedEvent) {
+  const content = eventText(event);
+  const urls = imetaAttachmentUrls(event);
+  return event.kind !== 40008 && (content.includes("![") || urls.size)
+    ? projectMarkdownAttachments(content, urls)
+    : { content, seams: [] };
+}
+
+/** An indexed event's text as it reads, without Markdown syntax and with
+ * spoilers hidden, for snippets and previews. */
+export function searchText(event: IndexedEvent) {
+  return plainText(eventBody(event).content, { limit: 4000 });
+}
+
+/** An indexed event's body and signed mentions, read from its tags as a
+ * message reads them: `p` recipients and two-field `mention` references. */
+export function eventMentions(event: IndexedEvent): PreviewMentions {
   const keys = (pick: (tag: readonly string[]) => boolean) => [
     ...new Set(
       event.tags.flatMap((tag) =>
@@ -86,14 +98,12 @@ export function eventMentions(event: {
       ),
     ),
   ];
+  const { content, seams } = eventBody(event);
   return {
-    content: eventText(event),
+    content,
     mentions: keys(([name]) => name === "p"),
     mentionReferences: keys((tag) => tag.length === 2 && tag[0] === "mention"),
-    // The conversation removes images and attachment links before binding.
-    ...(event.kind !== 40008
-      ? { attachmentUrls: imetaAttachmentUrls(event) }
-      : {}),
+    ...(seams.length ? { attachmentSeams: seams } : {}),
   };
 }
 type Result = {

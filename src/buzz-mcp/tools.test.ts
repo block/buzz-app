@@ -958,7 +958,7 @@ it.each([
   },
 );
 
-it("shows a message's other tags in a read, but not its signatures", async () => {
+it("shows a message's meaningful tags in a read, but not its bookkeeping", async () => {
   const id = "4".repeat(64);
   const shown = [
     ["p", bob],
@@ -966,15 +966,20 @@ it("shows a message's other tags in a read, but not its signatures", async () =>
     ["t", "release"],
     ["imeta", "url https://relay.test/media/a.png", "m image/png"],
     ["buzz:request", nested],
-    ["audience", "agents"],
   ];
   const auth = ["auth", bob, "kind=9", "8".repeat(128)];
+  const hidden = [
+    ["audience", "agents"],
+    ["client-id", "c1"],
+    ["ms", "5"],
+    ["model", bob, "m"],
+  ];
   const { client } = fake([
     ...community,
     event({
       id,
       content: "tagged",
-      tags: [["h", "chan"], auth, ["e", root, "", "root"], ...shown],
+      tags: [["h", "chan"], auth, ["e", root, "", "root"], ...shown, ...hidden],
     }),
   ]);
   const line = (await read(client, { channel: "chan" }))

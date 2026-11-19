@@ -36,10 +36,23 @@ export function withNames<T extends { id: string; pubkey: string }>(
   };
 }
 
-/** A message's tags for an agent to read: all but its channel and its `auth`
- * attestation, whose signature an agent never needs. */
+/** Tags that say what a message means: who it mentions, what it quotes or
+ * refers to, the thread it came from, the message it answers, its files,
+ * topics and custom emoji. Transport and runtime bookkeeping stays out. */
+const READABLE = new Set([
+  "p",
+  "q",
+  "e",
+  "buzz:request",
+  "buzz:sent-from-thread",
+  "imeta",
+  "t",
+  "emoji",
+]);
+
+/** A message's tags for an agent to read. */
 export const readableTags = (tags: readonly (readonly string[])[]) =>
-  tags.filter(([name]) => name !== "h" && name !== "auth");
+  tags.filter(([name]) => READABLE.has(name ?? ""));
 
 /** A message's tags with the files and custom emoji an edit may have
  * replaced, as its timeline shows them. */

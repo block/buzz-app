@@ -2,16 +2,17 @@ import { expect, it } from "vitest";
 import { keypair, message, signed } from "../../features/relay/testing";
 import { conversationHistory } from "./history";
 
-it("keeps each context message's tags but its channel and signatures", async () => {
+it("keeps each context message's meaningful tags, not its bookkeeping", async () => {
   const alice = keypair();
   const tags = [
     ["p", alice.pubkey],
     ["t", "release"],
-    ["audience", "agents"],
   ];
   const earlier = message(alice, "c", "Earlier", 10, [
     ["auth", alice.pubkey, "kind=9", "8".repeat(128)],
     ...tags,
+    ["audience", "agents"],
+    ["model", alice.pubkey, "m"],
   ]);
   const history = await conversationHistory(
     message(alice, "c", "Now", 20),

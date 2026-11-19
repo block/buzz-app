@@ -556,7 +556,7 @@ it("tells a turn a mention starts what it owes the mention, and a wake's turn no
   expect(system).not.toContain("belongs to a different session of you");
 });
 
-it("keeps each context message's tags but its channel and signatures", () => {
+it("keeps each context message's meaningful tags, not its bookkeeping", () => {
   const tags = [
     ["p", bob],
     ["q", "1".repeat(64)],
@@ -571,7 +571,13 @@ it("keeps each context message's tags but its channel and signatures", () => {
     topLevel: true,
     context: [
       event("2", "earlier", {
-        tags: [["h", "chan"], ["auth", bob, "kind=9", signature], ...tags],
+        tags: [
+          ["h", "chan"],
+          ["auth", bob, "kind=9", signature],
+          ["client-id", "c1"],
+          ...tags,
+          ["ms", "5"],
+        ],
       }),
     ],
     total: 2,

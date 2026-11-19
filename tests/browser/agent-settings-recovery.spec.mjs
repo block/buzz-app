@@ -61,6 +61,14 @@ test("reverts incompatible agent settings from Previous Versions", async ({
     .toEqual({ scope: "channel", model: "older-model", effort: "high" });
 
   await expect(history).toHaveCount(0);
+  // Successful recovery remounts the now-available split settings editor.
+  // Its history still contains the incompatible revision.
+  const disclosure = page.getByRole("button", {
+    name: "Previous versions",
+    exact: true,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await disclosure.click();
   await expect(incompatible).toBeVisible();
 
   await page.reload({ waitUntil: "domcontentloaded" });

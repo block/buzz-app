@@ -40,6 +40,8 @@ export type ButtonProps = Omit<
   children: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
+  /** Equal horizontal insets for compact actions, including their leading icon. */
+  inset?: "symmetric";
   loading?: boolean;
   /** Use disabled colors while retaining the loading spinner and geometry. */
   loadingAppearance?: "default" | "disabled";
@@ -56,6 +58,7 @@ export function Button({
   children,
   variant = "subtle",
   size = "md",
+  inset,
   shape = "capsule",
   type = "button",
   loading = false,
@@ -103,6 +106,7 @@ export function Button({
       data-outline-subtle={variant === "outline-subtle" || undefined}
       data-muted={variant === "subtle-muted" || undefined}
       data-size={size === "compact" ? "sm" : size === "default" ? "md" : size}
+      data-inset={inset}
       data-button-shape={shape}
       data-loading={loading || undefined}
       data-loading-appearance={loading ? loadingAppearance : undefined}

@@ -365,6 +365,11 @@ one preview may slide between its own pills once open (`PreviewCard warm`). The
 accessible name is never the hint: an icon button keeps its `aria-label` in
 every bucket.
 
+The compact **Link to chat / Unlink from chat** action on a PR link opens at
+once with `PreviewCard immediate`. It is a direct action, rather than a rich
+object preview; other link previews keep their preview timing.
+It uses `Button size="xs" inset="symmetric"` for equal 8px horizontal padding.
+
 ### States, feedback, and motion
 
 Design the states as part of the layout, not as unrelated replacement screens.

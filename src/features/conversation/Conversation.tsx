@@ -98,8 +98,12 @@ export function useMediaReview() {
 }
 
 const Context = createContext<Conversation | undefined>(undefined);
+/** Bundled link renderers also appear outside conversations, such as in notes. */
+export function useOptionalConversation() {
+  return useContext(Context);
+}
 export function useConversation() {
-  const value = useContext(Context);
+  const value = useOptionalConversation();
   if (!value)
     throw new Error("Conversation readers need a ConversationChannel");
   return value;

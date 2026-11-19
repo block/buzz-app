@@ -91,12 +91,17 @@
     padding: var(--space-2) var(--space-3);
   }
   /* A leading icon sits as close to the leading edge as to the top and bottom. */
-  .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
+  .buzz-button[data-size="xs"]:not([data-inset="symmetric"]):has(
+    > .buzz-button-label > svg:first-child
+  ) {
     padding-inline-start: var(--space-1);
   }
   /* A small leading dot needs less inset than a text-only capsule. */
   .buzz-button[data-size="xs"][data-leading-dot] {
     padding-inline-start: calc(var(--space-3) - var(--space-half));
+  }
+  .buzz-button[data-size="xs"][data-inset="symmetric"] {
+    padding-inline: var(--space-2);
   }
   /* Text links align with adjacent body copy, with the shared focus treatment. */
   .buzz-button[data-size="text"] {

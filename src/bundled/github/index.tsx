@@ -52,7 +52,7 @@ import { addPullStateTool } from "./pull-state-tool";
 import { gitHubPulls } from "./service";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { stateIcons } from "./pull-state-view";
-import { GitHubLink } from "./GitHubLink";
+import { ChatPullLink } from "./ChatPullLink";
 import {
   SoloPullIcon,
   SoloPullLink,
@@ -143,7 +143,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // whichever plugin registered first. Other GitHub pages stay with Links.
     order: -1,
     className: inlineStyles.link,
-    component: ({ url }) => <GitHubLink url={url} states={states} />,
+    component: ({ url }) => (
+      <ChatPullLink
+        url={url}
+        states={states}
+        relay={ctx.relay}
+        pullsFor={pullsFor}
+      />
+    ),
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu

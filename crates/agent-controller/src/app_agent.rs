@@ -1273,9 +1273,7 @@ impl AppAgents {
             return Ok(());
         };
         // Under the keys lock, a joining row is no Join under way.
-        let last = !rows
-            .iter()
-            .any(|other| other.relay != relay && other.live(pubkey, &other.relay));
+        let last = last_membership(&rows, pubkey, relay);
         let unfinished: Vec<&AppAgent> = rows
             .iter()
             .filter(|other| {
@@ -1306,6 +1304,12 @@ impl AppAgents {
     }
     /// Deletes every key it still has, as an erase that removes agents does
     /// before the rows go with app data. Absence is success, so it repeats safely.
+    /// Whether removing it from the community at `relay` leaves it in none:
+    /// as `remove` decides, so unfinished joins elsewhere don't count.
+    pub fn is_last_membership(&self, pubkey: &str, relay: &str) -> Result<bool> {
+        let relay = canonical_relay(relay)?;
+        Ok(last_membership(&self.list()?, pubkey, &relay))
+    }
     pub fn delete_keys(&self, credentials: &dyn Credentials) -> Result<()> {
         let _keys = self.keys_lock()?;
         for agent in self.list()?.into_iter().filter(|agent| !agent.deleted) {
@@ -1322,6 +1326,12 @@ impl AppAgents {
             Ok(())
         })
     }
+}
+
+fn last_membership(rows: &[AppAgent], pubkey: &str, relay: &str) -> bool {
+    !rows
+        .iter()
+        .any(|other| other.relay != relay && other.live(pubkey, &other.relay))
 }
 
 /// One copy of the app taking an agent out of a community: see

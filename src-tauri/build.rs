@@ -253,6 +253,8 @@ fn main() {
             "app_agent_remember",
             "app_agent_claim",
             "app_agent_release",
+            "agent_env_status",
+            "agent_env_set",
             "claude_api_key_status",
             "claude_api_key_set",
             "claude_api_key_clear",

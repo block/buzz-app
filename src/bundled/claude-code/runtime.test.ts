@@ -90,11 +90,24 @@ vi.mock("./transcript", async (actual) => {
       real.readLatestTurns(...args)) as typeof real.readLatestTurns,
   };
 });
+const env = vi.hoisted(() => ({
+  own: new Map<string, boolean | undefined>(),
+  gate: undefined as Promise<void> | undefined,
+  asked: 0,
+}));
+vi.mock("../agents/agent-env", () => ({
+  hasOwnEnv: async (agent: string) => {
+    env.asked++;
+    await env.gate;
+    return env.own.has(agent) ? env.own.get(agent) : false;
+  },
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
   transcriptReads.full = undefined;
   transcriptReads.latest = undefined;
+  env.own.clear();
 });
 
 const self = "c".repeat(64);
@@ -506,6 +519,8 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options).not.toHaveProperty("agent");
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
+  // It runs the agent, so it asks for the agent environment variables.
+  expect(claude?.options.secrets).toEqual(["agent-env"]);
   expect(published).toEqual([]);
 });
 
@@ -6929,3 +6944,61 @@ it.each(["thread", "channel"] as const)(
     }
   },
 );
+
+it.each([
+  ["has its own list", true],
+  ["can't say whether it has one", undefined],
+])("leaves the spare to other agents when an agent %s", async (_, own) => {
+  const mention = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, deliver, claudes } = setup();
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  // A list saved while the spare runs: the spare started without it.
+  env.own.set(self, own);
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  expect(spare.prompts).toHaveLength(0);
+  const started = claudes().find(
+    (process) => process !== spare && process.prompts.length,
+  );
+  expect(started?.options.envAgent).toBe(self);
+});
+
+it("starts no process for a presence answer that comes after the agent stops", async () => {
+  const mention = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, deliver, claudes } = setup();
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  let answer = () => {};
+  env.gate = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  env.own.set(self, true);
+  try {
+    const asked = env.asked;
+    void deliver({ type: "mention", event: mention });
+    await flush(10);
+    expect(env.asked).toBe(asked + 1);
+    const started = claudes().length;
+    runtime.sync([]);
+    await flush(10);
+    answer();
+    await flush(10);
+    expect(claudes()).toHaveLength(started);
+  } finally {
+    env.gate = undefined;
+    answer();
+  }
+});

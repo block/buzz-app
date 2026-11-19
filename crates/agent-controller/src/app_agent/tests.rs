@@ -1876,3 +1876,30 @@ fn a_forced_profile_republishes_a_current_one_with_its_saved_owner_proof() {
     assert_eq!(event["tags"], serde_json::json!([saved]));
     assert!(event["created_at"].as_u64() > first["created_at"].as_u64());
 }
+
+#[test]
+fn the_last_membership_ignores_unfinished_joins_and_counts_live_ones() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    assert!(agents.is_last_membership(&agent.pubkey, RELAY).unwrap());
+    agents
+        .update(|rows| {
+            rows.push(AppAgent {
+                relay: OTHER.into(),
+                home: Some(RELAY.into()),
+                joining: true,
+                ..agent.clone()
+            });
+            Ok(())
+        })
+        .unwrap();
+    // As `remove` decides: an unfinished join is no community it stays in.
+    assert!(agents.is_last_membership(&agent.pubkey, RELAY).unwrap());
+    agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    assert!(!agents.is_last_membership(&agent.pubkey, RELAY).unwrap());
+    assert!(!agents.is_last_membership(&agent.pubkey, OTHER).unwrap());
+}

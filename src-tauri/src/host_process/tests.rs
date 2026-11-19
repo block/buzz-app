@@ -1187,9 +1187,18 @@ fn every_process_is_told_the_buzz_version_a_plugin_cannot_change() {
             ("NOSTR_KEY", "from-profile"),
         ]
         .map(|(name, value)| (name.into(), value.into()));
+        let agent_env = [
+            ("PROFILE_SETTING", "from-list"),
+            ("PLUGIN_SETTING", "from-list"),
+            ("LIST_SETTING", "listed"),
+            ("BUZZ_FROM_LIST", "1"),
+            ("NOSTR_FROM_LIST", "1"),
+        ]
+        .map(|(name, value)| (name.into(), value.into()));
         set_environment(
             &mut command,
             &login_shell,
+            &agent_env,
             OsStr::new("/bin"),
             &environment,
             "0.7.12",
@@ -1200,8 +1209,11 @@ fn every_process_is_told_the_buzz_version_a_plugin_cannot_change() {
         assert_eq!(get(&command, "PATH").as_deref(), Some("/bin"));
         assert_eq!(
             get(&command, "PROFILE_SETTING").as_deref(),
-            Some("forwarded")
+            Some("from-list")
         );
+        assert_eq!(get(&command, "LIST_SETTING").as_deref(), Some("listed"));
+        assert_eq!(get(&command, "BUZZ_FROM_LIST"), None);
+        assert_eq!(get(&command, "NOSTR_FROM_LIST"), None);
         assert_eq!(get(&command, "BUZZ_RESOLVING_ENVIRONMENT"), None);
         assert_eq!(get(&command, "NOSTR_KEY"), None);
     }

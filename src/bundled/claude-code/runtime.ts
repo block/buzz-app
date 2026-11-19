@@ -70,6 +70,7 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
+import { hasOwnEnv } from "../agents/agent-env";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
@@ -199,6 +200,21 @@ export type SavedConversation = Conversation &
 /** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
  * process. */
 const STOP_WAIT_MS = 5_000;
+/** An agent's own `claude` asks for the environment variables saved for that
+ * agent; its pinned protected copy and setup steps never do. A spare, started
+ * for no agent yet, asks with none named and gets none. */
+const agentEnv = (
+  id: string,
+  options: Parameters<Spawn>[1],
+  agent?: AgentKey,
+) =>
+  id === "claude"
+    ? {
+        ...options,
+        secrets: [...(options?.secrets ?? []), "agent-env" as const],
+        ...(agent && { envAgent: pubkeyOf(agent) }),
+      }
+    : options;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -326,7 +342,7 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     // Started ahead of need, it never stops a conversation to make room.
-    (id, options) => this.spawn(id, options),
+    (id, options) => this.spawn(id, agentEnv(id, options)),
     (_conversation, message) =>
       respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
@@ -2303,9 +2319,20 @@ export class ClaudeRuntime {
       };
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawn(id, options),
+      spawn: (id, options) => this.spawn(id, agentEnv(id, options, agent)),
       room: () => this.room(),
-      ...(!this.target ? { spare: this.spare } : {}),
+      // The spare has no agent's own variables: an agent with its own, or
+      // whose list can't be read, starts fresh. Checked at each handover.
+      ...(!this.target
+        ? {
+            spare: {
+              take: async (where: Parameters<Spare["take"]>[0]) =>
+                (await hasOwnEnv(agent)) === false
+                  ? this.spare.take(where)
+                  : undefined,
+            },
+          }
+        : {}),
       strictResume: !!this.target,
       store: {
         get: (key) => {

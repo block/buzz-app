@@ -130,6 +130,11 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("asks for the agent environment variables for the agent it runs", async () => {
+    const { process } = await start();
+    expect(process.options.secrets).toEqual(["agent-env"]);
+  });
+
   it("points goose's Databricks provider at a packaged workspace", async () => {
     expect((await start()).process.options.env).not.toHaveProperty(
       "DATABRICKS_HOST",
@@ -200,6 +205,7 @@ describe("GooseProcess", () => {
       env: { BUZZ_SECURITY_URL: "http://127.0.0.1:1/" },
     });
     expect(fake.geese[0]?.killed).toBe(false);
+    expect(fake.geese[0]?.options.secrets).toBeUndefined();
   });
 
   it("still fails a protected start at its time limit when a goose without the security hooks never exits", async () => {

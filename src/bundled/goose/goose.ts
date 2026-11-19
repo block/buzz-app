@@ -227,6 +227,7 @@ export const GooseProcess = {
           GOOSE_AUTO_COMPACT_TOKEN_LIMIT: String(launch.compactAt),
         }),
       },
+      ...(!launch.protected && { secrets: ["agent-env"] }),
     });
     const cancel = () => void goose.kill();
     launch.signal?.addEventListener("abort", cancel, { once: true });

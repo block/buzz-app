@@ -285,13 +285,14 @@ function addressed(
   args: Record<string, unknown>,
   answering: readonly Request[],
   strict: boolean,
-  thread: string | undefined,
+  place: Place,
 ) {
   const id =
     typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
   const named = id && answering.find((pending) => pending.event?.id === id);
   if (named) return named;
-  const { channel } = args;
+  const channel =
+    typeof args.channel === "string" ? args.channel : place.channel;
   if (typeof channel !== "string") {
     if (id && strict)
       throw new Error(
@@ -299,7 +300,7 @@ function addressed(
       );
     return undefined;
   }
-  const scope = thread ?? channel;
+  const scope = place.thread ?? channel;
   return (
     answering.find(
       (pending) =>
@@ -311,20 +312,29 @@ function addressed(
   );
 }
 
-/** The thread a send's `reply` or `parent` posts in: a reply to any message
- * in a thread is in the thread, as the tools post it. */
-async function threadOf(
+type Place = { channel?: string; thread?: string };
+
+/** Where a send's `reply` or `parent` posts: a reply to any message in a
+ * thread is in the thread, and a subthread in its parent's channel, as the
+ * tools post them. */
+async function placeOf(
   agent: AgentHandle,
   args: Record<string, unknown>,
   answering: readonly Request[],
-) {
+): Promise<Place> {
   const id = [args.reply, args.parent]
     .find((id): id is string => typeof id === "string")
     ?.toLowerCase();
-  if (!id || answering.some(({ activityScope }) => activityScope === id))
-    return id;
+  if (!id) return {};
+  const known = answering.find(({ activityScope }) => activityScope === id);
+  if (known) return { channel: known.conversation.channelId, thread: id };
   const [event] = await agent.query([{ ids: [id], limit: 1 }]).catch(() => []);
-  return event ? (threadReference(event)?.rootId ?? event.id) : id;
+  if (!event) return { thread: id };
+  const channel = event.tags.find(([name]) => name === "h")?.[1];
+  return {
+    ...(channel ? { channel } : {}),
+    thread: threadReference(event)?.rootId ?? event.id,
+  };
 }
 
 /** The conversation's lane. A new community lane waits for every other lane. */
@@ -3107,7 +3117,7 @@ export class CodexRuntime {
             args,
             answering,
             community,
-            await threadOf(active.reply.agent, args, answering),
+            await placeOf(active.reply.agent, args, answering),
           )
         : undefined;
     const request = target ?? active?.reply;

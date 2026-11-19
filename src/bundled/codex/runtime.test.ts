@@ -9241,7 +9241,8 @@ it.each([
         ).toHaveLength(1),
       );
       await f.tool(tool, {
-        channel: "channel",
+        // reply_in_subthread takes no channel: its parent's is used.
+        ...(tool === "send" ? { channel: "channel" } : {}),
         [field]: first.trigger.event.id,
         audience: "everyone",
         text: "Thread reply",
@@ -9262,6 +9263,44 @@ it.each([
     }
   },
 );
+
+it("settles the thread a parent-only subthread answers in a two-thread channel turn", async () => {
+  const f = fixture();
+  const first = f.delivery("Thread A work");
+  if (first.trigger.type !== "mention") throw new Error("Expected a mention");
+  const config = { ...(first.config as object), scope: "channel" };
+  const second = f.delivery("Thread B work", "b".repeat(64));
+  const pending = Symbol("pending");
+  const state = async (index: number) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return Promise.race([
+      f.workingUntil.mock.calls[index]?.[0],
+      Promise.resolve(pending),
+    ]);
+  };
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({ ...second, config });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    // The tool takes no channel: the parent says where it goes.
+    await f.tool("reply_in_subthread", {
+      parent: first.trigger.event.id,
+      audience: "everyone",
+      text: "Thread A reply",
+      final: true,
+    });
+    expect(await state(0)).not.toBe(pending);
+    expect(await state(1)).toBe(pending);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 it("keeps community sessions apart for memberships of the same identity", async () => {
   const f = fixture();

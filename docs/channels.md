@@ -186,9 +186,10 @@ Filtered sections with no visible channels show only their header, retaining the
 The currently open channel remains visible in its section regardless of its filter,
 however it was opened. Navigating away removes that exception. When a filter hides
 channels, the **Filter** submenu appends those eligible channels below its three
-options and a separator, in the existing section order; choosing one opens
-the section and channel without changing the filter. Choices reuse the sidebar's
-channel-type icons, unread emphasis, attention/thread dots and working-agent
+options and a separator, in the existing section order. Choosing a Solo chat
+opens the chat and preserves the section's disclosure. Choosing another channel
+opens both the section and channel. The filter stays in place. Choices reuse
+the sidebar's channel-type icons, unread emphasis, attention/thread dots and working-agent
 indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
 their header and menu so the filter can be changed or a hidden row opened.
 Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups

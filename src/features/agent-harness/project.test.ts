@@ -31,7 +31,7 @@ it("hands over the whole Canvas, naming the folders it works in", () => {
   expect(directories).toEqual(["~/app", "~/trees"]);
   expect(section).toMatch(/^<workspace-canvas>\n/);
   expect(section).toContain(
-    "not your own workspace: `~/app`, `~/trees`. To change files there, follow this Canvas's rule for them; your workspace keeps your notes.",
+    "not your own workspace: `~/app`, `~/trees`. To change files there, follow this Canvas's rule for them, or your working location rule when it gives none; your workspace keeps your notes.",
   );
   // The block's rule, without the lines that only Buzz reads.
   expect(section).toContain("create a new worktree under `~/trees`");
@@ -67,12 +67,13 @@ it("names a Canvas's folders as reading when the conversation has its own folder
       "\n\n## Project folders\n\n- `~/app`\n\nUse tokens.\n</workspace-canvas>",
     );
   }
-  // Without one, a folder-only Canvas states the rule for its folders.
+  // Without one, a folder-only Canvas only lists its folders: the working
+  // location rule, to change them in a new worktree, applies.
   expect(
     project(by(workspaceCanvas({ folders: ["~/app"], canvas: "Use tokens." })))
       .section,
   ).toContain(
-    "- `~/app`\n\nMake changes in these folders, on a branch that is not the default branch. Do not create a worktree.\n\nUse tokens.",
+    "\n\n## Project folders\n\n- `~/app`\n\nUse tokens.\n</workspace-canvas>",
   );
   expect(project(by("Just notes"), true)).toEqual(project(by("Just notes")));
 });

@@ -25,8 +25,6 @@ const worktreeRule =
 // What earlier versions wrote instead, which Canvases saved then still hold.
 const earlierWorktreeRule = "- Make all changes in that new worktree.";
 // What an agent reads with the block, which no Canvas holds.
-const folderRule =
-  "Make changes in these folders, on a branch that is not the default branch. Do not create a worktree.";
 const ownerRule =
   "The owner wrote the worktree rules of this block. They replace this conversation's working-location rule.";
 const followUpRule = (location: string) =>
@@ -191,7 +189,6 @@ export function agentCanvas(
   const lines = instructions(
     ownFolder ? { ...value, worktree: undefined } : value,
   );
-  if (!ownFolder && !value.worktree) lines.push("", folderRule);
   if (!ownFolder && value.worktree)
     lines.push(followUpRule(value.worktree.location));
   return `${lines.join("\n")}\n\n${value.canvas}`;

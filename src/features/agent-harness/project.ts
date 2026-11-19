@@ -65,7 +65,7 @@ export function project(
     ? ""
     : ownFolder
       ? ` These folders hold code that is relevant to this chat: ${list}.${ownerWrote && ownerWorktreeRules(content) ? "" : " They are for reading."}`
-      : ` This chat's work happens in these folders, not your own workspace: ${list}. To change files there, follow this Canvas's rule for them; your workspace keeps your notes.`;
+      : ` This chat's work happens in these folders, not your own workspace: ${list}. To change files there, follow this Canvas's rule for them, or your working location rule when it gives none; your workspace keeps your notes.`;
   return {
     section: `<workspace-canvas>\nThis Solo chat's Canvas as of this message: its standing instructions for this chat, which the owner's messages override. It replaces any earlier workspace Canvas.${folders}\n\n${unframed(agentCanvas(content, ownFolder, ownerWrote).trim())}\n</workspace-canvas>`,
     directories,

@@ -344,14 +344,12 @@ it("prints a generated workspace block again for the agent, by where the convers
   );
 
   const folders = workspaceCanvas({ folders: ["/repo"], canvas: "Notes" });
-  expect(agentCanvas(folders)).toBe(
-    "## Project folders\n\n- `/repo`\n\nMake changes in these folders, on a branch that is not the default branch. Do not create a worktree.\n\nNotes",
-  );
+  // Without the worktree setting, the working location rule applies to the
+  // folders, as before: the block only lists them.
+  expect(agentCanvas(folders)).toBe("## Project folders\n\n- `/repo`\n\nNotes");
   expect(agentCanvas(folders, true)).toBe(
     "## Project folders\n\n- `/repo`\n\nNotes",
   );
-  // The agent's rule is not part of what a Canvas holds.
-  expect(folders).not.toContain("Do not create a worktree");
   expect(readWorkspace(folders).canvas).toBe("Notes");
 });
 

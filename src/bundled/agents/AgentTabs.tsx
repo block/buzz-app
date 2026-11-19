@@ -56,10 +56,12 @@ export function AgentTabs(props: {
   );
   const historyPanel = useRef<HTMLDivElement>(null);
   const [focusHistory, setFocusHistory] = useState(false);
+  const [draft, reportDraft] = useAgentSaveReports();
   const openVersionHistory = () => choose("agent:management", true);
   const supplied = agentSections({
     ...props,
     openVersionHistory,
+    versionHistoryDisabled: draft.saving,
     ...(split ? { settingsSection: "identity" as const } : {}),
   });
   const identity = supplied.find(
@@ -84,7 +86,6 @@ export function AgentTabs(props: {
         ? "agent:activity"
         : (sections[0]?.value ?? ""),
   );
-  const [draft, reportDraft] = useAgentSaveReports();
   // Hosts that replace or close the whole pane ask with the same total.
   useAgentSaveState(
     draft.dirty || Boolean(props.settingsHost.pendingSave),
@@ -130,6 +131,7 @@ export function AgentTabs(props: {
     ? agentSections({
         ...props,
         openVersionHistory,
+        versionHistoryDisabled: draft.saving,
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
         settingsContent: props.settingsContent,

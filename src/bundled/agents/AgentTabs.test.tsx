@@ -656,3 +656,28 @@ it("focuses previous versions after discarding changes to open recovery", async 
     screen.getByRole("button", { name: "Previous versions" }),
   ).toHaveFocus();
 });
+
+it("disables the recovery link until a save finishes", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  render(
+    <AgentTabs
+      {...recoveryFixture()}
+      settingsHost={{ pendingSave: () => saving }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  try {
+    expect(
+      screen.getByRole("button", { name: "Previous Versions" }),
+    ).toBeDisabled();
+  } finally {
+    await act(async () => finish());
+  }
+  expect(
+    screen.getByRole("button", { name: "Previous Versions" }),
+  ).toBeEnabled();
+});

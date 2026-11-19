@@ -231,32 +231,46 @@ it("preserves no-schema validity markers while opening and closing history", asy
   expect(settings()).toBeInTheDocument();
 });
 
-it("does not change incompatible settings labels when history collapses", async () => {
-  const { agents } = fixture();
-  const history = agents.configHistory();
-  Object.assign(
-    history.sides.find(({ side }) => side === "settings")?.head ?? {},
-    { content: "not-json" },
-  );
-  const checked = {
-    ...agents,
-    configHistory: () => ({
-      ...history,
-      settings: { agentType: "test", schema: {} },
+it.each([
+  ["not-json", "· Not valid"],
+  [
+    JSON.stringify({
+      version: 1,
+      agentType: "test",
+      settings: { future: "on" },
     }),
-  };
-  render(<AgentConfigHistoryRow agents={checked} pubkey="a" />);
-  await screen.findByText("3 versions");
-  const user = userEvent.setup();
-  const disclosure = screen.getByRole("button", { name: "Previous versions" });
-  expect(disclosure).toHaveAttribute("aria-expanded", "true");
-  const row = () =>
-    screen.getByRole("button", {
-      name: /Settings · Current\s*Incompatible/,
-      hidden: true,
+    "Incompatible",
+  ],
+])(
+  "keeps the settings revision label when history collapses (%s)",
+  async (content, label) => {
+    const { agents } = fixture();
+    const history = agents.configHistory();
+    Object.assign(
+      history.sides.find(({ side }) => side === "settings")?.head ?? {},
+      { content },
+    );
+    const checked = {
+      ...agents,
+      configHistory: () => ({
+        ...history,
+        settings: { agentType: "test", schema: {} },
+      }),
+    };
+    render(<AgentConfigHistoryRow agents={checked} pubkey="a" />);
+    await screen.findByText("3 versions");
+    const user = userEvent.setup();
+    const disclosure = screen.getByRole("button", {
+      name: "Previous versions",
     });
-  expect(row()).toBeVisible();
-  await user.click(disclosure);
-  expect(row()).toBeInTheDocument();
-  expect(screen.queryByText(/Not valid/)).toBeNull();
-});
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const row = () =>
+      screen.getByRole("button", {
+        name: new RegExp(`Settings · Current\\s*${label}`),
+        hidden: true,
+      });
+    expect(row()).toBeVisible();
+    await user.click(disclosure);
+    expect(row()).toBeInTheDocument();
+  },
+);

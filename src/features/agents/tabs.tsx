@@ -52,6 +52,7 @@ export function agentSections({
   settingsSection,
   settingsContent,
   openVersionHistory,
+  versionHistoryDisabled,
 }: {
   agents: Agents;
   agent: Agent;
@@ -70,6 +71,7 @@ export function agentSections({
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
   openVersionHistory?: (() => void) | undefined;
+  versionHistoryDisabled?: boolean | undefined;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
   memoryLinks?: MemoryLinks | undefined;
@@ -115,6 +117,7 @@ export function agentSections({
           agents={agents}
           agent={agent}
           openVersionHistory={recoverable ? openVersionHistory : undefined}
+          versionHistoryDisabled={versionHistoryDisabled}
           recoveryProblem={history?.settingsProblem}
         >
           {(save) => {
@@ -263,12 +266,14 @@ function EditorBase({
   agent,
   children,
   openVersionHistory,
+  versionHistoryDisabled,
 }: {
   agents: Pick<Agents, "save" | "snapshot">;
   agent: Agent;
   recoveryProblem?: string | undefined;
   children(save: AgentViewProps["save"]): ReactNode;
   openVersionHistory?: (() => void) | undefined;
+  versionHistoryDisabled?: boolean | undefined;
 }) {
   const [base, setBase] = useState(agent.configBase);
   const editor = children(async (config, options) => {
@@ -290,7 +295,12 @@ function EditorBase({
           {openVersionHistory && (
             <>
               {". Use a Buzz version that supports them, or open "}
-              <Button variant="link" size="text" onClick={openVersionHistory}>
+              <Button
+                variant="link"
+                size="text"
+                disabled={versionHistoryDisabled}
+                onClick={openVersionHistory}
+              >
                 Previous Versions
               </Button>
               {" to look for a compatible revision."}

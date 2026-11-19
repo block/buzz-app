@@ -10,6 +10,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   artifactOp,
+  artifactProblem,
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
@@ -376,6 +377,7 @@ export function AgentConfigVersionRow({
   const operation = artifactOp(event);
   const invalid =
     operation !== "delete" && revisionProblem(expected, event, settings);
+  const incompatible = invalid && settings && !artifactProblem(event, expected);
   const nowSeconds = Date.now() / 1000;
   const timestamp =
     nowSeconds - event.created_at < 7 * 24 * 60 * 60
@@ -407,7 +409,7 @@ export function AgentConfigVersionRow({
                   <span className="sr-only">· Current</span>
                 </>
               )}
-              {invalid && !settings && " · Not valid"}
+              {invalid && !incompatible && " · Not valid"}
             </span>
             {event.id === head?.id && (
               <span
@@ -416,7 +418,7 @@ export function AgentConfigVersionRow({
                 aria-hidden="true"
               />
             )}
-            {invalid && settings && (
+            {incompatible && (
               <span className="shrink-0 text-danger">Incompatible</span>
             )}
           </span>{" "}

@@ -248,7 +248,7 @@ describe("start resolution", () => {
     },
   );
 
-  it("uses the compatibility explanation for malformed settings too", () => {
+  it("reports malformed settings as unusable", () => {
     const { store } = seeded();
     install(
       store,
@@ -259,8 +259,7 @@ describe("start resolution", () => {
     expect(resolveStart(input(store))).toMatchObject({
       ok: false,
       state: "invalid",
-      reason:
-        "These agent settings aren't compatible with this version of Buzz: Settings missing",
+      reason: "Settings can't be used: Settings missing",
     });
   });
 

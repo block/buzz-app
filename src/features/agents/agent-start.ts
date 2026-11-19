@@ -66,7 +66,7 @@ const blocked = (
     state === "deleted"
       ? `${what} were deleted — restore from History`
       : state === "invalid"
-        ? `${what === "Settings" ? "These agent settings aren't compatible with this version of Buzz" : `${what} can't be used`}: ${problem ?? "invalid"}`
+        ? `${what} can't be used: ${problem ?? "invalid"}`
         : WAITING,
 });
 
@@ -103,7 +103,12 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
       input.agentType,
       settings.schema,
     );
-    if ("problem" in read) return blocked("invalid", read.problem, "Settings");
+    if ("problem" in read)
+      return {
+        ok: false,
+        state: "invalid",
+        reason: `These agent settings aren't compatible with this version of Buzz: ${read.problem}`,
+      };
     config = settings.withSynced(config, read.settings);
     // The synced Recommended mark is the agent's on every device.
     config = read.recommended

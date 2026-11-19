@@ -4640,9 +4640,9 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
 }
 
 #[tokio::test]
-async fn a_plugin_request_refused_without_the_users_sign_in_is_not_their_refusal() {
-    // Native plugins read and publish without federated evidence, so an
-    // FI-gated community's missing-evidence refusal is about that request.
+async fn a_request_without_federated_context_does_not_report_the_users_refusal() {
+    // Without the user's federated context, a missing-evidence refusal is
+    // about this request, not their signed-in session.
     let (url, task) = fixture_server(
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 24\r\nConnection: close\r\n\r\nauthentication required\n"
             .into(),

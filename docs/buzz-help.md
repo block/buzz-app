@@ -1724,7 +1724,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   That occurrence is used, not retried, and a wake that keeps failing is
   reported again only after one of its turns starts.
 - **Shared compute** is off by default; enable it in Settings → Plugins, then
-  turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
+  turn on sharing separately. It uses your community's existing sign-in;
+  if that sign-in expires, sign in again for that community.
+  **Mesh agents**, when it is enabled, use saved Interest
   instructions for watched turns in both Chat and Agent mode. Watched messages
   are context for that Interest; later direct requests do not inherit it. Mesh
   agents respond only to their owner. Find the ready-made tools under

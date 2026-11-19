@@ -1239,7 +1239,10 @@ pub fn run() {
     };
     builder
         .manage(clipboard::Clipboard::default())
-        .manage(mesh_compute::identity(identity.clone()))
+        .manage(mesh_compute::identity(
+            identity.clone(),
+            federated_identity.clone(),
+        ))
         .manage(MeshHost::default())
         .manage(keep_awake::KeepAwake::default())
         .manage(identity)

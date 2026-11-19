@@ -1058,9 +1058,8 @@ async fn send(
         .await
     }
     .await;
-    // Only a request sent as the signed-in user speaks for their session: a
-    // native plugin's read or publish goes without federated evidence, so an
-    // FI-gated community refusing it says nothing about the user's sign-in.
+    // Only an authenticated request using the signed-in session can report
+    // a community's refusal of that session.
     if authenticated && fi.is_some() {
         observe_refusal(&community, &result);
     }
@@ -2546,6 +2545,7 @@ mod tests;
 /// authenticated HTTP client as other native relay reads.
 pub(crate) async fn plugin_read(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     community: &str,
     filter: Option<serde_json::Value>,
 ) -> Result<serde_json::Value> {
@@ -2558,7 +2558,7 @@ pub(crate) async fn plugin_read(
     let body = filter.map(|filter| serde_json::json!([filter]).to_string());
     let response = send(
         host,
-        None,
+        Some(fi),
         url,
         method,
         body,
@@ -2576,6 +2576,7 @@ pub(crate) async fn plugin_read(
 /// plugin's host adapter; it never signs or publishes arbitrary events.
 pub(crate) async fn plugin_publish(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     community: &str,
     event: serde_json::Value,
 ) -> Result<()> {
@@ -2583,7 +2584,7 @@ pub(crate) async fn plugin_publish(
     let url = request_url(community, "/events", "POST")?;
     let response = send(
         host,
-        None,
+        Some(fi),
         url,
         "POST",
         Some(event.to_string()),

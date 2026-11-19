@@ -3,6 +3,7 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { LocalEvents, OutgoingEvent } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
+import { migrationSource } from "../relay/migration";
 
 const keyPattern = /^[0-9a-f]{64}$/;
 
@@ -139,7 +140,8 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
 }
 
 const batchPrefix = "member-add:batch:";
-/** A batch addition is settled by the roster read after it, never resumed. */
+const additionLifetimeSeconds = 15 * 60;
+/** A batch clears once each person it names is confirmed or has a single receipt. */
 export const isBatchAddition = (item: OutgoingEvent) =>
   !!item.recovery?.key.startsWith(batchPrefix);
 
@@ -151,6 +153,7 @@ export type MemberAdditionIntent = {
   role?: "guest";
   /** Outbox recovery is not an explicit request to re-invite a removed member. */
   retry?: true;
+  migration?: string | undefined;
 };
 
 /** Explicit single-person intent. Membership truth and pending writes stay
@@ -258,6 +261,14 @@ async function addOneMember(
   check();
   // A completed or missing receipt is not permission for Retry to create a grant.
   if (intent.retry && !pending) return;
+  if (
+    pending &&
+    migrationSource(pending.event.tags) !== intent.migration &&
+    !channel()?.members?.includes(pubkey)
+  )
+    throw new Error(
+      "This member has an addition with a different migration source in Outbox. Retry it there or remove it once it shows Not sent.",
+    );
   const confirmAddition = async (id: string) => {
     intent.id = id;
     intent.dismissed = false;
@@ -374,7 +385,7 @@ async function addOneMember(
     );
   if (
     pending?.delivery === "failed" &&
-    Date.now() / 1000 - pending.event.created_at >= 15 * 60
+    Date.now() / 1000 - pending.event.created_at >= additionLifetimeSeconds
   )
     throw new Error(
       "This addition expired. Remove its Not sent item in Outbox, then try again.",
@@ -400,6 +411,7 @@ async function addOneMember(
         ["h", channelId],
         ["p", pubkey],
         ...(role ? [["role", role]] : []),
+        ...(intent.migration ? [["migration", intent.migration]] : []),
       ],
     };
   }
@@ -425,18 +437,24 @@ export async function settleBatchAdditions(
         ),
     );
   const named = (item: OutgoingEvent) =>
-    item.event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : []));
-  const covered = new Set([
-    ...(channelOf(session, channelId)?.members ?? []),
-    ...items.filter((item) => !isBatchAddition(item)).flatMap(named),
-  ]);
-  for (const item of items)
-    if (
-      isBatchAddition(item) &&
-      item.delivery !== "sending" &&
-      named(item).every((key) => covered.has(key))
-    )
+    item.event.tags.flatMap(([tag, value]) =>
+      tag === "p" && value ? [value] : [],
+    );
+  const members = new Set(channelOf(session, channelId)?.members);
+  const singles = new Map<string | undefined, Set<string>>();
+  for (const item of items) {
+    if (isBatchAddition(item)) continue;
+    const source = migrationSource(item.event.tags);
+    const covered = singles.get(source) ?? new Set<string>();
+    for (const key of named(item)) covered.add(key);
+    singles.set(source, covered);
+  }
+  for (const item of items) {
+    if (!isBatchAddition(item) || item.delivery === "sending") continue;
+    const covered = singles.get(migrationSource(item.event.tags));
+    if (named(item).every((key) => members.has(key) || covered?.has(key)))
       await outbox.acknowledge(item.event.id).catch(() => {});
+  }
 }
 
 /** Most people one kind:9000 may name; see the relay's put-user handler. */
@@ -446,11 +464,13 @@ const batchLimit = 100;
  * Adds people missing from a channel with one kind:9000 per role and at most
  * 100 people, then reads the roster once. Returns everyone it shows, including
  * people already there. A relay without batch support adds only the first
- * person each event names. Best effort: only an abort throws.
+ * person each event names. Ordinary additions are best effort. For a
+ * migration, a failed send or roster read stops the batch without fallback.
  * Everyone not returned is left to `addChannelMember`, which also says
  * why they failed, as is anyone with an earlier single addition pending, so a
- * stale role is never resent. A batch is never resumed and never blocks one;
- * it stays in Outbox until everyone it names is settled.
+ * stale role is never resent. A labeled batch can reuse an unresolved receipt
+ * for the same role and recipients after a fresh roster check. A batch stays
+ * in Outbox until everyone it names is settled.
  */
 export async function addChannelMembersAtOnce(
   session: RelaySession,
@@ -465,6 +485,7 @@ export async function addChannelMembersAtOnce(
   const confirmed = new Set<string>();
   const outbox = session.outbox;
   if (people.length < 2 || !outbox) return confirmed;
+  const migration = intents.values().next().value?.migration;
   const allowed = () =>
     soloParticipant
       ? canShareSoloChat(session, channelOf(session, channelId))
@@ -472,8 +493,9 @@ export async function addChannelMembersAtOnce(
   const attempt = async <T>(work: () => T | Promise<T>) => {
     try {
       return await work();
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
+      if (migration !== undefined) throw error;
       return undefined;
     }
   };
@@ -567,8 +589,63 @@ export async function addChannelMembersAtOnce(
           );
           if (!recipients.length) continue;
           dispatched = true;
-          const id = await attempt(() =>
-            outbox.send(
+          const id = await attempt(async () => {
+            if (migration !== undefined) {
+              const saved = outbox.snapshot().find((item) => {
+                if (
+                  item.event.kind !== 9000 ||
+                  !isBatchAddition(item) ||
+                  item.acknowledged ||
+                  (!item.signed && item.delivery !== "sending") ||
+                  !["failed", "unknown", "sending"].includes(item.delivery) ||
+                  Date.now() / 1000 - item.event.created_at >=
+                    additionLifetimeSeconds
+                )
+                  return false;
+                const { tags } = item.event;
+                const people = new Set(
+                  tags.flatMap(([tag, key]) =>
+                    tag === "p" && key ? [key] : [],
+                  ),
+                );
+                return (
+                  migrationSource(tags) === migration &&
+                  tags.some(
+                    ([tag, value]) => tag === "h" && value === channelId,
+                  ) &&
+                  tags.find(([tag]) => tag === "role")?.[1] === role &&
+                  people.size === recipients.length &&
+                  recipients.every((key) => people.has(key))
+                );
+              });
+              if (saved?.recovery) {
+                const id = saved.event.id;
+                if (saved.delivery !== "sending") {
+                  if (!outbox.withRecovery)
+                    throw new Error(
+                      "The original migration batch cannot be retried on this host.",
+                    );
+                  await outbox.withRecovery(id, saved.recovery, () => {
+                    signal.throwIfAborted();
+                    if (
+                      !allowed() ||
+                      recipients.some(
+                        (key) =>
+                          agentUnavailable(session, key) ||
+                          channelOf(session, channelId)?.members?.includes(key),
+                      )
+                    )
+                      throw new Error(
+                        "Membership changed during retry. Try again.",
+                      );
+                    outbox.retry(id);
+                    return waitForAddition(outbox, id, signal);
+                  });
+                }
+                return id;
+              }
+            }
+            return outbox.send(
               {
                 kind: 9000,
                 content: "",
@@ -576,14 +653,15 @@ export async function addChannelMembersAtOnce(
                   ["h", channelId],
                   ...recipients.map((key) => ["p", key]),
                   ...(role ? [["role", role]] : []),
+                  ...(migration ? [["migration", migration]] : []),
                 ],
               },
               { key: `${batchPrefix}${crypto.randomUUID()}`, value: "1" },
-            ),
-          );
+            );
+          });
           if (!id) continue;
           sent = true;
-          // A refusal or unknown result still leaves the roster to decide.
+          // For ordinary additions, a refusal or unknown result leaves the roster to decide.
           await attempt(() => waitForAddition(outbox, id, signal));
         }
     const after = sent

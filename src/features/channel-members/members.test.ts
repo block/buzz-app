@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { verifyEvent } from "nostr-tools";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
 import { keypair, roster, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
+import { acceptPublish } from "../relay/transport";
 import {
   addChannelMember,
   addChannelMembersAtOnce,
@@ -1335,12 +1337,12 @@ function batchSetup(applyAll = true) {
   let clock = 1700000000;
   let records: readonly OutgoingEvent[] = [];
   const published: RelayEvent[] = [];
-  let onPublish = () => {};
+  let onPublish: (event: RelayEvent) => unknown = () => {};
   let rosterReads = 0;
   let failRosterRead = 0;
   let rosterDown = false;
   const publish = vi.fn(async (event: RelayEvent) => {
-    onPublish();
+    await onPublish(event);
     const named = event.tags.flatMap(([tag, value]) =>
       tag === "p" && value ? [value] : [],
     );
@@ -1401,10 +1403,11 @@ function batchSetup(applyAll = true) {
     id,
     agent,
     published,
+    publish,
     records: () => records,
     members: () => members,
     /** Runs as the relay receives each write, e.g. another owner's admission. */
-    onPublish(run: () => void) {
+    onPublish(run: typeof onPublish) {
       onPublish = run;
     },
     /** Fails the relay's nth roster read from now. */
@@ -1457,18 +1460,137 @@ it("adds people requested together in one write per role and 100 people", async 
   expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
 });
 
-it("adds anyone a relay without batch support missed one at a time", async () => {
-  const t = batchSetup(false);
+it.each([undefined, "slack"])(
+  "adds missed people individually on a legacy relay (migration=%s)",
+  async (migration) => {
+    const t = batchSetup(false);
+    await t.ready();
+    const [first = "", second = "", third = ""] = people(3);
+    await Promise.all(
+      [first, second, third].map((key) =>
+        t.session.memberAdditions.add(t.id, key, { migration }),
+      ),
+    );
+    expect(
+      t.published.map((event) =>
+        event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+      ),
+    ).toEqual([[first, second, third], [second], [third]]);
+    for (const event of t.published) {
+      expect(verifyEvent(structuredClone(event))).toBe(true);
+      expect(event.tags.filter(([tag]) => tag === "migration")).toEqual(
+        migration === undefined ? [] : [["migration", "slack"]],
+      );
+    }
+    expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+    expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  },
+);
+
+it("sends separate signed membership batches for each source", async () => {
+  const t = batchSetup();
   await t.ready();
-  const [first = "", second = "", third = ""] = people(3);
-  await t.addAll([first, second, third]);
+  const [a = "", b = "", c = "", d = "", e = "", f = ""] = people(6);
+  await Promise.all([
+    t.session.memberAdditions.add(t.id, a, { migration: "slack" }),
+    t.session.memberAdditions.add(t.id, b),
+    t.session.memberAdditions.add(t.id, c, { migration: "example-import" }),
+    t.session.memberAdditions.add(t.id, d, { migration: "slack" }),
+    t.session.memberAdditions.add(t.id, e),
+    t.session.memberAdditions.add(t.id, f, { migration: "example-import" }),
+  ]);
+  expect(t.published).toHaveLength(3);
   expect(
-    t.published.map((event) =>
-      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+    t.published.map(({ tags }) =>
+      tags.filter(([tag]) => tag === "p" || tag === "migration"),
     ),
-  ).toEqual([[first, second, third], [second], [third]]);
-  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
-  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  ).toEqual(
+    expect.arrayContaining([
+      [
+        ["p", a],
+        ["p", d],
+        ["migration", "slack"],
+      ],
+      [
+        ["p", b],
+        ["p", e],
+      ],
+      [
+        ["p", c],
+        ["p", f],
+        ["migration", "example-import"],
+      ],
+    ]),
+  );
+});
+
+it.each([
+  [
+    429,
+    { error: "rate-limited: quota exceeded; retry in 5s" },
+    "rate-limited: quota exceeded; retry in 5s",
+  ],
+  [502, {}, "Relay delivery could not be confirmed (502)"],
+] as const)(
+  "stops a migration batch after HTTP delivery fails (%s)",
+  async (status, refusal, message) => {
+    const t = batchSetup();
+    await t.ready();
+    t.onPublish((event) =>
+      acceptPublish(Response.json(refusal, { status }), event.id),
+    );
+    const members = [...people(2), t.agent.pubkey];
+    const add = () =>
+      Promise.allSettled(
+        members.map((key) =>
+          t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
+        ),
+      );
+    const results = await add();
+    expect(results).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: "rejected",
+        reason: new Error(message),
+      })),
+    );
+    expect(t.publish).toHaveBeenCalledOnce();
+    const [event] = t.publish.mock.lastCall ?? [];
+    expect(event?.tags.filter(([tag]) => tag === "p")).toHaveLength(2);
+    expect(event?.tags).toContainEqual(["migration", "slack"]);
+    const [saved] = t.records().filter((item) => !item.acknowledged);
+    expect(saved?.signed).toEqual(structuredClone(event));
+    await add();
+    expect(
+      t.publish.mock.calls.map(([attempt]) => structuredClone(attempt)),
+    ).toEqual([saved?.signed, saved?.signed]);
+    expect(t.records().filter((item) => !item.acknowledged)).toHaveLength(1);
+  },
+);
+
+it("retries the exact labeled single after restart and refuses a different source", async () => {
+  const t = setup();
+  await t.ready();
+  const add = (options?: Parameters<typeof t.session.memberAdditions.add>[2]) =>
+    t.session.memberAdditions.add(t.id, t.person.pubkey, options);
+  t.setFail("Connection lost after dispatch", true);
+  await expect(add({ migration: "slack" })).rejects.toThrow(/Connection lost/);
+  const original = structuredClone(t.publish.mock.lastCall?.[0]);
+  expect(original?.tags).toContainEqual(["migration", "slack"]);
+  await vi.waitFor(() => expect(t.records()[0]?.signed).toEqual(original));
+  t.restart();
+  await t.ready();
+  await expect(add()).rejects.toThrow(/different migration source/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.setFail("rate-limited: quota exceeded; retry in 2s");
+  await expect(add({ migration: "slack", retry: true })).rejects.toThrow(
+    /^rate-limited:/,
+  );
+  t.setFail("");
+  await add({ migration: "slack", retry: true });
+  await add();
+  expect(t.publish.mock.calls.map(([event]) => structuredClone(event))).toEqual(
+    [original, original, original],
+  );
 });
 
 it("leaves a pending single addition to resume, never batching its person again", async () => {

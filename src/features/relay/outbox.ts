@@ -7,6 +7,7 @@ import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
 import { MessageClock } from "./message-order";
+import { migrationSource } from "./migration";
 import {
   bytes,
   isCatalogKind,
@@ -719,6 +720,7 @@ export function createOutbox(
             : publishing && !(error instanceof PublishRejected)
               ? "unknown"
               : failedDelivery(attempt));
+      const message = error instanceof Error ? error.message : String(error);
       if (latest && delivery)
         saveStatus({
           ...latest,
@@ -735,13 +737,19 @@ export function createOutbox(
                 ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
                 : "Workflow command rejected; retain the draft and refresh the saved configuration."
               : `${
-                  attempt.previousDelivery === "unknown" ||
-                  attempt.previousDelivery === "accepted"
+                  (
+                    attempt.previousDelivery === "unknown" ||
+                      attempt.previousDelivery === "accepted"
+                  ) &&
+                  !(
+                    message.startsWith("rate-limited:") &&
+                    migrationSource(latest.event.tags)
+                  )
                     ? error instanceof PublishRejected
                       ? "Retry blocked: "
                       : "Retry failed: "
                     : ""
-                }${error instanceof Error ? error.message : String(error)}`,
+                }${message}`,
           ),
         });
       if (publishing && latest?.signed && !(error instanceof PublishRejected))

@@ -1,5 +1,6 @@
 import type { MemberAdditionIntent } from "./members";
 import type { Delivery, LocalEvents } from "../relay/outbox";
+import { isMigrationSource } from "../relay/migration";
 
 type Addition = Readonly<{
   channelId: string;
@@ -32,7 +33,7 @@ export function createMemberAdditions(
   const listeners = new Set<() => void>();
   const pending = new Map<string, Promise<void>>();
   const intents = new Map<string, MemberAdditionIntent>();
-  /** Additions to a channel requested in the same turn share one batch. */
+  /** Only same-turn additions for the same channel and source share a batch. */
   const batches = new Map<
     string,
     {
@@ -45,17 +46,18 @@ export function createMemberAdditions(
     pubkey: string,
     intent: MemberAdditionIntent,
   ) {
-    let current = batches.get(channelId);
+    const key = JSON.stringify([channelId, intent.migration]);
+    let current = batches.get(key);
     if (!current) {
       const people = new Map<string, MemberAdditionIntent>();
       const shown = Promise.resolve().then(() => {
-        batches.delete(channelId);
+        batches.delete(key);
         return people.size > 1 && addAtOnce
           ? addAtOnce(channelId, [...people.keys()], people)
           : new Set<string>();
       });
       current = { people, shown };
-      batches.set(channelId, current);
+      batches.set(key, current);
     }
     current.people.set(pubkey, intent);
     return current.shown;
@@ -88,10 +90,18 @@ export function createMemberAdditions(
     add(
       channelId: string,
       pubkey: string,
-      options: { role?: "guest"; retry?: true } = {},
+      options: {
+        role?: "guest";
+        retry?: true;
+        /** Source label for an imported membership write. */
+        migration?: string | undefined;
+      } = {},
     ): Promise<void> {
       if (signal.aborted)
         return Promise.reject(new Error("The community connection closed."));
+      const { migration } = options;
+      if (migration !== undefined && !isMigrationSource(migration))
+        return Promise.reject(new Error("Use a nonempty migration source."));
       const key = JSON.stringify([channelId, pubkey]);
       const existing = pending.get(key);
       // An addition under way keeps the role it asked for; another role
@@ -99,7 +109,10 @@ export function createMemberAdditions(
       if (existing) {
         if (intents.get(key)?.role !== options.role)
           return Promise.reject(new Error(differentRole));
-        if (intents.get(key)?.retry !== options.retry)
+        if (
+          intents.get(key)?.retry !== options.retry ||
+          intents.get(key)?.migration !== migration
+        )
           return Promise.reject(
             new Error(
               "A member operation is already running. Wait for it to finish, then try again.",
@@ -116,6 +129,7 @@ export function createMemberAdditions(
       else delete intent.role;
       if (options.retry) intent.retry = true;
       else delete intent.retry;
+      intent.migration = migration;
       let confirmed = previous?.confirmed ?? false;
       // Retry only finishes an existing receipt, so it never joins a batch.
       const shown =
@@ -133,8 +147,10 @@ export function createMemberAdditions(
         .then(async () => {
           signal.throwIfAborted();
           if (!confirmed) {
-            if ((await shown?.catch(() => undefined))?.has(pubkey))
-              intent.confirmed = true;
+            const roster = await (migration === undefined
+              ? shown?.catch(() => undefined)
+              : shown);
+            if (roster?.has(pubkey)) intent.confirmed = true;
             else await add(channelId, pubkey, intent);
             confirmed = true;
           }

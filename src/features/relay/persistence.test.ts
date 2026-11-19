@@ -19,7 +19,7 @@ function transaction(
     oncomplete: () => {},
     onabort: () => {},
     onerror: () => {},
-    objectStore: () => store,
+    objectStore: () => ({ ...store, transaction: tx }),
   };
   const request = {
     onsuccess: () => {},

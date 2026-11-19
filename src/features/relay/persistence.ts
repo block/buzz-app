@@ -37,12 +37,23 @@ export interface HeadPersistence {
 }
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
+const HEAD_META = "head-meta";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
-type Record = SavedHead & { key: string; scope: string; bytes: number };
+type HeadMeta = { key: string; bytes: number; savedAt: number };
+type Record = SavedHead & HeadMeta & { scope: string };
+
+function putHeadMeta(store: IDBObjectStore, { key, bytes, savedAt }: HeadMeta) {
+  store.put({ key, bytes, savedAt });
+}
+
+function deleteHead(store: IDBObjectStore, key: string) {
+  store.delete(key);
+  store.transaction.objectStore(HEAD_META).delete(key);
+}
 
 export function createHeadPersistence(
   viewer: string,
@@ -56,16 +67,28 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
         reject(new Error("Cache open timed out"));
       }, 1500);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        const meta = request.result.createObjectStore(HEAD_META, {
+          keyPath: "key",
+        });
+        if (event.oldVersion === 0) return;
+        // Backfill in the upgrade transaction so the first save sees the full budget.
+        const rows = meta.transaction.objectStore(STORE).openCursor();
+        rows.onsuccess = () => {
+          const row = rows.result;
+          if (!row) return;
+          putHeadMeta(meta, row.value);
+          row.continue();
+        };
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -117,7 +140,10 @@ export function createHeadPersistence(
     const db = await database();
     if (closed) throw new Error("Cache closed");
     return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(name, mode);
+      const tx = db.transaction(
+        name === STORE && mode === "readwrite" ? [STORE, HEAD_META] : name,
+        mode,
+      );
       let result: T;
       let ended = false;
       const timeout = setTimeout(() => {
@@ -245,8 +271,10 @@ export function createHeadPersistence(
           key: `${scope}:${head.channelId}`,
           bytes,
         };
+        const meta = store.transaction.objectStore(HEAD_META);
         store.put(row);
-        then(store.getAll(), (rows: Record[]) => {
+        putHeadMeta(meta, row);
+        then(meta.getAll(), (rows: HeadMeta[]) => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
@@ -258,14 +286,14 @@ export function createHeadPersistence(
               count > MAX_HEADS ||
               Date.now() - entry.savedAt >= MAX_AGE
             )
-              store.delete(entry.key);
+              deleteHead(store, entry.key);
           }
           done(undefined);
         });
       }),
     remove: (channelId) =>
       transact("readwrite", (store, done) => {
-        store.delete(`${scope}:${channelId}`);
+        deleteHead(store, `${scope}:${channelId}`);
         done(undefined);
       }),
     retain: (ids) =>
@@ -274,7 +302,7 @@ export function createHeadPersistence(
         then(store.getAll(), (rows: Record[]) => {
           for (const row of rows)
             if (row.scope === scope && !allowed.has(row.channelId))
-              store.delete(row.key);
+              deleteHead(store, row.key);
           done(undefined);
         });
       }),
@@ -291,7 +319,7 @@ export function createHeadPersistence(
       await transact("readwrite", (store, done, then) =>
         then(store.getAll(), (rows: Record[]) => {
           for (const row of rows)
-            if (row.scope === scope) store.delete(row.key);
+            if (row.scope === scope) deleteHead(store, row.key);
           done(undefined);
         }),
       );

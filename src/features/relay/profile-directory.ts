@@ -241,6 +241,12 @@ export function createProfileDirectory(
    * readers, and on verified-authority and head changes for
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
+    // After the snapshot is out: the read's synchronous `loading` may reenter.
+    if (fold(headChanged) && archives?.snapshot().status === "idle")
+      void archives.ensure();
+  }
+  /** Publishes the snapshot; true when a verified collision wants archives. */
+  function fold(headChanged = false): boolean {
     folded = false;
     const authority = verified?.authority();
     const held = new Set(
@@ -317,12 +323,9 @@ export function createProfileDirectory(
         if (!archived(id)) count(activeNames, activeUsernames, name, username);
       }
     // Only a verified collision needs the lazy archive read; it refolds on arrival.
-    if (
-      archives?.snapshot().status === "idle" &&
-      ([...verifiedNames.values()].some((n) => n > 1) ||
-        [...verifiedUsernames].some(([u, n]) => u !== undefined && n > 1))
-    )
-      void archives.ensure();
+    const collision =
+      [...verifiedNames.values()].some((n) => n > 1) ||
+      [...verifiedUsernames].some(([u, n]) => u !== undefined && n > 1);
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
       // Only an active verified profile discounts archived namesakes.
@@ -378,11 +381,12 @@ export function createProfileDirectory(
       publishedAuthority === verified?.authority() &&
       publishedRevision === verifiedRevision
     )
-      return;
+      return collision;
     publishedVerifiedHeads = held;
     publishedAuthority = verified?.authority();
     publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
+    return collision;
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
   function missed(
@@ -640,9 +644,10 @@ export function createProfileDirectory(
     localProfiles = signature;
     publish();
   });
-  // Archiving or unarchiving refolds namesake labels.
+  // Archiving or unarchiving refolds namesake labels. An archive notification
+  // never starts a read: a disconnect's `idle` must not read while offline.
   const unsubscribeArchives = archives?.subscribe(() => {
-    if (!closed) publish();
+    if (!closed) fold();
   });
   // Each reader's own choice of name for verified people refolds every label.
   const unsubscribePreference = subscribeNamePreference(() => {

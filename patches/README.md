@@ -230,14 +230,16 @@ geometry and a late notice at the bottom, and its journeys fail on any
 observer-loop error once Messages is ready.
 
 Sizes delivered per callback can flush a second correction in the same task as
-the first, before the first jump's scroll event updates the store's offset.
-Virtua's relative path starts from the native offset, but its absolute path
-added the jump to the stale store offset: in Chromium, a page landing among the
-loaded rows moved the reader about 220px on 2–3 of 20 runs of
-`history-loading.spec.mjs` "keeps a reader 250px up". The absolute path now
-starts from the native offset as well. An installed-driver regression flushes a
-shrink above the viewport before the shift's scroll event, a case that
-previously jumped to the top.
+the first, before the first jump's scroll event updates the store's offset. The
+absolute path, and its test for an offset beyond the new end, then started from
+an offset that omitted the first jump. In Chromium, a page landing among the
+loaded rows moved the reader about 220px in 2–3 of 20 runs of
+`history-loading.spec.mjs` "keeps a reader 250px up". The scroll observer now
+adds the jumps it applied since the store last observed an offset. It does not
+use the native offset, because a browser clamp after a shrink must not land
+twice (see [Corrections after a browser clamp](#corrections-after-a-browser-clamp)).
+Installed-driver regressions flush a shrink above the viewport, and a shrink
+after a clamp, before the previous jump's scroll event.
 
 ## Automated checks
 

@@ -440,7 +440,7 @@ it("a prepend whose rows measure after scroll-end still keeps the former first r
 
 // Sizes apply as each observer delivery arrives, so a second correction can
 // flush before the first jump's scroll event updates the store's offset.
-it("a correction before the previous jump's scroll event starts from the native offset", () => {
+it("a correction before the previous jump's scroll event includes that jump", () => {
   const c = setup({ platform: "Linux x86_64", offset: 0 });
   openHistory(c);
   c.prepend(40);
@@ -452,6 +452,24 @@ it("a correction before the previous jump's scroll event starts from the native 
     { top: -10, behavior: "instant" },
   ]);
   expect(c.viewport.scrollTop).toBe(1990);
+  c.driver.R();
+});
+
+it("a correction after a clamp and before the previous jump's scroll event lands once", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 1500 });
+  c.prepend(40); // the shift reaches the end: absolute 3500
+  expect(c.viewport.scrollTop).toBe(3500);
+  c.calls.length = 0;
+  // A prepended row measures 50px short; layout clamps the offset to the new
+  // end before the correction runs.
+  c.viewport.max = 3450;
+  c.viewport.scrollTop = 3450;
+  c.store.h(3, [[5, 50]]);
+  c.driver.te();
+  expect(c.calls.map((call) => call.options)).toEqual([
+    { top: 3450, behavior: "instant" },
+  ]);
+  expect(c.viewport.scrollTop).toBe(3450);
   c.driver.R();
 });
 

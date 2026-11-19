@@ -6269,6 +6269,16 @@ export class AgentsService extends Service implements Agents {
     ) => {
       // Taken off Automatic, by an edit here or another device's, meanwhile.
       if (!onRecommended(record.config)) return "it left Automatic";
+      // Nor once a plugin execution target is bound to it meanwhile.
+      if (
+        this.identities.some(
+          (member) =>
+            member.pubkey === pubkey &&
+            !member.deleted &&
+            this.executions.read(member.key),
+        )
+      )
+        return "it runs on an execution target now";
       const agent = this.agent(key);
       if (!agent) return "it isn't loaded here";
       if (

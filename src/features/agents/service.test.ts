@@ -4010,6 +4010,33 @@ describe("an agent on Automatic and the recommended harness", () => {
     expect(onRecommended(f.service.find(bot)?.config)).toBe(false);
   });
 
+  it("keeps its harness when an execution target is bound while the check runs", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    // A plugin execution target is bound to it during the check.
+    const { executions } = f.service as unknown as {
+      executions: { read(key: string): unknown };
+    };
+    vi.spyOn(executions, "read").mockImplementation((key) =>
+      key === bot ? { provider: "example.target" } : undefined,
+    );
+    check.resolve(true);
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: it runs on an execution target now",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
   it("waits for every harness plugin to start before it picks", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     const f = await harnesses({ starting: true });

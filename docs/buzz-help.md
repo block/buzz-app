@@ -1918,6 +1918,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   ordinary mentions can still wake them. Hosted agents have no Attention tab on
   this device. To start following something, ask the agent in a conversation,
   for example, “Watch this PR and tell me when CI finishes.”
+  The tab also says where the agent's Attention is kept: on this device, or
+  privately in its community once it was moved there. While this device loads
+  it from the community, its watches and timers wait.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
   Each interest has an Active/Paused menu. Pausing stops its triggers without changing
   individual watch settings. Running turns may finish; activating resumes enabled

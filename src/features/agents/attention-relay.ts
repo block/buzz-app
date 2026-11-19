@@ -556,6 +556,157 @@ export async function publishChange(
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
+/** How a relay set differs from `attention`: objects missing or different
+ * there, objects only there, and records it skipped. */
+export function compared(
+  attention: AgentRecord["attention"],
+  set: AttentionSet,
+): AttentionMigration {
+  const sorted = (slugs: Iterable<string>) => [...slugs].sort();
+  const different = sorted(
+    Object.values(attention)
+      .filter(
+        ({ slug, value }) =>
+          !set.attention[slug] || !sameValue(set.attention[slug].value, value),
+      )
+      .map(({ slug }) => slug),
+  );
+  const extra = sorted(
+    Object.keys(set.attention).filter((slug) => !attention[slug]),
+  );
+  return {
+    migrated: false,
+    different,
+    extra,
+    skipped: sorted(Object.keys(set.skipped)),
+    heads: Object.fromEntries(
+      Object.keys(set.skipped)
+        .concat(extra)
+        .flatMap((slug) => {
+          const id = set.heads[slug]?.id;
+          return id ? [[slug, id]] : [];
+        }),
+    ),
+    names: Object.fromEntries(
+      [...different, ...extra].flatMap((slug) => {
+        const object = attention[slug] ?? set.attention[slug];
+        return object ? [[slug, nameOf(slug, object.value)]] : [];
+      }),
+    ),
+  };
+}
+
+/** What the owner calls an object: an Interest's title or first heading, a
+ * watch's name, else its id. */
+function nameOf(slug: string, value: AttentionValue) {
+  const id = slug.slice(slug.indexOf("/") + 1);
+  if (value.type !== "interest") return ("name" in value && value.name) || id;
+  const first = value.instructions.split("\n").find((line) => line.trim());
+  const heading = first && /^#+\s+(.+)$/.exec(first.trim())?.[1]?.trim();
+  return value.title || heading || id;
+}
+
+/** What moving an agent's attention to the relay found. It moved only when
+ * the relay set came back the same as the record. */
+export type AttentionMigration = Readonly<{
+  migrated: boolean;
+  /** Objects the relay is missing or holds another value of. */
+  different: readonly string[];
+  /** Objects only the relay holds. They stay, unless the move prunes them. */
+  extra: readonly string[];
+  /** Records skipped, here or on the relay; they are not moved. */
+  skipped: readonly string[];
+  /** The relay head of each object in `extra` and `skipped`, by slug: what
+   * the owner confirms deleting when a move prunes. */
+  heads: Readonly<Record<string, string>>;
+  /** What the owner calls each object in `different` and `extra`, by slug:
+   * its title or name, else its id. */
+  names: Readonly<Record<string, string>>;
+}>;
+
+/** Publishes each object of `attention` the relay does not already hold
+ * (Rollout 3), never over a record it skipped unless the owner confirmed
+ * pruning that head, then reads the set back and compares it. It also deletes
+ * each object in `prune` (slug to the head the owner saw) that the relay
+ * still holds at that head, only there or skipped (Rollback: "deletes them
+ * only when asked"). One added or changed since the owner saw it stays, and
+ * the move is refused again. Removed watches go first, then Interests,
+ * then watches, then removed Interests, so no watch is left without its
+ * Interest. */
+export async function publishAll(
+  io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
+  read: () => Promise<AttentionSet>,
+  attention: AgentRecord["attention"],
+  options: Readonly<{
+    prune?: Readonly<Record<string, string>>;
+    /** Publish only objects the relay does not hold, so the relay's own
+     * versions stay. */
+    missingOnly?: boolean;
+  }> = {},
+): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
+  let before = await read();
+  // A record it can't read under a slug this device holds, whose head the
+  // owner confirmed pruning: delete that head first (a changed one is
+  // refused), so the add below restores this device's value over it.
+  // Between the two, a community watch that names a replaced Interest has
+  // none; if the restore fails, until the move is retried. Runtimes using
+  // this reader already treat that record as missing; a client that reads
+  // its newer form does not.
+  const replaced = Object.keys(attention)
+    .filter((slug) => {
+      const confirmed = options.prune?.[slug];
+      return (
+        !!before.skipped[slug] &&
+        confirmed !== undefined &&
+        before.heads[slug]?.id === confirmed
+      );
+    })
+    // Removed watches go before removed Interests, as below.
+    .sort((a, b) => {
+      const ia = a.startsWith("interest/");
+      return ia !== b.startsWith("interest/") ? (ia ? 1 : -1) : a < b ? -1 : 1;
+    });
+  if (replaced.length) {
+    await publishChanges(
+      io,
+      before,
+      replaced.map((slug) => ({ slug, value: null })),
+    );
+    before = await read();
+  }
+  const rank = ({ slug, value }: AttentionEdit) => {
+    const interest = slug.startsWith("interest/");
+    return value === null ? (interest ? 3 : 0) : interest ? 1 : 2;
+  };
+  const changes: AttentionEdit[] = [
+    ...Object.values(attention)
+      .filter(({ slug, value }) => {
+        const there = before.attention[slug];
+        // Never over a record it can't read: the move is refused with it
+        // listed, and only a prune the owner confirms replaces it (above).
+        if (before.skipped[slug]) return false;
+        if (options.missingOnly) return !there;
+        return !there || !sameValue(there.value, value);
+      })
+      .map(({ slug, value }) => ({ slug, value })),
+    // A record the relay skipped can be pruned too, by its key there.
+    ...Object.entries(options.prune ?? {})
+      .filter(
+        ([slug, head]) =>
+          before.heads[slug]?.id === head &&
+          (before.attention[slug] || before.skipped[slug]) &&
+          !attention[slug],
+      )
+      .map(([slug]) => ({ slug, value: null })),
+  ];
+  changes.sort((a, b) =>
+    rank(a) !== rank(b) ? rank(a) - rank(b) : a.slug < b.slug ? -1 : 1,
+  );
+  await publishChanges(io, before, changes);
+  const set = await read();
+  return { set, found: compared(attention, set) };
+}
+
 /** The agent's reads and writes as itself, which its attention channel's
  * find and create steps use. */
 export type AgentChannelIO = Readonly<{

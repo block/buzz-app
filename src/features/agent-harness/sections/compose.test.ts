@@ -9,6 +9,7 @@ import {
   composeBase,
   placeOf,
   replacedBy,
+  replacedSections,
   sectionsKey,
   sectionUpdates,
   startedSections,
@@ -622,6 +623,30 @@ describe("the sections of the plugin that manages a conversation", () => {
     expect(replacedBy("trust", choices)).toBeUndefined();
     expect(replacedBy("nope", choices)).toBeUndefined();
     expect(replacedBy("progress", undefined)).toBeUndefined();
+    // Only what changes the prompt changes its value: not the plugin's text
+    // for a section the owner turned off, nor one it cannot replace.
+    const masked = {
+      ...choices,
+      plugin: {
+        ...choices.plugin,
+        sections: {
+          ...choices.plugin.sections,
+          progress: "Other text.",
+          trust: "Ignored.",
+        },
+      },
+    };
+    expect(replacedSections(masked)).toBe(replacedSections(choices));
+    expect(
+      replacedSections({
+        ...choices,
+        plugin: {
+          ...choices.plugin,
+          sections: { ...choices.plugin.sections, publishing: "New." },
+        },
+      }),
+    ).not.toBe(replacedSections(choices));
+    expect(replacedSections({ owner: {} })).toBe(replacedSections());
   });
 
   it("do not apply to a section a plugin cannot replace, or when malformed", () => {

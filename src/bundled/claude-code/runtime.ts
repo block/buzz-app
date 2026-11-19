@@ -89,6 +89,7 @@ import {
 } from "../../features/agent-harness/project";
 import {
   placeOf,
+  replacedSections,
   sectionsOf,
 } from "../../features/agent-harness/sections/compose";
 import {
@@ -2226,10 +2227,9 @@ export class ClaudeRuntime {
           entry.memory,
           addedKey(this.added()),
           this.credentials,
-          // The base prompt's sections: a change gives an idle session the
-          // new prompt at its next turn.
-          sectionsOf(entry.handle, key),
         ]),
+      // A change gives the session the new prompt at its next turn.
+      sections: (key) => replacedSections(sectionsOf(entry.handle, key)),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
         const gate = entry.handle?.protection;

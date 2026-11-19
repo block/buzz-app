@@ -99,6 +99,22 @@ export const sectionsOf = (
   return handle?.promptSections?.(channelId, root);
 };
 
+/** What `choices` change in a base prompt: the text of each section they
+ * replace, or none for one turned off. Choices that change no section, such
+ * as a plugin's text under the owner's own, give the same value. */
+export const replacedSections = (choices?: SectionChoices) =>
+  JSON.stringify(
+    SECTIONS.flatMap((section) => {
+      const owner = ownerChoice(section, choices);
+      if (owner)
+        return [[section.id, owner.mode === "off" ? null : owner.text]];
+      const plugin = pluginText(section, choices);
+      return plugin === undefined
+        ? []
+        : [[section.id, plugin, choices?.plugin?.id ?? ""]];
+    }),
+  );
+
 /** What the session for conversation `key` is, as `sectionsOf` reads the
  * key: one thread, one whole conversation, or a run that joins none. */
 export const placeOf = (

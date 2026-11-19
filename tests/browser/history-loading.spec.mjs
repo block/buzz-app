@@ -645,8 +645,8 @@ test.describe("pages inside one second", () => {
           .poll(() => history(page).evaluate((e) => e.scrollHeight))
           .toBeGreaterThan(height);
         // A Virtua correction's scrollend can arrive before the input's own
-        // scroll, which Linux WebKit can deliver after later renders. Wait for
-        // the scrollend that follows the input's upward movement.
+        // scroll, which Linux WebKit can deliver after later renders. The
+        // input ends at a scrollend once the reader has moved.
         await history(page).evaluate((e) => {
           const start = e.scrollTop;
           let corrected = 0;
@@ -654,22 +654,27 @@ test.describe("pages inside one second", () => {
           e.addEventListener("virtua-scroll-correction", ({ detail }) => {
             corrected += detail.after - detail.before;
           });
-          const moved = () => {
+          const ended = () => {
             if (start + corrected - e.scrollTop < 150) return;
-            e.removeEventListener("scroll", moved);
-            e.addEventListener(
-              "scrollend",
-              () => delete e.dataset.scrollEnded,
-              { once: true },
-            );
+            delete e.dataset.scrollEnded;
+            e.removeEventListener("scrollend", ended);
           };
-          e.addEventListener("scroll", moved);
+          e.addEventListener("scrollend", ended);
         });
         if (input === "drag")
           await history(page).evaluate((e) => {
             e.scrollTop -= 300;
           });
-        else await page.mouse.wheel(0, -300);
+        // Linux WebKit animates a wheel scroll, and a row measurement's
+        // correction can stop it short. Wheel again until the reader moves.
+        else
+          for (
+            let i = 0;
+            i < 4 &&
+            (await history(page).getAttribute("data-scroll-ended")) !== null;
+            i++
+          )
+            await wheel(page, -300);
         await expect(history(page)).not.toHaveAttribute("data-scroll-ended");
         await mark(page, "input ended");
         if (input === "drag") await page.mouse.up();

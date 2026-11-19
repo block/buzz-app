@@ -39,7 +39,7 @@ and token in both themes.
 | A preview of an object | `PreviewCard` |
 | A settled empty or setup state | `EmptyState` with the next action |
 | Content that's loading | `LoadingRegion`: it stays quiet for the first second, so fast loads don't flicker |
-| A transient result | The shared Toast. A button that shows the result in its own label needs none, because the label is visible on touch |
+| A transient result | The shared Toast. A button that shows the result in its own label needs none, because the label is visible on touch; it keeps the screen-reader status |
 | A person or agent | `Avatar`; see [Identity shapes](#identity-shapes) |
 
 Use `NavigationSectionHeading` for workspace and channel headings. Its

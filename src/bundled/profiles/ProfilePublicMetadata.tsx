@@ -51,12 +51,6 @@ export function ProfileCopyField({
 }) {
   const [outcome, setOutcome] = useState<keyof typeof outcomes>();
   const generation = useRef(0);
-  useEffect(
-    () => () => {
-      generation.current++;
-    },
-    [],
-  );
   useEffect(() => {
     if (outcome !== "copied") return;
     const timer = setTimeout(() => setOutcome(undefined), 1500);

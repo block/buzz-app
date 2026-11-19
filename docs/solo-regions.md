@@ -216,7 +216,7 @@ Hosts that predate this prop ignore it.
 
 Both headers also accept optional `headerMetadata: ReactNode` for compact,
 non-interactive content such as a relative activity time. The host displays
-it at the trailing edge. The native Actions button overlays that slot on
-hover, keyboard focus, or while the menu is open. Touch shows the button
-directly. New task and the other native actions remain available in the menu.
-The title and accessory keep their positions when the content swaps.
+it at the trailing edge. Hovering that slot or focusing its controls reveals
+the native Actions button and, when available, the New task pencil. They
+overlay the metadata and adjacent accessory without shifting the header.
+Touch shows the controls directly. New task also remains available in the menu.

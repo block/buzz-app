@@ -1674,8 +1674,12 @@
 
   .navigation-section-heading[data-disclosure]
     .navigation-section-heading-actions[data-has-metadata] {
-    padding-inline-start: var(--space-1);
-    padding-inline-end: var(--session-row-inset, var(--space-2));
+    margin-inline-end: var(--session-row-inset, var(--space-2));
+    padding-inline-end: 0;
+  }
+
+  .navigation-section-heading[data-disclosure]:has(> [data-has-metadata]) {
+    column-gap: var(--space-1);
   }
 
   .navigation-section-heading-metadata {
@@ -1683,6 +1687,7 @@
     align-items: center;
     justify-content: center;
     min-inline-size: var(--navigation-heading-action-size);
+    min-block-size: var(--navigation-heading-action-size);
     pointer-events: none;
   }
 
@@ -1694,9 +1699,12 @@
   .navigation-section-heading-actions[data-has-metadata]
     .navigation-section-heading-buttons {
     position: absolute;
-    inset-inline-end: var(--session-row-inset, var(--space-2));
+    z-index: 1;
+    inset-inline-end: 0;
     inset-block-start: 50%;
     transform: translateY(-50%);
+    background: var(--surface-sidebar, var(--surface-popover));
+    border-radius: var(--radius-control);
   }
 
   .navigation-section-heading-actions[data-has-metadata]
@@ -1822,15 +1830,30 @@
     ),
     [data-context-menu-present] > .navigation-section-heading
   ) {
-    [data-navigation-reveal] {
+    [data-navigation-reveal]:not(.navigation-section-heading-buttons) {
       opacity: 1;
       max-width: none;
       overflow: visible;
     }
-    .navigation-section-heading-buttons {
+  }
+
+  /* The metadata-sized slot owns hover. The overlay can extend over the
+     accessory without contributing to layout or making the whole row hot. */
+  :is(
+    .navigation-section-heading-actions[data-has-metadata]:hover,
+    .navigation-section-heading-actions[data-has-metadata]:has(
+      :focus-visible,
+      [aria-expanded="true"][aria-haspopup="menu"]
+    ),
+    [data-context-menu-present]
+      > .navigation-section-heading
+      > [data-has-metadata]
+  ) {
+    > [data-navigation-reveal] {
+      opacity: 1;
       pointer-events: auto;
     }
-    [data-navigation-reveal-rest] {
+    > [data-navigation-reveal-rest] {
       visibility: hidden;
     }
   }

@@ -528,9 +528,9 @@ Tab strips keep their own wider horizontal fade.
 
 Every sidebar heading row, including collapsible channel groups and Solo
 workspaces, is a `NavigationSectionHeading`. It is auto layout: the label fills
-and truncates, actions hug the trailing edge, and the row fills its list. Never
-position heading actions absolutely or reserve trailing padding for them; a
-row that must work at every sidebar width cannot depend on a fixed gap. Use
+and truncates, actions hug the trailing edge, and the row fills its list.
+Keep ordinary actions in flow. The passive metadata slot described below
+provides a reference for its overlay. Use
 `disclosure` when the label is the feature's own collapse trigger, and
 `revealActions` or `data-navigation-reveal` for quiet parts such as the chevron.
 Revealed parts show on hover, keyboard focus, an open heading menu or while
@@ -538,9 +538,10 @@ one of them has focus, and always show on touch; a focused control is never
 invisible. Hidden actions take no width, so a long label keeps its words at
 large text sizes and narrow widths. A heading with an accessory keeps space
 for its quiet actions beside the accessory so all controls stay in place.
-When a heading also has passive metadata, it shares one compact trailing
-slot with those actions. Pointer hover and keyboard focus reveal the actions
-in that slot. Touch shows the actions directly.
+When a heading has passive metadata, it defines a compact trailing hover
+target. Its quiet controls overlay that slot and the adjacent accessory on
+slot hover or control focus. Touch shows these controls directly. The overlay
+keeps the title and accessory positions stable.
 When a host already names a list, as
 the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
 overlaying it; any actions it still needs take a headingless heading row.

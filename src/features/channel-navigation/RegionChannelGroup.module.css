@@ -3,7 +3,7 @@
 }
 
 @container solo-channel-group (max-width: 9rem) {
-  .group [data-solo-channel-new-task] {
+  .group [data-solo-channel-new-task]:not([data-has-metadata] *) {
     display: none;
   }
 }

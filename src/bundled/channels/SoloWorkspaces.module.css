@@ -78,7 +78,7 @@
   }
 }
 @container solo-workspace-header (max-width: 9rem) {
-  .workspaceHeader [data-solo-workspace-new-task] {
+  .workspaceHeader [data-solo-workspace-new-task]:not([data-has-metadata] *) {
     display: none;
   }
 }

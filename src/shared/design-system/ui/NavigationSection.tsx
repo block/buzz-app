@@ -34,8 +34,8 @@ export function NavigationSection({
  * `data-navigation-reveal` such as a chevron, appear on hover, keyboard focus,
  * while a menu from the heading is open or one of them has focus, and always
  * on touch. A heading with an accessory keeps the action space so its controls
- * stay in place. Optional metadata sets the footprint of an overlay for a
- * single quiet menu trigger.
+ * stay in place. Optional metadata sets the footprint of the trailing hover
+ * target. Quiet actions overlay that slot and the adjacent accessory.
  * Other headings give that space to the label until actions appear.
  */
 export function NavigationSectionHeading({

@@ -738,7 +738,10 @@ export function SoloWorkspaces({
             }
             actions={
               metadata != null && typeof metadata !== "boolean" ? (
-                overflow
+                <>
+                  {trailing}
+                  {overflow}
+                </>
               ) : (
                 <>
                   {overflow}

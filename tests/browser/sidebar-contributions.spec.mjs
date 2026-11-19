@@ -398,6 +398,10 @@ appTest.describe("Solo header accessories", () => {
             name: `Actions for ${title}`,
             exact: true,
           });
+          const pencil = group.getByRole("button", {
+            name: `New task in ${title}`,
+            exact: true,
+          });
           const metadata = group.getByText(activity, { exact: true });
           const name = heading.getByText(title, { exact: true });
           const actionPositions = async () =>
@@ -417,9 +421,6 @@ appTest.describe("Solo header accessories", () => {
           const menuBox = await nativeMenu.boundingBox();
           expect(activityBox).not.toBeNull();
           expect(menuBox).not.toBeNull();
-          expect((await nativeMenu.locator("..").boundingBox())?.width).toBe(
-            menuBox.width,
-          );
           expect(menuBox.x + menuBox.width).toBeGreaterThanOrEqual(
             activityBox.x + activityBox.width,
           );
@@ -438,9 +439,28 @@ appTest.describe("Solo header accessories", () => {
             (await heading.boundingBox())?.x,
           );
           await heading.hover();
+          await expect(metadata).toBeVisible();
+          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
+          await page.mouse.move(
+            activityBox.x + activityBox.width / 2,
+            activityBox.y + activityBox.height / 2,
+          );
           await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "1");
           await expect(metadata).toBeHidden();
+          await expect(pencil).toBeVisible();
           await expect.poll(actionPositions).toEqual(restingPositions);
+
+          await heading.click();
+          await expect(heading).toHaveAttribute("data-selected");
+          await page.mouse.move(
+            activityBox.x + activityBox.width / 2,
+            activityBox.y + activityBox.height / 2,
+          );
+          await pencil.click();
+          await expect(heading).not.toHaveAttribute("data-selected");
+          await heading.hover();
+          await expect(metadata).toBeVisible();
+          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
 
           await page.mouse.move(0, 0);
           await action.focus();
@@ -449,7 +469,7 @@ appTest.describe("Solo header accessories", () => {
           await page.keyboard.press("Tab");
           await expect(action).toBeFocused();
           await expect(action).toHaveCSS("outline-style", "solid");
-          await expect(metadata).toBeHidden();
+          await expect(metadata).toBeVisible();
           await expect.poll(actionPositions).toEqual(restingPositions);
           await page.keyboard.press("Shift+F10");
           await expect(page.getByRole("menu")).toHaveCount(0);
@@ -465,6 +485,12 @@ appTest.describe("Solo header accessories", () => {
           await expect.poll(actionPositions).toEqual(restingPositions);
           await disclosure.press("Enter");
           await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+          await action.focus();
+          await page.keyboard.press("Tab");
+          await expect(pencil).toBeFocused();
+          await expect(metadata).toBeHidden();
+          await page.keyboard.press("Tab");
+          await expect(nativeMenu).toBeFocused();
         }
       }
       await expect(

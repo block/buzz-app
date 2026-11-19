@@ -29,14 +29,16 @@ export type PluginInputProps = Readonly<{
   value?: string | undefined;
   defaultValue?: string | undefined;
   onValueChange?: ((value: string) => void) | undefined;
-  /** Default `text`. */
-  type?: "text" | "email" | "url" | "password" | undefined;
+  /**
+   * Default `text`. No `required`, `email` or `url`: native validation would
+   * block the form's submit before the plugin can show its `Field` error.
+   */
+  type?: "text" | "password" | undefined;
   placeholder?: string | undefined;
   name?: string | undefined;
   id?: string | undefined;
   disabled?: boolean | undefined;
   readOnly?: boolean | undefined;
-  required?: boolean | undefined;
   maxLength?: number | undefined;
   /** Needed only outside a `Field`, which labels its control. */
   "aria-label"?: string | undefined;

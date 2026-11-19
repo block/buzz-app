@@ -19,28 +19,38 @@ import type {
 const tabbable =
   'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
-/** Hidden by CSS on it or a container. `checkVisibility` needs Safari 17.4. */
+/** Shown on screen. Without `checkVisibility` (before Safari 17.4), check CSS and closed disclosures. */
 function rendered(element: HTMLElement) {
   if (element.checkVisibility)
     return element.checkVisibility({ visibilityProperty: true });
-  for (let node: Element | null = element; node; node = node.parentElement)
+  if (getComputedStyle(element).visibility !== "visible") return false;
+  for (let node = element; node.parentElement; node = node.parentElement) {
+    const parent = node.parentElement;
     if (getComputedStyle(node).display === "none") return false;
-  return getComputedStyle(element).visibility !== "hidden";
+    // A closed <details> shows only its summary.
+    if (
+      parent instanceof HTMLDetailsElement &&
+      !parent.open &&
+      node !== parent.querySelector(":scope > summary")
+    )
+      return false;
+  }
+  return true;
 }
 
-/** Not disabled by a fieldset, and not inside a hidden or inert container. */
+/** Not disabled by a fieldset, not inert, and shown on screen. */
 function focusable(element: HTMLElement) {
   return (
     !element.matches(":disabled") &&
-    !element.closest("[hidden], [inert]") &&
+    !element.closest("[inert]") &&
     rendered(element)
   );
 }
 
 /**
  * Plugins cannot pass a focus ref, so start where a form dialog should: on the
- * first body control, else the first action, never on header Close. The title
- * anchor finds this dialog's popup without exposing its ref.
+ * first body control, else the first action. Header Close gets focus only when
+ * there is neither. The title anchor finds this dialog's popup without exposing its ref.
  */
 function initialFocus(anchor: RefObject<HTMLSpanElement | null>) {
   return () => {
@@ -108,13 +118,12 @@ export const pluginUi: PluginUi = Object.freeze({
         value={str(props.value)}
         defaultValue={str(props.defaultValue)}
         onValueChange={onValueChange && ((value) => onValueChange(value))}
-        type={oneOf(props.type, ["text", "email", "url", "password"])}
+        type={oneOf(props.type, ["text", "password"])}
         placeholder={str(props.placeholder)}
         name={str(props.name)}
         id={str(props.id)}
         disabled={props.disabled === true}
         readOnly={props.readOnly === true}
-        required={props.required === true}
         maxLength={
           Number.isInteger(props.maxLength) ? props.maxLength : undefined
         }

@@ -100,6 +100,12 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
           h(loose.Input, { "aria-label": "Later" }),
         ),
         h(
+          "details",
+          null,
+          h("summary", { tabIndex: -1 }, "More"),
+          h(loose.Input, { "aria-label": "Folded" }),
+        ),
+        h(
           "form",
           { id: "profile", onSubmit: save },
           h(

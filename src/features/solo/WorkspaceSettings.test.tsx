@@ -785,6 +785,123 @@ it("uncertain name survives remount and reconciles without publishing or saving 
   expect(h.canvas.save).toHaveBeenCalledOnce();
 });
 
+it("keeps the Chat settings name editable during automatic naming and saves it once", async () => {
+  const h = combined();
+  const name = await screen.findByRole("textbox", { name: "Chat name" });
+  const details = h.details.capability;
+  const base = await details.load(h.id);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.publish.mockImplementationOnce(async (event) => {
+    await gate;
+    h.apply(event);
+  });
+
+  let automatic: Promise<void> | undefined;
+  try {
+    act(() => {
+      automatic = details.save(
+        base,
+        { ...base, name: "Automatic title" },
+        undefined,
+        undefined,
+        "automatic",
+      );
+    });
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    expect(name).toBeEnabled();
+    fireEvent.change(name, { target: { value: "My title" } });
+    expect(saveChanges()).toBeEnabled();
+    fireEvent.click(saveChanges());
+    await waitFor(() => expect(name).toBeDisabled());
+    expect(h.close).not.toHaveBeenCalled();
+    expect(h.publish).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => {
+      release();
+      await automatic;
+    });
+  }
+
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.publish).toHaveBeenCalledTimes(2);
+  expect(await details.load(h.id)).toMatchObject({
+    name: "My title",
+    ttlSeconds: 600,
+  });
+});
+
+it.each([
+  { draft: "an unchanged lifetime", conflict: false },
+  { draft: "a conflicting lifetime edit", conflict: true },
+])(
+  "checks an uncertain automatic title with $draft without saving the typed name",
+  async ({ conflict }) => {
+    const h = combined();
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    await waitFor(() => expect(saveChanges()).toBeEnabled());
+    fireEvent.change(name, { target: { value: "My title" } });
+    if (conflict)
+      fireEvent.click(screen.getByRole("radio", { name: /^Ongoing/ }));
+
+    h.saved(1200);
+    const details = h.details.capability;
+    const base = await details.load(h.id);
+    h.publish.mockImplementationOnce(async (event) => {
+      h.apply(event);
+      throw new Error("Lost ack");
+    });
+    await act(async () => {
+      await expect(
+        details.save(
+          base,
+          { ...base, name: "Automatic title" },
+          undefined,
+          undefined,
+          "automatic",
+        ),
+      ).rejects.toThrow("may have been saved");
+    });
+
+    const check = await screen.findByRole("button", {
+      name: "Check save status",
+    });
+    expect(name).toBeDisabled();
+    expect(name).toHaveValue("My title");
+    expect(check).toBeEnabled();
+    fireEvent.click(check);
+    await waitFor(() => expect(saveChanges()).toBeEnabled());
+    expect(name).toBeEnabled();
+    expect(name).toHaveValue("My title");
+    expect(h.close).not.toHaveBeenCalled();
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).toHaveBeenCalledOnce();
+
+    if (conflict) {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "The chat lifetime changed. Reload chat details before saving your edits.",
+      );
+      expect(screen.getByRole("radio", { name: /^Ongoing/ })).toBeChecked();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reload chat details" }),
+      );
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    } else {
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeChecked();
+    }
+
+    fireEvent.click(saveChanges());
+    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+    expect(h.publish).toHaveBeenCalledTimes(2);
+    const saved = await details.load(h.id);
+    expect(saved.name).toBe("My title");
+    expect(saved.ttlSeconds).toBe(conflict ? undefined : 1200);
+  },
+);
+
 it("shared name validation blocks oversized names before either owner publishes", async () => {
   const h = combined();
   await editBoth();

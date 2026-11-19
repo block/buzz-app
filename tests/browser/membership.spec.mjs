@@ -322,21 +322,30 @@ test("a revisit without saved geometry paints measured rows while late notices l
     await route.continue();
   });
   // Sample after each rendering update: a task posted from a frame callback.
+  // A task queued before it, such as a relay response, can mount rows after
+  // the paint; that state was never painted, so skip it.
   await page.evaluate(() => {
-    const frames = (window.paintedFrames = []);
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      const feed = document.querySelector(
+    const frames = [];
+    window.paintedFrames = frames;
+    const rows = (feed) => [...(feed?.querySelector("ol")?.children ?? [])];
+    const timeline = () =>
+      document.querySelector(
         '[data-message-scroller][data-channel-timeline="alpha"]',
       );
+    let rendered = [];
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      const feed = timeline();
       const box = feed?.getBoundingClientRect();
-      const items = [...(feed?.querySelector("ol")?.children ?? [])].filter(
-        (item) => {
-          const rect = item.getBoundingClientRect();
-          return rect.height && rect.bottom > box.top && rect.top < box.bottom;
-        },
-      );
-      if (items.length)
+      const mounted = rows(feed);
+      const painted =
+        mounted.length === rendered.length &&
+        mounted.every((row, index) => row === rendered[index]);
+      const items = mounted.filter((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.height && rect.bottom > box.top && rect.top < box.bottom;
+      });
+      if (painted && items.length)
         frames.push({
           hidden: items.filter((item) => item.style.visibility === "hidden")
             .length,
@@ -357,10 +366,13 @@ test("a revisit without saved geometry paints measured rows while late notices l
           ),
           notices: feed.querySelectorAll("[data-membership-row]").length,
         });
-      if (!window.stopFrames)
-        requestAnimationFrame(() => channel.port2.postMessage(0));
+      if (!window.stopFrames) requestAnimationFrame(frame);
     };
-    requestAnimationFrame(() => channel.port2.postMessage(0));
+    const frame = () => {
+      rendered = rows(timeline());
+      channel.port2.postMessage(0);
+    };
+    requestAnimationFrame(frame);
   });
   const feed = page.getByRole("region", { name: "Channel message history" });
   try {

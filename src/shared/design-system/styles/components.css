@@ -1691,13 +1691,8 @@
   .navigation-section-heading:has(> [data-reserve-space])
     > .navigation-section-heading-label {
     flex-wrap: wrap;
-  }
-
-  /* Keep room for the disclosure, icon and a short title before the accessory. */
-  :where(.navigation-section-heading:has(> [data-reserve-space]))
-    > .navigation-section-heading-label
-    > :first-child {
-    min-inline-size: min(100%, 7rem);
+    /* Leave room for the disclosure, icon and a short title before the accessory. */
+    --navigation-heading-title-min: min(100%, 7rem);
   }
 
   .navigation-section-heading:has(> [data-reserve-space])

@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   flex: 1;
-  min-width: 0;
+  min-width: var(--navigation-heading-title-min, 0);
   gap: 0;
 }
 .heading > [data-solo-workspace-id] {

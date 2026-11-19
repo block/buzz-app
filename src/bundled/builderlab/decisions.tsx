@@ -142,12 +142,14 @@ export function communityDecisionSessions(
   };
 }
 
-/** Registers Builderlab in Settings > Decisions API while the user is signed
- * in, or a joined community's sign-in server serves it, so it can be chosen
- * there before sign-in; and removes it otherwise. It is ready in a community
- * while that community's Builderlab reports that the account may use
- * decisions; reading its status keeps that fresh. Where it is ready it is a default provider,
- * so it answers unless the user chose another. Builds without native calls
+/** Registers Builderlab in Settings > Decisions API while the build's
+ * session is signed in or being restored, or while any joined community has a
+ * sign-in server that covers it (signed in, signed out or still being
+ * restored), so it can be chosen there before sign-in; and removes it
+ * otherwise. It is ready in a community while that community's Builderlab
+ * reports that the account may use decisions; reading its status keeps that
+ * fresh. Where it is offered it is the default provider, so it answers, or
+ * says why it can't, unless the user chose another. Builds without native calls
  * never offer it. `communities`, when given, answers each community with its
  * own sign-in server's session, else `session` answers. `signIn` is where
  * Settings sends a community that is not signed in. */

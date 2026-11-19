@@ -502,6 +502,19 @@ it("asks no provider in a community where the user turned decisions off", async 
   await expect(
     service.decide({ ...request, community: off }),
   ).resolves.toMatchObject({ outcome: "failed", reason: "unavailable" });
+  // Every spelling of the community is the same one: Settings saves the
+  // https origin, a plugin may name it by its relay URL with a final DNS
+  // dot, any case or the default port.
+  for (const spelling of [
+    "https://billed.example",
+    "wss://billed.example.",
+    "wss://BILLED.example:443/",
+  ]) {
+    expect(service.chosenIn(spelling)).toBe(DECISIONS_OFF);
+    await expect(
+      service.decide({ ...request, community: spelling }),
+    ).resolves.toMatchObject({ outcome: "failed", reason: "unavailable" });
+  }
   expect(typesafe).not.toHaveBeenCalled();
   expect(builderlab).not.toHaveBeenCalled();
   // Other communities keep their providers.
@@ -520,6 +533,28 @@ it("asks no provider in a community where the user turned decisions off", async 
   reloaded.service.setBackend(DEFAULT_DECISION_PROVIDER, off);
   expect(reloaded.service.backend(off)).toBe(DEFAULT_DECISION_PROVIDER);
   await reloaded.root.fiber.dispose();
+});
+
+it("treats a provider whose offered() throws as not offered, and never rejects", async () => {
+  const { service, plugin } = setup();
+  const thrower = vi.fn(async () => reply);
+  const typesafe = vi.fn(async () => reply);
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    decide: thrower,
+    offered: () => {
+      throw new Error("plugin bug");
+    },
+  });
+  await plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  const community = "wss://relay.example";
+  // With no choice, the default that throws is skipped for the next one.
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
+  await expect(
+    service.decide({ ...request, community }),
+  ).resolves.toMatchObject({ outcome: "answered" });
+  expect(thrower).not.toHaveBeenCalled();
+  expect(typesafe).toHaveBeenCalledOnce();
 });
 
 it("ignores malformed saved community choices", async () => {

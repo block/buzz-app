@@ -171,6 +171,45 @@ it("says whether each provider is ready while there are no communities", async (
   expect(screen.queryByRole("combobox")).toBeNull();
 });
 
+it("keeps rendering when a provider's status or offered() throws", async () => {
+  const user = userEvent.setup();
+  const { decisions, register } = setup();
+  await register(TYPESAFE, () => "ready");
+  await register(
+    "acme.helper/helper",
+    () => {
+      throw new Error("plugin bug");
+    },
+    {
+      offered: () => {
+        throw new Error("plugin bug");
+      },
+    },
+  );
+  const view = render(
+    <DecisionsSettings decisions={decisions} active={() => true} />,
+  );
+  // Without communities: a status it cannot read is not yet confirmed.
+  expect(row("helper")).toHaveTextContent("Ready");
+  view.unmount();
+  render(
+    <DecisionsSettings
+      decisions={decisions}
+      active={() => true}
+      memberships={memberships}
+    />,
+  );
+  const menu = screen.getByRole("combobox", {
+    name: "Decision provider for Block",
+  });
+  expect(menu).toHaveTextContent("TypeSafe");
+  // A provider whose offered() throws is not offered.
+  await user.click(menu);
+  const helper = await screen.findByRole("option", { name: /helper/ });
+  expect(helper).toHaveAttribute("aria-disabled", "true");
+  expect(helper).toHaveTextContent("Not offered in this community");
+});
+
 it("chooses a provider for each community, offering only those it can be set up in", async () => {
   const user = userEvent.setup();
   const { decisions, register } = setup();

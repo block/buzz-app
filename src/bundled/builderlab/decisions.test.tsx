@@ -554,8 +554,16 @@ it("answers each community with its own sign-in server's account, and leaves the
   view.rerender(<Settings active={() => true} community={BLOCK} />);
   expect(screen.queryByRole("status")).toBeNull();
   view.unmount();
-  // Without a community, it is not offered: it bills one.
+  // Without a community, it is not offered: it bills one. That holds even
+  // when its own session could answer, as a choice saved before
+  // per-community choices would ask it.
   expect(decisions.providers()[0]?.status()).toBe("needs-setup");
+  expect(
+    builderlabProvider(block, decide, undefined, communities).status(),
+  ).toBe("needs-setup");
+  expect(
+    builderlabProvider(block, decide, undefined, communities).status(BLOCK),
+  ).toBe("ready");
   expect(decisions.providers()[0]?.offered?.()).toBe(false);
   expect(decisions.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   await expect(

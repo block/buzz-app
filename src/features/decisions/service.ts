@@ -6,6 +6,7 @@
 // provider is held to the same rules and returns the same checked answers.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
+import { relayOrigin } from "../communities/destination";
 import {
   createContributions,
   type Contribution,
@@ -247,12 +248,20 @@ const offeredHere = (provider: DecisionProvider, community?: string) => {
   }
 };
 
-/** The key a community's choice is saved under: its relay host, so its
- * wss:// and https:// URLs share one choice. */
+/** The key a community's choice is saved under: the host of its relay
+ * origin, as Settings and the rest of the app spell it, so every spelling of
+ * one community (wss:// or https://, any case, a final DNS dot) shares one
+ * choice. Anything else keys by its URL host. */
 export const communityKey = (community: string | undefined) => {
   if (community === undefined) return undefined;
+  let origin = community;
   try {
-    return new URL(community).host.toLowerCase() || undefined;
+    origin = relayOrigin(community);
+  } catch {
+    // Not a relay origin: keyed by its own host below.
+  }
+  try {
+    return new URL(origin).host.toLowerCase() || undefined;
   } catch {
     return undefined;
   }

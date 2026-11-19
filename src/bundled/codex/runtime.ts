@@ -284,6 +284,7 @@ type Entry = {
 function addressed(
   args: Record<string, unknown>,
   answering: readonly Request[],
+  strict: boolean,
 ) {
   const id =
     typeof args.request === "string" ? args.request.trim().toLowerCase() : "";
@@ -291,7 +292,7 @@ function addressed(
   if (named) return named;
   const { channel, reply } = args;
   if (typeof channel !== "string") {
-    if (id)
+    if (id && strict)
       throw new Error(
         `Request ${id} is not part of this turn. Pass channel, and reply for a thread, to say where this goes.`,
       );
@@ -2362,7 +2363,16 @@ export class CodexRuntime {
                   request.conversation.channelId,
                   request.solo ? request.canvas : NO_PROJECT,
                 );
-              active.reply = request;
+              // A wake steering in from elsewhere leaves unaddressed sends
+              // answering the turn's destination; a message moves them.
+              if (
+                communityLane ||
+                !request.wake ||
+                (request.conversation.channelId ===
+                  active.reply.conversation.channelId &&
+                  request.replyRoot === active.reply.replyRoot)
+              )
+                active.reply = request;
               active.requests.push(request);
               entry.waiting.delete(request);
               this.touch(request, entry, key);
@@ -3062,9 +3072,15 @@ export class CodexRuntime {
     const answering = active ? [...active.requests] : [];
     // Undefined uses the default destination; null is an explicit one that
     // answers no request in this turn.
+    const community = active?.reply.settings.scope === "community";
+    // Only a community turn or one spanning destinations picks a request by
+    // its routing arguments; elsewhere a request ID only attributes the send.
+    const spanning =
+      community ||
+      new Set(answering.map((taken) => taken.activityScope)).size > 1;
     const target =
-      active && (call.tool === "send" || call.tool === "reply_in_subthread")
-        ? addressed(args, answering)
+      spanning && (call.tool === "send" || call.tool === "reply_in_subthread")
+        ? addressed(args, answering, community)
         : undefined;
     const request = target ?? active?.reply;
     const owner = request ?? (once as Once);
@@ -3132,8 +3148,7 @@ export class CodexRuntime {
     const final = isFinalMessage(call.tool, args);
     // A turn spanning destinations answers each with its own final send.
     const settling =
-      request?.conversation.community ||
-      new Set(answering.map((taken) => taken.activityScope)).size > 1
+      request?.conversation.community || spanning
         ? target === null
           ? []
           : answering.filter(

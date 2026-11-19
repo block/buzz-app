@@ -9114,6 +9114,53 @@ it.each(["channel", "thread"] as const)(
   },
 );
 
+it("attributes a single-request send to an earlier message outside the turn", async () => {
+  const f = fixture();
+  const delegating = "d".repeat(64);
+  try {
+    await f.runtime.run(f.delivery("Delegated work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.tool("send", {
+      request: delegating,
+      audience: "agents",
+      text: "Done",
+    });
+    expect(tagsOf(f)).toEqual([
+      expect.arrayContaining([["buzz:request", delegating]]),
+    ]);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("keeps an unaddressed send on the turn's thread after a top-level wake steers in", async () => {
+  const f = fixture();
+  const first = f.delivery("Threaded work");
+  const config = { ...(first.config as object), scope: "channel" };
+  const wake = pluginWake(f);
+  if (wake.trigger.type !== "plugin") throw new Error("Expected a plugin wake");
+  try {
+    await f.runtime.run({ ...first, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...wake,
+      config,
+      trigger: { ...wake.trigger, topLevel: true },
+    });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    await f.tool("send", { audience: "everyone", text: "Thread reply" });
+    expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+    await f.complete(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("settles only the destination a final reply answers in a mixed channel turn", async () => {
   const f = fixture();
   const first = f.delivery("Threaded work");

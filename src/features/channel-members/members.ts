@@ -1,7 +1,12 @@
 import { agentUnavailable } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import type { LocalEvents, Outbox, OutgoingEvent } from "../relay/outbox";
+import type {
+  LocalEvents,
+  Outbox,
+  OutgoingEvent,
+  RecoveryJournal,
+} from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import { migrationSource } from "../relay/migration";
 
@@ -144,6 +149,8 @@ const additionLifetimeSeconds = 15 * 60;
 /** A batch clears once each person it names is confirmed or has a single receipt. */
 export const isBatchAddition = (item: OutgoingEvent) =>
   !!item.recovery?.key.startsWith(batchPrefix);
+const batchOrigin = (item: OutgoingEvent) =>
+  item.recovery?.value === "1" ? item.event.id : item.recovery?.value;
 
 export type MemberAdditionIntent = {
   id?: string;
@@ -160,14 +167,18 @@ export type MemberAdditionIntent = {
 /** Require the original batch's ownership before admitting a retry. */
 async function withMigrationBatch(
   outbox: Outbox,
+  journal: RecoveryJournal | undefined,
   id: string,
   migration: string | undefined,
   channelId: string,
   recipients: readonly string[],
-  start: () => string,
+  start: () => string | Promise<string>,
 ): Promise<string> {
-  const batch = outbox.snapshot().find((item) => item.event.id === id);
+  const batch =
+    (await journal?.read())?.find((item) => item.event.id === id) ??
+    outbox.snapshot().find((item) => item.event.id === id);
   if (
+    !journal ||
     !batch?.recovery ||
     !isBatchAddition(batch) ||
     batch.acknowledged ||
@@ -187,19 +198,52 @@ async function withMigrationBatch(
     );
   let operation = "";
   await outbox.withRecovery(id, batch.recovery, async () => {
-    operation = start();
+    operation = await start();
+    await journal.flush();
   });
   return operation;
+}
+
+function withMemberMigration<T>(
+  outbox: Outbox | undefined,
+  channelId: string,
+  migration: string | undefined,
+  run: (journal?: RecoveryJournal) => Promise<T>,
+) {
+  if (migration === undefined) return run();
+  const lock = outbox?.withRecoveryJournal;
+  if (!lock) throw new Error("Migration recovery is unavailable on this host.");
+  return lock(`member-add:${channelId}`, run);
 }
 
 /** Explicit single-person intent. Membership truth and pending writes stay
  * session-owned. Whatever the outcome, settles the batches it may complete. */
 export async function addChannelMember(
-  ...args: Parameters<typeof addOneMember>
+  session: RelaySession,
+  channelId: string,
+  pubkey: string,
+  signal: AbortSignal,
+  intent: MemberAdditionIntent = {},
+  receipts?: LocalEvents,
+  soloParticipant = false,
 ) {
-  const [session, channelId] = args;
   try {
-    await addOneMember(...args);
+    await withMemberMigration(
+      session.outbox,
+      channelId,
+      intent.migration,
+      (journal) =>
+        addOneMember(
+          session,
+          channelId,
+          pubkey,
+          signal,
+          intent,
+          receipts,
+          soloParticipant,
+          journal,
+        ),
+    );
   } finally {
     await settleBatchAdditions(session, channelId);
   }
@@ -213,6 +257,7 @@ async function addOneMember(
   intent: MemberAdditionIntent = {},
   receipts: LocalEvents | undefined = session.outbox,
   soloParticipant = false,
+  sharedJournal?: RecoveryJournal,
 ): Promise<void> {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -251,6 +296,16 @@ async function addOneMember(
     event.tags.some(([tag, value]) => tag === "p" && value === pubkey);
   const noRole = (event: Pick<RelayEvent, "tags">) =>
     !event.tags.some(([tag]) => tag === "role");
+  if (sharedJournal && !fresh) {
+    const shared = (await sharedJournal.read()).find(
+      (item) =>
+        !item.acknowledged &&
+        !isBatchAddition(item) &&
+        matchesTarget(item.event),
+    );
+    if (shared && (!intent.id || shared.event.id === intent.id))
+      sharedJournal.adopt(shared);
+  }
   const saved = journal.snapshot();
   const pending = fresh
     ? undefined
@@ -434,11 +489,24 @@ async function addOneMember(
       outbox.retry(id);
     return id;
   };
+  const resume = async () => {
+    if (!sharedJournal || !pending || pending.acknowledged) return send();
+    const withRecovery = outbox.withRecovery;
+    if (!withRecovery)
+      throw new Error("Migration recovery is unavailable on this host.");
+    const id = pending.event.id;
+    await withRecovery(id, recovery, () => {
+      send();
+      return waitForAddition(journal, id, signal);
+    });
+    return id;
+  };
   const id =
     intent.batchReceipt === undefined
-      ? send()
+      ? await resume()
       : await withMigrationBatch(
           outbox,
+          sharedJournal,
           intent.batchReceipt,
           intent.migration,
           channelId,
@@ -446,7 +514,7 @@ async function addOneMember(
           () => {
             if (channel()?.members?.includes(pubkey))
               throw new Error("Membership changed during retry. Try again.");
-            return send();
+            return resume();
           },
         );
   return confirmAddition(id);
@@ -537,6 +605,31 @@ export async function addChannelMembersAtOnce(
   /** Receipts the single addition reads, including resolved ones. */
   receipts?: LocalEvents,
 ): Promise<ReadonlySet<string>> {
+  const { migration } = intents.values().next().value ?? {};
+  return withMemberMigration(session.outbox, channelId, migration, (journal) =>
+    addMemberBatch(
+      session,
+      channelId,
+      people,
+      intents,
+      signal,
+      soloParticipant,
+      receipts,
+      journal,
+    ),
+  );
+}
+
+async function addMemberBatch(
+  session: RelaySession,
+  channelId: string,
+  people: readonly string[],
+  intents: ReadonlyMap<string, MemberAdditionIntent>,
+  signal: AbortSignal,
+  soloParticipant: boolean,
+  receipts: LocalEvents | undefined,
+  sharedJournal?: RecoveryJournal,
+): Promise<ReadonlySet<string>> {
   const confirmed = new Set<string>();
   const outbox = session.outbox;
   if (people.length < 2 || !outbox) return confirmed;
@@ -560,16 +653,16 @@ export async function addChannelMembersAtOnce(
     return true;
   });
   if (!loaded) return confirmed;
-  const singles = (receipts ?? outbox)
-    .snapshot()
-    .filter(
-      (item) =>
-        !isBatchAddition(item) &&
-        item.event.kind === 9000 &&
-        item.event.tags.some(
-          ([tag, value]) => tag === "h" && value === channelId,
-        ),
-    );
+  const singles = (
+    sharedJournal ? await sharedJournal.read() : (receipts ?? outbox).snapshot()
+  ).filter(
+    (item) =>
+      !isBatchAddition(item) &&
+      item.event.kind === 9000 &&
+      item.event.tags.some(
+        ([tag, value]) => tag === "h" && value === channelId,
+      ),
+  );
   const named = (items: readonly OutgoingEvent[]) =>
     new Set(
       items.flatMap(({ event }) =>
@@ -657,16 +750,33 @@ export async function addChannelMembersAtOnce(
               throw new Error("Membership changed during retry. Try again.");
           };
           const id = await attempt(async () => {
-            if (migration !== undefined) {
-              const saved = outbox.snapshot().find((item) => {
+            let origin: string | undefined;
+            if (sharedJournal) {
+              const records = await sharedJournal.read();
+              const original =
+                batchReceipt === undefined
+                  ? undefined
+                  : (records.find((item) => item.event.id === batchReceipt) ??
+                    outbox
+                      .snapshot()
+                      .find((item) => item.event.id === batchReceipt));
+              if (
+                batchReceipt !== undefined &&
+                (!original ||
+                  !isBatchAddition(original) ||
+                  original.acknowledged)
+              )
+                throw new Error(
+                  "The original migration batch is unavailable. Refresh the Outbox before retrying.",
+                );
+              origin = original && batchOrigin(original);
+              const saved = records.find((item) => {
                 if (
                   item.event.kind !== 9000 ||
-                  (batchReceipt !== undefined &&
-                    item.event.id !== batchReceipt &&
-                    item.recovery?.value !== batchReceipt) ||
+                  (origin !== undefined && batchOrigin(item) !== origin) ||
                   !isBatchAddition(item) ||
                   item.acknowledged ||
-                  (!item.signed && item.delivery !== "sending") ||
+                  !item.signed ||
                   !["failed", "unknown", "sending"].includes(item.delivery) ||
                   Date.now() / 1000 - item.event.created_at >=
                     additionLifetimeSeconds
@@ -690,7 +800,6 @@ export async function addChannelMembersAtOnce(
               });
               if (saved?.recovery) {
                 const id = saved.event.id;
-                if (saved.delivery === "sending") return id;
                 const { withRecovery } = outbox;
                 const { recovery } = saved;
                 if (!withRecovery)
@@ -703,6 +812,7 @@ export async function addChannelMembersAtOnce(
                   batchReceipt !== undefined && id !== batchReceipt
                     ? await withMigrationBatch(
                         outbox,
+                        sharedJournal,
                         batchReceipt,
                         migration,
                         channelId,
@@ -712,6 +822,7 @@ export async function addChannelMembersAtOnce(
                     : id;
                 await withRecovery(target, recovery, () => {
                   checkRetry();
+                  sharedJournal.adopt(saved);
                   outbox.retry(target);
                   return waitForAddition(outbox, target, signal);
                 });
@@ -732,13 +843,14 @@ export async function addChannelMembersAtOnce(
                 },
                 {
                   key: `${batchPrefix}${crypto.randomUUID()}`,
-                  value: batchReceipt ?? "1",
+                  value: origin ?? "1",
                 },
               );
             return batchReceipt === undefined
               ? send()
               : withMigrationBatch(
                   outbox,
+                  sharedJournal,
                   batchReceipt,
                   migration,
                   channelId,

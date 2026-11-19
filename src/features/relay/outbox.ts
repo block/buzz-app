@@ -60,6 +60,11 @@ type Replacement = {
   input(): OutboxInput | undefined;
   queued(id: string): void;
 };
+export type RecoveryJournal = {
+  read(): Promise<readonly OutgoingEvent[]>;
+  adopt(item: OutgoingEvent): void;
+  flush(): Promise<void>;
+};
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
   snapshot(): readonly OutgoingEvent[];
@@ -71,6 +76,11 @@ export interface Outbox {
   ready(): Promise<void>;
   /** Fresh shared-journal ownership without importing another window's operations. */
   recovery(key: string): Promise<OutgoingEvent | undefined>;
+  /** Coordinate related recovery operations in the shared journal. */
+  withRecoveryJournal?<T>(
+    key: string,
+    run: (journal: RecoveryJournal) => Promise<T>,
+  ): Promise<T>;
   /** Verify the exact durable receipt and retain its dismissal lock through
    * dependent publication. Signing must happen before acquiring this lock.
    * Older Outboxes may omit this; dependent publication must fail closed. */
@@ -349,15 +359,19 @@ export function createOutbox(
   let storageError: string | undefined;
   let hydrated = false;
   let durable = Promise.resolve();
-  let ownership = Promise.resolve();
+  const ownership = new Map<string, Promise<void>>();
   function locked<T>(id: string, run: () => Promise<T>): Promise<T> {
     if (storage.lock) return storage.lock(id, run);
     // Memory/single-window stores still serialize publication with dismissal.
-    const work = ownership.then(run, run);
-    ownership = work.then(
+    const work = (ownership.get(id) ?? Promise.resolve()).then(run);
+    const tail = work.then(
       () => {},
       () => {},
     );
+    ownership.set(id, tail);
+    void tail.then(() => {
+      if (ownership.get(id) === tail) ownership.delete(id);
+    });
     return work;
   }
   const notify = () => {
@@ -1007,6 +1021,50 @@ export function createOutbox(
         notify();
       }
       return shared;
+    },
+    async withRecoveryJournal(key, run) {
+      await outbox.ready();
+      return locked(`recovery:${key}`, async () => {
+        const previous = durable;
+        await previous.catch(() => {});
+        const flush = async () => {
+          if (durable !== previous) await durable;
+        };
+        try {
+          return await run({
+            async read() {
+              const records = await storage.load({ readOnly: true });
+              validateSaved(records);
+              return records;
+            },
+            adopt(item) {
+              const id = item.event.id;
+              const existing = find(id);
+              if (
+                existing &&
+                (attempts.has(id) || existing.delivery === "seen")
+              )
+                return;
+              const decoded = decode(item);
+              const restored =
+                item.delivery === "accepted" && decoded.signed
+                  ? Object.freeze({ ...decoded, delivery: "accepted" as const })
+                  : decoded;
+              const next = [
+                ...snapshot.filter((row) => row.event.id !== id),
+                restored,
+              ];
+              admit(next, item.event.kind);
+              restoredReceipts.add(id);
+              snapshot = Object.freeze(next);
+              notify();
+            },
+            flush,
+          });
+        } finally {
+          await flush();
+        }
+      });
     },
     withRecovery,
     async finishRecovery(id: string, recovery: OutboxRecovery) {

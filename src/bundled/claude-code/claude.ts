@@ -80,6 +80,9 @@ export type ClaudeLaunch = Readonly<{
   model?: string;
   /** The session's own effort level; absent is Claude's default. */
   effort?: string;
+  /** The context size, in tokens, it compacts at; absent is Claude's
+   * default. A protected session never compacts. */
+  compactAt?: number;
   /** A saved session to continue. */
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
@@ -403,6 +406,9 @@ export class ClaudeProcess {
               CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
               CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
             }
+          : {}),
+        ...(launch.compactAt && !security
+          ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(launch.compactAt) }
           : {}),
         ...(security
           ? {

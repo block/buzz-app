@@ -794,6 +794,26 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+it.each([
+  [undefined, undefined],
+  ["200000", 200000],
+  ["12345", undefined],
+])(
+  "starts a thread compacting at the agent's threshold %s",
+  async (compactAt, limit) => {
+    const f = fixture();
+    const delivery = f.delivery("@Codex hello");
+    await f.runtime.run({
+      ...delivery,
+      config: { ...(delivery.config as object), compactAt },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const start = f.sent.find((wire) => wire.method === "thread/start") as {
+      params: { config: Record<string, unknown> };
+    };
+    expect(start.params.config.model_auto_compact_token_limit).toBe(limit);
+  },
+);
 it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
   const f = fixture();
   const delivery = f.delivery("@Codex check my mail");
@@ -884,6 +904,167 @@ it("serves every agent from one server and routes each tool call to its own agen
   expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
   expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
 });
+it("keeps other turns alive when unsubscribe times out and confirms release before resuming", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const b = second(f);
+  const firstCleanup = deferred<void>();
+  const nextCleanup = deferred<void>();
+  const unsubscribes = () =>
+    f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await f.runtime.run(b.delivery("other work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    f.held.set("thread/unsubscribe", firstCleanup.promise);
+    await f.complete(0, "");
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(1));
+
+    f.held.set("thread/unsubscribe", nextCleanup.promise);
+    await f.runtime.run(f.delivery("queued follow-up"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(f.runtime.sessions(pubkey)[0]).toMatchObject({
+      status: "Needs attention",
+      detail: "Codex thread/unsubscribe timed out",
+    });
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
+    expect(b.agent.publish).not.toHaveBeenCalled();
+
+    // Codex may have processed the first request even if Buzz got no answer.
+    // The follow-up must wait for a confirmed release before resuming.
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(2));
+    firstCleanup.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(false);
+
+    f.held.delete("thread/unsubscribe");
+    nextCleanup.resolve();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(servers(f)).toHaveLength(1);
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject(unsubscribes()[0]?.params as object);
+
+    await f.complete(1, "OTHER FINISHED");
+    await f.complete(2, "FOLLOW-UP FINISHED");
+    expect(contents(b.agent.publish as never)).toEqual(["OTHER FINISHED"]);
+    expect(contents(f.publish)).toEqual(["FOLLOW-UP FINISHED"]);
+  } finally {
+    firstCleanup.resolve();
+    nextCleanup.resolve();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it("replaces a silent app-server before resuming a queued follow-up", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const b = second(f);
+  const replacement = fixture();
+  const silent = deferred<void>();
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await f.runtime.run(b.delivery("other work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    for (const method of ["thread/unsubscribe", "account/read", "config/read"])
+      f.held.set(method, silent.promise);
+    await f.complete(0, "FIRST FINISHED");
+    const unsubscribes = () =>
+      f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+    await vi.waitFor(() => expect(unsubscribes()).toHaveLength(1));
+    await f.runtime.run(f.delivery("queued follow-up"));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.sent.some((wire) => wire.method === "account/read")).toBe(true);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(b.agent.publish).not.toHaveBeenCalled();
+
+    f.spawn.mockImplementationOnce(replacement.spawn);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).toHaveBeenCalledTimes(1);
+    expect(contents(b.agent.publish as never)).toEqual([
+      "Codex could not finish: Buzz closed the Codex connection after app-server responsiveness check failed.",
+    ]);
+    await vi.waitFor(() => expect(replacement.starts()).toHaveLength(1));
+    expect(servers(f)).toHaveLength(2);
+    expect(
+      replacement.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject(unsubscribes()[0]?.params as object);
+    await replacement.complete(0, "FOLLOW-UP FINISHED");
+    expect(contents(f.publish)).toEqual([
+      "FIRST FINISHED",
+      "FOLLOW-UP FINISHED",
+    ]);
+  } finally {
+    silent.resolve();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it.each([
+  "unknown",
+  "refused",
+  "completed before the start reply",
+  "completed during unsubscribe",
+])(
+  "handles unsubscribe failure when the turn state is %s",
+  async (turnState) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const b = second(f);
+    const startReply = deferred<void>();
+    const unsubscribeReply = deferred<void>();
+    const refused = turnState === "refused";
+    try {
+      await f.runtime.run(b.delivery("other work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      if (refused) f.failing.add("turn/start");
+      else f.held.set("turn/start", startReply.promise);
+      f.failing.add("thread/unsubscribe");
+      if (turnState === "completed during unsubscribe")
+        f.held.set("thread/unsubscribe", unsubscribeReply.promise);
+
+      await f.runtime.run(f.delivery("work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      if (turnState === "completed before the start reply")
+        await f.complete(1, "");
+      if (!refused) await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() =>
+        expect(f.sent).toContainEqual(
+          expect.objectContaining({ method: "thread/unsubscribe" }),
+        ),
+      );
+      expect(contents(f.publish)).toEqual([
+        refused
+          ? "Codex could not finish: turn/start failed."
+          : "Codex could not finish: Codex turn/start timed out.",
+      ]);
+      if (turnState === "completed during unsubscribe") {
+        await f.complete(1, "");
+        f.held.delete("thread/unsubscribe");
+        unsubscribeReply.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      if (turnState !== "unknown") {
+        expect(f.process.end).not.toHaveBeenCalled();
+        f.failing.delete("thread/unsubscribe");
+        await f.complete(0, "OTHER FINISHED");
+        expect(contents(b.agent.publish as never)).toEqual(["OTHER FINISHED"]);
+      } else {
+        expect(f.process.end).toHaveBeenCalledTimes(1);
+        expect(contents(b.agent.publish as never)).toEqual([
+          "Codex could not finish: Buzz closed the Codex connection after thread unsubscribe failed.",
+        ]);
+      }
+    } finally {
+      startReply.resolve();
+      unsubscribeReply.resolve();
+      f.runtime.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
 it("keeps an agent's two communities' threads apart, each under its membership's key", async () => {
   const f = fixture();
   const elsewhere = `${pubkey}@other.example`;
@@ -3684,8 +3865,11 @@ it("ends the server when its agent stops running and suppresses a late final ans
 
 it("reports an interruption cleanup failure when Codex reports surviving terminals", async () => {
   const f = fixture([{ processId: "42" }]);
-  await f.runtime.run(f.delivery("work"));
+  const b = second(f);
+  await f.runtime.run(b.delivery("other work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.interrupt();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
@@ -3695,6 +3879,14 @@ it("reports an interruption cleanup failure when Codex reports surviving termina
   });
   expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Needs attention");
   expect(f.process.end).toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(b.agent.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Codex could not finish: Buzz closed the Codex connection after background terminal cleanup failed.",
+      }),
+    ),
+  );
 });
 /** The threads whose start prompt is saved, oldest first, and their parts. */
 const savedPrompts = (storage: Map<string, string>) => {

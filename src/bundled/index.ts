@@ -74,6 +74,8 @@ import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
+import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
+import * as performanceDiagnostics from "./performance-diagnostics";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -271,6 +273,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...pluginDevelopmentManifest, apiVersion: 1 },
     module: pluginDevelopment,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...performanceDiagnosticsManifest, apiVersion: 1 },
+    module: performanceDiagnostics,
+    enabledByDefault: false,
   },
   // An organization's own build may bundle plugins here (org.ts).
   ...orgPlugins,

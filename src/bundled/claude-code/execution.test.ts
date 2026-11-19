@@ -92,7 +92,7 @@ const log = (value) => appendFileSync('wire.jsonl',JSON.stringify(value)+'\\n');
 if (process.argv.includes('--version')) { console.log('2.1.308 (Claude Code)'); process.exit(0); }
 if (process.env.ANTHROPIC_API_KEY !== 'guest-test-sign-in' || process.env.CLAUDECODE) process.exit(2);
 const send = (wire) => console.log(JSON.stringify({...wire,session_id:session}));
-log({launch:process.argv});
+log({launch:process.argv,window:process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW});
 const result = () => send({type:'result', subtype:'success', session_id:'session-1'});
 createInterface({input:process.stdin}).on('line', (line) => {
   const wire = JSON.parse(line);
@@ -187,6 +187,23 @@ it("carries Claude tools, hooks and Stop over guest stdio with guest authenticat
     await claude.interrupt();
     await expect(held).resolves.toMatchObject({ ok: true, stopped: true });
     await expect(claude.send("read again")).resolves.toEqual({ ok: true });
+  } finally {
+    await claude.kill();
+    await claude.exited;
+    await cleanup();
+  }
+});
+
+it("compacts a guest's Claude at the agent's threshold", async () => {
+  const { guest, directory, wires, cleanup } = await guestFixture();
+  const claude = await ClaudeProcess.start(executionSpawn(guest), {
+    cwd: directory,
+    systemPrompt: "test",
+    compactAt: 150000,
+  });
+  try {
+    await claude.models();
+    expect((await wires()).find((wire) => wire.launch)?.window).toBe("150000");
   } finally {
     await claude.kill();
     await claude.exited;

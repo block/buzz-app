@@ -907,11 +907,14 @@ function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Where a process runs and may work, its model and effort: all a spare is
+/** Where a process runs and may work, its model, effort and compaction: all a spare is
  * started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
-const place = ({ cwd, directories = [], model, effort }: Where) =>
-  JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
+type Where = Pick<
+  ClaudeLaunch,
+  "cwd" | "directories" | "model" | "effort" | "compactAt"
+>;
+const place = ({ cwd, directories = [], model, effort, compactAt }: Where) =>
+  JSON.stringify([cwd, directories, model ?? "", effort ?? "", compactAt ?? 0]);
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most

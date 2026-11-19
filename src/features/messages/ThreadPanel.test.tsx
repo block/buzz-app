@@ -554,6 +554,7 @@ it("holds seeded rows behind the loader until the first page, and unread until t
   Object.assign(h.session.unread, {
     sync: () => ({ capability: "frontier-sync" }),
     reading,
+    leave() {},
   });
   h.snapshot.status = "loading";
   h.snapshot.readKind = "refresh";
@@ -621,6 +622,7 @@ it.each([false, true])(
     Object.assign(h.session.unread, {
       sync: () => ({ capability: "frontier-sync" }),
       reading,
+      leave() {},
     });
     h.snapshot.status = "loading";
     h.snapshot.targetStatus = "loading";
@@ -678,6 +680,7 @@ it("scopes its reading leases to its thread while the original is unavailable", 
   Object.assign(h.session.unread, {
     sync: () => ({ capability: "frontier-sync" }),
     reading,
+    leave() {},
   });
   h.snapshot.root = undefined;
   h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
@@ -687,7 +690,7 @@ it("scopes its reading leases to its thread while the original is unavailable", 
   // In a DM, the thread it opened bounds what its reads may cover.
   expect(reading.mock.calls).not.toHaveLength(0);
   for (const call of reading.mock.calls)
-    expect(call).toEqual(["channel", row.id]);
+    expect(call).toEqual(["channel", row.id, {}]);
 });
 it("leaves a sibling reply it hides unread while a DM reply's original is unavailable", async () => {
   // The real unread owner, so a dwell's DM read lands in its journal.
@@ -2048,6 +2051,7 @@ it("observes a visible reply before its root resolves, then enables thread catch
           RelaySession["unread"]["sync"]
         >,
       reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+      leave() {},
     },
   };
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -2922,6 +2926,7 @@ it("a reader hidden while its route retargets reads nothing until the route rest
   Object.assign(h.session.unread, {
     sync: () => ({ capability: "frontier-sync" }),
     reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+    leave() {},
   });
   const props = h.props as ThreadPanelProps;
   Object.assign(props, { retainThread: true });

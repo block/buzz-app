@@ -61,6 +61,20 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
   expect(claude.started).toBe(false);
 });
 
+it.each([
+  [undefined, undefined],
+  [200000, "200000"],
+])("starts Claude compacting at %s tokens", async (compactAt, window) => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, {
+    ...launch,
+    ...(compactAt && { compactAt }),
+  });
+  expect(processes[0]?.options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+    window,
+  );
+});
+
 it("resumes a session on the system prompt it is launched with, not the one it saved", async () => {
   const { spawn, processes } = fakeSpawn();
   await ClaudeProcess.start(spawn, { ...launch, resume: "old-session" });

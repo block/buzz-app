@@ -1301,6 +1301,52 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it("starts goose at a saved compaction threshold, keeping an open thread's session when it changes", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const saved = (compactAt: string) =>
+      runtime.sync([
+        {
+          ...agent,
+          config: { ...DEFAULT_CONFIG, compactAt },
+        } as unknown as Agent,
+      ]);
+    saved("150000");
+    const first = message("1", "@Gander summarize this");
+    await deliver(first);
+    await flush(100);
+    expect(fake.geese[0]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("150000");
+    saved("120000");
+    await deliver(
+      message("2", "@Gander and now?", {
+        tags: [
+          ["h", channel],
+          ["e", first.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    );
+    await flush(100);
+    // The thread keeps its session, in the goose it opened in.
+    expect(fake.geese).toHaveLength(1);
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    // Another thread's opens in a goose started at the new threshold.
+    await deliver(message("3", "@Gander something else"));
+    await flush(100);
+    expect(fake.geese[1]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("120000");
+    expect(fake.geese[1]?.turns).toHaveLength(1);
+    // An invalid saved value leaves goose its own.
+    saved("50");
+    await deliver(message("4", "@Gander one more"));
+    await flush(100);
+    expect(fake.geese[2]?.env).not.toHaveProperty(
+      "GOOSE_AUTO_COMPACT_TOKEN_LIMIT",
+    );
+  });
+
   it.each(["", "openai"])(
     "refreshes inherited defaults without replacing explicit provider %s",
     async (provider) => {

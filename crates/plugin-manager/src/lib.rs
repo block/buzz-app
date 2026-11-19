@@ -585,6 +585,10 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
             "../../../src/bundled/plugin-development/manifest.json"
         ))
         .expect("plugin development manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/performance-diagnostics/manifest.json"
+        ))
+        .expect("performance diagnostics manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
             .expect("focus manifest"),
         serde_json::from_str(include_str!(

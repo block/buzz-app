@@ -31,7 +31,7 @@ import { createInterface } from "node:readline";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
-import { AuthFile, serve } from "./host.mjs";
+import { AuthFile, Compaction, serve } from "./host.mjs";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { defineExtension, defineTool, GenerationTask, Harness, hook } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -291,6 +291,73 @@ faux.setResponses([(context) => { staleSaw = context.messages.filter((m) => m.ro
 const stale = await pi.rpc("deliver", { ...turn("ST", "stale"), key: "chan/stale", context: { channel: "chan", root: "stale" } });
 staleSnapshot = false;
 out.stale = { wait: await pi.rpc("wait", { agent, submission: stale.submission }), saw: staleSaw };
+// An agent's compaction threshold starts compacting in the background once a
+// conversation passes it, well before Pi's own; without one, Pi's stands.
+const compacting = async (key, compactAt) => {
+  const from = faux.state.callCount;
+  faux.setResponses(Array.from({ length: 3 }, () => () => fauxAssistantMessage("Read it")));
+  let conversation;
+  for (const request of ["1", "2"]) {
+    const long = await pi.rpc("deliver", { ...turn(key + request, "word ".repeat(25_000)), key, context: { channel: "chan", root: key }, ...(compactAt ? { compactAt } : {}) });
+    conversation = long.conversation;
+    await pi.rpc("wait", { agent, submission: long.submission });
+  }
+  const kinds = async () => (await pi.rpc("entries", { agent, conversation })).entries.map((entry) => entry.kind);
+  for (let tries = 0; tries < 100 && !(await kinds()).includes("pi.compaction"); tries++) await new Promise((resolve) => setTimeout(resolve, 20));
+  return { compacted: (await kinds()).includes("pi.compaction"), calls: faux.state.callCount - from };
+};
+out.threshold = { at: await compacting("chan/threshold", 40_000), unset: await compacting("chan/unset") };
+// A run the host stopped in a tool resumes in the next host, whose next
+// request checks the threshold the agent opened with, before any turn
+// brings it.
+{
+  let pause;
+  const pausing = defineExtension({
+    name: "pausing",
+    tools: [defineTool({
+      name: "pause",
+      description: "Wait",
+      parameters: { type: "object", properties: {} },
+      execute: async (_args, _api, context) => {
+        if (pause) { pause.entered.release(); await abortable(pause.gate, context?.abortSignal); }
+        return { output: [{ type: "text", text: "waited" }] };
+      },
+    })],
+  });
+  const key = "chan/recover", context = { channel: "chan", root: key }, long = (request) => ({ ...turn(request, "word ".repeat(25_000)), key, context });
+  await pi.stop();
+  pi = start(undefined, [nesting, pausing]);
+  await pi.rpc("open", { agent, tools });
+  faux.setResponses([
+    () => fauxAssistantMessage("Read it"),
+    () => fauxAssistantMessage(fauxToolCall("pause", {}), { stopReason: "toolUse" }),
+    ...Array.from({ length: 3 }, () => () => fauxAssistantMessage("Read it")),
+  ]);
+  const r1 = await pi.rpc("deliver", long("RC1"));
+  await pi.rpc("wait", { agent, submission: r1.submission });
+  pause = { ...held(), entered: held() };
+  const r2 = await pi.rpc("deliver", long("RC2"));
+  await pause.entered.gate;
+  const kinds = async () => (await pi.rpc("entries", { agent, conversation: r2.conversation })).entries.map((entry) => entry.kind);
+  const before = (await kinds()).includes("pi.compaction");
+  const waiting = pi.rpc("wait", { agent, submission: r2.submission });
+  await pi.stop();
+  await waiting.catch(() => undefined);
+  pause = undefined;
+  pi = start(undefined, [nesting, pausing]);
+  await pi.rpc("open", { agent, tools, compactAt: 40_000 });
+  const resumed = await pi.rpc("wait", { agent, submission: r2.submission });
+  for (let tries = 0; tries < 100 && !(await kinds()).includes("pi.compaction"); tries++) await new Promise((resolve) => setTimeout(resolve, 20));
+  out.recovered = { before, resumed: resumed.status, compacted: (await kinds()).includes("pi.compaction") };
+  await pi.stop();
+  pi = start();
+  await pi.rpc("open", { agent, tools });
+}
+// Every model has it, so a run resumed on any of them does; and none starts
+// its background compaction later than Pi's own.
+const policy = new Compaction(() => [{ provider: "p", id: "small", contextWindow: 128_000 }, { provider: "p", id: "large", contextWindow: 1_000_000 }]);
+policy.use(200_000);
+out.policy = policy.settings().compaction.modelOverrides;
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
 faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
 for (const request of ["S2", "S3"]) {
@@ -943,6 +1010,19 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     // A later turn's first-turn check stops at the session's first prompt,
     // well short of the hundreds of entries since the reset.
     expect(out.sessions.deliverRead).toBeLessThan(50);
+    expect(out.threshold).toEqual({
+      at: { compacted: true, calls: 3 },
+      unset: { compacted: false, calls: 2 },
+    });
+    expect(out.recovered).toEqual({
+      before: false,
+      resumed: "done",
+      compacted: true,
+    });
+    expect(out.policy).toEqual({
+      "p/small": { backgroundTokens: 32_768 },
+      "p/large": { backgroundTokens: 1_000_000 - 16_384 - 200_000 },
+    });
     expect(out.renewed).toEqual({
       place: { seen: 0 },
       kinds: ["pi.reset", "pi.compaction"],

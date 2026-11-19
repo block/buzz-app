@@ -1093,12 +1093,69 @@ it("treats a thread the server no longer has as already cleaned when retiring", 
   const driver = codexRun(f.runtime);
   if (!driver.retire) throw new Error("Codex cannot retire its agents");
   await driver.retire(b.agent.key);
+  expect(f.process.end).not.toHaveBeenCalled();
+  f.failures.delete("thread/backgroundTerminals/clean");
+  const elsewhere = "6".repeat(64);
+  await f.runtime.run({
+    ...f.delivery("start another", elsewhere),
+    agent: b.agent,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  const next = (f.starts()[2]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  expect(next).not.toBe(thread);
+  await f.complete(2, "ANOTHER");
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessionState(
+        { ...b.agent, config: f.delivery("unused").config } as unknown as Agent,
+        { channelId: "channel", root: elsewhere },
+      ),
+    ).toBe("idle"),
+  );
   await driver.retire(b.agent.key);
   expect(
     f.sent
       .filter((wire) => wire.method === "thread/backgroundTerminals/clean")
       .map((wire) => wire.params),
-  ).toEqual([{ threadId: thread }]);
+  ).toEqual([{ threadId: thread }, { threadId: next }]);
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("still rejects retiring when the server says a different thread is not found", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessionState(
+        { ...b.agent, config: f.delivery("unused").config } as unknown as Agent,
+        { channelId: "channel", root: "7".repeat(64) },
+      ),
+    ).toBe("idle"),
+  );
+  f.failures.set(
+    "thread/backgroundTerminals/clean",
+    "thread not found: some-other-thread",
+  );
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  await expect(driver.retire(b.agent.key)).rejects.toThrow(
+    "thread not found: some-other-thread",
+  );
+  f.failures.delete("thread/backgroundTerminals/clean");
+  await driver.retire(b.agent.key);
+  expect(
+    f.sent
+      .filter((wire) => wire.method === "thread/backgroundTerminals/clean")
+      .map((wire) => wire.params),
+  ).toEqual([{ threadId: thread }, { threadId: thread }]);
   expect(f.process.end).not.toHaveBeenCalled();
   await f.complete(0, "STILL HERE");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));

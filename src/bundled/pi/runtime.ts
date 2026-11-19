@@ -51,6 +51,7 @@ import {
   placeOf,
   sectionsOf,
 } from "../../features/agent-harness/sections/compose";
+import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import {
   mentionAuthority,
   workflowOf,
@@ -180,8 +181,13 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   published?: () => void;
   /** Its destination got a final reply in a run spanning destinations. */
   answered?: boolean;
-  /** A wake prompt rebuilt when the native queue is ready to submit. */
-  prompt?: () => Promise<{ text: string; steer: string } | undefined>;
+  /** Its prompt, built when Pi is ready to submit it: with the instructions
+   * a new run takes, unless it `steers` the conversation's run. */
+  prompt?: (
+    steers?: boolean,
+  ) => Promise<
+    { text: string; steer: string; instructions?: string } | undefined
+  >;
 };
 
 type Entry = {
@@ -216,6 +222,9 @@ type Entry = {
   /** The folder each conversation's latest run here started in: its tools
    * read files from there. */
   folders: Map<string, string>;
+  /** The section choices each conversation's latest run here was set up
+   * with: a turn that steers it reads its Canvas with these. */
+  located: Map<string, SectionChoices | undefined>;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
   /** Requests waited for here without a receipt: standalone turns handed to
@@ -338,8 +347,8 @@ export class PiRuntime {
           }
           return answerGateway(this.seam, call);
         },
-        prompt: ({ agent, request }) =>
-          this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
+        prompt: ({ agent, request, steers }) =>
+          this.agents.get(agent)?.receipts.get(request)?.prompt?.(steers) ??
           Promise.resolve(undefined),
       },
       (pubkey) => {
@@ -823,10 +832,12 @@ export class PiRuntime {
       // the next. An Attention wake's or an accepted turn's text is built
       // again then, so it reads what is current.
       const refresh = !!(attention || accepted);
-      let turned: string | undefined;
+      let turned: { text: string; sections: string } | undefined;
+      // What Pi is set up with before it asks for the prompt.
+      let configured: { sections: string; instructions: string } | undefined;
       let notes: readonly string[] | undefined;
       let acceptProject: (() => void) | undefined;
-      const turn = async () => {
+      const turn = async (sections: SectionChoices | undefined) => {
         const wakePrompt = wake
           ? ((await wakeText?.()) ?? wake.text)
           : undefined;
@@ -839,6 +850,7 @@ export class PiRuntime {
           seen,
           solo,
           () => !interrupted && (!current || current()),
+          sections,
         );
         acceptProject = built.acceptProject;
         return turnPrompt({
@@ -861,13 +873,44 @@ export class PiRuntime {
         scope: topLevel ? channel : root,
         where,
         solo,
-        prompt: async () => {
-          const base = refresh || turned === undefined ? await turn() : turned;
+        prompt: async (steers = false) => {
+          // Read once Pi is ready to submit, past any wait: a new run takes
+          // the section choices current now, for its instructions and its
+          // Canvas alike, and a turn that steers a run keeps that run's.
+          const sections =
+            steers && entry.located.has(key)
+              ? entry.located.get(key)
+              : sectionsOf(entry.handle, key);
+          const chosen = JSON.stringify(sections ?? null);
+          const base =
+            refresh || turned?.sections !== chosen
+              ? await turn(sections)
+              : turned.text;
           if (refresh && (interrupted || (current && !current()))) return;
+          const instructions =
+            steers || !configured || chosen === configured.sections
+              ? undefined
+              : (
+                  await this.turnOf(
+                    entry,
+                    agent.key,
+                    model,
+                    effort,
+                    key,
+                    sections,
+                  )
+                ).instructions;
+          if (configured && instructions !== undefined)
+            configured = { sections: chosen, instructions };
+          if (!steers) entry.located.set(key, sections);
           accepted?.();
           notes ??= agent.notes?.(channel, replyRoot) ?? [];
           const text = this.review(entry, base, notes, channel, replyRoot, key);
-          return { text, steer: steerPrompt(text) };
+          return {
+            text,
+            steer: steerPrompt(text),
+            ...(instructions === undefined ? {} : { instructions }),
+          };
         },
         ...(step ? { step } : {}),
         acknowledged: (input) => {
@@ -876,12 +919,24 @@ export class PiRuntime {
         },
         ...(superseded ? { superseded } : {}),
       });
-      const picked = await this.turnOf(entry, agent.key, model, effort, key);
-      turned = await turn();
+      const sections = sectionsOf(entry.handle, key);
+      const picked = await this.turnOf(
+        entry,
+        agent.key,
+        model,
+        effort,
+        key,
+        sections,
+      );
+      configured = {
+        sections: JSON.stringify(sections ?? null),
+        instructions: picked.instructions,
+      };
+      turned = { text: await turn(sections), sections: configured.sections };
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
       submitting = true;
-      const text = this.review(entry, turned, [], channel, replyRoot, key);
+      const text = this.review(entry, turned.text, [], channel, replyRoot, key);
       submitted = await this.deliver(
         entry,
         agent.key,
@@ -918,7 +973,7 @@ export class PiRuntime {
         void this.prompts(agent.key).save(
           `${submitted.conversation}:${submitted.session}`,
           [
-            { label: "instructions", text: picked.instructions },
+            { label: "instructions", text: configured.instructions },
             { label: "core memory", text: picked.core?.text ?? "" },
           ],
         );
@@ -1628,6 +1683,8 @@ export class PiRuntime {
     effort?: string,
     /** The conversation the turn is in; none for a one-off turn. */
     conversation?: string,
+    // A conversation's prompt has the sections of the plugin that manages it.
+    sections = sectionsOf(entry.handle, conversation),
   ) {
     const { workspace, instructions, scope } = entry.config;
     const memory = await this.core(agent);
@@ -1657,9 +1714,7 @@ export class PiRuntime {
           : {}),
         instructions,
         team: entry.team,
-        // A conversation's prompt has the sections of the plugin that
-        // manages it.
-        sections: sectionsOf(entry.handle, conversation),
+        sections,
         place: placeOf(conversation),
       }),
       ...(memory === undefined
@@ -1737,6 +1792,9 @@ export class PiRuntime {
     seen: number,
     solo = topLevel,
     current = () => true,
+    /** The section choices its Canvas is read with: the current ones unless
+     * given. */
+    sections = this.agents.get(agent.key)?.handle?.promptSections?.(channelId),
   ) {
     const reads = this.reads(agent.key);
     const summary = await reads?.channel(channelId);
@@ -1753,7 +1811,7 @@ export class PiRuntime {
           canvas && owner ? () => canvas(channelId, owner) : undefined,
           worksElsewhere(
             reads ? this.folder(agent.key, key) : undefined,
-            this.agents.get(agent.key)?.handle?.promptSections?.(channelId),
+            sections,
           ),
         )
       : Promise.resolve(undefined);
@@ -1835,6 +1893,7 @@ export class PiRuntime {
       name: agent.name,
       policies: new Map(),
       folders: new Map(),
+      located: new Map(),
       receipts: new Map(),
       standalone: new Set(),
       active: new Map(),

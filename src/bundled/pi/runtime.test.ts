@@ -590,6 +590,82 @@ it("tells a Solo chat whose plugin gives the working location to read its Canvas
   expect(String(delivered?.params.text)).not.toContain("create a new worktree");
 });
 
+it("sets a new run up with the sections chosen once Pi is ready for it, and keeps its run's for a steer", async () => {
+  let managed = false;
+  let steers = false;
+  const prompts: unknown[] = [];
+  const { host, deliver, settled, agent, solo } = setup(
+    {
+      deliver: async (params, process) => {
+        // The plugin takes the working location while the turn waits, and
+        // gives it back while the run it starts works.
+        managed = !steers;
+        prompts.push(
+          (
+            await process.tool(
+              { agent: self, request: params.request, steers },
+              "prompt",
+            )
+          ).result,
+        );
+        managed = false;
+        return { submission: prompts.length, conversation: CONVERSATION };
+      },
+      wait: () => ({ status: "done", answer: 1, text: "Done" }),
+    },
+    [],
+    {
+      content: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+    },
+  );
+  solo.add("solo-1");
+  Object.assign(agent, {
+    promptSections: (): SectionChoices =>
+      managed
+        ? {
+            plugin: {
+              id: "example.plugin",
+              sections: { "working-location": "Work in the task's folder." },
+            },
+          }
+        : {},
+  });
+  const send = async (id: string) => {
+    const turn = deliver(
+      {
+        type: "mention",
+        event: message(id, "@Pi", { tags: [["h", "solo-1"]] }),
+      },
+      { channelId: "solo-1" },
+    );
+    await turn.run;
+    await settled(turn);
+  };
+  await send("2");
+  const [delivered] = host.requests("deliver");
+  // What it was handed before the wait had the earlier choices.
+  expect(String(delivered?.params.instructions)).not.toContain(
+    '<plugin-section id="working-location" plugin="example.plugin">',
+  );
+  const [started] = prompts as { text: string; instructions?: string }[];
+  expect(started?.instructions).toContain(
+    '<plugin-section id="working-location" plugin="example.plugin">',
+  );
+  expect(started?.text).toContain("They are for reading.");
+  expect(started?.text).not.toContain("create a new worktree");
+  // A turn that steers that run reads its Canvas as the run has it, and
+  // sets nothing up.
+  steers = true;
+  await send("3");
+  const steered = prompts[1] as { text: string; instructions?: string };
+  expect(steered).not.toHaveProperty("instructions");
+  expect(steered.text).toContain("They are for reading.");
+});
+
 it("tells a Solo chat given its own folder to read its Canvas's folders", async () => {
   const { host, deliver, solo, storage, desktop } = setup({}, [], {
     content: workspaceCanvas({

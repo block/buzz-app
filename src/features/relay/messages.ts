@@ -549,6 +549,10 @@ export function createMessages(
         ]
           .filter(Boolean)
           .join("\n\n");
+        const recipients = mentionTags(
+          channelId,
+          withDmAgents(channelId, options.mentions ?? []),
+        );
         event.tags = [
           ...event.tags.filter(([tag]) => tag !== "p" && tag !== "mention"),
           ...(root && parent
@@ -557,10 +561,10 @@ export function createMessages(
                 ["e", parent, "", "reply"],
               ]
             : []),
-          ...mentionTags(
-            channelId,
-            withDmAgents(channelId, options.mentions ?? []),
-          ),
+          ...recipients,
+          ...(root && parent
+            ? invocationTags(channelId, root, parent, recipients)
+            : []),
           ...referenceTags(options.references ?? []),
           ...pickTags(channelId, options.mentions ?? [], options.picks ?? {}),
           ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),

@@ -2574,8 +2574,9 @@ function rootOf(event: BuzzEvent) {
 }
 
 /** Messages oldest first, each showing its author's latest edit, with the
- * files it leaves (none when it clears them) and its custom emoji, as
- * `foldMessages` does. */
+ * files it leaves (none when it clears them, as the relay serves; the
+ * timeline's `foldMessages` still shows the last files) and its custom
+ * emoji. */
 function edited(events: readonly BuzzEvent[]) {
   const messages = events.filter((event) => event.kind !== 40003);
   const byId = new Map(messages.map((event) => [event.id, event]));

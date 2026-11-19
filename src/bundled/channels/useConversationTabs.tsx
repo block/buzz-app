@@ -22,6 +22,8 @@ import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ThreadLoading } from "../../features/messages/ThreadPanel";
+import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
+import { rosterRecovering } from "../../features/relay/live-recovery";
 import {
   BrowserIcon,
   ThreadIcon,
@@ -60,27 +62,45 @@ export const historyPanel = (entry: PanelOpening) =>
     entry.panel.key === "buzz.github/object");
 
 /** Why a tab cannot show its conversation, most specific first. A missing
- * channel proves nothing while its list failed to load. */
+ * channel proves nothing while its list failed to load. Only a conversation
+ * tab reaches the archived and read-only reasons: its body always mounts a
+ * composer, while a thread tab shows such a channel with its notice. */
 function unavailableReason(
   target: ChannelSummary | undefined,
   list: string | undefined,
-  viewer: string | undefined,
 ) {
-  if (!target && list === "error")
-    return "Your conversations didn’t load, so this one can’t be shown.";
+  if (!target && list === "error") return "This conversation didn’t load.";
   if (target?.cached)
-    return "You can open this conversation once Buzz reconnects.";
-  if (target?.archived)
-    return "This conversation is archived, so it can’t be shown in a tab.";
-  if (
-    target?.channelType === "solo" &&
-    target.members &&
-    !target.members.includes(viewer ?? "")
-  )
-    return "You’re not a member of this Solo chat.";
+    return "This conversation will appear once Buzz reconnects.";
+  if (target?.archived) return "This conversation is archived.";
   if (target?.readOnly)
-    return "You have read-only access to this conversation, so it can’t be shown in a tab.";
+    return "You have read-only access to this conversation.";
   return "This conversation is no longer available.";
+}
+
+/** A tab whose channel is missing from a channel list that is not complete.
+ * The channel may yet be in a list still being read, or in one whose failed
+ * read recovery is retrying; the recovery notice is then the one report, as
+ * in the sidebar. A failure recovery does not retry is stated. */
+function UnlistedChannel({
+  session,
+  list,
+  label,
+}: {
+  session: Pick<RelaySession, "recovery" | "live">;
+  list: string;
+  label: string | undefined;
+}) {
+  const retrying = useRecoveryOwns(session, (live) =>
+    rosterRecovering(live.roster),
+  );
+  return list === "loading" || retrying ? (
+    <ThreadLoading {...(label && { label })} />
+  ) : (
+    <p role="status" className={styles.empty}>
+      {unavailableReason(undefined, list)}
+    </p>
+  );
 }
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
@@ -765,11 +785,16 @@ export function useConversationTabs({
   }
   // The currently resolved channel can be a verified public/archived preview
   // absent from the joined sidebar list. Reading its thread is not write access.
+  // Another listed channel's thread is read the same way: the thread panel
+  // replaces the composer of an archived or guest channel with its notice.
+  // Only a conversation tab, whose body always mounts a composer, needs a
+  // channel the viewer can post in.
   function tabChannel(tab: Pick<Tab, "kind" | "channelId">) {
     if (tab.kind === "thread" && current?.id === tab.channelId)
       return current.cached ? undefined : current;
     const target = channels.find((item) => item.id === tab.channelId);
-    return target && usableChannel(target) ? target : undefined;
+    if (!target || target.cached) return undefined;
+    return tab.kind === "thread" || usableChannel(target) ? target : undefined;
   }
   // What a tab without a usable channel shows: a placeholder while the relay
   // is still expected to settle it, else the most specific reason known.
@@ -779,19 +804,15 @@ export function useConversationTabs({
         ? current
         : channels.find((item) => item.id === tab.channelId);
     const list = queries.channels.list().status;
-    // Saved membership on a connected session awaits its live roster; a
-    // channel missing from a list still being read may yet be in it.
-    return (
-      target
-        ? target.cached && !queries.channels.cachedOnly
-        : list === "loading"
-    ) ? (
-      <ThreadLoading
-        {...(tab.kind !== "thread" && { label: "Loading conversation…" })}
-      />
+    const label = tab.kind === "thread" ? undefined : "Loading conversation…";
+    if (!target && (list === "loading" || list === "error"))
+      return <UnlistedChannel session={queries} list={list} label={label} />;
+    // Saved membership on a connected session awaits its live roster.
+    return target?.cached && !queries.channels.cachedOnly ? (
+      <ThreadLoading {...(label && { label })} />
     ) : (
       <p role="status" className={styles.empty}>
-        {unavailableReason(target, list, queries.viewer)}
+        {unavailableReason(target, list)}
       </p>
     );
   }

@@ -787,7 +787,6 @@ it("a keyboard move focuses the placed tab at once and never takes focus back la
 
 it("the current verified read-only preview owns its thread host, but unrelated previews do not", () => {
   const current = { id: "preview", name: "Public", readOnly: true as const };
-  const other = { id: "other", name: "Other public", readOnly: true as const };
   const session = {
     viewer: "viewer",
     channels: { list: () => ({ channels: [] }), window: () => ({ rows: [] }) },
@@ -810,7 +809,8 @@ it("the current verified read-only preview owns its thread host, but unrelated p
         session,
         panels,
         current: { ...current, ...(cached ? { cached: true } : {}) },
-        channels: [other],
+        // A preview never enters the joined channel list.
+        channels: [],
         scope: "scope:viewer",
         conversationIcon: () => null,
         leadingIds: [],
@@ -1312,7 +1312,13 @@ it("opens a linked thread from a readable channel through one stable opener", ()
   const channels = [
     { id: "alpha", name: "Alpha" },
     { id: "beta", name: "Beta" },
-    { id: "gone", name: "Gone", archived: true as const },
+    // Saved membership the relay has not confirmed is not readable yet.
+    {
+      id: "gone",
+      name: "Gone",
+      cached: true as const,
+      readOnly: true as const,
+    },
   ];
   const session = {
     viewer: "viewer",
@@ -2274,6 +2280,16 @@ it("does not treat an unmarked catch-all as a native profile history reader", ()
   ).toBe(false);
 });
 
+// Recovery and the live roster read, as the session reports them.
+const rosterRead = (recovering: boolean, transient?: true) => {
+  const recovery = { recovering, shown: false };
+  const live = { roster: { state: "error", ...(transient && { transient }) } };
+  return {
+    recovery: { subscribe: () => () => {}, snapshot: () => recovery },
+    live: { subscribe: () => () => {}, snapshot: () => live },
+  };
+};
+
 it.each([
   // The reported cold start: the open channel's saved membership on a
   // connected session, before its live roster arrives.
@@ -2302,45 +2318,61 @@ it.each([
     loading: "Loading thread…",
   },
   {
+    name: "a channel missing from a failed list that recovery is retrying",
+    kind: "thread",
+    list: "error",
+    roster: rosterRead(true, true),
+    loading: "Loading thread…",
+  },
+  {
+    name: "a conversation missing from a failed list that recovery is retrying",
+    kind: "conversation",
+    list: "error",
+    roster: rosterRead(true, true),
+    loading: "Loading conversation…",
+  },
+  {
+    // Recovery is busy with another source; a denial is not retried.
+    name: "a channel missing from a failed list that is not retried",
+    kind: "thread",
+    list: "error",
+    roster: rosterRead(true),
+    text: "This conversation didn’t load.",
+  },
+  {
+    name: "a conversation missing from a list that failed to load",
+    kind: "conversation",
+    list: "error",
+    text: "This conversation didn’t load.",
+  },
+  {
     name: "saved membership while Buzz is not connected",
     kind: "thread",
     current: { cached: true as const, readOnly: true as const },
     cachedOnly: true,
-    text: "You can open this conversation once Buzz reconnects.",
-  },
-  {
-    name: "a channel missing from a list that failed to load",
-    kind: "conversation",
-    list: "error",
-    text: "Your conversations didn’t load, so this one can’t be shown.",
+    text: "This conversation will appear once Buzz reconnects.",
   },
   {
     name: "an archived channel",
     kind: "conversation",
     listed: { archived: true as const, readOnly: true as const },
-    text: "This conversation is archived, so it can’t be shown in a tab.",
+    text: "This conversation is archived.",
   },
   {
-    name: "a Solo chat the viewer is not in",
+    name: "a channel the viewer is a guest of",
     kind: "conversation",
-    listed: { channelType: "solo" as const, members: ["someone"] },
-    text: "You’re not a member of this Solo chat.",
-  },
-  {
-    name: "a read-only channel",
-    kind: "thread",
     listed: { readOnly: true as const, viewerRole: "guest" as const },
-    text: "You have read-only access to this conversation, so it can’t be shown in a tab.",
-  },
-  {
-    name: "a Solo chat whose members are unknown",
-    kind: "conversation",
-    listed: { channelType: "solo" as const },
-    text: "This conversation is no longer available.",
+    text: "You have read-only access to this conversation.",
   },
   {
     name: "a channel missing from a complete list",
     kind: "thread",
+    list: "ready",
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a conversation missing from a complete list",
+    kind: "conversation",
     list: "ready",
     text: "This conversation is no longer available.",
   },
@@ -2350,16 +2382,27 @@ it.each([
   current?: object;
   listed?: object;
   list?: string;
+  roster?: ReturnType<typeof rosterRead>;
   cachedOnly?: true;
   loading?: string;
   text?: string;
 }[])(
   "a $kind tab without a usable channel explains $name",
-  ({ kind, current, listed, list = "ready", cachedOnly, loading, text }) => {
+  ({
+    kind,
+    current,
+    listed,
+    list = "ready",
+    roster = rosterRead(false),
+    cachedOnly,
+    loading,
+    text,
+  }) => {
     const channel = { id: "target", name: "Target" };
     const channels = listed ? [{ ...channel, ...listed }] : [];
     const session = {
       viewer: "viewer",
+      ...roster,
       channels: {
         list: () => ({ status: list, channels }),
         window: () => ({ rows: [] }),
@@ -2409,5 +2452,62 @@ it.each([
     expect(status).toHaveTextContent(loading ?? text ?? "");
     // Only a wait shows the placeholder; a settled reason is plain text.
     expect(!!status.querySelector("img")).toBe(!!loading);
+  },
+);
+
+// The thread panel replaces the composer with the channel's own notice, so a
+// thread is readable in a tab wherever its channel is, whichever is open.
+it.each([
+  { name: "an archived", listed: { archived: true, readOnly: true } },
+  { name: "a guest", listed: { readOnly: true, viewerRole: "guest" } },
+])(
+  "a thread tab for $name channel other than the open one hosts its thread",
+  ({ listed }) => {
+    const other = { id: "other", name: "Other", ...listed };
+    const session = {
+      viewer: "viewer",
+      channels: {
+        list: () => ({ status: "ready", channels: [other] }),
+        window: () => ({ rows: [] }),
+      },
+    } as unknown as RelaySession;
+    const emptyPanels: RegisteredPanel[] = [];
+    const panels = {
+      snapshot: () => emptyPanels,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    const h = renderHook(() => {
+      const state = useChannelTabState(session, "open");
+      const workspace = useConversationTabs({
+        profiles: new Map(),
+        state,
+        relay,
+        session,
+        panels,
+        current: { id: "open", name: "Open" },
+        channels: [other as never],
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    });
+    // A linked thread opens as a tab; a conversation tab still needs a composer.
+    expect(h.result.current.workspace.canOpenConversation("other")).toBe(false);
+    act(() => {
+      expect(
+        h.result.current.workspace.openLinkedThread("other", "root", "root"),
+      ).toBe(true);
+    });
+    expect(h.result.current.workspace.hosts).toHaveLength(1);
+    expect(h.result.current.workspace.items[0]?.label).not.toBe(
+      "Unavailable conversation",
+    );
   },
 );

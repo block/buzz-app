@@ -1548,6 +1548,10 @@ off, and it needs no README. Its declared network origins are granted without
 an access review, as for every bundled plugin: the packager chose them.
 Choose ids no other plugin uses, such as one under the organization's domain.
 
+The same packager can ship the build's agent gateway descriptors in
+`src/bundled/org-gateways.json`, also `[]` in open-source builds; see
+[Packaged gateway descriptors](configuration.md#packaged-gateway-descriptors).
+
 ### Optional channel menu panels
 
 A panel can register `channelMenu: { label, eligible(channel, session) }` for

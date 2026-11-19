@@ -201,6 +201,21 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               { ...defaultLauncher, launcher_client: 'buzz' },
             );
             rmSync('.env.production');
+            // Without one, the packaged org-gateways.json entry for the
+            // process's default community; this checkout ships none, so a
+            // default community alone leaves routing off and an explicit
+            // descriptor still wins.
+            process.env.BUZZ_DEFAULT_COMMUNITY_URL = 'wss://relay.example';
+            for (const [raw, expected] of [
+              [undefined, ''],
+              [gateway([{ id, origin: 'wss://relay.example' }]), gateway([{ id, origin: 'https://relay.example' }])],
+            ]) {
+              if (raw === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
+              else process.env.BUZZ_AGENT_GATEWAY = raw;
+              const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'], JSON.stringify(expected));
+            }
+            delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
             // Anything else must be a valid version 2 descriptor, and the
             // build's error never echoes it.
             for (const invalid of [

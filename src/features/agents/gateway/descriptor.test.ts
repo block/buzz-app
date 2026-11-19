@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   GatewayDescriptorError,
   type GatewayDescriptor,
   parseGatewayDescriptor,
   PROTECTED_HEADERS,
+  selectGatewayDescriptor,
 } from "./descriptor";
 import VECTORS from "./descriptor-vectors.json";
 
@@ -62,5 +65,50 @@ describe("parseGatewayDescriptor", () => {
     for (const value of strings(vector.descriptor ?? vector.raw))
       if (value.length > 3)
         expect(message.toLowerCase()).not.toContain(value.toLowerCase());
+  });
+});
+
+type Select = {
+  name: string;
+  explicit?: unknown;
+  explicit_raw?: string;
+  listed?: unknown;
+  listed_raw?: string;
+  community_url: string;
+  expect?: unknown;
+  error?: string;
+};
+const select = (vector: Select) =>
+  selectGatewayDescriptor(
+    vector.explicit_raw ??
+      (vector.explicit === undefined ? "" : JSON.stringify(vector.explicit)),
+    vector.listed_raw ?? JSON.stringify(vector.listed),
+    vector.community_url,
+  );
+
+describe("selectGatewayDescriptor", () => {
+  it.each((VECTORS.select as Select[]).filter((v) => !v.error))(
+    "selects $name",
+    (vector) => {
+      expect(select(vector)).toEqual(vector.expect);
+    },
+  );
+
+  it.each((VECTORS.select as Select[]).filter((v) => v.error))(
+    "refuses $name",
+    (vector) => {
+      expect(() => select(vector)).toThrow(vector.error);
+    },
+  );
+
+  it("ships an empty list, so open-source builds route only by an explicit descriptor", () => {
+    const listed = readFileSync(
+      resolve(import.meta.dirname, "../../../bundled/org-gateways.json"),
+      "utf8",
+    );
+    expect(JSON.parse(listed)).toEqual([]);
+    expect(
+      selectGatewayDescriptor("", listed, "wss://relay.example"),
+    ).toBeNull();
   });
 });

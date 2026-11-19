@@ -2163,14 +2163,15 @@ it("routes member administration through the native purpose-bound writer, never 
     await expect(writer.sign(event, signal)).rejects.toThrow();
   const template = memberContract.accepted[0]?.event;
   assert.exists(template);
-  const channelTag = template.tags[0];
-  assert.exists(channelTag);
-  await expect(
-    writer.sign(
-      { ...template, tags: [channelTag, ["p", viewer.pubkey]] },
-      signal,
+  const selfTarget = {
+    ...template,
+    tags: template.tags.map((tag) =>
+      tag[0] === "p" ? ["p", viewer.pubkey] : tag,
     ),
-  ).rejects.toThrow();
+  };
+  await expect(writer.sign(selfTarget, signal)).rejects.toThrow(
+    "Invalid member administration command",
+  );
   await expect(
     writer.publish(signed(relay, template), signal),
   ).rejects.toThrow();

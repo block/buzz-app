@@ -190,14 +190,18 @@
 .channelSection {
   position: relative;
   flex-shrink: 0;
+  --sidebar-section-gap: var(--space-2);
+}
+.channelSection[data-sidebar-section="starred"] {
+  --sidebar-section-gap: var(--space-4);
 }
 .channelSection + .channelSection {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 [data-sidebar-slot]:has(> .channelSection)
   ~ [data-sidebar-slot]
   > .channelSection:first-child {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 .channelSection[data-drop-target] {
   border-radius: var(--radius-row);

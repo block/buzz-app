@@ -146,11 +146,11 @@ writer selects the admission contract by the event's `d` coordinate. The
 sidebar coordinates must match what the sidebar signer produces, and recipe
 coordinates must satisfy the recipe contract.
 
-The sidebar defaults to **Plugins** (sidebar pages such as Activity, when
-any are enabled), **Starred**, personal workspaces, **Solo**, **Team**,
-**Forums**, and **Direct messages**. All sections can be reordered by dragging
-the heading or through **Move up** and **Move down**. The saved order syncs with
-workspace placement.
+Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
+list. The conversation sections default to **Starred**, personal
+workspaces, **Solo**, **Team**, **Forums**, and **Direct messages**. Reorder them
+by dragging their headings or using **Move up** and **Move down**. The saved
+order syncs with workspace placement.
 
 Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
 its home section. The row’s **Move to…** menu offers the same destinations.

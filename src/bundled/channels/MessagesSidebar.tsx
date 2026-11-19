@@ -168,7 +168,7 @@ function ScopedSidebar({
           </div>
         </div>
       )}
-      {props.children && !restriction && !inventory && (
+      {props.children && !restriction && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
@@ -177,7 +177,6 @@ function ScopedSidebar({
     <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
       {session && inventory ? (
         <ChannelInventory
-          pages={restriction ? undefined : props.children}
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}

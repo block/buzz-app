@@ -25,8 +25,7 @@
   position: relative;
   z-index: 1;
 }
-/* Hover moves the menu into the row's flow, so it must fit the row's height;
-   a compact IconButton's 2rem minimum would grow the row on hover. */
+/* The explicit touch menu fits the compact row. */
 .row [data-solo-row-action] {
   flex-shrink: 0;
   width: calc(var(--space-6) + var(--space-1));
@@ -34,11 +33,9 @@
   min-height: 0;
 }
 @media (hover: hover) and (pointer: fine) {
-  .row:not(:hover, :focus-within)
-    [data-solo-row-action]:not([aria-expanded="true"]) {
-    position: absolute;
-    inset-inline-end: var(--channel-row-fill-end, 0%);
-    opacity: 0;
+  /* Pointer and keyboard users open the row's context menu directly. */
+  .row [data-solo-row-action] {
+    display: none;
   }
 }
 .row:is(:hover, :has([data-context-menu-present])):not(
@@ -66,11 +63,15 @@
   display: flex;
   width: 100%;
   margin-inline: 0;
-  padding-inline: var(--space-2)
-    calc(var(--channel-row-fill-end, 0%) + var(--space-1) + var(--space-half));
+  padding-inline: calc(var(--space-2) + var(--space-half))
+    calc(var(--channel-row-fill-end, 0%) + var(--space-2));
 }
 .row .select [data-variant="row"][data-working] {
-  padding-inline-end: calc(var(--channel-row-fill-end, 0%) + var(--space-2));
+  padding-inline-end: calc(
+    var(--channel-row-fill-end, 0%) +
+    var(--space-2) +
+    var(--space-half)
+  );
 }
 .select [class~="navigation-item-label"] {
   text-overflow: clip;

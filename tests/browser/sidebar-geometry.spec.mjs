@@ -80,12 +80,12 @@ test("Team and Solo working badges share the painted row inset", async ({
                 ) / 100,
               inset:
                 Math.round(
-                  ((rect.right - fillEnd - marker.right) / root) * 100,
-                ) / 100,
+                  ((rect.right - fillEnd - marker.right) / root) * 64,
+                ) / 64,
             };
           }),
         )
-        .toEqual({ center: 0, inset: 0.5 });
+        .toEqual({ center: 0, inset: 0.625 });
     }
   }
 });
@@ -143,6 +143,19 @@ function columnsAgainstChannelRow(row) {
         parseFloat(fill.right),
     ),
   };
+}
+
+function railInsetError(row) {
+  const rail = row.closest("aside");
+  const bounds = rail.getBoundingClientRect();
+  const fill = row.getBoundingClientRect();
+  const list = rail.querySelector('nav[aria-label="Subscribed channels"]');
+  const gutter = list.offsetWidth - list.clientWidth;
+  const padding = parseFloat(
+    getComputedStyle(rail.firstElementChild).paddingInlineEnd,
+  );
+  const insetDifference = bounds.right - fill.right - (fill.left - bounds.left);
+  return Math.abs(insetDifference - Math.max(0, gutter - padding));
 }
 
 const newOptions = (page) =>
@@ -237,13 +250,31 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
     await expect
       .poll(() => drafts.evaluate(columnsAgainstChannelRow))
       .toEqual({
-        inset: 0.375,
+        inset: 0.5,
         start: 0,
         icon: 0,
         label: 0,
         trailing: 0,
         end: 0,
       });
+    await expect.poll(() => drafts.evaluate(railInsetError)).toBeLessThan(1);
+    await expect
+      .poll(() =>
+        drafts.evaluate((row) => {
+          const starred = document.querySelector(
+            '[data-sidebar-section="starred"]',
+          );
+          if (!starred) return undefined;
+          const gap =
+            starred.getBoundingClientRect().top -
+            row.getBoundingClientRect().bottom;
+          const rem = parseFloat(
+            getComputedStyle(document.documentElement).fontSize,
+          );
+          return Math.round((gap / rem) * 64) / 64;
+        }),
+      )
+      .toBe(1);
     await create.focus();
     await expect
       .poll(() => create.evaluate(controlsAgainstHeading))
@@ -256,11 +287,33 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
         .toBeGreaterThanOrEqual(0);
     }
   }
+  // A short viewport makes the conversation list scroll without a large roster.
+  await page.setViewportSize({ width: 900, height: 300 });
+  const activity = rows.first();
+  await expect(activity).toHaveAccessibleName(/^Activity/);
+  const list = page.getByRole("navigation", {
+    name: "Subscribed channels",
+    exact: true,
+  });
+  const positions = () =>
+    Promise.all(
+      [activity, drafts].map((row) =>
+        row.evaluate((element) => element.getBoundingClientRect().top),
+      ),
+    );
+  const before = await positions();
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() => list.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  await expect.poll(positions).toEqual(before);
 });
 
 // The case above only exercises the scrollbar gutter where the engine happens
 // to reserve one. This case runs where scrollbars take space and requires it.
-test("beside a classic scrollbar, the Drafts & sent row ends in channel rows' column and the header controls stay put", {
+test("beside a classic scrollbar, page and channel rows share the rail insets and the header controls stay put", {
   tag: "@classic-scrollbars",
 }, async ({ page, app }) => {
   test.skip(
@@ -278,7 +331,8 @@ test("beside a classic scrollbar, the Drafts & sent row ends in channel rows' co
   ).toBeGreaterThan(0);
   await expect
     .poll(() => drafts.evaluate(columnsAgainstChannelRow))
-    .toMatchObject({ trailing: 0, end: 0 });
+    .toMatchObject({ start: 0, trailing: 0, end: 0 });
+  await expect.poll(() => drafts.evaluate(railInsetError)).toBeLessThan(1);
   const create = newOptions(page);
   await create.focus();
   await expect
@@ -286,7 +340,7 @@ test("beside a classic scrollbar, the Drafts & sent row ends in channel rows' co
     .toEqual(expectedHeadingControls);
   await expect
     .poll(() => drafts.evaluate(columnsAgainstChannelRow))
-    .toMatchObject({ trailing: 0, end: 0 });
+    .toMatchObject({ start: 0, trailing: 0, end: 0 });
 });
 
 test("a presence badge preserves the sidebar avatar center and header insets", async ({
@@ -429,9 +483,14 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
   const workspace = sidebar.locator('[data-sidebar-section^="group:"]').filter({
     has: page.locator('summary[aria-label="Work"]'),
   });
-  await expect(
-    workspace.locator(`button[data-channel-id="${solo}"]`),
-  ).toBeVisible();
+  const chat = workspace.locator(`button[data-channel-id="${solo}"]`);
+  await chat.click();
+  await expect(chat).toHaveAttribute("aria-current", "page");
+  const action = workspace.locator("[data-solo-row-action]");
+  const titleWidth = () =>
+    chat
+      .locator(".navigation-item-label")
+      .evaluate((label) => label.getBoundingClientRect().width);
   await expect(
     sidebar.locator(
       '[data-sidebar-section="channels"] button[data-channel-id="beta"]',
@@ -573,7 +632,26 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
     const result = await layout();
     expect(result.rows).toBeGreaterThanOrEqual(2);
     expect(result.headings).toBeGreaterThanOrEqual(6);
+
+    // The touch action must take no space in pointer and keyboard layouts.
+    const restingWidth = await titleWidth();
+    await chat.hover({ position: { x: 24, y: 14 } });
+    await expect.poll(titleWidth).toBe(restingWidth);
+    await expect(action).toBeHidden();
+    await page.mouse.move(0, 0);
+    await chat.focus();
+    await expect.poll(titleWidth).toBe(restingWidth);
   }
+  const menu = page.getByRole("menu", { name: "Actions for Alpha" });
+  await chat.press("Shift+F10");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await chat.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await separator.focus();
 
   // Hovering any heading reveals every control that belongs to it.
   const headings = sidebar.locator(".navigation-section-heading");

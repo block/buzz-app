@@ -1,5 +1,6 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
+import { pauseClock } from "./clock.mjs";
 import { frames, open, settle } from "./timeline.mjs";
 import { chooseDefaultSkinTone } from "./skin-tone.mjs";
 
@@ -271,14 +272,36 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     event.content,
   ]);
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Copy link", exact: true }).click();
+  await expect(actions).toHaveCSS("opacity", "1");
+  // The toolbar's Copy link stays in view, so its own icon shows the copy: a
+  // check for 1.5 seconds, in a toolbar that keeps its size, with no toast.
+  // Hold the clock so the check stays until it has been read.
+  const copyLink = row.getByRole("button", { name: "Copy link", exact: true });
+  const toolbar = async () => [
+    await copyLink.boundingBox(),
+    await actions.boundingBox(),
+  ];
+  const notices = page
+    .getByRole("region", { name: "App notifications" })
+    .locator("[data-sonner-toast]");
+  await pauseClock(page);
+  const atRest = await toolbar();
+  await copyLink.click();
+  await expect(copyLink.locator(".tabler-icon-check")).toBeVisible();
+  await expect(copyLink).toHaveAccessibleName("Copy link");
   await expect(
-    page
-      .getByRole("region", { name: "App notifications" })
-      .getByText("Link copied", { exact: true }),
-  ).toBeVisible();
+    row.getByRole("status").filter({ hasText: /^Copied$/ }),
+  ).toHaveCount(1);
+  expect(await toolbar()).toEqual(atRest);
   const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
   expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  await page.clock.runFor(1500);
+  await expect(copyLink.locator(".tabler-icon-link")).toBeVisible();
+  // The clock a toast mounts on has run. The click cleared the menu's
+  // "Message copied", and the toolbar raised no toast of its own.
+  await expect(notices.filter({ hasText: /\S/ })).toHaveCount(0);
+  expect(await toolbar()).toEqual(atRest);
+  await page.clock.resume();
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const panel = page.getByRole("complementary", {
@@ -288,10 +311,6 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   const root = panel.locator(`[data-message-id="${event.id}"]`);
   await expect(root).toBeVisible();
   // A pointer click leaves focus on the control; the bar still follows hover.
-  const copyLink = row.getByRole("button", {
-    name: "Copy link",
-    exact: true,
-  });
   await hoverMessage(row);
   await copyLink.click();
   await page.mouse.move(0, 0);
@@ -586,13 +605,10 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   );
   await hoverMessage(row);
   await row.getByRole("button", { name: "Copy link", exact: true }).click();
-  await expect(
-    page
-      .getByRole("region", { name: "App notifications" })
-      .getByText("Link copied", { exact: true }),
-  ).toBeVisible();
-  const copiedLink = await page.evaluate(() => window.copiedMessageLink);
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  const copiedLink = `buzz://message?channel=alpha&id=${event.id}`;
+  await expect
+    .poll(() => page.evaluate(() => window.copiedMessageLink))
+    .toBe(copiedLink);
   const sharedConversation = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alice Fixture", exact: true });

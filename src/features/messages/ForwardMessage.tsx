@@ -1,6 +1,11 @@
 import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { copyAsForward } from "./forward-clipboard";
+import {
+  CopyLabel,
+  CopyStatus,
+  useCopyFeedback,
+} from "../../shared/CopyFeedback";
 import { snapshotMessage } from "../relay/forwarded-message";
 import { writeClipboardText } from "../../shared/clipboard";
 import { ForwardDisclosure } from "./ForwardDisclosure";
@@ -369,6 +374,7 @@ function ForwardMessageDialog({
     [people, verified, profiles],
   );
   const privacyId = useId();
+  const pasteHintId = useId();
   const sourceRead = useForwardSource(
     session,
     source.channelId,
@@ -414,15 +420,13 @@ function ForwardMessageDialog({
           note,
         )
       : undefined;
+  // Each copy button shows its own copy.
+  const forwardCopy = useCopyFeedback();
+  const linkCopy = useCopyFeedback();
   const copyLink = async () => {
-    try {
-      await writeClipboardText(
-        `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`,
-      );
-      setNotice({ text: "Message link copied", error: false });
-    } catch {
+    const link = `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`;
+    if ((await linkCopy.copy(() => writeClipboardText(link))) === "failed")
       setError("Couldn’t copy the link. Try again.");
-    }
   };
 
   const locked = pending || !!recovered;
@@ -608,27 +612,40 @@ function ForwardMessageDialog({
         actions={
           <>
             <Button
+              aria-label="Copy as forward"
+              aria-describedby={forwardProblem ? undefined : pasteHintId}
               disabled={pending || !forwardRow || !!forwardProblem}
               onClick={() => {
                 if (!forwardRow) return;
-                void copyAsForward(session, forwardRow, authorName, note).then(
-                  () =>
-                    setNotice({
-                      text: "Copied. Paste it in any message box to forward it.",
-                      error: false,
-                    }),
-                  () =>
-                    setNotice({
-                      text: "Couldn't copy. Try again, or use Forward.",
-                      error: true,
-                    }),
-                );
+                void forwardCopy
+                  .copy(() =>
+                    copyAsForward(session, forwardRow, authorName, note),
+                  )
+                  .then((result) => {
+                    if (result)
+                      setNotice(
+                        result === "failed"
+                          ? {
+                              text: "Couldn't copy. Try again, or use Forward.",
+                              error: true,
+                            }
+                          : undefined,
+                      );
+                  });
               }}
             >
-              Copy as forward
+              <CopyLabel label="Copy as forward" copied={forwardCopy.copied} />
             </Button>
+            {forwardCopy.attempted && (
+              <CopyStatus copied={forwardCopy.copied} />
+            )}
             {forwardProblem && (
-              <Button onClick={() => void copyLink()}>Copy link</Button>
+              <>
+                <Button aria-label="Copy link" onClick={() => void copyLink()}>
+                  <CopyLabel label="Copy link" copied={linkCopy.copied} />
+                </Button>
+                {linkCopy.attempted && <CopyStatus copied={linkCopy.copied} />}
+              </>
             )}
             <Button disabled={pending} onClick={close}>
               Cancel
@@ -751,6 +768,13 @@ function ForwardMessageDialog({
           {error && (
             <p role="alert" className="text-body-sm text-subtle">
               {error}
+            </p>
+          )}
+
+          {/* Always shown, so a copy adds no line that would move its button. */}
+          {!forwardProblem && (
+            <p id={pasteHintId} className="text-body-sm text-subtle">
+              Copy as forward, then paste it in any message box to forward it.
             </p>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { useId, useRef, useState } from "react";
-import { CopyIcon } from "../design-system/icons";
+import { CheckIcon, CopyIcon } from "../design-system/icons";
 import { IconButton } from "../design-system/ui/IconButton";
 import { useToastNotification } from "../design-system/ui/Toast";
 import { Avatar } from "../design-system/ui/Avatar";
@@ -8,6 +8,7 @@ import { ChoiceRow } from "../design-system/ui/ChoiceRow";
 import { PreviewCard } from "../design-system/ui/PreviewCard";
 import { formatPublicKey } from "./public-key";
 import { writeClipboardText } from "../clipboard";
+import { CopyStatus, useCopyFeedback } from "../CopyFeedback";
 
 /** Shared identity presentation. The caller retains selection and action behavior. */
 export function IdentityRow({
@@ -31,6 +32,7 @@ export function IdentityRow({
   const anchor = useRef<HTMLSpanElement>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
   const notify = useToastNotification();
+  const { attempted, copied, copy } = useCopyFeedback();
   const npub = npubEncode(pubkey);
   const content = (
     <span ref={anchor} className="inline-flex max-w-full align-middle">
@@ -110,20 +112,24 @@ export function IdentityRow({
             size="xs"
             variant="ghost"
             aria-label="Copy npub"
-            icon={<CopyIcon size={16} aria-hidden="true" />}
+            icon={
+              copied ? (
+                <CheckIcon size={16} aria-hidden="true" />
+              ) : (
+                <CopyIcon size={16} aria-hidden="true" />
+              )
+            }
             onClick={() => {
-              void Promise.resolve()
-                .then(() => writeClipboardText(npub))
-                .then(
-                  () => notify("Copied npub", "success"),
-                  () =>
-                    notify(
-                      "Couldn’t copy npub. Select the text to copy it.",
-                      "error",
-                    ),
-                );
+              void copy(() => writeClipboardText(npub)).then((result) => {
+                if (result === "failed")
+                  notify(
+                    "Couldn’t copy npub. Select the text to copy it.",
+                    "error",
+                  );
+              });
             }}
           />
+          {attempted && <CopyStatus copied={copied} />}
         </div>
       </PreviewCard>
     </>

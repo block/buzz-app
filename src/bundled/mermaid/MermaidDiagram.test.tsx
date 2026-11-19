@@ -4,6 +4,7 @@ import { Context } from "@deepseek-ai/cordis";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -26,6 +27,7 @@ afterEach(async () => {
   for (const dispose of disposals.splice(0)) await dispose();
   localStorage.removeItem("buzzodz.plugins.v1");
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 it("draws mermaid fences in messages while the bundled plugin is enabled", async () => {
@@ -136,9 +138,14 @@ it("expands the diagram in a dialog that copies its source and restores focus", 
   await waitFor(() =>
     expect(dialog.querySelector("svg.pele")).toHaveTextContent("Start"),
   );
-  await user.click(within(dialog).getByRole("button", { name: "Copy code" }));
+  const copy = within(dialog).getByRole("button", { name: "Copy code" });
+  expect(copy).toHaveTextContent(/^Copy code$/);
+  await user.click(copy);
   expect(write).toHaveBeenCalledWith(code);
-  await screen.findByText("Copied code to clipboard");
+  await waitFor(() => expect(copy).toHaveTextContent(/^Copied$/));
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy code");
+  expect(copyStatus(dialog)).toHaveTextContent(/^Copied$/);
   await user.click(
     within(dialog).getByRole("button", { name: "Close diagram" }),
   );
@@ -148,4 +155,45 @@ it("expands the diagram in a dialog that copies its source and restores focus", 
     ).toBeNull(),
   );
   expect(expand).toHaveFocus();
+});
+
+/** The Copy code button's status, the dialog's only one. */
+const copyStatus = (dialog: HTMLElement) => within(dialog).getByRole("status");
+
+it("shows the dialog's copy and its refusal in the Copy code button, with no toast", async () => {
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"))
+    .mockResolvedValueOnce();
+  render(<MermaidExpand code="flowchart LR\n  A --> B" />, {
+    wrapper: ToastProvider,
+  });
+  await user.click(screen.getByRole("button", { name: "Expand diagram" }));
+  const dialog = await screen.findByRole("dialog", { name: "Mermaid diagram" });
+  const copy = within(dialog).getByRole("button", { name: "Copy code" });
+  vi.useFakeTimers();
+
+  await act(async () => fireEvent.click(copy));
+  expect(copy).toHaveTextContent(/^Couldn’t copy$/);
+  expect(copy.querySelector(".tabler-icon-alert-circle")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy code");
+  expect(copyStatus(dialog)).toHaveTextContent(/^Couldn’t copy$/);
+  // A refusal outlasts every timer now pending, and raises no toast.
+  act(() => vi.runOnlyPendingTimers());
+  expect(copy).toHaveTextContent(/^Couldn’t copy$/);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+
+  // The next attempt replaces it: a copy shows for 1.5 seconds.
+  await act(async () => fireEvent.click(copy));
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(copy).toHaveTextContent(/^Copied$/);
+  expect(copyStatus(dialog)).toHaveTextContent(/^Copied$/);
+  act(() => vi.advanceTimersByTime(1499));
+  expect(copy).toHaveTextContent(/^Copied$/);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(copy).toHaveTextContent(/^Copy code$/);
+  expect(copy.querySelector(".tabler-icon-copy")).not.toBeNull();
+  expect(copyStatus(dialog)).toBeEmptyDOMElement();
 });

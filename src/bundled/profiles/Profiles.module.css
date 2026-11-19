@@ -86,22 +86,6 @@
   line-height: var(--text-mono--line-height);
   letter-spacing: var(--text-mono--letter-spacing);
 }
-/* Hold the Copy label at the width of "Copied", so a copy that works never
- * resizes its button or moves the card. A refused copy's longer label grows it.
- * A button centres its text, which would shift "Copy" within that width, so
- * the label starts at its leading edge and the spare width follows it. */
-.copyLabel {
-  display: inline-flex;
-  flex-direction: column;
-  text-align: start;
-}
-.copyLabel::after {
-  content: attr(data-reserve);
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-
 .tabContent {
   display: flex;
   flex-direction: column;

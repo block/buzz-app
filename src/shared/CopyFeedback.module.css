@@ -1,0 +1,35 @@
+/* Hold a copy button's label at the width of the state it is not showing, so
+ * a copy that works never resizes its button or moves what is beside it. A
+ * refused copy's longer label grows it. A button centres its text, which would
+ * shift "Copy" within that width, so beside an icon the label starts at its
+ * leading edge and the spare width follows it. */
+.label {
+  display: inline-flex;
+  flex-direction: column;
+  text-align: start;
+}
+.label::after {
+  content: attr(data-reserve);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+/* A label with no icon beside it stays centred. Its result brings an icon, so
+ * at rest it also holds that icon's width and gap. */
+.label[data-alone] {
+  text-align: center;
+}
+.label[data-alone]:not(:has(.result))::after {
+  padding-inline-start: calc(var(--space-4) + var(--space-row-gap));
+}
+.result {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-row-gap);
+}
+.result > svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex-shrink: 0;
+}

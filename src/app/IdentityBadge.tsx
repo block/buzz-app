@@ -12,6 +12,7 @@ import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import { CopyStatus, useCopyFeedback } from "../shared/CopyFeedback";
 import { Panel } from "../shared/design-system/ui/Panel";
 import {
   CaretLeftIcon,
@@ -45,12 +46,15 @@ export function IdentityBadge({
   backup?: "pending" | "confirmed" | "attention" | "running" | undefined;
   /** Where the backup is, e.g. "your Builderlab account". */
   backupAccount?: string | undefined;
-  onCopy(): void;
+  /** Copies the Buzz ID. The Copy button shows a copy that works; a refusal
+   * is its owner's to report. */
+  onCopy(): Promise<void>;
   children(
     active: boolean,
     action: RefObject<HTMLButtonElement | null>,
   ): ReactNode;
 }) {
+  const { attempted, copied, copy } = useCopyFeedback();
   const [back, setBack] = useState(false);
   const [loaded, setLoaded] = useState<string>();
   const faceId = useId();
@@ -245,10 +249,17 @@ export function IdentityBadge({
                         <IconButton
                           aria-label="Copy Buzz ID"
                           size="xs"
-                          icon={<CopyIcon aria-hidden="true" />}
-                          onClick={onCopy}
+                          icon={
+                            copied ? (
+                              <CheckIcon aria-hidden="true" />
+                            ) : (
+                              <CopyIcon aria-hidden="true" />
+                            )
+                          }
+                          onClick={() => void copy(onCopy)}
                         />
                       </Tooltip>
+                      {attempted && <CopyStatus copied={copied} />}
                     </span>
                   </div>
                 </div>

@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  CheckIcon,
-  CopyIcon,
-  WarningCircleIcon,
-} from "../../shared/design-system/icons";
+import type { ReactNode } from "react";
+import { CopyIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { writeClipboardText } from "../../shared/clipboard";
-import styles from "./Profiles.module.css";
+import {
+  CopyLabel,
+  CopyStatus,
+  useCopyFeedback,
+} from "../../shared/CopyFeedback";
 
 export function ProfilePublicMetadata({
   nip05,
@@ -25,11 +25,6 @@ export function ProfilePublicMetadata({
     />
   ) : null;
 }
-
-const outcomes = {
-  copied: { Icon: CheckIcon, text: "Copied" },
-  failed: { Icon: WarningCircleIcon, text: "Couldn’t copy" },
-};
 
 /** A profile value with its Copy button. The button alone shows the result:
  * a copy reverts after 1.5 seconds, a refused copy stays until the next
@@ -49,16 +44,7 @@ export function ProfileCopyField({
   /** How the value is shown, when not as plain text. */
   children?: ReactNode;
 }) {
-  const [outcome, setOutcome] = useState<keyof typeof outcomes>();
-  const generation = useRef(0);
-  useEffect(() => {
-    if (outcome !== "copied") return;
-    const timer = setTimeout(() => setOutcome(undefined), 1500);
-    return () => clearTimeout(timer);
-  }, [outcome]);
-  const { Icon, text } = outcome
-    ? outcomes[outcome]
-    : { Icon: CopyIcon, text: "Copy" };
+  const { copied, failed, copy } = useCopyFeedback();
   return (
     <SettingsGroup>
       <PreferenceRow
@@ -71,28 +57,16 @@ export function ProfileCopyField({
               variant="ghost"
               aria-label={copyLabel}
               title={hint}
-              onClick={() => {
-                const current = ++generation.current;
-                const settle = (next: keyof typeof outcomes) => () => {
-                  if (current === generation.current) setOutcome(next);
-                };
-                setOutcome(undefined);
-                void Promise.resolve()
-                  .then(() => writeClipboardText(value))
-                  .then(settle("copied"), settle("failed"));
-              }}
+              onClick={() => void copy(() => writeClipboardText(value))}
             >
-              <Icon size={16} aria-hidden="true" />
-              <span
-                className={styles.copyLabel}
-                data-reserve={outcomes.copied.text}
-              >
-                {text}
-              </span>
+              <CopyLabel
+                label="Copy"
+                icon={<CopyIcon size={16} aria-hidden="true" />}
+                copied={copied}
+                failed={failed}
+              />
             </Button>
-            <span role="status" className="sr-only">
-              {outcome && text}
-            </span>
+            <CopyStatus copied={copied} failed={failed} />
           </>
         }
       />

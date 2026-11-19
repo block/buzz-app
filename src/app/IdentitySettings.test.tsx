@@ -48,6 +48,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 type Send = NonNullable<Parameters<typeof createBackupStatus>[0]>;
@@ -193,6 +194,47 @@ it.each([false, true])(
     expect(moved ? elsewhere : field).toHaveFocus();
   },
 );
+
+it("shows a copied Buzz ID in the badge's Copy button, and keeps a refusal's notice with the full ID", async () => {
+  const writeText = vi
+    .fn<(text: string) => Promise<void>>()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+  vi.spyOn(navigator, "clipboard", "get").mockReturnValue({
+    writeText,
+  } as unknown as Clipboard);
+  render(<IdentitySettings viewer={viewer} />, { wrapper: ToastProvider });
+  const copy = screen.getByRole("button", { name: "Copy Buzz ID" });
+  expect(screen.queryByRole("status")).toBeNull();
+  // Only the timers: with the clock faked too, this test leaves it ahead of
+  // the real one, and the tests after it fail to open their menus.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  await act(async () => fireEvent.click(copy));
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(npubEncode(viewer));
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy Buzz ID");
+  expect(screen.getByRole("status")).toHaveTextContent(/^Copied$/);
+  act(() => vi.advanceTimersByTime(1499));
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  // The clock a toast mounts on has run: the status is all that says so.
+  expect(screen.getAllByText(/copied/i)).toHaveLength(1);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(copy.querySelector(".tabler-icon-copy")).not.toBeNull();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+
+  // A refusal is the notice's to report, with the full ID to select instead.
+  await act(async () => fireEvent.click(copy));
+  act(() => vi.runOnlyPendingTimers());
+  expect(screen.getByText("Identity wasn’t copied")).toBeVisible();
+  expect(
+    screen.getByText("Couldn’t copy buzz id. Select it and copy manually."),
+  ).toBeVisible();
+  expect(screen.getByText(npubEncode(viewer))).toBeVisible();
+  expect(copy.querySelector(".tabler-icon-copy")).not.toBeNull();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+});
 
 it("clears a pending private-key reveal when the badge flips back", async () => {
   const h = backupHost(at(1, { status: "idle" }));

@@ -39,7 +39,7 @@ and token in both themes.
 | A preview of an object | `PreviewCard` |
 | A settled empty or setup state | `EmptyState` with the next action |
 | Content that's loading | `LoadingRegion`: it stays quiet for the first second, so fast loads don't flicker |
-| A transient result | The shared Toast. A button that shows the result in its own label needs none, because the label is visible on touch; it keeps the screen-reader status |
+| A transient result | The shared Toast; a copy button shows its own result, see [Copy feedback](#copy-feedback) |
 | A person or agent | `Avatar`; see [Identity shapes](#identity-shapes) |
 
 Use `NavigationSectionHeading` for workspace and channel headings. Its
@@ -102,6 +102,20 @@ Keyboard focus is always visible. Shared components draw the ring, shown when
 `html[data-keyboard-navigation]` is set, so pointer use doesn't leave rings
 behind. Shared text fields replace the ring with a border stroke. Don't add
 local focus rings.
+
+## Copy feedback
+
+A copy button that stays in view shows a copy that works in the button itself,
+for 1.5 seconds, and raises no toast: a labelled button's label becomes a check
+and “Copied” without changing width, and an icon button's icon becomes a check.
+The button keeps its accessible name, and a screen-reader status beside it says
+“Copied”. Build these from `useCopyFeedback`, `CopyLabel` and `CopyStatus` in
+`src/shared/CopyFeedback.tsx`. Words a person needs after the copy, such as
+where to paste it, stay beside the button whether or not anything has been
+copied. Report a refusal in words: keep the line, notice or toast that says how
+to recover, or let a labelled button hold a warning and “Couldn’t copy” until
+the next attempt. A menu item or toast action closes when chosen, so a toast
+confirms its copy.
 
 ## Identity shapes
 

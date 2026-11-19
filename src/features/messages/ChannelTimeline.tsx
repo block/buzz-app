@@ -238,6 +238,7 @@ export type ChannelTimelineProps = {
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
+  latestRequest?: AbortSignal | undefined;
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
@@ -284,6 +285,7 @@ function Timeline({
   openThreadRootId,
   inlineTarget,
   transient = false,
+  latestRequest,
   marksRead = true,
   navigation,
   onOpenThread,
@@ -300,6 +302,7 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   // The place a reveal left: for its visit, with the exact follow state; for
   // the channel, with the 80 px rule every other place is saved with. The
   // channel's applies until a newer place replaces the reveal's.
@@ -1653,6 +1656,10 @@ function Timeline({
     }
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
+    const openLatest =
+      latestRequest &&
+      !latestRequest.aborted &&
+      positionedLatestRequest.current !== latestRequest;
     const revealIndex =
       revealMessageId && revealed.current !== revealMessageId
         ? rows.findIndex(
@@ -1697,7 +1704,8 @@ function Timeline({
       !size.width ||
       !size.height ||
       !rows.length ||
-      (revealIndex < 0 &&
+      (!openLatest &&
+        revealIndex < 0 &&
         settled.current &&
         (!follow.current ||
           (prepend &&
@@ -1706,8 +1714,7 @@ function Timeline({
     )
       return;
     if (prepend) fillLanding.current = false;
-    // A send supersedes saved reading intent before the first scroll event.
-    // This effect also retains its height observer through late measurements.
+    // A send supersedes saved reading intent.
     if (revealIndex >= 0 && revealMessageId) {
       intent.current++;
       pendingReveal.current = { id: revealMessageId, intent: intent.current };
@@ -1720,7 +1727,7 @@ function Timeline({
     }
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
-    const scheduledIntent = intent.current;
+    let scheduledIntent = intent.current;
     const saved =
       (!settled.current || pendingRestore.current === scheduledIntent) &&
       savedPosition.current &&
@@ -1738,7 +1745,8 @@ function Timeline({
     // Only a loaded row is a place to return to. Until it loads, an opening
     // reader follows the latest message and the saved row stays pending; a
     // place without a row to wait for is forgotten. A placed reader stays put.
-    const restore = restoreIndex >= 0 ? saved : null;
+    let restore = restoreIndex >= 0 ? saved : null;
+    let endIndex = revealIndex >= 0 ? revealIndex : rows.length - 1;
     if (saved && !restore && follow.current) {
       if (anchor) pendingRestore.current = scheduledIntent;
       else savedPosition.current = { bottom: true };
@@ -1746,7 +1754,7 @@ function Timeline({
     let observer: MutationObserver | undefined;
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
-      const row = rows[restoreIndex];
+      const row = restore && rows[restoreIndex];
       if (anchor && row) {
         pendingRestore.current = undefined;
         restoredAnchor.current = {
@@ -1777,12 +1785,11 @@ function Timeline({
         follow.current = false;
       } else if (follow.current) {
         layoutCorrection.current = true;
-        const index = revealIndex >= 0 ? revealIndex : rows.length - 1;
         const tailHeight =
-          index === rows.length - 1
+          endIndex === rows.length - 1
             ? (activityTail.current?.getBoundingClientRect().height ?? 0)
             : 0;
-        handle.current.scrollToIndex(index, {
+        handle.current.scrollToIndex(endIndex, {
           align: "end",
           ...(tailHeight ? { offset: tailHeight } : {}),
         });
@@ -1794,6 +1801,21 @@ function Timeline({
     };
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
+        // A request can be cancelled while the scroller is attaching.
+        if (openLatest && !latestRequest.aborted) {
+          positionedLatestRequest.current = latestRequest;
+          scheduledIntent = ++intent.current;
+          endIndex = rows.length - 1;
+          restore = null;
+          pendingRestore.current = undefined;
+          follow.current = true;
+          restoredAnchor.current = undefined;
+          savedPosition.current = { bottom: true };
+          measuredPosition.current = null;
+          userScrolled.current = false;
+          upwardGesture.current = false;
+          setNewMessageCount(0);
+        }
         // Input can move the DOM before its scroll event is delivered.
         if (!restore && scroller.current && measuredPosition.current)
           recordPosition(scroller.current);
@@ -1847,8 +1869,9 @@ function Timeline({
       readingPositioned(scroller.current);
       // Virtua may apply the scroll just requested after this frame, so a
       // reader following the latest message is still at its bottom.
-      if (follow.current) setShowJumpToLatest(false);
-      else if (scroller.current) updateJumpToLatest(scroller.current);
+      if (follow.current) {
+        setShowJumpToLatest(false);
+      } else if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
       cancelAnimationFrame(frame);
@@ -1878,6 +1901,7 @@ function Timeline({
     revealedSignal,
     updateJumpToLatest,
     revealMessageId,
+    latestRequest,
     containedOwners,
     newMessageBoundaryId,
   ]);

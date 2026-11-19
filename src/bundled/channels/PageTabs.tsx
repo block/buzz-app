@@ -514,6 +514,11 @@ export function PageTabs({
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
                             intro={workspace.intro}
+                            latestRequest={
+                              primaryTarget?.messageId
+                                ? undefined
+                                : workspace.latestRequest
+                            }
                             active={
                               secondary.selectedMain === "conversation" &&
                               !covered

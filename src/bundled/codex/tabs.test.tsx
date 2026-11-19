@@ -3666,3 +3666,27 @@ it("blocks an unsupported proposal effort and lets the owner clear it", async ()
     expect.objectContaining({ model: "", effort: "" }),
   );
 });
+
+it("saves proposed model and effort overrides for a verified execution target", async () => {
+  const binding = { provider: "test/guest" };
+  const f = fixture({ binding });
+  const save = vi.fn(async () => {});
+  const props = f.props(
+    { ...defaults, model: "target-custom-model", effort: "high" },
+    save,
+  );
+  render(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, executionBinding: binding }}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  await screen.findByDisplayValue("Selected when the session starts");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "target-custom-model", effort: "high" }),
+    ),
+  );
+});

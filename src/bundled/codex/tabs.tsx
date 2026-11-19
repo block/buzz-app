@@ -1488,7 +1488,10 @@ export function createTabs(
         });
         if (!validWorkspace(settings.workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
+        // A verified execution target accepts custom model IDs. Its runtime
+        // checks the overrides against its own catalog when it starts a turn.
         if (
+          !bound &&
           settingsHost?.proposedModelOrEffort &&
           (settings.model || settings.effort)
         ) {

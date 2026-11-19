@@ -584,8 +584,9 @@ export type AgentHandle = Readonly<{
   owner: string;
   /** Waits while its community reloads in place, until ready again; at once
    * otherwise. Resolves when the reload fails too, so the call fails as on
-   * any reconnect. Says whether it waited for a reload. */
-  settle?(signal: AbortSignal): Promise<boolean>;
+   * any reconnect. With `gateway`, for a gateway turn, it then waits for
+   * the gateway access check a reload started. Says whether it waited. */
+  settle?(signal: AbortSignal, gateway?: boolean): Promise<boolean>;
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
@@ -2142,6 +2143,8 @@ type Bound = {
   retried?: number;
   /** Whether its relay is reloading in place. */
   reloading?: true;
+  /** Who its last session listened as, and since when. */
+  listened?: { viewer: string; scope: string; start: number };
 };
 /** A saved identity, which is the agent's membership in one community, with
  * that membership's key. */
@@ -2597,7 +2600,7 @@ export class AgentsService extends Service implements Agents {
       watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
       ready: (key) => this.ready(key),
       reloading: (key) => this.reloading(key),
-      settle: async (agent, signal) => {
+      settle: async (agent, signal, gateway) => {
         const reloading = this.reloading(agent.key);
         if (reloading)
           await readyOwnerReads(
@@ -2607,7 +2610,7 @@ export class AgentsService extends Service implements Agents {
           ).catch(() => {});
         signal.throwIfAborted();
         // Then the gateway access check the reloaded session started.
-        const session = this.reloaded.get(agent.key);
+        const session = gateway && this.reloaded.get(agent.key);
         if (!session || this.bindingOf(agent)?.session !== session)
           return reloading;
         await gatewayRoutes.routeForTurn(
@@ -7796,14 +7799,22 @@ export class AgentsService extends Service implements Agents {
   private agent(key: AgentKey) {
     return this.state.running.find((agent) => agent.key === key);
   }
-  /** Whether the running agent's community is reloading in place. */
+  /** Drops the reload markers that hold `session`, once it is replaced. */
+  private forgetReload(session: RelaySession | undefined) {
+    for (const [key, held] of this.reloaded)
+      if (held === session) this.reloaded.delete(key);
+  }
+  /** Whether the running agent's community is reloading in place: still
+   * connecting or retrying, not settled in a refusal or a final error. */
   private reloading(key: AgentKey) {
     const agent = this.agent(key);
     const origin = agent && originOf(agent.relay);
+    const snapshot = origin && this.bound.get(origin)?.relay.snapshot();
     return (
-      !!origin &&
+      !!snapshot &&
       agent.owner === this.communities.snapshot().viewer &&
-      !!this.bound.get(origin)?.relay.snapshot().reloading
+      !!snapshot.reloading &&
+      (snapshot.status !== "error" || !!snapshot.retrying)
     );
   }
   /** The agent, while its community's session is live to run it in. */
@@ -8027,6 +8038,7 @@ export class AgentsService extends Service implements Agents {
   }
   private unbind(origin: string) {
     const entry = this.bound.get(origin);
+    this.forgetReload(entry?.binding?.session);
     this.bound.delete(origin);
     this.listings.delete(origin);
     this.edits.delete(origin);
@@ -8060,6 +8072,7 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.session !== live?.session ||
       entry.binding?.scope !== live?.scope;
     if (changed) {
+      this.forgetReload(entry.binding?.session);
       entry.binding?.stopLive();
       entry.binding?.attending?.stop();
       entry.binding?.controller.abort();
@@ -8067,10 +8080,19 @@ export class AgentsService extends Service implements Agents {
       this.edits.delete(origin);
       this.communityConfigs.get(origin)?.dispose();
       this.communityConfigs.delete(origin);
-      const connection: Connection = {
-        epoch: 0,
-        start: Math.floor(Date.now() / 1000),
-      };
+      // A reload for the same viewer listens from where its last session
+      // did, so replay and catch-up keep what was posted in between.
+      const { listened } = entry;
+      const start =
+        entry.reloading &&
+        listened &&
+        listened.viewer === live?.viewer &&
+        listened.scope === live?.scope
+          ? listened.start
+          : Math.floor(Date.now() / 1000);
+      if (live)
+        entry.listened = { viewer: live.viewer, scope: live.scope, start };
+      const connection: Connection = { epoch: 0, start };
       entry.binding = live && {
         ...live,
         connection,

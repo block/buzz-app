@@ -23253,7 +23253,7 @@ describe("reload in place", () => {
     reload();
     await settle();
     // Its attempt timed out, and its automatic retry is still the reload.
-    reload({});
+    reload({ retrying: true });
     await settle();
     reload();
     await settle();
@@ -23267,34 +23267,42 @@ describe("reload in place", () => {
     expect(native.release).not.toHaveBeenCalled();
   });
 
-  it("keeps custody and the working turn through a reload that fails for good, until disconnected", async () => {
-    const { service, run, emit, native, reload, connect } = await setup();
+  it("cancels the working turn, then releases custody, when a reload settles in a refusal", async () => {
+    const { service, run, emit, native, reload } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
-    let finish: () => void = () => {};
     let signal: AbortSignal | undefined;
+    let handle: Delivery["agent"] | undefined;
     run.mockImplementationOnce((delivery) => {
       signal = delivery.signal;
-      return new Promise<void>((resolve) => (finish = resolve));
+      handle = delivery.agent;
+      return new Promise<void>(() => {});
     });
     emit({ events: [event("1", { tags: [["p", bot]] })] });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    let abortedAtRelease: boolean | undefined;
+    native.release.mockImplementation(async () => {
+      abortedAtRelease = signal?.aborted;
+    });
     reload();
-    reload({ denied: true });
     await settle();
     expect(signal?.aborted).toBe(false);
-    finish();
-    await settle();
-    expect(native.release).not.toHaveBeenCalled();
-    connect(false);
+    reload({ denied: true });
     await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+    expect(abortedAtRelease).toBe(true);
+    if (!handle) throw new Error("Expected the turn's handle");
+    await expect(
+      handle.publish({ kind: 9, content: "late", tags: [["h", channel]] }),
+    ).rejects.toThrow();
+    await settle();
+    expect(native.release).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     ["its protection", { protectionRevision: 1 }],
     ["its type", { type: "other/relay" }],
   ])(
-    "releases custody held by a reload that fails for good when %s changes",
+    "releases custody held by a retrying reload when %s changes",
     async (_label, change) => {
       const identities: AgentIdentity[] = [];
       const { ctx, service, native, reload } = await setup({ identities });
@@ -23311,7 +23319,7 @@ describe("reload in place", () => {
       await service.create({ type: "example/echo", name: "Echo" });
       await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       reload();
-      reload({ denied: true });
+      reload({ retrying: true });
       await settle();
       expect(native.release).not.toHaveBeenCalled();
       const identity = identities[0];
@@ -23321,6 +23329,30 @@ describe("reload in place", () => {
       await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
     },
   );
+
+  it("answers a mention posted while a reload reconnects, once", async () => {
+    const { service, run, emit, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await settle();
+    const before = Math.floor(Date.now() / 1000);
+    reload();
+    await settle();
+    const gap = event("gap", { created_at: before + 5, tags: [["p", bot]] });
+    // The reload is ready well after the mention was posted.
+    const now = vi.spyOn(Date, "now").mockReturnValue((before + 60) * 1000);
+    try {
+      connect(true);
+      await settle();
+      // Replay sends it again, as each resubscription does; it runs once.
+      emit({ events: [gap], replay: true });
+      emit({ events: [gap], replay: true });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
 
   it("releases custody when a reload is disconnected", async () => {
     const { service, native, reload, connect } = await setup();
@@ -23355,9 +23387,14 @@ describe("reload in place", () => {
       await settle();
       connect(true);
       await settle();
-      // A fresh request after relay-ready still waits for the new check.
+      // Only a gateway turn waits for the check; other harnesses go on.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).not.toHaveBeenCalled();
+      // A fresh gateway request after relay-ready waits for the new check.
       let waited: boolean | undefined;
-      const call = handle.settle(signal).then((result) => (waited = result));
+      const call = handle
+        .settle(signal, true)
+        .then((result) => (waited = result));
       await vi.waitFor(() => expect(checked).toHaveBeenCalledOnce());
       await settle();
       expect(waited).toBeUndefined();
@@ -23367,6 +23404,31 @@ describe("reload in place", () => {
       // Once answered, the marker is gone.
       await expect(handle.settle(signal)).resolves.toBe(false);
       expect(checked).toHaveBeenCalledOnce();
+    } finally {
+      checked.mockRestore();
+    }
+  });
+
+  it("forgets a reload's gateway marker when its session disconnects", async () => {
+    const checked = vi
+      .spyOn(gatewayRoutes, "routeForTurn")
+      .mockResolvedValue({ kind: "external", revision: 2 } as never);
+    try {
+      const { service, plugin, reload, connect } = await setup();
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+      reload();
+      await settle();
+      connect(true);
+      await settle();
+      const markers = (service as unknown as { reloaded: Map<string, unknown> })
+        .reloaded;
+      expect(markers.size).toBe(1);
+      // Disconnected, it no longer holds the old session alive.
+      connect(false);
+      await settle();
+      expect(markers.size).toBe(0);
+      expect(checked).not.toHaveBeenCalled();
     } finally {
       checked.mockRestore();
     }

@@ -294,13 +294,13 @@ export class PiRuntime {
         },
         event: (event) => this.event(event),
         gateway: async (call, signal) => {
-          // A model request waits out a reload in place and the new
-          // session's access check, then is admitted against them.
-          if (call.op === "admit") {
+          // A turn's bind and each model request wait out a reload in place
+          // and the new session's access check, then answer against them.
+          if (call.op !== "deny") {
             const handle =
               this.agents.get(call.agent)?.handle ?? this.handle(call.agent);
             // Outside a reload, a pending route refuses at once.
-            await handle?.settle?.(signal);
+            await handle?.settle?.(signal, true);
           }
           return answerGateway(this.seam, call);
         },

@@ -487,7 +487,11 @@ export type RunnerHost = {
    * new until ready, but keeps custody and its turn meanwhile. */
   reloading?(key: AgentKey): boolean;
   /** Waits while the agent's community reloads in place (`AgentHandle.settle`). */
-  settle?(agent: Agent, signal: AbortSignal): Promise<boolean>;
+  settle?(
+    agent: Agent,
+    signal: AbortSignal,
+    gateway?: boolean,
+  ): Promise<boolean>;
   /** A running agent, in any community. */
   agent(key: AgentKey): Agent | undefined;
   /** The membership's saved Attention, even while it is disconnected. */
@@ -721,6 +725,8 @@ export class AgentRunners {
   private readonly custody = new Map<string, Promise<void>>();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
+  /** Runners whose custody a reload in place holds, as of `resume`. */
+  private reloads = new Set<string>();
   /** Catch-up progress of each watch stream, as saved. */
   private checkpoints: Readonly<Record<string, Checkpoint>>;
   /** By agent, its catch-up running or last run. */
@@ -863,11 +869,22 @@ export class AgentRunners {
    * the agents whose community is live now. */
   resume(ready: ReadonlySet<string>) {
     const connected = new Set<string>();
+    const reloads = new Set<string>();
     for (const runner of this.runners.values()) {
-      const live =
+      const retained =
         ready.has(runner.key) &&
-        (!!this.host.ready(runner.key) || this.retained(runner));
+        !this.host.ready(runner.key) &&
+        this.retained(runner);
+      const live =
+        ready.has(runner.key) && (!!this.host.ready(runner.key) || retained);
       if (live) connected.add(runner.key);
+      if (retained) reloads.add(runner.key);
+      else if (!live && this.reloads.has(runner.key)) {
+        // A reload that settles without its community ends the turns it kept
+        // before custody goes, so no other copy takes over one still running.
+        runner.controller.abort();
+        runner.controller = new AbortController();
+      }
       if (
         runner.queues.mention.length ||
         runner.queues.watch.length ||
@@ -876,6 +893,7 @@ export class AgentRunners {
         void this.drain(runner);
     }
     this.connected = connected;
+    this.reloads = reloads;
   }
   /** Whether a reload in place holds the runner's custody: only while its
    * type and protection are those it had when its community was last ready. */
@@ -3471,10 +3489,11 @@ export class AgentRunners {
           this.host.remembered(agent.key, slug, body);
           return event;
         },
-        settle: async (signal: AbortSignal) =>
+        settle: async (signal: AbortSignal, gateway?: boolean) =>
           (await this.host.settle?.(
             agent,
             AbortSignal.any([lifetime, signal]),
+            gateway,
           )) ?? false,
         agentTypes: () => this.host.agentTypes(),
         // Drafts outlive the run's handover deadline, as a turn still working may

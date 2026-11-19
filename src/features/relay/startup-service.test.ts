@@ -570,3 +570,55 @@ it("reload keeps its state through a denial until disconnected, and does nothing
   expect(data.snapshot().status).toBe("disconnected");
   expect(connections).toHaveLength(count);
 });
+it("reload keeps a channel to reopen through a second reload before its roster answers", async () => {
+  const relay = keypair();
+  const { data, connections, source, restored } = setup({ relay });
+  await restored();
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  const query = vi.mocked(source.query);
+  const rosterRead = (filters: readonly import("./events").ReadFilter[]) =>
+    filters.some((f) => f.kinds?.includes(39002));
+  const fallback = async (filters: readonly import("./events").ReadFilter[]) =>
+    rosterRead(filters)
+      ? [
+          roster(relay, "alpha", [source.viewer]),
+          metadata(relay, "alpha", "Alpha"),
+          roster(relay, "beta", [source.viewer]),
+          metadata(relay, "beta", "Beta"),
+        ]
+      : filters.some((f) => f["#h"]?.includes("beta"))
+        ? [
+            bounds(relay, "beta", "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          ]
+        : [];
+  query.mockImplementation(fallback);
+  const { channels } = data.snapshot().session;
+  channels.refreshList?.();
+  await vi.waitFor(() => expect(channels.get?.("beta")).toBeDefined());
+  // Beta is open in the background; alpha stays the selected channel.
+  channels.ensure("beta");
+  channels.ensure("alpha");
+  query.mockImplementation(async (filters) => {
+    if (rosterRead(filters)) return new Promise(() => {});
+    return fallback(filters);
+  });
+  data.reload();
+  await vi.waitFor(() => expect(connections).toHaveLength(2));
+  connections.at(-1)?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  expect(data.snapshot().session.channels.list().status).toBe("loading");
+  // Another reload before the roster answers still carries beta.
+  query.mockImplementation(fallback);
+  data.reload();
+  await vi.waitFor(() => expect(connections).toHaveLength(3));
+  connections.at(-1)?.resolve(source);
+  await vi.waitFor(() =>
+    expect(data.snapshot().session.channels.window("beta").status).toBe(
+      "ready",
+    ),
+  );
+});

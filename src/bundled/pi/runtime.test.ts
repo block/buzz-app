@@ -4311,3 +4311,44 @@ it("refuses a model request on a pending route at once outside a reload", async 
   answered.resolve({ status: "done", answer: 1, text: "" });
   await f.settled(turn);
 });
+
+it("holds a turn's bind until its reload settles, then binds against the route", async () => {
+  const r = routes(eligible);
+  let route = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  const settled = deferred<boolean>();
+  const settle = vi.fn(() => settled.promise);
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => route,
+  });
+  Object.assign(f.agent, { settle });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  let bound: unknown;
+  const bind = process
+    ?.tool(
+      {
+        op: "bind",
+        agent: self,
+        event: "new_generation",
+        saved: null,
+        turn: {},
+      },
+      "gateway",
+    )
+    .then((answer) => (bound = answer));
+  await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  expect(bound).toBeUndefined();
+  route = eligible;
+  settled.resolve(true);
+  await bind;
+  expect(bound).toMatchObject({ result: { ok: true, binding: { v: 1 } } });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
+});

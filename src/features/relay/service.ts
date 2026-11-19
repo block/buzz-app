@@ -75,14 +75,22 @@ declare module "@deepseek-ai/cordis" {
 }
 
 /** Opens again what a reload had open, once the new roster authorizes it:
- * nothing was restored from disk to authorize it sooner. */
-function reopenListed(session: RelaySession, ids: ReadonlySet<string>) {
-  const { channels } = session;
+ * nothing was restored from disk to authorize it sooner. Each ID stays in
+ * `ids` until its channel opens or a complete roster omits it, through
+ * later roster pages and errors; a later reload carries what is left. */
+function reopenListed(
+  owner: ReturnType<typeof createRelaySession>,
+  ids: Set<string>,
+) {
+  const { channels } = owner.session;
   const open = () => {
-    const { status } = channels.list();
-    if (status === "idle" || status === "loading") return false;
+    const list = channels.list();
+    if (list.status === "idle" || list.status === "loading") return false;
     for (const id of ids) channels.ensure(id);
-    return true;
+    for (const id of owner.retainedChannels()) ids.delete(id);
+    // Only a complete roster read proves the rest are no longer the viewer's.
+    if (list.status === "ready" && list.rosterAsOf !== undefined) ids.clear();
+    return !ids.size;
   };
   if (open()) return;
   const stop = channels.subscribeList(() => {
@@ -133,6 +141,8 @@ export function provideRelay(
   /** A reload's state, from `reload()` until ready or disconnected: it reads
    * nothing saved, and its channels open again on the new session. */
   let reloading: { channels: Set<string> } | undefined;
+  /** What the last reload has yet to open again on its session. */
+  let reopening: Set<string> | undefined;
   const publish = ({
     retrying: _retrying,
     reloading: _reloading,
@@ -445,7 +455,8 @@ export function provideRelay(
           });
           ready = true;
           store.session.channels.ensureList();
-          if (reopen) reopenListed(store.session, reopen);
+          reopening = reopen;
+          if (reopen) reopenListed(store, reopen);
         })
         .catch(async (error) => {
           await restoring;
@@ -480,8 +491,12 @@ export function provideRelay(
         return;
       }
       // Reset disposes the store, so keep what it has open first.
-      const channels = reloading?.channels ?? new Set<string>();
-      for (const id of store.retainedChannels()) channels.add(id);
+      const channels = new Set([
+        ...(reloading?.channels ?? []),
+        ...(reopening ?? []),
+        ...store.retainedChannels(),
+      ]);
+      reopening = undefined;
       reloading = { channels };
       // A connection under way may already have read what was saved.
       reset();

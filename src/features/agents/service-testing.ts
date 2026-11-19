@@ -280,9 +280,9 @@ export function fakeRelay(origin = "https://relay.example.test") {
       snapshot = { status: "error", generation: 4, session, error: "down" };
       for (const listener of changes) listener();
     },
-    /** Reloads in place, as Cmd+R does: connecting, then failing if asked,
-     * still reloading until `connect`. */
-    reload(failure?: { denied?: true }) {
+    /** Reloads in place, as Cmd+R does: connecting, then failing if asked
+     * (for good unless `retrying`), still reloading until `connect`. */
+    reload(failure?: { denied?: true; retrying?: true }) {
       snapshot = failure
         ? {
             status: "error",

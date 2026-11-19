@@ -2311,10 +2311,13 @@ export function EditableInput({
           },
           // Send/completion/cancel policy belongs to the host. ProseMirror's
           // default capture otherwise prevents Escape before React can cancel edits.
+          // Tab accepts a completion first; list indentation runs after the host.
           keydown(_view, event) {
             flushTokens();
             return (
-              (event.key === "Enter" || event.key === "Escape") &&
+              (event.key === "Enter" ||
+                event.key === "Escape" ||
+                event.key === "Tab") &&
               !event.isComposing &&
               !composing.current
             );
@@ -2601,6 +2604,18 @@ export function EditableInput({
       insertResource: { configurable: true, value: insertResource },
       insertToken: { configurable: true, value: insertToken },
       toggleFormat: { configurable: true, value: toggleFormat },
+      indentListItem: {
+        configurable: true,
+        value: (outdent: boolean) => {
+          if (!editable() || composing.current || editor.composing)
+            return false;
+          syncNativeSelection();
+          const command = outdent ? liftListItem : sinkListItem;
+          return command(composerSchema.nodes.list_item)(editor.state, (tr) =>
+            editor.dispatch(closeHistory(tr)),
+          );
+        },
+      },
       insertLineBreak: {
         configurable: true,
         value: () => {
@@ -2972,6 +2987,15 @@ export function EditableInput({
             event.preventDefault();
             ref.current?.insertLineBreak();
           }
+          if (
+            !event.defaultPrevented &&
+            event.key === "Tab" &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            ref.current?.indentListItem(event.shiftKey)
+          )
+            event.preventDefault();
           // After the host, which claims Up and Down for a completion list.
           if (
             !event.defaultPrevented &&

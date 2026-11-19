@@ -1127,6 +1127,18 @@ it("keeps a shown line while a late navigation for the opening decides it again"
     line,
   ]);
   expect(h.element.scrollTop).toBe(300);
+
+  // A later opening that finds nothing unread retires the kept line.
+  unread.clear();
+  h.snapshot.status = "loading";
+  delete h.snapshot.direction;
+  h.render();
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  h.snapshot.status = "ready";
+  h.snapshot.direction = "older";
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 });
 it("shows a visible inactive preview and read resumed rows at once, without a line", () => {
   // A draft preview is laid out but reads nothing.

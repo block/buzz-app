@@ -979,9 +979,13 @@ function ThreadMessages({
   // A route can arrive after its opening already showed a line; keep that line
   // on screen until the new decision replaces it, rather than blinking it out.
   if (opening && opening !== boundary.opening)
-    setBoundary({ opening, shown: boundary.id ?? boundary.shown });
+    setBoundary({
+      opening,
+      shown: boundary.id === undefined ? boundary.shown : boundary.id,
+    });
   const unreadBoundary = boundary.id;
-  const shownBoundary = unreadBoundary ?? boundary.shown;
+  const shownBoundary =
+    unreadBoundary === undefined ? boundary.shown : unreadBoundary;
   // The line stays with a reply that moved under its late parent.
   const lineRow = tree.parents.get(shownBoundary ?? "") ?? shownBoundary;
   const placed = useRef<typeof boundary>(undefined);

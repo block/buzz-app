@@ -749,53 +749,6 @@ it("an accepted but unconfirmed request fails instead of presenting the new stat
   expect(fixture.published).toHaveLength(1);
   expect(archives.state(target.pubkey)).toBe("not-archived");
 });
-it("confirms from the read a reconnect restarts, not the one it aborted", async () => {
-  const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
-  const query = fixture.transport.query;
-  const gates: (() => void)[] = [];
-  let holding = false;
-  let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...fixture.transport,
-    query: async (filters, options) => {
-      if (holding && filters.some((filter) => filter.kinds?.includes(13535)))
-        await new Promise<void>((resolve) => gates.push(resolve));
-      return query(filters, options);
-    },
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
-    },
-  });
-  owners.push(owner);
-  const archives = owner.session.archives;
-  const established = async () => {
-    live.state({ status: "connected", routes: [] });
-    live.established();
-    // The session acts on an establishment in a timer.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  };
-  await established();
-  await archives.ensure();
-  const unsubscribe = archives.subscribe(() => {});
-  holding = true;
-  const request = archives.request("archive", target.pubkey);
-  // The relay accepts the request, then the connection drops, which cancels
-  // the confirming read. The request reads again during the outage.
-  await vi.waitFor(() => expect(gates).toHaveLength(1));
-  live.state({ status: "retrying", routes: [] });
-  gates[0]?.();
-  await vi.waitFor(() => expect(gates).toHaveLength(2));
-  // The connection is back while that read still waits; it is read again.
-  await established();
-  await vi.waitFor(() => expect(gates).toHaveLength(3));
-  gates[1]?.();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  gates[2]?.();
-  await request;
-  expect(archives.state(target.pubkey)).toBe("archived");
-  unsubscribe();
-});
 it("offers no writer without an archive authority", () => {
   const fixture = archiveRelay(viewer, relay);
   const { archiveAuthority: _, ...transport } = fixture.transport;

@@ -392,6 +392,33 @@ it("drops a replacement the next archive snapshot has not confirmed", async () =
   expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
 });
 
+it("drops a replacement when a reread of the same snapshot fails", async () => {
+  const { failing, archives } = mount([
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ]);
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  // The snapshot reads the same, but its delta read fails.
+  failing.deltas = true;
+  await act(() => archives.refresh());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: /new key profile/ }),
+    ).toBeNull(),
+  );
+  // The delta reads again, then the snapshot read itself fails.
+  failing.deltas = false;
+  await act(() => archives.refresh());
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  failing.snapshots = true;
+  await act(() => archives.refresh());
+  await waitFor(() => expect(archives.snapshot().status).toBe("error"));
+  expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+    "This key is archived in this community.",
+  );
+});
+
 it("withholds the replacement when deltas at the newest second disagree", async () => {
   // Relays before strictly later delta stamps break a same-second tie by id,
   // so either delta may be the current one.

@@ -45,14 +45,13 @@ export function ProfileArchiveNotice({
     if (shown && idle) void archives.ensure();
   }, [archives, idle, shown]);
   const archived = snapshot.archived.includes(pubkey);
-  // A result counts only for the snapshot it was read under, so a corrected
-  // archive never keeps an earlier replacement, even when the reread fails.
+  // A result counts only for the snapshot read it answered, so a reread that
+  // fails, or whose lookup fails, shows no earlier replacement.
   const [replacement, setReplacement] = useState<{
     of: string;
-    snapshot: string | undefined;
+    readAt: number | undefined;
     key: string | undefined;
   }>();
-  const eventId = snapshot.eventId;
   // Each snapshot read, also one that keeps its event, retries a lookup that
   // an interruption or a failure left unanswered.
   const readAt = snapshot.readAt;
@@ -67,17 +66,19 @@ export function ProfileArchiveNotice({
     let current = true;
     void archives.replacement(pubkey).then(
       (key) => {
-        if (current) setReplacement({ of: pubkey, snapshot: eventId, key });
+        if (current) setReplacement({ of: pubkey, readAt, key });
       },
       () => {},
     );
     return () => {
       current = false;
     };
-  }, [archives, archived, loading, pubkey, eventId, readAt, shown]);
+  }, [archives, archived, loading, pubkey, readAt, shown]);
   if (!archived) return null;
   const successor =
-    replacement?.of === pubkey && replacement.snapshot === eventId
+    replacement?.of === pubkey &&
+    replacement.readAt === readAt &&
+    snapshot.status !== "error"
       ? replacement.key
       : undefined;
   return (

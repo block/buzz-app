@@ -21,19 +21,12 @@ const reference = {
 it("round trips only an explicit forward locator, keeping fallback text inert", () => {
   const payload = forwardClipboard(reference, '<img src=x onerror="bad">');
   expect(payload.html).not.toContain("<img");
+  expect(pastedForward(payload.html)).toEqual(reference);
+  expect(pastedForward(payload.text)).toBeUndefined();
   expect(
-    pastedForward({
-      getData: (type) => (type === "text/html" ? payload.html : payload.text),
-    }),
-  ).toEqual(reference);
-  expect(
-    pastedForward({
-      getData: () => `buzz://message?channel=source&id=${reference.id}`,
-    }),
+    pastedForward(`buzz://message?channel=source&id=${reference.id}`),
   ).toBeUndefined();
-  expect(
-    pastedForward({ getData: () => payload.html + payload.html }),
-  ).toBeUndefined();
+  expect(pastedForward(payload.html + payload.html)).toBeUndefined();
   expect(forwardReference({ ...reference, version: 2 })).toBeUndefined();
 });
 it("persists the locator as draft content and removes it explicitly", () => {
@@ -65,7 +58,7 @@ it("carries an editable note separately from the source locator", () => {
     "fallback",
     "Please keep my review note",
   );
-  expect(pastedForward({ getData: () => payload.html })).toEqual({
+  expect(pastedForward(payload.html)).toEqual({
     ...reference,
     note: "Please keep my review note",
   });

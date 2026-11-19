@@ -29,15 +29,22 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-it("reads the hidden macOS image as an attachable PNG", async () => {
-  const bytes = Uint8Array.of(137, 80, 78, 71);
-  native.mockResolvedValue(bytes.buffer);
-  const file = await readUnexposedClipboardImage(paste());
-  expect(native).toHaveBeenCalledExactlyOnceWith("clipboard_read_pasted_image");
-  expect(file).toMatchObject({ name: "Pasted image.png", type: "image/png" });
-  if (!file) throw new Error("Expected a PNG attachment");
-  expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
-});
+it.each([
+  [Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), "png", "image/png"],
+  [Uint8Array.of(255, 216, 255), "jpg", "image/jpeg"],
+] as const)(
+  "stages the native image with its encoded format",
+  async (bytes, suffix, type) => {
+    native.mockResolvedValue(bytes.buffer);
+    const file = await readUnexposedClipboardImage(paste());
+    expect(native).toHaveBeenCalledExactlyOnceWith(
+      "clipboard_read_pasted_image",
+    );
+    expect(file).toMatchObject({ name: `Pasted image.${suffix}`, type });
+    if (!file) throw new Error("Expected an image attachment");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+  },
+);
 
 it("returns no attachment when the native pasteboard has no candidate image", async () => {
   native.mockResolvedValue(new ArrayBuffer(0));

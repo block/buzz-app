@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { imageType } from "../relay/attachment-limits";
 
 /** WebKit advertises some macOS images as Files with no accessible file. Keep
  * ordinary file, rich-text and text paste on their existing paths. */
@@ -17,9 +18,11 @@ export function readUnexposedClipboardImage(
   )
     return;
 
-  return invoke<ArrayBuffer>("clipboard_read_pasted_image").then((png) =>
-    png.byteLength
-      ? new File([png], "Pasted image.png", { type: "image/png" })
-      : undefined,
-  );
+  return invoke<ArrayBuffer>("clipboard_read_pasted_image").then((image) => {
+    const type = imageType(new Uint8Array(image));
+    if (type === "image/png")
+      return new File([image], "Pasted image.png", { type });
+    if (type === "image/jpeg")
+      return new File([image], "Pasted image.jpg", { type });
+  });
 }

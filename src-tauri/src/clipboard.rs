@@ -76,12 +76,12 @@ pub(crate) async fn write_image<R: tauri::Runtime>(
 pub(crate) async fn clipboard_read_pasted_image<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
 ) -> Result<tauri::ipc::Response, String> {
-    let png = if window.label() == "main" {
+    let image = if window.label() == "main" {
         read_pasted_image(&window).await?
     } else {
         Vec::new()
     };
-    Ok(tauri::ipc::Response::new(png))
+    Ok(tauri::ipc::Response::new(image))
 }
 
 #[cfg(target_os = "macos")]
@@ -192,16 +192,17 @@ async fn read_pasted_image<R: tauri::Runtime>(
     else {
         return Ok(Vec::new());
     };
-    tauri::async_runtime::spawn_blocking(move || pasted_image_png(image, MAX_ENCODED_BYTES))
+    tauri::async_runtime::spawn_blocking(move || encode_pasted_image(image, MAX_ENCODED_BYTES))
         .await
         .map_err(|_| "Could not decode the clipboard image".to_owned())?
 }
 
 #[cfg(target_os = "macos")]
-fn pasted_image_png(bytes: Vec<u8>, max_encoded_bytes: usize) -> Result<Vec<u8>, String> {
-    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep};
+fn encode_pasted_image(bytes: Vec<u8>, max_encoded_bytes: usize) -> Result<Vec<u8>, String> {
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImageCompressionFactor};
     use objc2_core_image::CIImage;
-    use objc2_foundation::{NSData, NSDictionary};
+    use objc2_foundation::{NSData, NSDictionary, NSNumber};
 
     const MAX_PIXELS: isize = 25_000_000;
     objc2::rc::autoreleasepool(|_| {
@@ -228,10 +229,29 @@ fn pasted_image_png(bytes: Vec<u8>, max_encoded_bytes: usize) -> Result<Vec<u8>,
             )
         }
         .ok_or("Could not convert the clipboard image")?;
-        if png.len() > max_encoded_bytes {
-            return Err("The clipboard image is too large to paste".into());
+        if png.len() <= max_encoded_bytes {
+            return Ok(png.to_vec());
         }
-        Ok(png.to_vec())
+        // A large opaque HDR capture can exceed the relay image limit as PNG.
+        // Use JPEG only in that case, so transparent images keep their alpha.
+        drop(png);
+        if !bitmap.hasAlpha() {
+            let quality = NSNumber::new_f64(0.9);
+            // SAFETY: The options dictionary contains JPEG's numeric quality key.
+            let jpeg = unsafe {
+                bitmap.representationUsingType_properties(
+                    NSBitmapImageFileType::JPEG,
+                    &NSDictionary::<_, AnyObject>::from_slices(
+                        &[NSImageCompressionFactor],
+                        &[&quality],
+                    ),
+                )
+            };
+            if let Some(jpeg) = jpeg.filter(|image| image.len() <= max_encoded_bytes) {
+                return Ok(jpeg.to_vec());
+            }
+        }
+        Err("The clipboard image is too large to paste".into())
     })
 }
 
@@ -419,6 +439,30 @@ fn clear_if_latest(board: &mut impl Board, secrets: &Secrets, generation: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn encodes_an_opaque_clipboard_image_as_jpeg_only_if_png_is_too_large() {
+        let mut seed = 7u32;
+        let image = image::RgbImage::from_fn(256, 256, |_, _| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let [r, g, b, _] = seed.to_be_bytes();
+            image::Rgb([r, g, b])
+        });
+        let mut source = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut source, image::ImageFormat::Png)
+            .unwrap();
+        let source = source.into_inner();
+        let png = encode_pasted_image(source.clone(), 512 * 1024).unwrap();
+        let jpeg = encode_pasted_image(source, 128 * 1024).unwrap();
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+        assert_eq!(
+            image::guess_format(&jpeg).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+        assert!(jpeg.len() <= 128 * 1024);
+    }
 
     #[derive(Default)]
     struct Fake {

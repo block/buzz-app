@@ -1516,6 +1516,8 @@ it("creates a Solo chat in its single durable outbox command, with validated lif
   );
   for (const ttl of [0, -1, 1.5, 2147483648, NaN])
     expect(() => h.service.create(id, "Work", ttl)).toThrow("duration");
+  for (const name of ["\u200b", "\u200c\u200d", "\ufe0f"])
+    expect(() => h.service.create(id, name)).toThrow("visible character");
   expect(h.outbox.send).toHaveBeenCalledTimes(3);
 });
 

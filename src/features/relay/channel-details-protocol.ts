@@ -49,6 +49,15 @@ export function canonicalDetailsName(name: string): string {
   return name.replace(/^[#\p{White_Space}]+|\p{White_Space}+$/gu, "");
 }
 
+/** Match buzz-core's channel_name_has_content: whitespace, controls, Unicode
+ * default-ignorables and BRAILLE PATTERN BLANK do not make a name visible.
+ * Test only: never strip joiners or selectors from an accepted name. */
+export function channelNameHasContent(name: string): boolean {
+  return /[^\p{White_Space}\p{Cc}\p{Default_Ignorable_Code_Point}\u2800]/u.test(
+    name,
+  );
+}
+
 /** Shared field feedback; the command validator remains the write boundary. */
 export function detailsDraftErrors(draft: ChannelDetailsDraft) {
   return {
@@ -59,7 +68,9 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
       draft.name !== canonicalDetailsName(draft.name) ||
       [...draft.name].length > 120
         ? "Enter a channel name of 1–120 characters without a leading #."
-        : undefined,
+        : !channelNameHasContent(draft.name)
+          ? "Enter a channel name with at least one visible character."
+          : undefined,
     description:
       !draft ||
       typeof draft.description !== "string" ||

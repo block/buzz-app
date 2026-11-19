@@ -44,6 +44,7 @@ const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type HeadMeta = { key: string; bytes: number; savedAt: number };
 type Record = SavedHead & HeadMeta & { scope: string };
+type ScopedRow = Pick<Record, "scope" | "channelId"> & { key: IDBValidKey };
 
 // History keys are strings. Array keys let us load the metadata on its own
 // without changing the database version that older builds open.
@@ -314,10 +315,10 @@ export function createHeadPersistence(
     retain: (ids) =>
       transact("readwrite", (store, done, then) => {
         const allowed = new Set(ids);
-        then(store.getAll(historyKeys()), (rows: Record[]) => {
+        then(store.getAll(), (rows: ScopedRow[]) => {
           for (const row of rows)
             if (row.scope === scope && !allowed.has(row.channelId))
-              deleteHead(store, row.key);
+              store.delete(row.key);
           done(undefined);
         });
       }),
@@ -332,9 +333,10 @@ export function createHeadPersistence(
         STARTUP,
       );
       await transact("readwrite", (store, done, then) =>
-        then(store.getAll(historyKeys()), (rows: Record[]) => {
+        // Include metadata left by a point delete on an older build.
+        then(store.getAll(), (rows: ScopedRow[]) => {
           for (const row of rows)
-            if (row.scope === scope) deleteHead(store, row.key);
+            if (row.scope === scope) store.delete(row.key);
           done(undefined);
         }),
       );

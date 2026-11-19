@@ -117,6 +117,8 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
           startup.delete(scopes[0]);
           startup.delete(`${scopes[0]}:profiles`);
           const heads = tx.objectStore("heads");
+          // An older point delete can leave metadata in the other scope.
+          heads.delete(`${scopes[1]}:channel-61`);
           const rows = heads.getAll();
           rows.onsuccess = () => {
             for (const row of rows.result)
@@ -129,16 +131,28 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
         legacy.close();
       }
       stores = viewers.map((viewer) => createHeadPersistence(viewer, relay));
+      const afterLegacyClear = await snapshot();
+      const profiles = await Promise.all(
+        stores.map((store) => store.readProfiles()),
+      );
+      await stores[1].clear();
+      const inspection = await openV2();
+      const remaining = await new Promise((resolve, reject) => {
+        const tx = inspection.transaction("heads");
+        const count = tx.objectStore("heads").count();
+        tx.oncomplete = () => resolve(count.result);
+        tx.onabort = () => reject(tx.error);
+      });
+      inspection.close();
       return {
         initialized,
         rolledBack,
         aborted,
         fullHeadReads,
         reopened,
-        afterLegacyClear: await snapshot(),
-        profiles: await Promise.all(
-          stores.map((store) => store.readProfiles()),
-        ),
+        afterLegacyClear,
+        profiles,
+        remaining,
       };
     } finally {
       for (const [i, method] of methods.entries()) prototype[method] = read[i];
@@ -160,6 +174,10 @@ test("cached heads preserve the budget through an aborted save and version 2 cle
   );
   expect(result.reopened[1]).toEqual(result.initialized[1].slice(1));
   expect(result.fullHeadReads).toBe(0);
-  expect(result.afterLegacyClear).toEqual([[], result.reopened[1]]);
+  expect(result.afterLegacyClear).toEqual([
+    [],
+    result.reopened[1].filter((row) => row.channelId !== "channel-61"),
+  ]);
   expect(result.profiles).toEqual([[], ["profile"]]);
+  expect(result.remaining).toBe(0);
 });

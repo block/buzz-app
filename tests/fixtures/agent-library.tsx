@@ -561,6 +561,7 @@ const agents = {
         ? { ...agent, config: change.config ?? agent.config }
         : agent,
     );
+    if (proposingSettings) snapshot.running = snapshot.agents;
     if (settingsSync) {
       snapshot = { ...snapshot };
       localStorage.setItem(

@@ -14,8 +14,9 @@ across versions yet, and the author types are `0.0.0-preview.1`.
 - **Steady:** the plugin envelope (manifest, `inject`/`apply`, `ctx.effect`
   cleanup) and capability services: host grants, `addTool` (the tool's shape, not
   the whole client passed to `call`), shortcuts, notifications, settings cards, and
-  navigation `open` for plugin pages, Home and Settings. Owning a whole page or
-  panel is steady, but placement is not.
+  navigation `open` for plugin pages, Home and Settings, and the `ui`
+  [host controls](#host-controls). Owning a whole page or panel is steady, but
+  placement is not.
 - **Borderline:** decisions, and link and code-block renderers.
 - **Likely to break:** the relay session read model; conversation contributions;
   sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
@@ -397,6 +398,33 @@ See [foundation status and open gates](status.md) for maintained decisions,
 remaining acceptance work and historical evidence.
 
 ## Starting contracts
+
+### Host controls
+
+External plugins cannot import app source, so the host provides its own
+controls. Read the optional `ui` service with `ctx.reflect.get("ui")`; it is
+`undefined` on older hosts. It offers `Button`, `Input`, `Field`, `Switch` and
+`Dialog`, rendered by the host with its React instance, theme, focus handling
+and overlay layer. The props are `PluginButtonProps`, `PluginInputProps`,
+`PluginFieldProps`, `PluginSwitchProps` and `PluginDialogProps` in
+`@buzz/author` (`src/features/plugin-ui/contract.ts`).
+
+Each control forwards only its documented props: other props are ignored and
+an unsupported value uses the default, so internal and migrating variants never
+become plugin behavior. Change handlers receive plain values (`onValueChange(value)`,
+`onCheckedChange(checked)`, `onOpenChange(open)`); `onClick` receives nothing.
+The host owns appearance. Like the other services, the set is a preview; the
+narrow props keep later changes small. Shared primitives belong in `ui`;
+feature components stay with the service that owns them, such as
+`conversation.ui`. A component reads the same on every
+access, so it is safe to use as a React element type. Plugin page state stays
+in the plugin's components; unmounting a page with an open `Dialog` removes its
+portal and scroll lock.
+
+For styling beyond these controls, rely on the `core` roles in the token
+registry and the classes the authoring guide names (`ui-card`,
+`shell-sidebar-default`). Control class names and `data-*` attributes are
+internal.
 
 ### Subject lift
 
@@ -1100,6 +1128,59 @@ the base prompt ranks them below the owner's messages and above a Solo chat's
 Canvas. They are kept on this device for now. `conversationInstructions(agent,
 place)` resolves with the text. See [Agents](agents.md).
 
+A bundled plugin can give this launch's recommended agent setup in place of
+the build's `BUZZ_RECOMMENDED_AGENT` with
+`ctx.agents.recommend(source)`; see [Recommended agent](configuration.md#recommended-agent).
+Call it while the plugin starts. Buzz calls `source(signal)` once, as soon as
+the plugin registers it. Its answer has the setting's shape, `{recommendedBy?,
+description?, candidates}`, and Buzz checks it with `setRuntimeRecommendation`
+like the setting, replacing attribution, description and candidates together.
+Finds and picks wait until the answer comes, or until every plugin
+has started with none calling `recommend`, but never more than five seconds
+(`SOURCE_MS`) from when the agents service started. After that the setup is
+final for the launch: a late answer is dropped, so nothing already found would
+be found again. No answer (`undefined`, `null` or no candidates), a throw, or an
+invalid setup keeps the build's. `signal` aborts when the wait ends. Only the first
+plugin to call it in a launch is asked; later calls only log. Views that read
+the setup before it is final, such as whether a harness offers Automatic, see
+the build's. Turning the plugin off stops it answering from the next launch.
+
+Bundled plugins also get the building blocks to move agents onto
+Automatic themselves, with their own rules and wording. Each throws for any
+other plugin:
+
+- `ctx.agents.isReady()` is true once plugin start-up is over, the agent list
+  has loaded and the recommended setup is final; `subscribe` hears when it
+  changes, and `whenReady(signal?)` resolves the first time it is. Don't
+  await it in `apply`: start-up isn't over until `apply` returns.
+- `switchable(agent)` says whether an agent could run on Automatic here: not
+  hosted nor bound to another execution target, of a type registered on this device and not remote, whose harness
+  the setup has a candidate for. An agent of a type this device doesn't know
+  isn't. `switchableAgents()` lists the person's, one per agent.
+- `switchToAutomatic(agent, {note?})` puts it on Automatic and resolves with
+  the `model`, `provider` and `effort` it had; `restoreSettings(agent,
+  previous, {note?})` undoes that while the agent is still on Automatic. Both
+  save its settings from the copy passed in, so a copy that changed since it
+  was read, here or by sync, is refused, and only for an agent set up on
+  this computer whose synced settings have arrived. Where a community can't
+  sync agent settings, they always refuse.
+- `readNote(agent)` and `setNote(agent, note | null)` keep a small note per
+  plugin in the agent's synced settings (`pluginNotes`, by plugin id), so it
+  follows the agent to every device and settings history never reverts it:
+  `{data, tag?}`, with JSON `data` of at most 1 KB. A note is known only once
+  the agent's synced settings have arrived (`configBase.settings` is a
+  string). Any other save, such as from a settings form, keeps notes as they
+  are. Each settings revision
+  carries a tagged note as `["note", pluginId, tag]` beside the `preset`
+  tag. `switchToAutomatic` and `restoreSettings` take the note too, to save
+  it in the same revision.
+- `ctx.pages.registerOverlay({id, component})` mounts a component once in
+  the app shell, beside the app's own notices, while the plugin is on, such
+  as a notice or a dialog; it places itself. It renders inside the app's
+  toast host, so the design system's toasts work there.
+  For focus and visibility, read `document.hasFocus()` and
+  `document.visibilityState`.
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a
@@ -1476,6 +1557,28 @@ signed-in `gh` account. That allows any query or mutation the account may make;
 the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
 URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
 execution, remain future shared capabilities.
+
+### Organization plugins
+
+An organization that packages its own build of Buzz can bundle its own plugins
+without changing any other file. `src/bundled/org.json` lists each one's
+manifest and whether it starts on, as
+`[{ "manifest": { … }, "enabledByDefault": true }]`, and `src/bundled/org.ts`
+gives each one's code (its module) by manifest id. Both are empty in
+open-source builds; a packager replaces both at build time. The web build reads
+them through `orgPlugins`, which `bundledPlugins` lists after the rest, and the
+desktop app's native catalog (`crates/plugin-manager`) compiles `org.json` in,
+so both agree on the list, the defaults, and the host access each manifest
+declares. A listed plugin without code is left out and logged; the native catalog still
+lists it, so it shows as failing to load. Like any
+bundled plugin it shows in Settings → Plugins, where the person can turn it
+off, and it needs no README. Its declared network origins are granted without
+an access review, as for every bundled plugin: the packager chose them.
+Choose ids no other plugin uses, such as one under the organization's domain.
+
+The same packager can ship the build's agent gateway descriptors in
+`src/bundled/org-gateways.json`, also `[]` in open-source builds; see
+[Packaged gateway descriptors](configuration.md#packaged-gateway-descriptors).
 
 ### Optional channel menu panels
 
@@ -3306,7 +3409,7 @@ channel metadata, which the store reuses while the viewer types. While the next
 lookup runs, the previous one's still-matching rows stay. Names match by the
 channel pickers' rule (`matchName`): exact, prefix, word start, substring,
 then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
-alphabetical ties. Its last rank, letters merely in order, is left out, because
+alphabetical ties. Its last rank, typed words in any order, is left out, because
 Enter and Tab pick the first row while the viewer writes prose. The same rule
 applies to open channels from the lookup. Open channels follow joined ones, as in
 Command-K, so a late search result never moves the first row; when joined

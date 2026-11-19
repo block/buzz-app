@@ -12,7 +12,10 @@ import {
   type ReactNode,
 } from "react";
 import { Virtualizer } from "virtua";
-import type { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import {
+  type ChatCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import type { PeekFollow, PeekTarget } from "./SearchPreview";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Badge } from "../../shared/design-system/ui/Badge";
@@ -45,6 +48,9 @@ export type SearchDestination = {
   rank?: number;
   key: string;
   label: string;
+  /** Shown in place of `label` where text alone cannot show it, as a
+   * message's mention chips; `matches` still index `label`. */
+  labelContent?: ReactNode;
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
@@ -156,6 +162,18 @@ export const DEFAULT_SEARCH_STEPS: SearchSteps = {
   next: { key: "ArrowDown" },
 };
 export const SearchStepsContext = createContext(DEFAULT_SEARCH_STEPS);
+/** Vim's and Emacs's keys, with Control itself on every platform: a step to
+ * the next or previous result, or to the next or previous group as Tab. */
+const CONTROL_STEPS = new Map<string, readonly ["result" | "group", boolean]>([
+  ["j", ["result", true]],
+  ["n", ["result", true]],
+  ["k", ["result", false]],
+  ["p", ["result", false]],
+  ["l", ["group", true]],
+  ["f", ["group", true]],
+  ["h", ["group", false]],
+  ["b", ["group", false]],
+]);
 
 /** Top results shows this many rows of its first group, and of the rest. */
 const LEAD_ROWS = 5;
@@ -183,7 +201,8 @@ export type SearchInputProps = {
   onQueryChange: (query: string) => void;
   input: RefObject<HTMLElement | null>;
   label?: string;
-  scope?: { label: string; onRemove: () => void } | undefined;
+  /** One conversation the search is narrowed to, by `id`. */
+  scope?: { id: string; label: string; onRemove: () => void } | undefined;
   /** A control that refines the results, inside the field after Clear. */
   fieldAction?: ReactNode;
   chips?: readonly SearchChip[] | undefined;
@@ -246,6 +265,8 @@ export function SearchChoices({
   peek,
   completing = false,
   completionPending = false,
+  conversationShortcut,
+  onBack,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
@@ -272,6 +293,12 @@ export function SearchChoices({
   /** The suggestions that would complete the filter are still loading, so
    * Tab stays in the field rather than leaving before they arrive. */
   completionPending?: boolean;
+  /** Hinted with the keys below: the chord that searches the current
+   * conversation instead. */
+  conversationShortcut?: KeyBinding | undefined;
+  /** Set while the caller shows a view over the results, such as a guide:
+   * Escape in the palette leaves it rather than search. */
+  onBack?: (() => void) | undefined;
 }) {
   const palette = useRef<HTMLDivElement>(null);
   // A hidden preview would still read; it mounts only where it shows.
@@ -358,7 +385,10 @@ export function SearchChoices({
   // while its source hasn't searched the text as typed, shown by its own
   // status until it has rows. It's let go once its source has searched and
   // settled without it. Shown or not, the choice is never kept out of sight.
-  const chosen = ranked.find((group) => group.label === peekScope);
+  // With nothing typed, the first group is the view search opens on, so
+  // there is no Top results above it.
+  const home = needle ? undefined : ranked[0]?.label;
+  const chosen = ranked.find((group) => group.label === (peekScope ?? home));
   const awaited =
     !!peekScope &&
     (!!peek?.busy || Object.hasOwn(peek?.unsearched ?? {}, peekScope));
@@ -417,6 +447,18 @@ export function SearchChoices({
     if (resultsContent.current) resultsContent.current.scrollTop = 0;
     if (focusInput) input.current?.focus();
   };
+  /** Shows the group after or before the one shown, Top results (or an empty
+   * search's first group) first; false past either end. */
+  const stepScope = (forward: boolean) => {
+    const order = [
+      ...(home ? [] : [undefined]),
+      ...tabs.map(({ label }) => label),
+    ];
+    const next = order.indexOf(scoped?.label) + (forward ? 1 : -1);
+    if (next < 0 || next >= order.length) return false;
+    showScope(order[next]);
+    return true;
+  };
   const hasControls = groups.some((group) =>
     group.destinations.some((row) => row.content),
   );
@@ -428,7 +470,9 @@ export function SearchChoices({
   const place = views?.place;
   const keys = destinations.map(({ key }) => key);
   const highlight = useSearchHighlight({
-    query,
+    // A view over the results has a highlight of its own, so an Enter
+    // waiting for results never runs one of its rows.
+    query: onBack ? `\u0000${query}` : query,
     keys,
     onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
     open,
@@ -436,6 +480,7 @@ export function SearchChoices({
     isAction,
     highlightEmpty,
     followFirst: !!peek?.ranked,
+    within: scope?.id,
     // A kept place keeps its row: Enter never chooses a row scrolled away.
     ...(place?.key && keys.includes(place.key)
       ? { initial: place.key }
@@ -613,6 +658,7 @@ export function SearchChoices({
       content,
       key,
       label,
+      labelContent,
       detail,
       detailIcon: DetailIcon,
       detailIconLabel,
@@ -750,7 +796,9 @@ export function SearchChoices({
             label={
               <>
                 <span className="block truncate text-body-sm">
-                  <MatchedLabel label={label} positions={matches} />
+                  {labelContent ?? (
+                    <MatchedLabel label={label} positions={matches} />
+                  )}
                 </span>
                 {detail && (
                   <span
@@ -781,6 +829,7 @@ export function SearchChoices({
       </div>
     );
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Hears Escape from the controls inside; the palette takes no input of its own.
     <div
       ref={palette}
       className="search-palette"
@@ -788,6 +837,20 @@ export function SearchChoices({
       data-search-footer={footer ? "" : undefined}
       data-search-peek={peek ? "" : undefined}
       {...highlight.listProps}
+      // Escape from anywhere in the palette, the field or a control beside
+      // it, leaves the caller's view first. A menu it opened closes alone.
+      onKeyDown={(event) => {
+        if (
+          event.key !== "Escape" ||
+          !onBack ||
+          !palette.current?.contains(event.target as Node)
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        onBack();
+        input.current?.focus();
+      }}
     >
       {scope && (
         <div className="search-palette-scope-row">
@@ -808,19 +871,26 @@ export function SearchChoices({
             chips?.length ? (
               <span className="search-palette-author-prefix">
                 {chips.map((chip) => (
-                  <button
+                  // A chosen filter, led by its guide row's dot; one click
+                  // removes it, as Backspace before the text edits it.
+                  <Button
                     key={chip.operand}
-                    type="button"
-                    className="search-palette-author-chip"
+                    variant="subtle"
+                    size="sm"
+                    data-search-filter-chip=""
                     data-operator={chip.operand
                       .slice(0, chip.operand.indexOf(":"))
                       .toLowerCase()}
                     aria-label={chip.label}
                     title={chip.title}
+                    // The field keeps focus, so typing carries on.
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => onRemoveChip?.(chip)}
                   >
-                    <span aria-hidden="true">×</span> {chip.text}
-                  </button>
+                    <span className="search-filter-dot" aria-hidden="true" />
+                    <span className="search-filter-chip-text">{chip.text}</span>
+                    <XIcon size={16} aria-hidden="true" />
+                  </Button>
                 ))}
               </span>
             ) : undefined
@@ -865,6 +935,44 @@ export function SearchChoices({
               }
               // Other arrow chords, such as Shift+Down, edit the text.
               if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
+              // Control's letter keys step after the person's keys, in place
+              // of the text field's own Emacs keys. Group keys only take
+              // over while there are groups to show. An app shortcut that
+              // runs inside search, such as one the person moved to one of
+              // these, comes first: the window's dispatcher sees the key
+              // after this field, so the step waits there and is skipped
+              // once a shortcut has claimed the key.
+              const control =
+                native.ctrlKey &&
+                !native.metaKey &&
+                !native.altKey &&
+                !native.shiftKey &&
+                !native.getModifierState("AltGraph")
+                  ? CONTROL_STEPS.get(event.key.toLowerCase())
+                  : undefined;
+              const host = event.currentTarget.ownerDocument.defaultView;
+              if (
+                host &&
+                control &&
+                (control[0] === "result" || (peek?.ranked && tabs.length))
+              ) {
+                const [kind, forward] = control;
+                const step = (later: Event) => {
+                  if (later !== native) return;
+                  host.removeEventListener("keydown", step);
+                  if (native.defaultPrevented) return;
+                  native.preventDefault();
+                  if (kind === "group") return void stepScope(forward);
+                  restore.current = 0;
+                  highlight.move(forward);
+                };
+                host.addEventListener("keydown", step);
+                // A key stopped before the window edits the text as before.
+                host.setTimeout(() =>
+                  host.removeEventListener("keydown", step),
+                );
+                return;
+              }
             }
             const shortcutNumber = /^Digit([1-9])$/.exec(event.code)?.[1];
             if (
@@ -925,17 +1033,13 @@ export function SearchChoices({
               !event.metaKey &&
               !event.altKey
             ) {
-              const order = [undefined, ...tabs.map(({ label }) => label)];
-              const next =
-                order.indexOf(scoped?.label) + (event.shiftKey ? -1 : 1);
-              if (tabs.length ? next >= 0 && next < order.length : peek.busy) {
+              if (tabs.length ? stepScope(!event.shiftKey) : peek.busy)
                 event.preventDefault();
-                if (tabs.length) showScope(order[next]);
-              }
               return;
             }
-            // Escape from one group returns to Top results, not out of search.
-            if (event.key === "Escape" && scoped) {
+            // Escape from one group returns to Top results, or the first
+            // group, not out of search.
+            if (event.key === "Escape" && scoped && scoped.label !== home) {
               event.preventDefault();
               event.stopPropagation();
               showScope(undefined);
@@ -954,13 +1058,14 @@ export function SearchChoices({
             className="search-peek-rail"
             aria-label="Result groups"
             onKeyDown={(event) => {
-              if (event.key !== "Escape" || !scoped) return;
+              if (event.key !== "Escape" || !scoped || scoped.label === home)
+                return;
               event.preventDefault();
               event.stopPropagation();
               showScope(undefined);
             }}
           >
-            {[undefined, ...tabs].map((group, index) => (
+            {(home ? tabs : [undefined, ...tabs]).map((group, index) => (
               <Button
                 key={group?.label ?? ""}
                 id={`${peekPanelId(group?.label)}-filter`}
@@ -983,10 +1088,7 @@ export function SearchChoices({
                 />
                 {group?.label === "Direct messages"
                   ? "DMs"
-                  : group?.label === "Recent searches"
-                    ? "Recents"
-                    : (group?.label ??
-                      (query.trim() ? "Top results" : "Jump back in"))}
+                  : (group?.label ?? "Top results")}
                 {/* A landing group has no count yet. */}
                 {(!group || group !== landing) && (
                   <span className="search-peek-count">
@@ -1241,10 +1343,21 @@ export function SearchChoices({
             </span>
           )}
           <span>
-            <kbd>↵</kbd> Open
+            <kbd>↵</kbd> {onBack ? "Add" : "Open"}
           </span>
+          {conversationShortcut && (
+            <span>
+              <kbd>{formatBinding(conversationShortcut, apple).text}</kbd> This
+              conversation
+            </span>
+          )}
           <span>
-            <kbd>esc</kbd> {scoped ? "Back to top" : "Close"}
+            <kbd>esc</kbd>{" "}
+            {onBack
+              ? "Back"
+              : scoped && scoped.label !== home
+                ? `Back to ${home ?? "top"}`
+                : "Close"}
           </span>
         </div>
       )}

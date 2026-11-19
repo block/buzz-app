@@ -16,7 +16,8 @@ import {
  * highlighted row leaves, the highlight returns to the first row rather than
  * reviving the old one. Enter before any row arrives, while results are
  * pending, chooses the first row once they are not, unless an edit, moving
- * the highlight, a choice, Escape or closing comes first. Enter on an action
+ * the highlight, a choice, Escape, closing or a change of `within` comes
+ * first. Enter on an action
  * row waits the same way while no result row has arrived, unless the user
  * highlighted that row. The hook draws nothing; rows keep their own markup. */
 export function useSearchHighlight({
@@ -31,6 +32,7 @@ export function useSearchHighlight({
   isAction,
   initial,
   followFirst = false,
+  within,
 }: {
   query: string;
   /** Row keys, in display order. */
@@ -61,6 +63,9 @@ export function useSearchHighlight({
    * first row, whichever row that is as results arrive, rather than on the
    * row that was first. Enter chooses the row highlighted on screen. */
   followFirst?: boolean;
+  /** What the rows search, such as one conversation. Narrowing it keeps the
+   * text but not a waiting Enter, which was meant for the rows before. */
+  within?: string | undefined;
 }) {
   const id = useId();
   const [selection, setSelection] = useState(() => ({
@@ -103,6 +108,11 @@ export function useSearchHighlight({
     : fallback;
   /** The text whose Enter waits for its first row. */
   const [awaiting, setAwaiting] = useState<string>();
+  const [awaitedWithin, setAwaitedWithin] = useState(within);
+  if (awaitedWithin !== within) {
+    setAwaitedWithin(within);
+    setAwaiting(undefined);
+  }
   if (awaiting !== undefined && awaiting !== query) setAwaiting(undefined);
   const choose = (key: string | undefined) => {
     setAwaiting(undefined);

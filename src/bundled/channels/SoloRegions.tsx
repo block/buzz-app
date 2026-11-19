@@ -220,12 +220,39 @@ function RegionFrame({
       source && binding ? service.presentation(source, binding) : undefined,
     [service, source, binding],
   );
-  const active = () =>
-    !!binding &&
-    service.snapshot().binding === binding &&
-    !!source &&
-    service.sources().includes(source);
   const { toggle, retryReveal, revealAgain } = sidebar;
+  const { channels, live } = region;
+  const destination = useMemo(
+    () => ({
+      channels,
+      live,
+      session,
+      navigator,
+      pendingClick,
+      scope,
+      current,
+      active: () =>
+        !!binding &&
+        service.snapshot().binding === binding &&
+        !!source &&
+        service.sources().includes(source),
+      retryReveal,
+    }),
+    [
+      channels,
+      live,
+      session,
+      navigator,
+      pendingClick,
+      scope,
+      current,
+      binding,
+      service,
+      source,
+      retryReveal,
+    ],
+  );
+  const { active } = destination;
   const ownsCurrent =
     !!current && region.channels.some((channel) => channel.id === current);
   useLayoutEffect(() => {
@@ -403,18 +430,7 @@ function RegionFrame({
       ))
     : body;
   return (
-    <RegionDestinationContext.Provider
-      value={{
-        region,
-        session,
-        navigator,
-        pendingClick,
-        scope,
-        current,
-        active,
-        retryReveal,
-      }}
-    >
+    <RegionDestinationContext.Provider value={destination}>
       <div ref={root}>
         <SidebarSection
           sectionKey={sectionKey}

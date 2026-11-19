@@ -63,6 +63,7 @@ import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { orgPlugins } from "./org";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import moderationManifest from "./moderation/manifest.json";
@@ -73,6 +74,8 @@ import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
+import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
+import * as performanceDiagnostics from "./performance-diagnostics";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -271,4 +274,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: pluginDevelopment,
     enabledByDefault: true,
   },
+  {
+    manifest: { ...performanceDiagnosticsManifest, apiVersion: 1 },
+    module: performanceDiagnostics,
+    enabledByDefault: false,
+  },
+  // An organization's own build may bundle plugins here (org.ts).
+  ...orgPlugins,
 ];

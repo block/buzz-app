@@ -61,10 +61,10 @@ use the normal destination rules. The option does not change access or focus.
 
 `data-solo-destination-id` is a supported behavior hook. A primary
 `Conversation.Link` carries its channel ID; secondary links omit the marker.
-Recovery destinations use the same marker. Nexus uses it to identify dragged
-tasks and restore focus after a move. Plugins must scope queries to their own
-region. Changes to the marker or its meaning require coordinated updates to the
-host and consuming plugins.
+Recovery destinations use the same marker. Plugins can use it to identify
+dragged destinations and restore focus after a move. Plugins must scope queries
+to their own region. Changes to the marker or its meaning require coordinated
+updates to the host and consuming plugins.
 
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale

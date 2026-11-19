@@ -598,6 +598,10 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     agent: agent.pubkey,
     settings: { voice: "maple" },
   });
+  const { requestId: modelRequest } = await propose({
+    agent: agent.pubkey,
+    settings: { model: "local-model" },
+  });
   const beforeBinding = service.local();
   expect(
     beforeBinding.agents.find((item) => item.pubkey === agent.pubkey)
@@ -667,6 +671,21 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     ),
   ).rejects.toThrow("can only propose the default Huddle voice");
   service.dismissUpdate(voiceRequest);
+  for (const settings of [{ model: "target-model" }, { effort: "high" }]) {
+    await expect(
+      handle.updateAgent({ agent: agent.pubkey, settings }),
+    ).rejects.toThrow("does not support model or thinking proposals");
+  }
+  await expect(
+    service.approveUpdate(
+      modelRequest,
+      { ...approval, config: { model: "local-model" } },
+      opened,
+    ),
+  ).rejects.toThrow("does not support model or thinking proposals");
+  expect(service.find(agent.key)?.config).toEqual(opened.config);
+  expect(service.updateRequests().map(({ id }) => id)).toEqual([modelRequest]);
+  service.dismissUpdate(modelRequest);
   const { requestId: defaultVoiceRequest } = await handle.updateAgent({
     agent: agent.pubkey,
     settings: { voice: "" },

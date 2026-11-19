@@ -4530,10 +4530,15 @@ export class AgentsService extends Service implements Agents {
           "The agent changed while this review was open. Close it and ask for a new proposal.",
         );
       if (!progress?.saved.has("Harness")) {
+        const proposedType = request.type ?? request.agentType;
+        const support = this.types().find(
+          (kind) => kind.key === proposedType,
+        )?.settingsProposal;
         const problem = settingsProposalProblem(
           request.settings,
           current,
           current.executionBinding,
+          support,
           request.agentType,
         );
         if (problem) throw new Error(problem);
@@ -4761,6 +4766,7 @@ export class AgentsService extends Service implements Agents {
         change.settings,
         identity,
         this.executions.read(identity.key),
+        support,
       );
       if (problem) throw new Error(problem);
     }

@@ -17,14 +17,16 @@ export type AgentSettingsProposalSupport = Readonly<{
   voice?: true;
   apps?: true;
   compactAt?: true | "unprotected";
+  adapterModelAndEffort?: true;
   resolveRecommended?(): Promise<RecommendedCandidate | null>;
 }>;
 
 /** Explain when the current agent can no longer accept a proposal. */
 export function settingsProposalProblem(
-  { apps, workspace, voice }: AgentSettingsProposal,
+  { apps, workspace, voice, model, effort }: AgentSettingsProposal,
   agent: Pick<Agent, "type" | "protection">,
   executionBinding: Agent["executionBinding"],
+  support: AgentSettingsProposalSupport | undefined,
   proposedFromType = agent.type,
 ) {
   if (agent.type !== proposedFromType)
@@ -35,6 +37,12 @@ export function settingsProposalProblem(
     return "The execution adapter manages apps and workspace.";
   if (executionBinding && voice)
     return "Agents using an execution adapter can only propose the default Huddle voice.";
+  if (
+    executionBinding &&
+    !support?.adapterModelAndEffort &&
+    (model !== undefined || effort !== undefined)
+  )
+    return "The execution target for this harness does not support model or thinking proposals.";
 }
 
 /** Check the target harness's existing Auto-compact policy. */

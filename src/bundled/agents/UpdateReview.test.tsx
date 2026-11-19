@@ -237,6 +237,11 @@ it.each([
     message: "The execution adapter manages apps and workspace",
   },
   {
+    agentState: { executionBinding: { provider: "test/remote", config: {} } },
+    settings: { model: "local-model" },
+    message: "does not support model or thinking proposals",
+  },
+  {
     agentState: { protection: { provider: "test/protection", policy: {} } },
     settings: { apps: true },
     message: "Protected agents cannot enable Codex apps and plugins",

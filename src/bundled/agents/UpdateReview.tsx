@@ -54,6 +54,7 @@ export function UpdateReview({ agents }: { agents: Agents }) {
       request.settings,
       agent,
       agent.executionBinding,
+      type?.settingsProposal,
       request.agentType,
     ) ??
       (type &&

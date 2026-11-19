@@ -402,13 +402,22 @@ it("cancels a dismissed toast's pending removal when its host unmounts", async (
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it.each(["top", "bottom"] as const)(
-  "keeps %s clearance off the document root and skips unchanged values",
-  async (edge) => {
+it.each([
+  { edge: "top", top: 0, bottom: 48, height: 48, expected: "48px" },
+  {
+    edge: "bottom",
+    top: window.innerHeight - 80,
+    bottom: window.innerHeight,
+    height: 80,
+    expected: "80px",
+  },
+] as const)(
+  "keeps $edge clearance off the document root and skips unchanged values",
+  async ({ edge, top, bottom, height, expected }) => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      top: window.innerHeight - 80,
-      bottom: 80,
-      height: 80,
+      top,
+      bottom,
+      height,
     } as DOMRect);
     const rootWrite = vi.spyOn(document.documentElement.style, "setProperty");
     function Docked() {
@@ -430,7 +439,7 @@ it.each(["top", "bottom"] as const)(
           ? "--buzz-toast-top-clearance"
           : "--buzz-toast-clearance",
       );
-    expect(clearance()).toBe("80px");
+    expect(clearance()).toBe(expected);
     // Switching channels replaces the composer with one of the same height.
     const write = vi.spyOn(viewport.style, "setProperty");
     view.rerender(host("second"));

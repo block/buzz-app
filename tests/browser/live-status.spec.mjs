@@ -125,6 +125,13 @@ for (const target of ["alpha", "profiles"]) {
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
     await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
+    if (target === "alpha") {
+      // Model the native Mac shell's CSS branch in this browser journey. Its
+      // header controls must remain clickable beneath persistent recovery too.
+      await page.locator(".shell-header").evaluate((header) => {
+        header.classList.add("shell-header-mac");
+      });
+    }
     // Recovery never falls back to the unrecoverable "limited" status.
     const warning = page.getByRole("status", {
       name: "Live updates limited",

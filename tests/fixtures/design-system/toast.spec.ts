@@ -2,6 +2,74 @@ import { expect, test } from "../../browser/playwright-test.mjs";
 
 const viewer = "/tests/fixtures/design-system.html";
 
+test("ordinary Tab keeps recovery actions visible through pointer exit and reverse traversal", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 800, height: 400 });
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page.getByRole("button", { name: "Show recovery stack" }).click();
+  const region = page.getByRole("region", { name: "App notifications" });
+  const stack = region.locator("[data-sonner-toaster]");
+  const cards = stack.locator("[data-sonner-toast]");
+  await expect(cards).toHaveCount(6);
+  // Bound the portal's normal tab order without involving browser chrome or F6.
+  await region.evaluate((element) => {
+    for (const side of ["before", "after"] as const) {
+      const button = document.createElement("button");
+      button.tabIndex = 0;
+      button.textContent = `${side} notifications`;
+      element[side](button);
+    }
+  });
+  await page.mouse.move(0, 0);
+  await page.getByRole("button", { name: "before notifications" }).focus();
+  await expect(cards.first()).toHaveAttribute("data-expanded", "false");
+  for (let id = 6; id >= 1; id--) {
+    await page.keyboard.press("Tab");
+    await expect(cards.nth(6 - id)).toBeFocused();
+    await page.keyboard.press("Tab");
+    const action = stack.getByRole("button", {
+      name: `Resolve ${id}`,
+      exact: true,
+    });
+    await expect(action).toBeFocused();
+    await expect(cards.nth(6 - id)).toHaveAttribute("data-expanded", "true");
+    await expect(cards.nth(6 - id)).toHaveCSS("opacity", "1");
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect(action).toBeInViewport();
+    if (id === 2) {
+      await action.hover();
+      await page.mouse.move(0, 0);
+      await expect(action).toBeFocused();
+      await expect(cards.nth(4)).toHaveAttribute("data-expanded", "true");
+      await expect(action).toHaveCSS("opacity", "1");
+    }
+  }
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "after notifications" }),
+  ).toBeFocused();
+  await expect(cards.first()).toHaveAttribute("data-expanded", "false");
+  for (let id = 1; id <= 6; id++) {
+    await page.keyboard.press("Shift+Tab");
+    const action = stack.getByRole("button", {
+      name: `Resolve ${id}`,
+      exact: true,
+    });
+    await expect(action).toBeFocused();
+    await expect(cards.nth(6 - id)).toHaveAttribute("data-expanded", "true");
+    await expect(action).toHaveCSS("opacity", "1");
+    await expect(action).toBeInViewport();
+    await page.keyboard.press("Shift+Tab");
+    await expect(cards.nth(6 - id)).toBeFocused();
+  }
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    page.getByRole("button", { name: "before notifications" }),
+  ).toBeFocused();
+  await expect(cards.first()).toHaveAttribute("data-expanded", "false");
+});
+
 // Real layout/focus coverage: a DOM emulator cannot prove portal stacking or scroll reachability.
 test("toast recovery stays reachable across themes, sizes, keyboard scrolling and modals", async ({
   page,

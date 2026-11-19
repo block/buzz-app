@@ -1525,6 +1525,8 @@ Group title and description with `space-1` (4px), then separate actions with
 leading corner and appears on hover or keyboard focus, remaining visible on
 touch. Descriptions use subtle text; actions trail the message and wrap below
 it when space is limited.
+Ordinary Tab or Shift+Tab entry expands the stack, and it remains expanded and
+scrollable while it contains focus, including when the pointer leaves.
 The pinned Sonner patch preserves intentional focus destinations when leaving a
 toast; fallback restoration still applies when focus is otherwise lost. Expiry
 pauses while the stack is hovered, focused or being dragged, independently of
@@ -1560,8 +1562,8 @@ no dismissal unless the source supplies onDismiss; preserve all recovery actions
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the top right with safe-area insets. The app shell registers its
 header with `useToastClearance(ref, "top")` and reserves the workspace header
-height on non-Mac shells, keeping window, update, and conversation controls reachable.
-The native Mac shell retains the window-edge placement; integrated Windows/Linux
+height, keeping window, update, and conversation controls reachable.
+The native Mac shell reserves this clearance too; integrated Windows/Linux
 chrome aligns the card with the room/content divider. On touch,
 notices form a bounded scrolling list. Trailing actions wrap below the message
 when their intrinsic width cannot fit beside it.

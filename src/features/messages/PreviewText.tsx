@@ -10,7 +10,6 @@ import {
 } from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
-import referenceStyles from "../../shared/InlineReference.module.css";
 import { prepareMarkdown, recentResults } from "./markdown-preparation";
 import { normalizeWrappedLinks } from "./message-link-parts";
 import type { AgentLibrary } from "../agents/library";
@@ -18,7 +17,7 @@ import {
   profileMentionNames,
   renderedProfileMentionParts,
 } from "./profile-mentions";
-import { MentionLabel, useReferenceDirectory } from "./ReferenceText";
+import { ProfileMention, useReferenceDirectory } from "./ReferenceText";
 
 /** A message as its previews bind it: its body and signed identities.
  * `attachmentUrls` marks a source body the conversation projects first:
@@ -516,30 +515,20 @@ export function PreviewText({
     const positions = matches
       ?.filter((at) => at >= start && at < start + length)
       .map((at) => at - start);
-    const key = part.target && profileKey(part.target);
-    if (!key)
+    if (!part.target || !profileKey(part.target))
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
-    // A namesake-qualified span shows its name, as a message shows it.
-    const label = resolveName(
-      key,
-      part.text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, ""),
-    );
-    const agent =
-      directory.agents.some((entry) => entry.pubkey === key) ||
-      !!directory.profiles.get(key)?.isAgent;
     const chip = (
-      <span
+      <ProfileMention
         key={start}
-        className={referenceStyles.link}
-        data-mention-kind={agent ? "agent" : "person"}
-        data-mention-self={key === session?.viewer ? "" : undefined}
-        data-profile-target={part.target}
-        data-mention-name={label}
-      >
-        <MentionLabel agent={agent} label={label} />
-      </span>
+        text={part.text}
+        target={part.target}
+        profiles={directory.profiles}
+        agents={directory.agents}
+        viewer={session?.viewer}
+        resolveName={resolveName}
+      />
     );
     return positions?.length ? (
       <mark key={start} className="search-match">

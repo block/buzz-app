@@ -71,6 +71,8 @@ export type ClaudeLaunch = Readonly<{
   hook?: ClaudeHook;
   /** The agent it works for: the `buzz` it runs acts as that agent. */
   agent?: Readonly<{ pubkey: string; relay: string }>;
+  /** Its conversation's variables (`conversationEnv`), for its commands. */
+  context?: Readonly<Record<string, string>>;
 }>;
 
 /** Answers the in-process server's JSON-RPC for the conversation a process
@@ -145,6 +147,8 @@ export class ClaudeProcess {
   private protectedHistory: unknown = [];
   private readonly protectedEvents: Message[] = [];
   private resuming = false;
+  /** Started with, or given, its conversation's variables. */
+  private context = false;
   private reviewText = "";
   private reviewOutput: unknown;
   get result() {
@@ -335,6 +339,7 @@ export class ClaudeProcess {
       agentCredential: !launch.discovery,
       env: {
         ...ENV,
+        ...launch.context,
         ...(launch.discovery
           ? {
               CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
@@ -415,6 +420,7 @@ export class ClaudeProcess {
       launch.hook,
     );
     claude.protection = launch.protection;
+    claude.context = !!launch.context;
     claude.resuming = !!launch.resume;
     claude.protectedInstructions = launch.systemPrompt ?? "";
     for (const data of earlyErrors) claude.readError(data);
@@ -427,7 +433,7 @@ export class ClaudeProcess {
   async initialize(
     launch: Pick<
       ClaudeLaunch,
-      "systemPrompt" | "tools" | "protection" | "hook" | "agent"
+      "systemPrompt" | "tools" | "protection" | "hook" | "agent" | "context"
     >,
   ) {
     if (launch.agent)
@@ -438,6 +444,20 @@ export class ClaudeProcess {
         throw error;
       });
     try {
+      // A spare starts before its conversation is known. Claude adds these
+      // to the environment its commands run in; it cannot remove one, but a
+      // spare was started with none.
+      if (launch.context && !this.context) {
+        const applied = await this.call({
+          subtype: "apply_flag_settings",
+          settings: { env: launch.context },
+        });
+        if (applied.subtype !== "success")
+          throw new Error(
+            `Claude did not take its conversation: ${String(applied.error)}`,
+          );
+        this.context = true;
+      }
       if (launch.tools) this.tools = launch.tools;
       this.hook = launch.protection ? undefined : launch.hook;
       const { written, answer } = this.request({

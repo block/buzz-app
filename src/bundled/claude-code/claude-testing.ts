@@ -23,6 +23,11 @@ export type FakeClaude = {
   model: string;
   /** The model each user message was taken on. */
   models: string[];
+  /** The `BUZZ_` variables its commands see: its launch environment, which
+   * `apply_flag_settings` can add to but, as Claude's, never remove from. */
+  shellEnv: Record<string, string>;
+  /** Its commands' `BUZZ_` variables as each user message was taken. */
+  shellEnvs: Record<string, string>[];
   /** When set, a turn stays open until `finish()`. */
   hold: boolean;
   killed: boolean;
@@ -117,6 +122,13 @@ export function fakeSpawn(known = new Set<string>()) {
       efforts: [],
       model: flag("--model") ?? "default",
       models: [],
+      shellEnv: Object.fromEntries(
+        Object.entries(options.env ?? {}).filter(
+          (entry): entry is [string, string] =>
+            entry[0].startsWith("BUZZ_") && typeof entry[1] === "string",
+        ),
+      ),
+      shellEnvs: [],
       hold: false,
       killed: false,
       exitOnKill: true,
@@ -162,6 +174,10 @@ export function fakeSpawn(known = new Set<string>()) {
           typeof level === "string"
         )
           fake.effort = level;
+        const env = (request.settings as Record<string, unknown> | undefined)
+          ?.env as Record<string, string> | undefined;
+        if (request.subtype === "apply_flag_settings" && env)
+          Object.assign(fake.shellEnv, env);
         if (request.subtype === "set_model")
           fake.model = flag("--model") ?? "default";
         if (
@@ -211,6 +227,7 @@ export function fakeSpawn(known = new Set<string>()) {
       fake.prompts.push(content);
       fake.efforts.push(fake.effort);
       fake.models.push(fake.model);
+      fake.shellEnvs.push({ ...fake.shellEnv });
       if (!started) {
         started = true;
         known.add(session);

@@ -18,6 +18,7 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
+import { canonicalPublicKey } from "../../shared/identity/public-key";
 import {
   localStore,
   fileStore,
@@ -786,6 +787,71 @@ it("hands over promptly and runs conversations independently on one server", asy
     content: "FIRST",
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
+});
+it("sets each conversation's Buzz context on its own thread's commands", async () => {
+  const f = fixture();
+  const one = "11111111-1111-4111-8111-111111111111";
+  const two = "22222222-2222-4222-8222-222222222222";
+  const other = "e".repeat(64);
+  const at = (
+    text: string,
+    channelId: string,
+    threadRoot: string,
+    scope = "thread",
+  ): Delivery => {
+    const delivery = f.delivery(text, threadRoot);
+    // The event the fixture also lists for thread reads.
+    const event = (delivery.trigger as { event: { tags: string[][] } }).event;
+    event.tags = event.tags.map((tag) =>
+      tag[0] === "h" ? ["h", channelId] : tag,
+    );
+    return {
+      ...delivery,
+      channelId,
+      config: { ...(delivery.config as object), scope },
+    };
+  };
+  await f.runtime.run(at("@Codex first", one, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(at("@Codex second", two, other));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // A session for the whole channel, though the message is in a thread.
+  await f.runtime.run(at("@Codex third", two, root, "channel"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.spawn).toHaveBeenCalledTimes(1);
+  const contexts = f.sent
+    .filter((wire) => wire.method === "thread/start")
+    .map((wire) =>
+      Object.fromEntries(
+        Object.entries(
+          (wire.params as { config: Record<string, unknown> }).config,
+        )
+          .filter(([name]) =>
+            name.startsWith("shell_environment_policy.set.BUZZ_"),
+          )
+          .map(([name, value]) => [name.split(".").at(-1), value]),
+      ),
+    );
+  const npub = canonicalPublicKey(owner);
+  expect(contexts).toEqual([
+    {
+      BUZZ_CHANNEL_ID: one,
+      BUZZ_CHANNEL: one,
+      BUZZ_NPUB: npub,
+      BUZZ_THREAD_ID: root,
+    },
+    {
+      BUZZ_CHANNEL_ID: two,
+      BUZZ_CHANNEL: two,
+      BUZZ_NPUB: npub,
+      BUZZ_THREAD_ID: other,
+    },
+    { BUZZ_CHANNEL_ID: two, BUZZ_CHANNEL: two, BUZZ_NPUB: npub },
+  ]);
+  f.complete(0, "ONE");
+  f.complete(1, "TWO");
+  f.complete(2, "THREE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
 });
 it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
   const f = fixture();

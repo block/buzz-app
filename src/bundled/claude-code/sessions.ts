@@ -831,6 +831,14 @@ const message = (error: unknown) =>
 type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
 const place = ({ cwd, directories = [], model, effort }: Where) =>
   JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
+/** Only where it is: a conversation's launch also holds that conversation,
+ * which a spare for the next one must not start with. */
+const only = ({ cwd, directories, model, effort }: Where): Where => ({
+  cwd,
+  ...(directories ? { directories } : {}),
+  ...(model ? { model } : {}),
+  ...(effort ? { effort } : {}),
+});
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most
@@ -923,7 +931,7 @@ export class Spare {
     const next = {
       place: this.place(first),
       process: ClaudeProcess.spawn(this.spawn, {
-        ...first,
+        ...only(first),
         sessionId: this.newId(),
         tools: this.tools,
       }).catch((error) => {

@@ -191,6 +191,8 @@ export class AgentSessions {
   >();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
+  /** The same, per thread, in a session shared by several threads. */
+  private readonly threads = new Map<string, Map<string, number>>();
   /** Conversations that have had a session, whose next new one may have been
    * prompted for the old one. */
   private readonly had = new Set<string>();
@@ -208,9 +210,14 @@ export class AgentSessions {
     };
   }
 
-  /** What this conversation's session has been shown. */
-  seen(key: string) {
-    return this.shown.get(key) ?? 0;
+  /** What this conversation's session has been shown, of `contextRoot`'s
+   * thread when given. */
+  seen(key: string, contextRoot?: string) {
+    return (
+      (contextRoot
+        ? this.threads.get(key)?.get(contextRoot)
+        : this.shown.get(key)) ?? 0
+    );
   }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.session.working;
@@ -256,7 +263,9 @@ export class AgentSessions {
    * takes that name;
    * `model`, one of the agent's
    * provider's, and `effort`, one of its thinking levels, are what its turn
-   * runs on, and `kept`, a synced level, one it must run on. Once `signal` aborts, it stops
+   * runs on, and `kept`, a synced level, one it must run on;
+   * `contextRoot` is the thread whose history `seen` covers in a shared
+   * session. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -273,6 +282,7 @@ export class AgentSessions {
       model,
       effort,
       kept,
+      contextRoot,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -284,6 +294,7 @@ export class AgentSessions {
       model?: string;
       effort?: string;
       kept?: string;
+      contextRoot?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -331,6 +342,7 @@ export class AgentSessions {
         model,
         effort,
         kept,
+        contextRoot,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
@@ -372,6 +384,7 @@ export class AgentSessions {
           model,
           effort,
           kept,
+          contextRoot,
         ),
       };
     })();
@@ -695,13 +708,15 @@ export class AgentSessions {
     model: string | undefined,
     effort?: string,
     kept?: string,
+    contextRoot?: string,
   ) {
     const sent = live.session.send(
       text,
       {
         ...activity,
         delivered: () => {
-          if (this.live.get(key) === live) this.touch(key, live, seen);
+          if (this.live.get(key) === live)
+            this.touch(key, live, seen, contextRoot);
           activity.delivered?.();
         },
       },
@@ -724,7 +739,7 @@ export class AgentSessions {
   }
   /** Notes that the session took in a message or ended a turn, and what it
    * has been shown, and restarts its idle countdown. */
-  private touch(key: string, live: Live, seen?: number) {
+  private touch(key: string, live: Live, seen?: number, contextRoot?: string) {
     live.at = Date.now();
     const { store } = this.options;
     if (store) {
@@ -739,8 +754,13 @@ export class AgentSessions {
       });
     }
     this.countdown(key, live);
-    if (seen !== undefined)
-      this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
+    if (seen === undefined) return;
+    this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
+    if (contextRoot) {
+      const threads = this.threads.get(key) ?? new Map<string, number>();
+      threads.set(contextRoot, Math.max(seen, threads.get(contextRoot) ?? 0));
+      this.threads.set(key, threads);
+    }
   }
   /** Closes the session after IDLE_MS, or waits again while it is busy: a
    * long turn is not new use. */
@@ -757,6 +777,7 @@ export class AgentSessions {
     if (this.live.get(key) === live) {
       this.live.delete(key);
       this.shown.delete(key);
+      this.threads.delete(key);
       this.options.onChange?.();
     }
     void this.close(live);

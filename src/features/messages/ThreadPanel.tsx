@@ -2048,13 +2048,15 @@ function ThreadMessages({
         // exact reply under an unavailable original shows alone, so it, not
         // its signed root, is the thread: its hidden siblings stay unread.
         rootId={snapshot.root?.id ?? messageId}
-        // A visible exact reply can outlive its unavailable root. Until resolved,
-        // observe rows individually; an absent root must not mean channel catch-up.
+        // An absent or forum root is not readable thread evidence. Observe
+        // its chat replies individually; never fall back to channel catch-up.
         latestMessageId={
-          snapshot.root
+          snapshot.root && !snapshot.root.forum
             ? snapshot.replies.reduce<ChannelMessage | undefined>(
                 (latest, row) =>
-                  !latest || row.createdAt > latest.createdAt ? row : latest,
+                  !row.forum && (!latest || row.createdAt > latest.createdAt)
+                    ? row
+                    : latest,
                 undefined,
               )?.id
             : undefined

@@ -59,7 +59,11 @@ vi.mock("./MessageRow", () => ({
     onOpenMediaReview,
     onMediaPlayback,
   }: MessageRowProps) => (
-    <article data-message-id={row.id} data-scope={scope}>
+    <article
+      data-message-id={row.id}
+      data-forum-row={row.forum ? "" : undefined}
+      data-scope={scope}
+    >
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -2025,65 +2029,80 @@ it("without close, the embedded thread keeps its reader but has no close header 
   expect(close).toHaveBeenCalledOnce();
 });
 
-it("observes a visible reply before its root resolves, then enables thread catch-up", async () => {
-  vi.useFakeTimers();
-  const h = messagesHarness();
-  const reply = {
-    ...row,
-    id: "c".repeat(64),
-    content: "available reply",
-    createdAt: 2,
-  };
-  h.snapshot.root = undefined;
-  h.snapshot.replies = [reply];
-  h.resize(600);
-  const observe = vi.fn(async () => {});
-  const catchUp = vi.fn(async (_id: string, rootId?: string) => {
-    if (!rootId)
-      throw new Error("A thread reply cannot advance the channel frontier");
-  });
-  h.props.session = {
-    ...h.session,
-    unread: {
-      ...h.session.unread,
-      sync: () =>
-        ({ capability: "frontier-sync" }) as ReturnType<
-          RelaySession["unread"]["sync"]
-        >,
-      reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
-      leave() {},
-    },
-  };
-  vi.spyOn(document, "hasFocus").mockReturnValue(true);
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
-    new DOMRect(0, 0, 500, 500),
-  ] as unknown as DOMRectList);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(0, 0, 500, 500),
-  );
-  h.render();
-  screen.getByRole("button", { name: "Close thread" }).focus();
-  // Focus rerenders the rows, which measure again in the next frame.
-  await act(async () => {});
-  await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersByTimeAsync(299));
-  expect(observe).not.toHaveBeenCalled();
-  await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
-  expect(catchUp).not.toHaveBeenCalled();
+it.each([
+  { forumTail: false, forumRoot: false },
+  { forumTail: true, forumRoot: false },
+  { forumTail: true, forumRoot: true },
+])(
+  "observes replies until a chat root resolves (forum tail: $forumTail, root: $forumRoot)",
+  async ({ forumTail, forumRoot }) => {
+    vi.useFakeTimers();
+    const h = messagesHarness();
+    const reply = {
+      ...row,
+      id: "c".repeat(64),
+      content: "available reply",
+      createdAt: 2,
+    };
+    h.snapshot.root = undefined;
+    h.snapshot.replies = forumTail
+      ? [reply, { ...reply, id: "forum", createdAt: 3, forum: true }]
+      : [reply];
+    h.resize(600);
+    const observe = vi.fn(async () => {});
+    const catchUp = vi.fn(async (_id: string, rootId?: string) => {
+      if (!rootId)
+        throw new Error("A thread reply cannot advance the channel frontier");
+    });
+    h.props.session = {
+      ...h.session,
+      unread: {
+        ...h.session.unread,
+        sync: () =>
+          ({ capability: "frontier-sync" }) as ReturnType<
+            RelaySession["unread"]["sync"]
+          >,
+        reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+        leave() {},
+      },
+    };
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      new DOMRect(0, 0, 500, 500),
+    ] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 500),
+    );
+    h.render();
+    screen.getByRole("button", { name: "Close thread" }).focus();
+    // Focus rerenders the rows, which measure again in the next frame.
+    await act(async () => {});
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(observe).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
+    expect(catchUp).not.toHaveBeenCalled();
 
-  h.snapshot.root = row;
-  h.render();
-  // The rows measure in the next frame. That list mutation restarts dwell,
-  // which measures again in the frame after it.
-  await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersByTimeAsync(299));
-  expect(catchUp).not.toHaveBeenCalled();
-  await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
-});
+    h.snapshot.root = {
+      ...row,
+      ...(forumRoot ? { forum: true as const } : {}),
+    };
+    h.render();
+    // The rows measure in the next frame. That list mutation restarts dwell,
+    // which measures again in the frame after it.
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(catchUp).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    if (forumRoot) {
+      expect(catchUp).not.toHaveBeenCalled();
+      expect(observe).toHaveBeenLastCalledWith([reply.id]);
+    } else expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
+  },
+);
 
 it("inline Inbox reveal opts into exact reader and composes origin action without changing ordinary tab focus", () => {
   const h = messagesHarness();

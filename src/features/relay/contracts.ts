@@ -142,6 +142,8 @@ export type ChannelMessage = Readonly<{
   forward?: Readonly<{ snapshot: ForwardSnapshot; note: string }>;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
+  /** Original forum post/comment; mobile does not apply edit/reaction overlays. */
+  forum?: true;
   /** Signed `audience` tag of the original event: `agents` is coordination
    * between agents, shown quietly. Absent means everyone; unknown values too. */
   audience?: "agents";

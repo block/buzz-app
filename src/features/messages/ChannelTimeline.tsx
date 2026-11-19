@@ -498,6 +498,7 @@ function Timeline({
   const classifiable = (row: ChannelMessage) =>
     !row.membership &&
     !row.huddle &&
+    !row.forum &&
     row.audience !== "agents" &&
     row.authorId !== queries.viewer;
   const entryAttention =
@@ -1302,7 +1303,7 @@ function Timeline({
     settled,
     restoring,
     latestMessageId: window.rows
-      .filter((row) => !row.membership && !row.huddle)
+      .filter((row) => !row.membership && !row.huddle && !row.forum)
       .at(-1)?.id,
     // The channel's read mark stops at its newest top-level post: an "Also
     // send to channel" reply at the bottom is not one.
@@ -1311,6 +1312,7 @@ function Timeline({
         (row) =>
           !row.membership &&
           !row.huddle &&
+          !row.forum &&
           !row.threadRootId &&
           !row.replyParentId,
       )

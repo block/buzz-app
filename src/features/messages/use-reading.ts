@@ -176,6 +176,7 @@ export function useReading({
       return (
         row.dataset.membershipRow === undefined &&
         row.dataset.huddleRow === undefined &&
+        row.dataset.forumRow === undefined &&
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.top >= Math.max(viewport.top, 0) - 1 &&
@@ -219,7 +220,8 @@ export function useReading({
         ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
       ].find((row) => row.dataset.messageId === latest);
       const bounds = row?.getBoundingClientRect();
-      return bounds &&
+      return row?.dataset.forumRow === undefined &&
+        bounds &&
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.bottom > Math.max(viewport.top, 0) &&

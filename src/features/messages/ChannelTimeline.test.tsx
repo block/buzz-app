@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
 import { ChannelTimeline } from "./ChannelTimeline";
+import { useReading } from "./use-reading";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { createAgentLibrary } from "../agents/library";
 import { createRelaySession } from "../relay/session";
@@ -2110,3 +2111,20 @@ it("pages Solo chat history on scroll without an initial button and keeps error 
   expect(failed.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
   failed.unmount();
 });
+
+it.each([false, true])(
+  "keeps forum rows out of the channel reading bottom (chat: %s)",
+  (chat) => {
+    const h = setup({
+      initialRows: [
+        ...(chat ? [timelineMessage("chat")] : []),
+        { ...timelineMessage("forum"), forum: true },
+      ],
+    });
+    h.render();
+    expect(vi.mocked(useReading).mock.lastCall?.[0].latestMessageId).toBe(
+      chat ? "chat" : undefined,
+    );
+    h.unmount();
+  },
+);

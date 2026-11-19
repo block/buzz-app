@@ -14,7 +14,7 @@ import { createRelaySession } from "../relay/session";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 import type { RelayEvent } from "../relay/events";
 import type { ReadTarget } from "../relay/read-state-model";
-import { keypair, message, scriptedTransport } from "../relay/testing";
+import { keypair, message, scriptedTransport, signed } from "../relay/testing";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageManagement } from "./MessageManagement";
 import type { PageNavigation } from "../navigation/service";
@@ -676,6 +676,34 @@ it("waits for entry and unread evidence before selecting a verified entry bounda
 const divider = () => screen.getByRole("separator", { name: "New messages" });
 const precedes = (earlier: Node, later: Node) =>
   !!(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+it.each([45001, 45003])(
+  "skips forum kind %s when finding the entry unread boundary",
+  async (kind) => {
+    const h = boundaryFixture();
+    const read = h.row(message(h.peer, "c", "Read chat", 1));
+    const forum = h.row(
+      signed(h.peer, {
+        kind,
+        content: "Forum row",
+        created_at: 2,
+        tags: [["h", "c"]],
+      }),
+      "c",
+      { forum: true },
+    );
+    const chat = h.row(message(h.peer, "c", "Unread chat", 3));
+    h.unknownIds.add(forum.id);
+    h.unreadIds.add(chat.id);
+    h.completeReadStateSnapshot();
+    h.publish();
+    const mounted = render(h.tree("c", [read, forum, chat], true));
+    await h.completeEntry();
+    expect(precedes(screen.getByText("Forum row"), divider())).toBe(true);
+    expect(precedes(divider(), screen.getByText("Unread chat"))).toBe(true);
+    mounted.unmount();
+  },
+);
 
 it.each([{ presented: true }, { presented: false }])(
   "places the entry boundary inside incomplete history when the oldest unread message is loaded: %j",
@@ -3832,6 +3860,47 @@ async function arriveWhileAway(
   await h.dwell();
   return { rows: next, added };
 }
+
+it.each([45001, 45003])(
+  "ignores kind %s for catch-up and the divider after returning to chat",
+  async (kind) => {
+    const { h, mounted, read } = await settledReader();
+    try {
+      const forum = h.row(
+        signed(h.peer, {
+          kind,
+          content: "Future forum row",
+          created_at: 20,
+          tags: [["h", "c"]],
+        }),
+        "c",
+        { forum: true },
+      );
+      h.unknownIds.add(forum.id);
+      h.publish();
+      mounted.rerender(h.tree("c", [read, forum]));
+      await h.dwell();
+      expect(h.catchUp).toHaveBeenCalledWith(read.id, undefined);
+      expect(h.catchUp).not.toHaveBeenCalledWith(forum.id, undefined);
+      for (const [ids] of h.observe.mock.calls)
+        expect(ids).not.toContain(forum.id);
+      setDocumentActive(false);
+      await arriveWhileAway(
+        h,
+        mounted,
+        [read, forum],
+        [{ content: "Chat while away", at: 11 }],
+      );
+      setDocumentActive(true);
+      expect(precedes(divider(), screen.getByText("Chat while away"))).toBe(
+        true,
+      );
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("places the line above the first arrival when attention returns to a visit that settled with none, before reading it", async () => {
   const { h, mounted, read } = await settledReader();

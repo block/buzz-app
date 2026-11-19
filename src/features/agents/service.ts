@@ -1630,8 +1630,6 @@ export type WatchReadFailure = Readonly<{
 }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
-  /** Whether a watch's classifier can run on this device now. */
-  classifier: ClassifierAvailability;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -2274,9 +2272,9 @@ export type Agents = {
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(agent: AgentKey): Promise<string | undefined>;
-  /** Whether a watch's classifier can run now: in `community`, an agent's
-   * relay, or without one, wherever no community is named. */
-  classifier(community?: string): ClassifierAvailability;
+  /** Whether a watch's classifier can run now in `community`, an agent's
+   * relay. */
+  classifier(community: string): ClassifierAvailability;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
    * be agents on this device or, for a synced team, its home community's
    * hosted agents whose setup finished. Each community has the members that
@@ -2943,7 +2941,6 @@ export class AgentsService extends Service implements Agents {
     this.teamMoves = new TeamMoves(storage);
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
-      classifier: this.availability(),
       agents: [],
       running: [],
       interrupted: [],
@@ -5969,22 +5966,16 @@ export class AgentsService extends Service implements Agents {
     }
     return kind;
   }
-  /** Whether watch classifiers can run in `community`, or without one,
-   * where no community is named: its decision provider can be asked. */
-  classifier(community?: string): ClassifierAvailability {
-    if (community === undefined) return this.state.classifier;
+  /** Whether watch classifiers can run in `community`: its decision
+   * provider can be asked. A view that shows it must subscribe to the whole
+   * snapshot, which is replaced on every decisions change. */
+  classifier(community: string): ClassifierAvailability {
     return classifierRuns(this.decisions?.status(community));
   }
-  private availability(): ClassifierAvailability {
-    return classifierRuns(this.decisions?.status());
-  }
-  /** A new snapshot on every decisions change: each community's
-   * availability is read from it, not only the one without a community. */
+  /** A new snapshot on every decisions change, so views re-read each
+   * community's availability. */
   private updateClassifier() {
-    this.state = Object.freeze({
-      ...this.state,
-      classifier: this.availability(),
-    });
+    this.state = Object.freeze({ ...this.state });
     this.notify();
   }
   /** The event's surroundings for the classifier, from what the app knows. */

@@ -5135,6 +5135,27 @@ describe("editable tables", () => {
     expect(h.markdown()).toBe("| Name | Qty |\n| --- | --- |\n| Tea | 2 |");
   });
 
+  describe("a table copied from the timeline", () => {
+    const html =
+      '<div data-buzz-copy="timeline"><p>intro</p><table><tbody><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table><p>outro</p></div>';
+
+    it("pastes as tab separated rows, as it did before tables", () => {
+      const h = mount();
+      paste(h.input, "intro\na\tb\n1\t2\noutro", html);
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe("intro\na\tb\n1\t2\noutro");
+    });
+
+    it("is quoted as tab separated rows", () => {
+      const h = mount();
+      act(() => {
+        expect(h.input.insertQuote(html)).toBe(true);
+      });
+      expect(h.input.querySelector("table")).toBeNull();
+      expect(h.markdown()).toBe("> intro\n> a\tb\n> 1\t2\n> outro\n\n");
+    });
+  });
+
   it("pastes tab-indented code as text, not a table", () => {
     const go = "\tif err != nil {\n\t\treturn err\n\t}\n";
     const make = "build:\n\tgo build ./...\n\tgo test ./...";

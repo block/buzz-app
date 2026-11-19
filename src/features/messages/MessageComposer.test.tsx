@@ -17613,6 +17613,23 @@ describe("table editing controls", () => {
     expect(screen.queryByRole("toolbar", { name: "Table" })).toBeNull();
   });
 
+  it("accepts an emoji with Tab in a cell without leaving it, then Tab moves on", async () => {
+    const h = mountEmojiTypeahead();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+    fireEvent.mouseDown(await screen.findByRole("button", { name: "Table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    await h.user.keyboard(":smil");
+    await screen.findByRole("option", { name: ":smile:" });
+    await h.user.keyboard("{Tab}");
+    expect(cells(h.input())[0]).toEqual(["\u{1F604} ", "", ""]);
+    expect(h.input().querySelector("th[data-active]")).toHaveTextContent(
+      "\u{1F604}",
+    );
+    await h.user.keyboard("{Tab}");
+    expect(h.input().querySelectorAll("th")[1]).toHaveAttribute("data-active");
+    expect(h.input()).toHaveFocus();
+  });
+
   it("disables the Table control in a list and a quote", async () => {
     const h = mount();
     fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));

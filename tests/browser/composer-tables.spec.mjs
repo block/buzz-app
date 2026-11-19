@@ -180,6 +180,58 @@ test("Delete from the paragraph above a table never edits the one below", async 
   await expect(input.locator("th").first()).toHaveText("ell");
 });
 
+const grid2x2 =
+  "<table><tbody><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table>";
+const code = "<pre><code>cc</code></pre>";
+const place = (input, at) =>
+  input.evaluate((el, at) => {
+    const index =
+      at === "end" ? el.value.length : el.value.indexOf(at) + at.length;
+    el.focus();
+    el.setSelectionRange(index, index);
+  }, at);
+const fill = (input, html) =>
+  paste(input, "x", `<div data-buzz-copy="composer">${html}</div>`);
+
+test("arrow keys go from a code block into a table and out of the draft below it", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.click();
+  await fill(input, code + grid2x2);
+  await place(input, "cc");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Z");
+  await expect(input.locator("th").first()).toHaveText("aZ");
+  await expect(input.locator("pre")).toHaveText("cc");
+  await place(input, "end");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Y");
+  await expect(input.locator("p").last()).toHaveText("Y");
+  await expect(input.locator("td").last()).toHaveText("2");
+});
+
+test("arrow keys leave a table at the top of the draft and a code block below it", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await input.click();
+  await fill(input, grid2x2 + code);
+  await place(input, "end");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Z");
+  await expect(input.locator("p").last()).toHaveText("Z");
+  await expect(input.locator("pre")).toHaveText("cc");
+  await input.evaluate((el) => {
+    el.focus();
+    el.setSelectionRange(0, 0);
+  });
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.type("Y");
+  await expect(input.locator("p").first()).toHaveText("Y");
+  await expect(input.locator("th").first()).toHaveText("a");
+});
+
 test("Select all then Backspace clears the draft and undo brings the table back", async ({
   page,
 }) => {

@@ -75,15 +75,25 @@ export function checkedSections(
   return checked;
 }
 
-/** The conversation's record; undefined when it has none or it cannot be
- * read. */
+/** Each store's saved value of a record while a save to it is still being
+ * written, and how many are. A store shows a value as soon as it is
+ * written, and puts the saved one back if the write fails. */
+const saving = new WeakMap<
+  Pick<AgentStore, "get">,
+  Map<string, { saved: string | null; count: number }>
+>();
+
+/** The conversation's saved record; undefined when it has none or it cannot
+ * be read. A turn must not take a record whose save then fails. */
 export function conversationSections(
   store: Pick<AgentStore, "get">,
   scope: string,
   agent: AgentKey,
   conversation: string,
 ): ConversationSections | undefined {
-  const saved = store.get(storageKey(scope, agent, conversation));
+  const key = storageKey(scope, agent, conversation);
+  const pending = saving.get(store)?.get(key);
+  const saved = pending ? pending.saved : store.get(key);
   if (!saved) return undefined;
   try {
     const { plugin, sections } = JSON.parse(
@@ -129,10 +139,22 @@ export async function setConversationSections(
   plugin: string,
   sections: Texts,
 ) {
-  await store.set(
-    storageKey(scope, agent, conversation),
-    Object.keys(sections).length ? JSON.stringify({ plugin, sections }) : null,
-  );
+  const key = storageKey(scope, agent, conversation);
+  const value = Object.keys(sections).length
+    ? JSON.stringify({ plugin, sections })
+    : null;
+  const writes = saving.get(store) ?? new Map();
+  saving.set(store, writes);
+  const pending = writes.get(key) ?? { saved: store.get(key), count: 0 };
+  pending.count += 1;
+  writes.set(key, pending);
+  try {
+    await store.set(key, value);
+    // Writes are saved in order, so this is now the saved value.
+    pending.saved = value;
+  } finally {
+    if (!--pending.count) writes.delete(key);
+  }
 }
 
 /** Drops every conversation's record for the agent, in every scope. A

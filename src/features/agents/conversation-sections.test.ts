@@ -7,7 +7,7 @@ import {
   setConversationSections,
   usableSections,
 } from "./conversation-sections";
-import { isAgentKey } from "./state";
+import { fileStore, isAgentKey } from "./state";
 import { localStore } from "./store";
 
 const memory = () => {
@@ -95,6 +95,43 @@ describe("the sections a plugin gives a conversation", () => {
     await setConversationSections(store, "scope", "agent", "c/r", "b", {});
     expect(get("c/r")).toBeUndefined();
     expect(store.keys()).toHaveLength(0);
+  });
+
+  it("are read only once they are saved", async () => {
+    // A native store shows a write at once, and puts the saved value back
+    // when the write fails.
+    const writes: ((error?: Error) => void)[] = [];
+    const store = fileStore(
+      new Map(),
+      () =>
+        new Promise<void>((resolve, reject) => {
+          writes.push((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    const agent = "agent";
+    const read = () => conversationSections(store, "s", agent, "c");
+    const set = (progress: string) =>
+      setConversationSections(store, "s", agent, "c", "p", { progress });
+    const failed = set("Lost.");
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(store.get(key("s", agent, "c"))).toContain("Lost.");
+    expect(read()).toBeUndefined();
+    writes[0]?.(new Error("disk full"));
+    await expect(failed).rejects.toThrow("disk full");
+    expect(read()).toBeUndefined();
+    const saved = set("Kept.");
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    expect(read()).toBeUndefined();
+    writes[1]?.();
+    await saved;
+    expect(read()).toEqual({ plugin: "p", sections: { progress: "Kept." } });
+    // While a later save is written, a turn keeps the saved record.
+    const later = set("Next.");
+    await vi.waitFor(() => expect(writes).toHaveLength(3));
+    expect(read()?.sections).toEqual({ progress: "Kept." });
+    writes[2]?.();
+    await later;
+    expect(read()?.sections).toEqual({ progress: "Next." });
   });
 
   it("read as none when the saved value is unreadable", async () => {

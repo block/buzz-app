@@ -115,8 +115,8 @@ function rerankOrder(
 /**
  * Reorders the first relevance-ranked hits by how likely the decision
  * provider judges each to be what the searcher wants. The keyword order shows
- * first; a failed provider leaves it. Enable it only while `useCanRerank`
- * holds, so a provider that becomes able to answer starts it. Once `held`,
+ * first; a failed provider leaves it. Enable it once `useCanRerank` holds,
+ * so a provider that becomes able to answer starts it. Once `held`,
  * an answer that arrives later is dropped, so rows don't move under someone
  * reading them; one already applied stays.
  */
@@ -178,12 +178,15 @@ export function useMessageRerank({
       clearTimeout(timer);
     };
   }, [key, decisions, community]);
-  // A later page extends the hits that were ordered: that order stays, so
-  // the rows above don't move.
+  // A later page extends the hits that were ordered, or a hit leaves with
+  // its conversation: that order stays, so the rows above don't move.
+  const present = new Set(ids);
+  const kept = result?.ids.filter((id) => present.has(id)) ?? [];
   const order =
     key &&
     result?.query === query &&
-    result.ids.every((id, index) => ids[index] === id)
+    kept.length > 0 &&
+    kept.every((id, index) => ids[index] === id)
       ? result.order
       : undefined;
   const ordered = useMemo(() => {

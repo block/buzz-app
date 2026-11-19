@@ -247,3 +247,36 @@ it("keeps an applied order while a later page extends the hits", async () => {
   expect(result.current.reranked).toBe(true);
   expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a", "c"]);
 });
+
+it("keeps an applied order for the hits that stay when one leaves", async () => {
+  vi.useFakeTimers();
+  const scores: Record<string, number> = { a: 0.1, b: 0.5, c: 0.9 };
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, (text) => scores[text]),
+  );
+  const decisions = decisionsOf(decide);
+  const { result, rerender } = renderHook(
+    ({ messages, held }) =>
+      useMessageRerank({
+        decisions,
+        community: undefined,
+        query: "q",
+        messages,
+        enabled: true,
+        facts,
+        held,
+      }),
+    { initialProps: { messages: ["a", "b", "c"].map(message), held: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["c", "b", "a"]);
+  // The person moves, then a's conversation leaves the list.
+  rerender({ messages: ["b", "c"].map(message), held: true });
+  expect(result.current.reranked).toBe(true);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["c", "b"]);
+  // Different hits for the same text aren't ordered by the old answer.
+  rerender({ messages: ["d", "e"].map(message), held: true });
+  expect(result.current.reranked).toBe(false);
+});

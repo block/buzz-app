@@ -728,6 +728,11 @@ export function SearchResults({
   // The chip or a single resolved `in:` limits results to one conversation.
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   const canRerank = useCanRerank(decisions);
+  // A provider that stops being able to answer, as a key found missing does,
+  // leaves this text's hits and order as they are: only new text drops them.
+  const [rerankFor, setRerankFor] = useState<string>();
+  if (canRerank && rerankFor !== query) setRerankFor(query);
+  const rerankable = canRerank || rerankFor === query;
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -744,7 +749,7 @@ export function SearchResults({
     // Only one conversation's results offer the choice; across
     // conversations, search keeps relevance.
     effectiveChannelId ? sort : "relevance",
-    canRerank ? RERANK_PAGES : 1,
+    rerankable ? RERANK_PAGES : 1,
   );
   // Offline or asking, nothing is searched, so there is no order to choose.
   const sortable =
@@ -1832,7 +1837,7 @@ export function SearchResults({
     query: parsed.text,
     messages: search.messages,
     enabled:
-      canRerank && !!parsed.text && !search.newestFirst && !search.loading,
+      rerankable && !!parsed.text && !search.newestFirst && !search.loading,
     facts: (message) => {
       const channel = session.channels.get?.(message.channelId);
       return {

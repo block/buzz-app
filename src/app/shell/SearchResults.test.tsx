@@ -1480,6 +1480,21 @@ it("reranks message hits once the decision provider can answer, holding them onc
     await search("deploy");
     await answer();
     expect(order()).toEqual(["runbook", "one", "two"]);
+
+    // A provider that stops being able to answer leaves this text's hits
+    // and order; new text then reads one page.
+    const reads = limits.length;
+    act(() => {
+      status = "needs-setup";
+      for (const listener of listeners) listener();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(limits).toHaveLength(reads);
+    expect(order()).toEqual(["runbook", "one", "two"]);
+    expect(screen.getByText(/· Reranked/)).toBeVisible();
+    view.rerender(<SearchResults {...props} query="deployed" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(limits.slice(reads)).toEqual([20]);
   } finally {
     cleanup();
     owner.dispose();

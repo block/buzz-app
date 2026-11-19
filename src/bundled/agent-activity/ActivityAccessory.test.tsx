@@ -40,7 +40,7 @@ import { createAgentActivity } from "../../features/agents/activity";
 import { requestWork } from "../../features/agents/request-work";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { RelaySession } from "../../features/relay/session";
-import type { ChannelMessage } from "../../features/relay/contracts";
+import type { ChannelMessage, Profile } from "../../features/relay/contracts";
 
 // Stop's results are host toasts; the shared Toast owns how they show.
 const notify = vi.hoisted(() => vi.fn());
@@ -167,6 +167,147 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     },
   };
 }
+
+function uploadedAvatarFixture(
+  local: ReturnType<typeof createLocalAgentActivity>,
+) {
+  const f = fixture(local);
+  const poster = `https://community.test/media/${"7".repeat(64)}.png`;
+  const original = `https://community.test/media/${"8".repeat(64)}.webp`;
+  const picture = `${poster}#buzz-anim=${encodeURIComponent(original)}`;
+  (f.profiles as Map<string, Profile>).set(A, {
+    name: "Blossom",
+    isAgent: true,
+    picture,
+  });
+  const media = vi.fn((url: string, size?: "small") =>
+    size ? `still:${url.split("#")[0]}` : `protected:${url}`,
+  );
+  const loads: Array<{ src: string; onload: (() => void) | null }> = [];
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(prefers-reduced-motion: no-preference)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      onload = null;
+      constructor() {
+        loads.push(this);
+      }
+    },
+  );
+  return {
+    ...f,
+    props: { ...f.props, session: { ...f.props.session, media } },
+    poster,
+    original,
+    picture,
+    media,
+    loads,
+  };
+}
+
+it.each(["done", "error", "stopped"] as const)(
+  "plays the message-owned portrait only after its first working step, then restores still on %s",
+  (outcome) => {
+    const local = createLocalAgentActivity();
+    const f = uploadedAvatarFixture(local);
+    const view = render(<ActivityAccessory {...f.props} />);
+    const animations = () =>
+      view.container.querySelectorAll(`img[src="protected:${f.original}"]`);
+    try {
+      let work!: ReturnType<typeof local.begin>;
+      act(() => {
+        work = local.begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        });
+      });
+      expect(
+        screen.getByRole("button", {
+          name: "View agent activity: Blossom, Received · waiting to start",
+        }),
+      ).toBeVisible();
+      expect(f.media).toHaveBeenCalledWith(f.picture, "small");
+      expect(f.loads).toHaveLength(0);
+      act(() => work.started());
+      expect(
+        screen.getByRole("button", {
+          name: "View agent activity: Blossom, Starting",
+        }),
+      ).toBeVisible();
+      expect(f.loads).toHaveLength(0);
+      act(() => work.step("send_message"));
+      expect(
+        screen.getByRole("button", {
+          name: "View agent activity: Blossom, Sending a message",
+        }),
+      ).toBeVisible();
+      expect(f.media).toHaveBeenCalledWith(f.original);
+      expect(f.loads).toHaveLength(1);
+      expect(f.loads[0]?.src).toBe(`protected:${f.original}`);
+      expect(animations()).toHaveLength(0);
+      expect(
+        view.container.querySelector(`img[src="still:${f.poster}"]`),
+      ).toBeVisible();
+      act(() => f.loads[0]?.onload?.());
+      expect(animations()).toHaveLength(1);
+      expect(animations()[0]?.closest("[data-message-activity]")).toBe(
+        screen.getByLabelText("Agent activity on this message"),
+      );
+      expect(animations()[0]).toBeVisible();
+      act(() =>
+        work.finish({
+          ok: outcome === "done",
+          ...(outcome === "error" ? { error: "Provider unavailable" } : {}),
+          ...(outcome === "stopped" ? { stopped: true } : {}),
+        }),
+      );
+      expect(animations()).toHaveLength(0);
+      expect(f.loads[0]?.onload).toBeNull();
+      expect(f.loads).toHaveLength(1);
+      if (outcome !== "done")
+        expect(
+          view.container.querySelector(`img[src="still:${f.poster}"]`),
+        ).toBeVisible();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
+it("keeps a message-owned multiagent portrait cluster still", () => {
+  const local = createLocalAgentActivity();
+  const f = uploadedAvatarFixture(local);
+  for (const agent of [A, B]) {
+    const work = local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent,
+    });
+    work.step("send_message");
+  }
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    expect(screen.getByRole("img", { name: "Blossom, Bubbles" })).toBeVisible();
+    expect(f.loads).toHaveLength(0);
+    expect(
+      view.container.querySelector(`img[src="protected:${f.original}"]`),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 
 it("shows one bubble with one avatar per agent across multiple turns, removing only the settled agent", () => {
   const f = fixture();

@@ -9502,6 +9502,47 @@ it("ignores retained conversation folders for remote community admission", async
   }
 });
 
+it("starts a preparing community turn on a new app-server when Huddle speech will not stop", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const d = f.delivery("typed in another conversation");
+  const { config } = scoped(d);
+  f.huddleChannels.add("room");
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing spawn fixture");
+  // The retired app-server has exited; its replacement keeps running.
+  f.spawn.mockImplementation(async (id, options) => {
+    const spawned = await spawn(id, options);
+    return id === "app-server" && f.process.end.mock.calls.length
+      ? { ...spawned, exited: new Promise<number | null>(() => {}) }
+      : spawned;
+  });
+  const connection = await join(f, d);
+  const preparing = deferred<void>();
+  const core = deferred<string | null | undefined>();
+  f.failing.add("turn/interrupt");
+  f.core.mockImplementationOnce(() => {
+    preparing.resolve();
+    return core.promise;
+  });
+  try {
+    await f.runtime.run({ ...d, channelId: "other", config });
+    await preparing.promise;
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "early-spoken" } },
+    });
+    core.resolve(undefined);
+    await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(inputText(f.starts()[0])).toContain("typed in another conversation");
+    await f.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+    await connection.close();
+  }
+});
+
 it("rejects Huddle speech before dispatching a preparing community turn", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();

@@ -2920,7 +2920,9 @@ export class CodexRuntime {
         }
         try {
           await entry.after;
-          await this.execute(request, text, key, current, entry, next);
+          // A rerun waits for the retired Huddle seat to let go of the lane.
+          while (await this.execute(request, text, key, current, entry, next))
+            await current.voice?.rejectedSpeechClosing;
         } catch (error) {
           request.failActivity(message(error));
           throw error;
@@ -3715,7 +3717,16 @@ export class CodexRuntime {
             ...(tools ? { tools } : {}),
           });
         if (active.rejectedSpeech) await active.rejectedSpeech;
-        if (signal.aborted || (request.current && !request.current())) {
+        // Speech that would not stop closed this app-server: start again on a new one.
+        const again =
+          active.rejectedSpeech !== undefined &&
+          rpc.exited &&
+          request.current?.() !== false;
+        if (
+          again ||
+          signal.aborted ||
+          (request.current && !request.current())
+        ) {
           if (this.target && !resuming) {
             // An empty remote thread has no rollout to resume on the next request.
             const { [key]: _, ...kept } = entry.saved;
@@ -3724,11 +3735,14 @@ export class CodexRuntime {
           }
           signal.throwIfAborted();
           restoreNotes(request);
-          request.answered();
-          this.status(agent.key, key, "Idle");
+          if (again) active.requests = [];
+          else {
+            request.answered();
+            this.status(agent.key, key, "Idle");
+          }
           active.finished = true;
           ready();
-          return;
+          return again;
         }
         signal.throwIfAborted();
         request.accepted?.();

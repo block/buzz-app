@@ -170,9 +170,12 @@ They survive page switches in the same mounted sidebar, are saved when that
 sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
 palette; legacy sidebar filters are ignored. Each section's ellipsis menu offers
-**Filter → All, Unreads, Active in the last**. Unreads shows channels with observed or
-manually marked unread messages or unread thread activity. Muted channels with retained unread backlog remain eligible even when their ordinary sidebar cues are quiet: mute does not mark messages read. Active in the last opens a compact,
-content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
+**Filter → All, Unreads, Active**. Unreads shows channels with observed or
+manually marked unread messages or unread thread activity. Muted channels with
+retained unread backlog remain eligible even when their ordinary sidebar cues
+are quiet: mute does not mark messages read. Active opens the compact
+**Active in the last** dialog with 1-, 7-, 30-, and 90-day text-only radio tiles
+in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
 failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until their activity is read. Activity applies in one update when a read finishes; a read that fails partway still applies what it read, and channels it did not reach stay available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
@@ -232,7 +235,7 @@ The development broker and packaged native host save these choices in the deskto
 kind-30078 `channel-workspace-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
 A–Z writes a null register and removes that group's legacy override.
 Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
-coordinate: Unreads is `unreads`, Active in the last is `active`, and All
+coordinate: Unreads is `unreads`, Active is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
 stores each group’s duration in whole-day seconds; absence means 30 days. Presets
 and custom values share this representation. Apply publishes mode and duration

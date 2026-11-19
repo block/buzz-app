@@ -253,7 +253,7 @@ export function SidebarSection({
                             <MenuIcon>
                               <TimerIcon size={14} />
                             </MenuIcon>
-                            Active in the last
+                            Active
                             {filter.value === "active" && (
                               <MenuTrailing>
                                 {activeWindowLabel(filter.activeWindowSeconds)}

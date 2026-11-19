@@ -824,10 +824,16 @@ function Composer({
       ? draftKey
       : undefined,
   );
+  // `dirty`: an edit that is not in storage. `edited`: typed in since the
+  // draft was last loaded, saved or not.
   const dirty = useRef(!!reopenedConflict);
+  const edited = useRef(!!reopenedConflict);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(!!reopenedConflict);
+  // A shown conflict protects the text until the user resolves it, whatever
+  // the draft's saved state was when it was raised.
   function reportConflict(draft = valueRef.current) {
+    dirty.current = true;
     // Only a distinct edit needs a backup when the shared draft is absent.
     if (
       !conflictDraft.current &&
@@ -1359,6 +1365,7 @@ function Composer({
     }
     cancelDraftSave();
     dirty.current = true;
+    edited.current = true;
     if (conflictDraft.current) conflictDraft.current.draft = next;
     else if (conflict && !accepted) reportConflict(next);
     if (conflict || conflictDraft.current || accepted) return;
@@ -1417,8 +1424,8 @@ function Composer({
       draftAtRevision.current = next;
       savedCursor.current = draftRetirementCursor(scope, draftKey);
       forgetConflict();
-      // Saved text has no edits left to protect: a later change made elsewhere
-      // is loaded, not reported as a conflict.
+      // Saved text has no unsaved edits left to protect: a later change made
+      // elsewhere is loaded unless the user is in this editor.
       dirty.current = false;
     }
     if (result === "changed" && next === valueRef.current && dirty.current)
@@ -1797,6 +1804,7 @@ function Composer({
     draftAtRevision.current = next;
     savedCursor.current = draftRetirementCursor(scope, draftKey);
     dirty.current = false;
+    edited.current = false;
     valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
@@ -1879,7 +1887,15 @@ function Composer({
         !sendAttempt.current
       )
         loadSaved(current);
-      else if (dirty.current || sendAttempt.current) {
+      else if (
+        dirty.current ||
+        sendAttempt.current ||
+        // Text typed here is never replaced under the user: storage can lose
+        // a save that read back, and another window can write mid-typing.
+        (edited.current &&
+          document.activeElement === input.current &&
+          document.hasFocus())
+      ) {
         const pending = cancelDraftSave();
         // Two windows can independently arrive at the same draft before saving.
         if (pending && current === JSON.stringify(pending.draft)) {
@@ -1982,6 +1998,7 @@ function Composer({
       return;
     }
     dirty.current = false;
+    edited.current = false;
     onDraftSaved?.();
   }
   useEffect(() => {

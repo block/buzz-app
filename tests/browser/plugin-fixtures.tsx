@@ -74,6 +74,12 @@ declare global {
     fixtureRelay?: RelayData;
     revocationProbe?: "complete" | "resolve";
     revocationAccepted?: boolean;
+    fixtureMessageLinks?: {
+      mode: "match" | "decline" | "fail" | "invalid" | "hold";
+      seen: unknown[];
+      signal?: AbortSignal;
+      release?: () => void;
+    };
   }
 }
 declare module "@deepseek-ai/cordis" {
@@ -144,6 +150,46 @@ const fill = (background: string, zIndex?: number) => () => (
 );
 
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: {
+      id: "fixture.message-link",
+      name: "Message link fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["pages"],
+      apply(ctx) {
+        const control: NonNullable<Window["fixtureMessageLinks"]> = {
+          mode: "match",
+          seen: [],
+        };
+        window.fixtureMessageLinks = control;
+        ctx.pages.register({
+          id: "message",
+          title: "Message link fixture",
+          component: () => <p>Contributed message destination</p>,
+          route: {
+            version: 1,
+            validate: (params) => typeof params === "string",
+            async resolveMessageLink(link, signal) {
+              control.seen.push(link);
+              control.signal = signal;
+              if (control.mode === "decline") return undefined;
+              if (control.mode === "fail")
+                throw new Error("Fixture declined with error");
+              if (control.mode === "invalid") return { scope: null };
+              if (control.mode === "hold")
+                await new Promise<void>((release) => {
+                  control.release = release;
+                });
+              return link.messageId;
+            },
+          },
+        });
+      },
+    },
+  },
   soloRegionFixture,
   {
     manifest: {

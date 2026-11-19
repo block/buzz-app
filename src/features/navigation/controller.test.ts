@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
-import { joinBeneath, type OpenTarget } from "./targets";
+import { joinBeneath, withoutJoin, type OpenTarget } from "./targets";
 const settings: OpenTarget = {
   version: 1,
   kind: "settings",
@@ -57,6 +57,45 @@ describe("navigation attempts over one history driver", () => {
     expect(attempt.signal.aborted).toBe(false);
     nav.back();
     expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  });
+  it("keeps an admitted message address through page normalization and a Join dialog", async () => {
+    const { host, navigation: nav, history } = setup();
+    const viewer = "a".repeat(64);
+    const scope = { viewer, communityOrigin: "https://relay.example" };
+    const link: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "alpha",
+      messageId: "b".repeat(64),
+      messageLink: true,
+    };
+    const opened = nav.open(link);
+    const original = nav.snapshot().entry;
+    expect(host.resolve(nav.snapshot().attempt, { ...page, scope }, true)).toBe(
+      true,
+    );
+    const canonical = {
+      ...page,
+      scope,
+      route: { version: 1, params: "complete" },
+    };
+    expect(host.resolve(nav.snapshot().attempt, canonical)).toBe(true);
+    expect(nav.snapshot().entry).toEqual({
+      id: original.id,
+      target: canonical,
+    });
+    expect(history.snapshot().current).toEqual(original);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+
+    const join = { viewer, visit: "v1" };
+    void nav.open({ ...nav.snapshot().entry.target, join });
+    const joined = nav.snapshot().entry;
+    expect(joined.target).toEqual({ ...link, join });
+    expect(history.snapshot().current).toEqual(joined);
+    nav.dismiss([joined.id], withoutJoin(joined.target));
+    expect(nav.snapshot().entry).toEqual(original);
   });
   it("keeps Members through passive traversal but retires an explicit dismissal", async () => {
     const { host, navigation: nav } = setup();

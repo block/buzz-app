@@ -26,6 +26,7 @@ import type {
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import { offerMessageLink } from "../features/pages/message-link";
 
 const channelsKey = "buzz.channels/channels";
 /** Presentation-only lease for an already-confirmed Settings departure. */
@@ -361,28 +362,40 @@ export function useAppNavigation(
       previous?.presentation.dispose();
       workspace.current = undefined;
     }
+    const visitTarget = owner.attempt.entry.target;
+    const link =
+      visitTarget.kind === "conversation" &&
+      visitTarget.messageLink &&
+      !visitTarget.context &&
+      !visitTarget.panel &&
+      !visitTarget.detail &&
+      !visitTarget.forward &&
+      !visitTarget.join
+        ? visitTarget
+        : undefined;
+    function valid() {
+      // Check exact registration identity at use time, before eventual React cleanup.
+      if (owner.page && !services.pages.snapshot().includes(owner.page))
+        return false;
+      if (!("scope" in visitTarget) || visitTarget.scope === undefined)
+        return true;
+      const client = services.communities.snapshot();
+      if (client.status === "loading") return false;
+      if (visitTarget.scope === null) return client.selected === null;
+      const scope = visitTarget.scope;
+      return (
+        client.viewer === scope.viewer &&
+        client.memberships.some(
+          (item) =>
+            item.id === client.selected &&
+            communityDestination(item.id).url === scope.communityOrigin,
+        )
+      );
+    }
     const next = services.navigationHost.request(
       owner.attempt,
       {
-        valid() {
-          // Check exact registration identity at use time, before eventual React cleanup.
-          if (owner.page && !services.pages.snapshot().includes(owner.page))
-            return false;
-          const target = owner.attempt.entry.target;
-          if (!("scope" in target) || target.scope === undefined) return true;
-          const client = services.communities.snapshot();
-          if (client.status === "loading") return false;
-          if (target.scope === null) return client.selected === null;
-          const scope = target.scope;
-          return (
-            client.viewer === scope.viewer &&
-            client.memberships.some(
-              (item) =>
-                item.id === client.selected &&
-                communityDestination(item.id).url === scope.communityOrigin,
-            )
-          );
-        },
+        valid,
         subscribe(listener) {
           const stopPages = services.pages.subscribe(listener);
           const stopClient = services.communities.subscribe(listener);
@@ -395,6 +408,60 @@ export function useAppNavigation(
         },
       },
       settings || !!owner.page,
+      link && {
+        available: () =>
+          services.pages
+            .snapshot()
+            .some((page) => page.route?.resolveMessageLink),
+        async run(root, verified, signal) {
+          const connection = services.relay.snapshot();
+          const channels = connection.session.channels;
+          const access = new AbortController();
+          const attempt = AbortSignal.any([
+            owner.attempt.signal,
+            signal,
+            access.signal,
+          ]);
+          const live = () => {
+            const state = navigation.snapshot();
+            const channel = channels.get?.(link.channelId);
+            return (
+              !attempt.aborted &&
+              state.attempt === owner.attempt &&
+              !state.ingress &&
+              state.status === "opening" &&
+              valid() &&
+              connection.status === "ready" &&
+              !connection.cached &&
+              connection.origin === link.scope.communityOrigin &&
+              connection.viewer === link.scope.viewer &&
+              !!channel &&
+              !channel.cached &&
+              !channel.pending &&
+              !channel.huddle &&
+              !channel.metadataPending &&
+              verified()
+            );
+          };
+          if (!live()) return;
+          const stop = channels.subscribeList(() => {
+            if (!live()) access.abort();
+          });
+          try {
+            await offerMessageLink(
+              services.pages,
+              link,
+              root,
+              live,
+              attempt,
+              (target) =>
+                services.navigationHost.resolve(owner.attempt, target, true),
+            );
+          } finally {
+            stop();
+          }
+        },
+      },
     );
     presented.set({ owner, request: next.request });
     if (settings) {
@@ -402,7 +469,7 @@ export function useAppNavigation(
       return;
     }
     workspace.current = { owner, presentation: next };
-  }, [services, owner, settings, presented, join]);
+  }, [services, owner, settings, presented, join, navigation]);
   const retained = workspace.current;
   // Join over a page retained from its own visit: present that page beneath.
   const covered =
@@ -745,11 +812,11 @@ function settingsBeneath(
 /** Whether a retained page is the visit this join dialog was opened over: a
  * multi-step traversal can land on a join whose page was never presented. */
 function sameVisitBeneath(
-  retained: { entry: { target: OpenTarget } },
-  join: { entry: { target: OpenTarget } },
+  retained: Pick<OpenAttempt, "address" | "entry">,
+  join: Pick<OpenAttempt, "address" | "entry">,
 ) {
   return (
-    targetKey(joinBeneath(retained.entry.target)) ===
-    targetKey(joinBeneath(join.entry.target))
+    targetKey(joinBeneath(retained.address ?? retained.entry.target)) ===
+    targetKey(joinBeneath(join.address ?? join.entry.target))
   );
 }

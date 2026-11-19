@@ -92,6 +92,8 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         messageId?: string;
         /** Hint only. Resolve the actual root from verified message evidence. */
         threadRootId?: string;
+        /** Offer an activated message link to pages after conversation admission. */
+        messageLink?: true;
         /** With threadRootId: the thread opens beside that root, revealed in the
          * channel timeline even beyond its newest page, as Open in channel asks. */
         context?: "channel";
@@ -477,6 +479,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "channelId",
           "messageId",
           "threadRootId",
+          "messageLink",
           "context",
           "panel",
           "forward",
@@ -485,7 +488,13 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "inlineMessage",
           "layer",
         ]);
-        if (value.threadRootId !== undefined && value.messageId === undefined)
+        if (
+          (value.threadRootId !== undefined ||
+            value.messageLink !== undefined) &&
+          value.messageId === undefined
+        )
+          throw invalid();
+        if (value.messageLink !== undefined && value.messageLink !== true)
           throw invalid();
         if (
           value.context !== undefined &&
@@ -558,6 +567,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.threadRootId !== undefined
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
+          ...(value.messageLink === true ? { messageLink: true } : {}),
           ...(value.context === "channel" ? { context: value.context } : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
           ...(value.forward !== undefined

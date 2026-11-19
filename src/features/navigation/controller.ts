@@ -62,6 +62,8 @@ export type NavigationOpenOptions = {
 export type OpenAttempt = Readonly<{
   id: string;
   entry: NavigationEntry;
+  /** Original address when this visit presents an admitted message in a page. */
+  address?: OpenTarget;
   signal: AbortSignal;
   focus?: NavigationFocus;
   sidebar?: "preserve";
@@ -105,6 +107,7 @@ export function createNavigationController(
     throw new Error("Invalid open timeout");
   type Operation = {
     attempt: OpenAttempt;
+    address: NavigationEntry;
     controller: AbortController;
     promise: Promise<OpenResult>;
     resolve: (result: OpenResult) => void;
@@ -284,6 +287,7 @@ export function createNavigationController(
     });
     const operation: Operation = {
       attempt,
+      address: state.current,
       controller,
       promise,
       resolve,
@@ -329,25 +333,30 @@ export function createNavigationController(
   // A dismissal's traversal may publish after open() returns; it keeps its focus.
   let returningFocus: NavigationFocus | undefined;
   let returningSidebar: "preserve" | undefined;
+  function presentResolved(entry: NavigationEntry) {
+    // Keep the deadline and caller. Rotate the token to revoke the old presenter.
+    const state = history.snapshot();
+    active.address = state.current;
+    const { address: _address, ...attempt } = active.attempt;
+    active.attempt = Object.freeze({
+      ...attempt,
+      entry,
+      ...(entry !== state.current && { address: state.current.target }),
+    });
+    snapshot = Object.freeze({
+      ...snapshot,
+      retainedVisits: state.retainedVisits,
+      entry,
+      attempt: active.attempt,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+    });
+    emit();
+  }
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
-        // Domain normalization keeps the caller, visit, signal and original deadline.
-        // Rotate the immutable attempt token so an old presentation cannot complete it.
-        const state = history.snapshot();
-        active.attempt = Object.freeze({
-          ...active.attempt,
-          entry: state.current,
-        });
-        snapshot = Object.freeze({
-          ...snapshot,
-          retainedVisits: state.retainedVisits,
-          entry: state.current,
-          attempt: active.attempt,
-          canGoBack: state.canGoBack,
-          canGoForward: state.canGoForward,
-        });
-        emit();
+        presentResolved(history.snapshot().current);
       } else {
         const state = history.snapshot();
         if (departure?.from === state.current.id) {
@@ -385,7 +394,7 @@ export function createNavigationController(
           }
           departure = undefined;
         }
-        if (state.current === active.attempt.entry) {
+        if (state.current === active.address) {
           snapshot = Object.freeze({
             ...snapshot,
             retainedVisits: state.retainedVisits,
@@ -427,6 +436,13 @@ export function createNavigationController(
         let target: OpenTarget;
         try {
           target = parseOpenTarget(input);
+          const address = active.attempt.address;
+          if (
+            address &&
+            target.join &&
+            targetKey(withoutJoin(target)) === targetKey(snapshot.entry.target)
+          )
+            target = parseOpenTarget({ ...address, join: target.join });
         } catch {
           return Promise.resolve<OpenResult>({
             status: "failed",
@@ -615,7 +631,7 @@ export function createNavigationController(
       };
     },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
-    resolve(attempt: OpenAttempt, input: OpenTarget) {
+    resolve(attempt: OpenAttempt, input: OpenTarget, keepAddress = false) {
       return transaction(() => {
         if (
           disposed ||
@@ -635,6 +651,11 @@ export function createNavigationController(
               : parsed;
           if (targetKey(target) === targetKey(snapshot.entry.target))
             return true;
+          if (keepAddress || attempt.address) {
+            // A message link must pass live access checks again on traversal.
+            presentResolved(Object.freeze({ id: attempt.entry.id, target }));
+            return true;
+          }
           resolving = active;
           history.resolve(target);
           return true;

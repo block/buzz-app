@@ -1069,6 +1069,42 @@ it("stops an exact view's overlapped window when the root is missing", async () 
   release();
 });
 
+it("publishes live root proof for an exact reply while the strict window is pending", async () => {
+  const row = reply(0);
+  let intercepted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    intercepted = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(async (filter) => {
+    if (filter.ids) return filter.ids.includes(row.id) ? [row] : [root];
+    if (!filter.thread_window) return [];
+    intercepted();
+    await held;
+    return [row, bounds(filter)];
+  });
+  const view = h.session.thread(channel, row.id, { exact: true });
+  const loading = view.refresh();
+  try {
+    await started;
+    await vi.waitFor(() =>
+      expect(view.snapshot()).toMatchObject({
+        status: "loading",
+        root: { id: root.id },
+        rootVerified: true,
+        target: { id: row.id },
+        targetStatus: "ready",
+      }),
+    );
+  } finally {
+    release();
+    await loading;
+  }
+});
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;

@@ -69,6 +69,7 @@ import {
 } from "./use-reading";
 import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
+import { useMessageLinkOffer } from "./use-message-link-offer";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -1300,6 +1301,21 @@ function Timeline({
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members"
   );
+  const linkMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  const verifiedRoot = useCallback(() => {
+    const current = queries.channels.window(channelId);
+    return current.status === "ready" &&
+      current.freshness === "verified" &&
+      current.rows.some(
+        (row) => row.id === linkMessage && !row.threadRootId && !row.delivery,
+      )
+      ? linkMessage
+      : undefined;
+  }, [queries, channelId, linkMessage]);
+  const offeringLink = useMessageLinkOffer(navigation, verifiedRoot);
   useMessageReveal({
     scroller,
     focus: focusesTarget && inlineTarget?.focus !== false,
@@ -1307,7 +1323,7 @@ function Timeline({
     settled,
     messageId: targetId,
     signal: targetSignal,
-    ready: !!size.width && !!size.height && targetIndex >= 0,
+    ready: !offeringLink && !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     placed: targetPlaced,
     complete: completeTarget,
@@ -1318,7 +1334,7 @@ function Timeline({
   // visit still presented only completes. A place whose row isn't loaded opens
   // as the link first did.
   useLayoutEffect(() => {
-    if (!navigation || navigation.signal.aborted) return;
+    if (!navigation || navigation.signal.aborted || offeringLink) return;
     if (presentedVisit.current?.entryId !== navigation.entryId)
       presentedVisit.current = undefined;
     const prior = presentedVisit.current;
@@ -1380,6 +1396,7 @@ function Timeline({
     activity,
     focusesTarget,
     present,
+    offeringLink,
   ]);
   // Leaving a link's visit once it was presented, revealed or returned to, by
   // navigating on or unmounting, records where the reader was for Back/Forward.

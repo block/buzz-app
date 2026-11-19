@@ -151,6 +151,25 @@ if (result?.status === "available") {
 
 Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
 
+### Route a message link to your page
+
+A versioned page route can define `route.resolveMessageLink(link, signal)`.
+Buzz offers an activated message link after it confirms live channel access and
+verifies the message and its thread root. `link` contains `scope`, `channelId`,
+`messageId`, and `threadRootId`. Both message IDs match for a top-level message.
+
+Return JSON params for your own page, or `undefined` to decline. Buzz keeps the
+link's scope and checks the params with `route.validate`. Active pages get offers
+in contribution-key order, with a shared budget of up to one second. Honor the
+`AbortSignal` when the visit, reader, session, or page registration changes, or
+when the budget ends. Your page still checks access to its own data.
+
+If no resolver supplies a valid route in time, Channels opens the message. The
+original link address and history visit stay the same. Back and Forward recheck
+access and resolve the link again. Settings resumes an ordinary Channels visit.
+If Settings covered a contributed page, Buzz rechecks the link and preserves the
+page's local state when the same page and route return.
+
 ## Speech providers
 
 The host owns speech to text end to end: the microphone, a WebRTC peer

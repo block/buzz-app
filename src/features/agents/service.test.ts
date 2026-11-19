@@ -558,7 +558,7 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     settingsProposal: { voice: true },
     protection: true,
     retire,
-    defaults: () => ({ config: {} }),
+    defaults: () => ({ config: { voice: "cove" } }),
     run: vi.fn(),
   });
   const target = {

@@ -849,7 +849,10 @@ export class PiRuntime {
       let instructed: string | undefined;
       let notes: readonly string[] | undefined;
       let acceptProject: (() => void) | undefined;
-      const turn = async (sections: SectionChoices | undefined) => {
+      const turn = async (
+        sections: SectionChoices | undefined,
+        canvas = solo,
+      ) => {
         const wakePrompt = wake
           ? ((await wakeText?.()) ?? wake.text)
           : undefined;
@@ -860,7 +863,7 @@ export class PiRuntime {
           key,
           topLevel,
           seen,
-          solo,
+          canvas,
           () => !interrupted && (!current || current()),
           sections,
         );
@@ -888,15 +891,19 @@ export class PiRuntime {
         prompt: async (steers = false) => {
           // Read once Pi is ready to submit, past any wait: a new run takes
           // the section choices current now, for its instructions and its
-          // Canvas alike, and a turn that steers a run keeps that run's.
+          // Canvas alike, and a turn that steers a run keeps that run's. A
+          // run that this app did not set up, such as one an earlier app
+          // started, has choices nothing here knows: its steer leaves the
+          // Canvas out rather than contradict the run's instructions.
+          const unknown = steers && !entry.located.has(key);
           const sections =
-            steers && entry.located.has(key)
+            steers && !unknown
               ? entry.located.get(key)
               : sectionsOf(entry.handle, key);
           const chosen = JSON.stringify(sections ?? null);
           const base =
-            refresh || turned?.sections !== chosen
-              ? await turn(sections)
+            refresh || unknown || turned?.sections !== chosen
+              ? await turn(sections, solo && !unknown)
               : turned.text;
           // Against what this attempt was set up with: a host that stopped
           // first is set up with it again.
@@ -915,7 +922,8 @@ export class PiRuntime {
                 ).instructions;
           // The final guard, once the turn is ready to hand over.
           if (refresh && (interrupted || (current && !current()))) return;
-          if (instructions !== undefined) instructed = instructions;
+          // What this attempt runs with: its own, else what it was set up with.
+          if (!steers) instructed = instructions;
           if (!steers) entry.located.set(key, sections);
           accepted?.();
           notes ??= agent.notes?.(channel, replyRoot) ?? [];

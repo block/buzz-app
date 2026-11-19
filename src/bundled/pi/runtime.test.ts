@@ -666,6 +666,48 @@ it("sets a new run up with the sections chosen once Pi is ready for it, and keep
   expect(steered.text).toContain("They are for reading.");
 });
 
+it("leaves the Canvas out of a steer into a run that this app did not set up", async () => {
+  const prompts: { text: string }[] = [];
+  const { deliver, settled, solo } = setup(
+    {
+      // Pi still runs what an earlier app started, so the turn steers it.
+      deliver: async (params, process) => {
+        prompts.push(
+          (
+            await process.tool(
+              { agent: self, request: params.request, steers: true },
+              "prompt",
+            )
+          ).result as { text: string },
+        );
+        return { submission: 1, conversation: CONVERSATION };
+      },
+      wait: () => ({ status: "done", answer: 1, text: "Done" }),
+    },
+    [],
+    {
+      content: workspaceCanvas({
+        folders: ["~/Development/app"],
+        worktree: { location: "~/Development/trees", baseBranch: "main" },
+        canvas: "Use the design system.",
+      }),
+    },
+  );
+  solo.add("solo-1");
+  const turn = deliver(
+    {
+      type: "mention",
+      event: message("2", "@Pi also this", { tags: [["h", "solo-1"]] }),
+    },
+    { channelId: "solo-1" },
+  );
+  await turn.run;
+  await settled(turn);
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]?.text).toContain("also this");
+  expect(prompts[0]?.text).not.toContain("Use the design system.");
+});
+
 it("sets a new run up again with the sections chosen once Pi is ready, when the host stops first", async () => {
   let hosts = 0;
   let managed = false;

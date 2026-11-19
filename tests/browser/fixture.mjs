@@ -2205,7 +2205,23 @@ export const test = base.extend({
         });
         return;
       }
-      expect(event.tags).toContainEqual(["t", "read-state"]);
+      // Thread follow choices sync through their own slots.
+      if (event.tags.some(([k, v]) => k === "t" && v === "thread-follows")) {
+        report.followPublications ??= [];
+        report.followPublications.push({ community, event });
+        // Stored beside read state: the same snapshot reads both back.
+        readEvents
+          .get(community)
+          .set(event.tags.find(([key]) => key === "d")?.[1], event);
+        return;
+      }
+      // Read positions, or the version-2 unread record: each prefix with its tag.
+      const namespace = event.tags
+        .find(([key]) => key === "d")?.[1]
+        ?.startsWith("read-state-unread-v2:")
+        ? "read-state-unread-v2"
+        : "read-state";
+      expect(event.tags).toContainEqual(["t", namespace]);
       const blob = JSON.parse(
         nip44.v2.decrypt(
           event.content,
@@ -2213,7 +2229,8 @@ export const test = base.extend({
         ),
       );
       const coordinate = event.tags.find(([key]) => key === "d")?.[1];
-      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
+      expect(coordinate).toMatch(/^read-state(-unread-v2)?:[0-9a-f]{32}$/);
+      expect(blob.v).toBe(namespace === "read-state" ? 1 : 2);
       const previous = readEvents.get(community).get(coordinate);
       if (
         !previous ||

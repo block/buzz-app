@@ -238,23 +238,51 @@ With it set:
   only for local harnesses: a hosted type such as Builderlab is chosen under
   Custom's Harness and keeps its own model choices.
 - The agent saves only `preset: "recommended"` in its config, with its own
-  model, provider and thinking level cleared. Its harness is never changed for
-  it.
+  model, provider and thinking level cleared.
+- Once per app launch, the copy of Buzz that runs the agent (the one holding
+  it, so two copies never both change it) finds the first candidate that is
+  ready here, checked as for a new agent, once any bundled plugin has given
+  that launch's setup. When that candidate's harness isn't
+  the agent's, up or down the list, the agent moves to it by the usual
+  harness change and stays on Automatic: its instructions and workspace carry
+  over, and its old sessions are retired, so new conversations start fresh on
+  the new harness. So if the harness an Automatic agent uses is signed out or
+  out of date on this computer, the agent moves to the next recommended
+  harness that is ready at the next launch. A check that times out or fails
+  never moves it. It moves at most once per launch, and only on definite
+  answers: when a check ahead of that candidate fails or takes longer than
+  8 seconds, or Codex or Claude Code can't tell (a check that failed other
+  than for not being installed or signed in, or a model list that came back
+  empty), no agent moves that launch (the app log says so once) and the next
+  launch asks again, so a slow start never moves an agent off a harness that
+  is fine. An agent switched to Automatic during a launch moves at the next
+  one. Turns left working when the app last quit keep it on its harness
+  until they are resumed or dismissed. It keeps its harness when nothing
+  recommended is ready here, when it was taken off Automatic during the
+  check, while it is answering (it tries again when the
+  turn ends), while its settings or type are still syncing or changing, when
+  it runs through a plugin execution target, when the new harness can't keep
+  its protection, or when the change would drop or reset a setting of its
+  own, such as a channel-wide session setting. Hosted agents never move. The
+  app log notes each move by harness name only.
 - At run time it uses the first candidate for its own harness whose model is
   still offered, checked the same way once per app launch. If none is, it runs
   on the harness's own default instead of failing, and it asks again at a run
   a minute or more later, so a harness set up or signed in since then is
   picked up. A later build's recommendation reaches it the same way.
 - The agent's **Identity** tab shows the same **AI setup** row. Automatic shows
-  what it runs on, or that it fell back to the harness default; it keeps the agent's harness even when another is
-  recommended first. **Custom** opens the Harness row and the harness's model
+  what it runs on, or that it fell back to the harness default, on its current
+  harness; it moves to the first ready recommended harness at the next
+  launch, as above. **Custom** opens the Harness row and the harness's model
   rows; changing the harness there is the usual harness change. Any model,
   provider or thinking change, on the agent's card or in Settings, takes it
   off Automatic.
 
 On a config channel, the mark syncs with the agent's settings: its
 `buzz.agent.settings` revision (kind 45010) carries `"preset": "recommended"`
-beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. Versions without
+beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. A bundled plugin's
+note on the agent (`pluginNotes`, see plugin-architecture.md) sits beside it
+too, and a tagged note adds a `["note", pluginId, tag]` tag. Versions without
 this feature ignore it there and keep it when they edit (NIP-AP "Editing"), so
 their strict settings check never rejects it. The synced revision decides on
 every device: one without the mark takes the agent off Recommended, and one
@@ -263,6 +291,16 @@ mark. Synced settings carry the agent's own model settings blank or not at all
 while it is on Recommended. Without a config channel, the mark is kept in the
 agent's local settings. Which harness an agent runs on is the `runtime` tag of
 its kind 30177 record.
+
+A bundled plugin, such as one in an organization's own build, can replace the
+setup for a launch with `ctx.agents.recommend(source)`,
+for example to choose candidates per person or team from the organization's
+own services; see [Plugin architecture](plugin-architecture.md). Its answer
+has this setting's object shape and is checked the same way. Buzz waits for it
+at most five seconds from start-up, and only before creating an agent or
+finding what one runs on. No answer, a failure, an invalid setup, or a late one
+keeps this setting's for that launch, so set `BUZZ_RECOMMENDED_AGENT` too, as
+the fallback.
 
 ## Mobile app links
 

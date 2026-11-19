@@ -1550,6 +1550,50 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   runtime.dispose();
 });
 
+it("refreshes core memory after a queued community wake acquires ownership", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  f.core.mockResolvedValue("OLD_CORE");
+  await f.deliver(
+    { type: "mention", event: message("1", "active") },
+    { config },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().find((p) => p.prompts.length)).toBeDefined(),
+  );
+  const first = f.claudes().find((p) => p.prompts.length);
+  if (!first) throw new Error("Missing active worker");
+  const read = vi.fn(async () => "OLD_CORE");
+  f.core.mockImplementation(read);
+  const wake = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "queued",
+    signal: new AbortController().signal,
+    prompt: async () => "queued wake",
+  } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+  try {
+    await flush(10);
+    f.core.mockResolvedValue("NEW_CORE");
+    first.finish();
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toContainEqual(
+        expect.stringContaining("queued wake"),
+      ),
+    );
+    const current = f
+      .claudes()
+      .find((p) => p.prompts.some((text) => text.includes("queued wake")));
+    if (!current) throw new Error("Missing queued wake worker");
+    expect(systemPromptOf(current)).toContain("NEW_CORE");
+    current.finish();
+    await wake;
+  } finally {
+    for (const p of f.claudes()) p.finish();
+    await wake;
+    f.runtime.dispose();
+  }
+});
+
 it("runs a timer on the core memory as it is then, after an ordinary turn read it", async () => {
   const root = message("2", "@Claude hi", {
     tags: [
@@ -1870,6 +1914,50 @@ it("resumes an idle session at a newly saved effort", async () => {
   expect(second?.options.args).toEqual(
     expect.arrayContaining(["--resume", "--effort", "low"]),
   );
+  runtime.dispose();
+});
+
+it("resumes an idle session at a newly saved compaction threshold", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: typeof root, compactAt?: string) => {
+    const config = { ...DEFAULT_CONFIG, ...(compactAt && { compactAt }) };
+    runtime.sync([{ key: self, pubkey: self, config } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  };
+  await run(root);
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.env).not.toHaveProperty(
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  );
+  await run(reply, "400000");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(second?.options.env).toMatchObject({
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "400000",
+  });
   runtime.dispose();
 });
 
@@ -4290,5 +4378,1545 @@ describe("a conversation given its own folder", () => {
     expect(fake.processes.some((process) => process.id === "workspace")).toBe(
       false,
     );
+    const shared = {
+      agent: self,
+      channelId: channel,
+      root: root.id,
+      community: true as const,
+    };
+    const signal = new AbortController().signal;
+    await runtime.transcript(shared, "~/.buzz", false, signal);
+    await runtime.latestTurns(shared, "~/.buzz", false, signal, []);
+    expect(
+      fake.processes.filter((process) => process.id === "workspace"),
+    ).toHaveLength(2);
   });
 });
+
+it.each([
+  ["mention", false],
+  ["mention", true],
+  ["attention", false],
+  ["plugin", false],
+] as const)(
+  "steers a community session across channels with %s (scope changed: %s)",
+  async (type, changed) => {
+    const f = setup([], {
+      hold: true,
+      solo: new Set([channel]),
+      canvas: { content: "SOURCE_CANVAS" },
+    });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const conversationInstructions = vi.fn((source: string, root?: string) =>
+      source === channel && !root
+        ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+        : undefined,
+    );
+    Object.assign(f.agent, { conversationInstructions });
+    const listed = f.session.channels.list();
+    const firstChannel = listed.channels[0];
+    if (!firstChannel) throw new Error("Expected the source channel");
+    vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+      ...listed,
+      status: "ready",
+      channels: [
+        ...listed.channels,
+        { ...firstChannel, id: "other", channelType: "stream" },
+      ],
+    }));
+
+    try {
+      await f.deliver(
+        { type: "mention", event: message("1", "first") },
+        { config },
+      );
+      await vi.waitFor(() =>
+        expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1),
+      );
+      const worker = f.claudes().find((p) => p.prompts.length);
+      if (!worker) throw new Error("No Claude process");
+      const second = message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      });
+      await f.deliver(
+        type === "mention"
+          ? { type, event: second }
+          : {
+              ...pluginWake(second.id),
+              ...(type === "attention" ? { type } : { type, plugin: "github" }),
+              channel: "other",
+              text: "second",
+            },
+        { config, channelId: "other" },
+      );
+      await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+      if (changed)
+        f.runtime.sync([
+          {
+            ...f.agent,
+            config: { ...config, scope: "thread" },
+          } as unknown as Agent,
+        ]);
+      const prompts = () => worker.prompts;
+      expect(prompts()[1]).toContain("Session scope: community");
+      expect(prompts()[1]).toContain("other");
+      expect(worker.prompts[0]).toContain("SOURCE_ONLY");
+      expect(worker.prompts[0]).toContain("SOURCE_CANVAS");
+      expect(prompts()[1]).toContain("Disregard any earlier workspace Canvas");
+      expect(prompts()[1]).toContain(
+        "Disregard any earlier <owner-instructions>",
+      );
+      expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
+      expect(prompts()[1]).toContain(
+        "new-message-arrived-while-you-were-working",
+      );
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.conversations(self)).toHaveLength(1),
+      );
+      expect(f.runtime.conversations(self)[0]).toMatchObject({
+        community: true,
+        channelId: "other",
+      });
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("withdraws the previous Solo folders when a community session moves to a channel", async () => {
+  const f = setup([], {
+    solo: new Set([channel]),
+    canvas: {
+      content: workspaceCanvas({
+        folders: ["~/old-project"],
+        canvas: "SOURCE_CANVAS",
+      }),
+    },
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  }));
+  await f.deliver(
+    { type: "mention", event: message("1", "first") },
+    { config },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+  );
+  const old = f.claudes().find((p) => p.prompts.length);
+  expect(old?.options.args).toContain("~/old-project");
+  await f.deliver(
+    {
+      type: "mention",
+      event: message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+    },
+    { config, channelId: "other" },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().filter((p) => p.prompts.length)).toHaveLength(2),
+  );
+  const current = f
+    .claudes()
+    .filter((p) => p.prompts.length)
+    .at(-1);
+  expect(current?.options.args).not.toContain("~/old-project");
+  expect(current?.prompts[0]).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+  f.runtime.dispose();
+});
+
+it("stops only the queued community request selected by the user", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+    f.agent.publish(...args),
+  );
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1),
+    );
+    await f.deliver(
+      { type: "mention", event: message("2", "queued") },
+      {
+        config,
+        agent: {
+          ...f.agent,
+          publish: queuedPublish,
+        } as unknown as Delivery["agent"],
+      },
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("No Claude process");
+    const before = worker.received.filter(
+      (i) =>
+        i.type === "control_request" &&
+        (i.request as { subtype?: string }).subtype === "interrupt",
+    ).length;
+    await f.interruptible.mock.calls[1]?.[0]();
+    expect(
+      worker.received.filter(
+        (i) =>
+          i.type === "control_request" &&
+          (i.request as { subtype?: string }).subtype === "interrupt",
+      ),
+    ).toHaveLength(before);
+    await mcp(worker, 201, "tools/call", {
+      name: "send",
+      arguments: { text: "active reply", audience: "everyone" },
+    });
+    expect(queuedPublish).not.toHaveBeenCalled();
+    expect(f.agent.publish).toHaveBeenCalled();
+    worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(worker.prompts).toHaveLength(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("does not offer a shared native title to a later Solo source", async () => {
+  const named = vi.fn();
+  const f = setup([], {
+    solo: new Set([channel]),
+    named,
+    title: "PRIVATE_SUBJECT",
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  try {
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("1", "private subject", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { channelId: "other", config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await f.deliver(
+      { type: "mention", event: message("2", "new Solo") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await flush();
+    expect(named).not.toHaveBeenCalled();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("keeps a background continuation on its source until native work drains", async () => {
+  const f = setup([], { hold: true, solo: new Set([channel]) });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  const states: string[] = [];
+  const watching = { ...f.agent, config } as unknown as Agent;
+  const place = { channelId: channel };
+  const off = f.runtime.subscribe(() =>
+    states.push(f.runtime.sessionState(watching, place)),
+  );
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "start background") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("no worker");
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ id: "background" }],
+    });
+    worker.finish();
+    await f.workingUntil.mock.calls[0]?.[0];
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("2", "other source", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { channelId: "other", config },
+    );
+    worker.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "background",
+    });
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "working",
+    });
+    await mcp(worker, 200, "tools/call", {
+      name: "send",
+      arguments: { text: "background result", audience: "everyone" },
+    });
+    expect(f.published.at(-1)?.tags).toContainEqual(["h", channel]);
+    expect(worker.prompts).toHaveLength(1);
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+    });
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+    worker.finish();
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+    });
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(watching, place)).toBe("idle"),
+    );
+    expect(states.at(-1)).toBe("idle");
+  } finally {
+    off();
+    f.runtime.dispose();
+  }
+});
+
+it("retains the Solo Canvas when a stopped source finishes preparation", async () => {
+  const f = setup([], {
+    solo: new Set([channel, "other"]),
+    canvas: { content: "RETAINED_CANVAS" },
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+
+  const listed = f.session.channels.list();
+  const firstChannel = listed.channels[0];
+  if (!firstChannel) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...firstChannel, id: "other", channelType: "solo" },
+    ],
+  });
+
+  let release!: () => void;
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    const started = vi.fn();
+    f.session.canvas.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          started();
+          release = () => resolve(undefined);
+        }),
+    );
+    const pending = f.deliver(
+      {
+        type: "mention",
+        event: message("2", "cancel", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await vi.waitFor(() => expect(started).toHaveBeenCalled());
+    await f.interruptible.mock.calls[1]?.[0]();
+    release();
+    await pending;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.deliver(
+      { type: "mention", event: message("3", "same Solo") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(
+      f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .at(-1),
+    ).toContain("RETAINED_CANVAS");
+  } finally {
+    release?.();
+    f.runtime.dispose();
+  }
+});
+
+it("kills community wake execution if its deadline interrupt is refused", async () => {
+  const f = setup([], { hold: true });
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: { ...DEFAULT_CONFIG, scope: "community" },
+      current: () => true,
+    },
+    key: "expired",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+  const settled = vi.fn();
+  const observed = done.then(settled, settled);
+  try {
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing Claude");
+    worker.interruptError = "cannot interrupt";
+    worker.exitOnKill = false;
+    abort.abort(new Error("deadline"));
+    await vi.waitFor(() => expect(worker.killed).toBe(true));
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    await f.deliver(
+      { type: "mention", event: message("2", "next") },
+      { config },
+    );
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(1);
+    expect(
+      f.runtime.sessionState({ ...f.agent, config } as unknown as Agent, {
+        channelId: channel,
+      }),
+    ).toBe("active");
+    worker.exit(0);
+    await observed;
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(2),
+    );
+  } finally {
+    for (const worker of f.claudes()) worker.exit(0);
+    await observed;
+    f.runtime.dispose();
+  }
+});
+
+it("keeps a community predecessor's reply destination after later admission fails", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("Missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  const failed: PromiseLike<unknown>[] = [];
+  try {
+    await f.deliver({ type: "mention", event: message("1", "Z") }, { config });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    await f.deliver({ type: "mention", event: message("2", "A") }, { config });
+    await f.deliver(
+      { type: "mention", event: message("3", "B") },
+      {
+        config,
+        prepareSession: async () => {
+          throw new Error("Admission refused");
+        },
+        workingUntil: (done) => {
+          failed.push(done);
+        },
+      },
+    );
+    await Promise.all(failed);
+    await flush(10);
+    worker.finish();
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("4", "C", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(3));
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: {
+        channel,
+        request: message("2", "A").id,
+        text: "A reply",
+        audience: "everyone",
+      },
+    });
+    expect(
+      f.published.find((event) => event.content === "A reply")?.tags,
+    ).toContainEqual(["h", channel]);
+    worker.finish();
+  } finally {
+    for (const worker of f.claudes()) worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.runtime.dispose();
+  }
+});
+
+it("keeps tool defaults with the running community turn when a follow-up from another channel is dropped", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("Missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let refreshing!: () => void;
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  let live = true;
+  try {
+    await f.deliver({ type: "mention", event: message("1", "Z") }, { config });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    await f.deliver(
+      { ...pluginWake("a".repeat(64)), channel: "other" },
+      { config, channelId: "other", wakeText, current: () => live },
+    );
+    // The wake is withdrawn while its prompt is built again for delivery.
+    await started;
+    live = false;
+    release();
+    await flush(10);
+    expect(worker.prompts).toHaveLength(1);
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: { text: "Still here", audience: "everyone" },
+    });
+    expect(
+      f.published.find((event) => event.content === "Still here")?.tags,
+    ).toContainEqual(["h", channel]);
+  } finally {
+    release();
+    for (const worker of f.claudes()) worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.runtime.dispose();
+  }
+});
+
+it.each(["thread", "community"] as const)(
+  "includes standalone wake instructions once in %s scope",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    Object.assign(f.agent, {
+      instructions: () => [
+        { plugin: "example", text: "ONE_PLUGIN_INSTRUCTION" },
+      ],
+    });
+    try {
+      await f.deliver(timer("daily", "ops"), {
+        config: { ...DEFAULT_CONFIG, scope },
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+      );
+      const text = f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .join("\n");
+      expect(text.split("ONE_PLUGIN_INSTRUCTION")).toHaveLength(2);
+      expect(text.split("Handle the work that caused this turn.")).toHaveLength(
+        2,
+      );
+      if (scope === "community")
+        expect(text).toContain("Disregard any earlier <owner-instructions>");
+    } finally {
+      for (const worker of f.claudes()) worker.finish();
+      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("does not start a deferred community request cancelled during execution inspection", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let inspected!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    inspected = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    worker.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    const compacted = f.runtime.session(
+      agent,
+      { channelId: channel },
+      "compact",
+    );
+    await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+    Object.assign(f.runtime, {
+      execution: async () => {
+        throw new Error("Unexpected remote execution");
+      },
+      inspect: vi
+        .fn(async () => undefined)
+        .mockImplementationOnce(async () => {
+          inspected();
+          await gate;
+          return undefined;
+        }),
+    });
+    await f.deliver(
+      { type: "mention", event: message("2", "CANCELLED_DURING_INSPECTION") },
+      { config },
+    );
+    worker.finish();
+    await compacted;
+    await entered;
+    await f.runtime.session(agent, { channelId: channel }, "interrupt");
+    release();
+    await flush(10);
+    for (const active of f.claudes()) active.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(worker.prompts).toHaveLength(2);
+  } finally {
+    release();
+    for (const worker of f.claudes()) worker.finish();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps addressed community admission ahead of a later wake during compaction", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let wake: Promise<unknown> | undefined;
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing worker");
+    worker.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    const compacted = f.runtime.session(
+      agent,
+      { channelId: channel },
+      "compact",
+    );
+    await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+    await f.deliver(
+      { type: "mention", event: message("2", "ADDRESSED_BEFORE_WAKE") },
+      { config },
+    );
+    vi.useFakeTimers();
+    wake = f.runtime
+      .runOnce({
+        delivery: {
+          agent: f.agent as unknown as Delivery["agent"],
+          config,
+          current: () => true,
+        },
+        key: "later-wake",
+        signal: new AbortController().signal,
+        prompt: async () => "WAKE_AFTER_ADDRESSED",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch((error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    worker.finish();
+    await compacted;
+    await vi.waitFor(() => expect(worker.prompts.length).toBe(3));
+    expect(worker.prompts[2]).toContain("ADDRESSED_BEFORE_WAKE");
+    worker.finish();
+    await vi.waitFor(() => expect(worker.prompts.length).toBe(4));
+    expect(worker.prompts[3]).toContain("WAKE_AFTER_ADDRESSED");
+    worker.finish();
+    await wake;
+  } finally {
+    vi.useRealTimers();
+    f.runtime.dispose();
+    await wake;
+  }
+});
+
+it.each(["reset", "admission", "source"])(
+  "orders remote community wakes across %s",
+  async (boundary) => {
+    const f = setup();
+    const config = { ...DEFAULT_CONFIG, scope: "community" };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    let release!: () => void;
+    let mark!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve;
+    });
+    const order: string[] = [];
+    const remote = {
+      run: vi.fn(async () => {
+        order.push("addressed");
+      }),
+      runOnce: vi.fn(async () => {
+        order.push("wake");
+        return { ok: true };
+      }),
+    };
+    if (boundary === "source") {
+      const reads = (
+        f.runtime as unknown as {
+          reads(key: string): ReturnType<typeof ownerReads>;
+        }
+      ).reads;
+      let held = false;
+      Object.assign(f.runtime, {
+        reads: (key: string) => {
+          const source = reads(key);
+          return (
+            source && {
+              ...source,
+              soloChat: async (...args: Parameters<typeof source.soloChat>) => {
+                if (!held) {
+                  held = true;
+                  mark();
+                  await gate;
+                }
+                return source.soloChat(...args);
+              },
+            }
+          );
+        },
+      });
+    }
+    const connection = vi.fn(async () => remote);
+    Object.assign(f.runtime, {
+      inspect: async () => ({}),
+      execution: async () => ({}),
+      connection,
+    });
+    let preceding: Promise<unknown> | undefined;
+    let wake: Promise<unknown> | undefined;
+    try {
+      preceding =
+        boundary === "reset"
+          ? f.runtime.session(
+              agent,
+              { channelId: channel },
+              "new",
+              async (change) => {
+                mark();
+                await gate;
+                await change();
+              },
+            )
+          : f.deliver(
+              { type: "mention", event: message("1", "earlier addressed") },
+              {
+                config,
+                prepareSession: async () => {
+                  mark();
+                  await gate;
+                },
+              },
+            );
+      await entered;
+      wake = f.runtime.runOnce({
+        delivery: { agent: f.agent, config, current: () => true },
+        key: "remote",
+        signal: new AbortController().signal,
+        prompt: async () => "wake",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      expect(connection).not.toHaveBeenCalled();
+      release();
+      await preceding;
+      await wake;
+      expect(order).toEqual(
+        boundary === "reset" ? ["wake"] : ["addressed", "wake"],
+      );
+    } finally {
+      vi.useRealTimers();
+      release();
+      await Promise.allSettled([preceding, wake]);
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("retains a deferred remote community handoff until admission finishes", async () => {
+  const f = setup();
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let releaseReset!: () => void,
+    resetEntered!: () => void,
+    releaseAdmission!: () => void,
+    admissionEntered!: () => void;
+  const resetGate = new Promise<void>((resolve) => {
+    releaseReset = resolve;
+  });
+  const resetting = new Promise<void>((resolve) => {
+    resetEntered = resolve;
+  });
+  const admissionGate = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  const preparing = new Promise<void>((resolve) => {
+    admissionEntered = resolve;
+  });
+  const order: string[] = [];
+  const remote = {
+    target: { signal: new AbortController().signal },
+    run: vi.fn(async () => {
+      order.push("addressed");
+    }),
+    runOnce: vi.fn(async () => {
+      order.push("wake");
+      return { ok: true };
+    }),
+  };
+  const connection = vi.fn(async () => remote);
+  Object.assign(f.runtime, {
+    inspect: async () => ({}),
+    execution: async () => ({}),
+    connection,
+  });
+  const reset = f.runtime.session(
+    agent,
+    { channelId: channel },
+    "new",
+    async (change) => {
+      resetEntered();
+      await resetGate;
+      await change();
+    },
+  );
+  let wake: Promise<unknown> | undefined;
+  try {
+    await resetting;
+    await f.deliver(
+      { type: "mention", event: message("1", "earlier") },
+      {
+        config,
+        prepareSession: async () => {
+          admissionEntered();
+          await admissionGate;
+        },
+      },
+    );
+    releaseReset();
+    await reset;
+    await preparing;
+    wake = f.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "later",
+      signal: new AbortController().signal,
+      prompt: async () => "later wake",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    expect(connection).not.toHaveBeenCalled();
+    releaseAdmission();
+    await wake;
+    expect(order).toEqual(["addressed", "wake"]);
+  } finally {
+    vi.useRealTimers();
+    releaseReset();
+    releaseAdmission();
+    await Promise.allSettled([reset, wake]);
+    f.runtime.dispose();
+  }
+});
+
+it("keeps deferred community admission in its captured session scope after settings change", async () => {
+  const f = setup();
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  let release!: () => void;
+  let mark!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    mark = resolve;
+  });
+  const runtime = f.runtime as unknown as {
+    key(...args: unknown[]): Promise<{ key: string }>;
+  };
+  const original = runtime.key;
+  const keys: string[] = [];
+  let held = false;
+  vi.spyOn(runtime, "key").mockImplementation(async (...args) => {
+    if (!held) {
+      held = true;
+      mark();
+      await gate;
+    }
+    const result = await original.apply(f.runtime, args);
+    keys.push(result.key);
+    return result;
+  });
+  const first = f.deliver(
+    { type: "mention", event: message("1", "FIRST_SCOPE") },
+    { config },
+  );
+  let second: ReturnType<typeof f.deliver> | undefined;
+  try {
+    await entered;
+    second = f.deliver(
+      { type: "mention", event: message("2", "DEFERRED_SCOPE") },
+      { config },
+    );
+    await second;
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    release();
+    await first;
+    await vi.waitFor(() => expect(keys.length).toBeGreaterThanOrEqual(2));
+    expect(keys.every((key) => key === "@community")).toBe(true);
+  } finally {
+    release();
+    f.runtime.dispose();
+    await Promise.allSettled([first, second]);
+  }
+});
+
+it.each(["community", "thread"] as const)(
+  "uses the admitted %s scope for a standalone wake despite newer settings",
+  async (scope) => {
+    const f = setup();
+    const config = { ...DEFAULT_CONFIG, scope };
+    const newer = {
+      ...DEFAULT_CONFIG,
+      scope: scope === "community" ? "thread" : "community",
+    };
+    (
+      f.runtime as unknown as {
+        entry(agent: unknown, config: unknown): unknown;
+      }
+    ).entry(f.agent, newer);
+    try {
+      await expect(
+        f.runtime.runOnce({
+          delivery: { agent: f.agent, config, current: () => true },
+          key: "captured-scope",
+          signal: new AbortController().signal,
+          prompt: async () => "CAPTURED_STANDALONE_SCOPE",
+        } as unknown as Parameters<typeof f.runtime.runOnce>[0]),
+      ).resolves.toMatchObject({ ok: true });
+      const text = f
+        .claudes()
+        .flatMap((process) => process.prompts)
+        .join("\n");
+      expect(text.includes("Session scope: community")).toBe(
+        scope === "community",
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["mention", "attention", "thread", "channel"] as const)(
+  "keeps active community ownership and unsuccessful queued %s completion after scope sync and Stop",
+  async (kind) => {
+    const f = setup([], { hold: true });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
+    );
+    const agent = {
+      ...f.agent,
+      publish: queuedPublish,
+    } as unknown as Delivery["agent"];
+    const held: PromiseLike<unknown>[] = [];
+    const workingUntil: Delivery["workingUntil"] = (done) => held.push(done);
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await f.deliver(
+      { type: "mention", event: message("1", "held first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(
+        f.claudes().find((process) => process.prompts.length),
+      ).toBeDefined(),
+    );
+    const worker = f.claudes().find((process) => process.prompts.length);
+    if (!worker) throw new Error("Missing active native worker");
+    try {
+      f.runtime.sync([
+        {
+          ...f.agent,
+          config: {
+            ...config,
+            scope: kind === "channel" ? "channel" : "thread",
+          },
+        } as unknown as Agent,
+      ]);
+      await f.deliver(
+        kind !== "attention"
+          ? { type: "mention", event: message("2", "queued second") }
+          : {
+              type: "attention",
+              channel,
+              root: message("2", "").id,
+              id: "f".repeat(64),
+              at: 200_000,
+              text: "queued second",
+            },
+        {
+          config:
+            kind === "thread" || kind === "channel"
+              ? { ...config, scope: kind }
+              : config,
+          agent,
+          interruptible,
+          workingUntil,
+        },
+      );
+      await interruptible.mock.calls[0]?.[0]();
+      await mcp(worker, 1, "tools/call", {
+        name: "send",
+        arguments: { text: "active owner reply", audience: "everyone" },
+      });
+      expect(queuedPublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.finish();
+      const results = await Promise.all(held);
+      if (kind === "mention" || kind === "attention")
+        expect(results).toContainEqual(expect.objectContaining({ ok: false }));
+      expect(worker.prompts).toHaveLength(1);
+    } finally {
+      worker?.finish();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["thread", "channel"] as const)(
+  "preserves active community publication ownership when a promptless %s wake starts",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    await f.deliver(
+      { type: "mention", event: message("1", "active community") },
+      { config: { ...DEFAULT_CONFIG, scope: "community" } },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().find((worker) => worker.prompts.length)).toBeDefined(),
+    );
+    const worker = f.claudes().find((worker) => worker.prompts.length);
+    if (!worker) throw new Error("Missing active native worker");
+    try {
+      let reached!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const runtime = f.runtime as unknown as {
+        entry(...args: unknown[]): unknown;
+      };
+      const original = runtime.entry.bind(runtime);
+      vi.spyOn(runtime, "entry").mockImplementation((...args) => {
+        const entry = original(...args);
+        reached();
+        return entry;
+      });
+      const prompt = vi.fn(async () => undefined);
+      const wakePublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+        f.agent.publish(...args),
+      );
+      const wake = f.runtime.runOnce({
+        delivery: {
+          agent: { ...f.agent, publish: wakePublish },
+          config: { ...DEFAULT_CONFIG, scope },
+          current: () => true,
+        },
+        key: "independent-wake",
+        signal: new AbortController().signal,
+        prompt,
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      await entered;
+      await mcp(worker, 1, "tools/call", {
+        name: "send",
+        arguments: { text: "active reply", audience: "everyone" },
+      });
+      expect(wakePublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.finish();
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      expect(prompt).toHaveBeenCalledOnce();
+    } finally {
+      worker.finish();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["thread", "channel"] as const)(
+  "drains an active %s standalone wake before community ownership changes",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const wake = f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope },
+        current: () => true,
+      },
+      key: "old-scope-wake",
+      signal: new AbortController().signal,
+      prompt: async () => "held standalone wake",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    await vi.waitFor(() =>
+      expect(
+        f.claudes().find((process) => process.prompts.length),
+      ).toBeDefined(),
+    );
+    const worker = f.claudes().find((process) => process.prompts.length);
+    if (!worker) throw new Error("Missing standalone native worker");
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
+    );
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    try {
+      f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+      await f.deliver(
+        { type: "mention", event: message("2", "community second") },
+        {
+          config,
+          agent: {
+            ...f.agent,
+            publish: queuedPublish,
+          } as unknown as Delivery["agent"],
+        },
+      );
+      // Finish the fake protocol's queued microtasks before the late tool call.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await mcp(worker, 1, "tools/call", {
+        name: "send",
+        arguments: {
+          text: "standalone owner output",
+          channel,
+          audience: "everyone",
+        },
+      });
+      expect(queuedPublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.finish();
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      await vi.waitFor(() =>
+        expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(
+          2,
+        ),
+      );
+    } finally {
+      for (const process of f.claudes()) process.finish();
+      f.runtime.dispose();
+      await wake.catch(() => {});
+    }
+  },
+);
+
+it.each(["unpublished", "published", "failed", "delegated"])(
+  "drains an expired %s community wake before its successor",
+  async (publication) => {
+    const f = setup([], { hold: true });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const abort = new AbortController();
+    const outer = publication === "delegated" ? setup() : f;
+    if (outer !== f)
+      Object.assign(outer.runtime, {
+        inspect: async () => ({}),
+        connection: async () => f.runtime,
+      });
+    const done = outer.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "expired",
+      signal: abort.signal,
+      prompt: async () => "check",
+    } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+    try {
+      await vi.waitFor(() =>
+        expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+      );
+      const worker = f.claudes().find((p) => p.prompts.length);
+      if (!worker) throw new Error("missing worker");
+      if (publication !== "unpublished") {
+        if (publication === "failed")
+          f.agent.publish.mockRejectedValueOnce(new Error("offline"));
+        const result = await mcp(worker, 91, "tools/call", {
+          name: "send",
+          arguments: {
+            channel,
+            text: "DONE",
+            audience: "everyone",
+            final: true,
+          },
+        });
+        expect(result).toMatchObject(
+          publication === "failed"
+            ? { isError: true }
+            : { content: expect.any(Array) },
+        );
+      }
+      const emit = worker.emit.bind(worker);
+      let interrupt: unknown;
+      const held = vi.spyOn(worker, "emit").mockImplementation((message) => {
+        const response = message.response as
+          | { request_id?: unknown }
+          | undefined;
+        const request = worker.received.find(
+          (row) => row.request_id === response?.request_id,
+        );
+        if (
+          message.type === "control_response" &&
+          (request?.request as { subtype?: string })?.subtype === "interrupt"
+        ) {
+          interrupt = response?.request_id;
+          return;
+        }
+        emit(message);
+      });
+      abort.abort(new Error("deadline"));
+      await vi.waitFor(() => expect(interrupt).toBeDefined());
+      worker.finish();
+      await f.deliver(
+        { type: "mention", event: message("2", "next") },
+        { config },
+      );
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(worker.prompts).toHaveLength(1);
+      held.mockRestore();
+      emit({
+        type: "control_response",
+        response: {
+          subtype: "error",
+          request_id: interrupt,
+          error: "too late",
+        },
+      });
+      await expect(done).resolves.toMatchObject({
+        ok: publication === "published" || publication === "delegated",
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
+      );
+      const next = f.claudes().find((p) => p !== worker && p.prompts.length);
+      expect(next).toBeDefined();
+      expect(next?.killed).toBe(false);
+      next?.finish();
+      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    } finally {
+      for (const worker of f.claudes()) worker.exit(0);
+      await done;
+      outer.runtime.dispose();
+      if (outer !== f) f.runtime.dispose();
+    }
+  },
+);
+
+it("retains the Solo Canvas after a community turn fails effort admission", async () => {
+  const f = setup([], {
+    solo: new Set([channel]),
+    canvas: { content: "RETAINED_CANVAS" },
+  });
+  const config = {
+    ...DEFAULT_CONFIG,
+    scope: "community" as const,
+    model: "haiku",
+  };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  const deliver = (id: string, extra = {}) =>
+    f.deliver(
+      { type: "mention", event: message(id, "work") },
+      { config, ...extra },
+    );
+  try {
+    await deliver("1");
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await deliver("2", { channelId: "other", synced: { effort: "medium" } });
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1);
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await deliver("3");
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(
+      f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .at(-1),
+    ).toContain("RETAINED_CANVAS");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("reaps an unresponsive Claude community wake after its deadline", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "stalled",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing Claude");
+    const emit = worker.emit.bind(worker);
+    vi.spyOn(worker, "emit").mockImplementation((message) => {
+      const response = message.response as { request_id?: unknown } | undefined;
+      const request = worker.received.find(
+        (row) => row.request_id === response?.request_id,
+      );
+      if (
+        message.type === "control_response" &&
+        (request?.request as { subtype?: string })?.subtype === "interrupt"
+      )
+        return;
+      emit(message);
+    });
+    worker.exitOnKill = false;
+    vi.useFakeTimers();
+    abort.abort(new Error("deadline"));
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(worker.killed).toBe(true);
+    await f.deliver(
+      { type: "mention", event: message("2", "next") },
+      { config },
+    );
+    expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1);
+    worker.exit(0);
+    vi.useRealTimers();
+    await done;
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
+    );
+  } finally {
+    vi.useRealTimers();
+    for (const p of f.claudes()) p.exit(0);
+    await done.catch(() => {});
+    f.runtime.dispose();
+  }
+});
+
+it.each(["thread", "channel", "community"] as const)(
+  "keeps queued Claude work separate from compaction cancellation (%s)",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver({ type: "mention", event: root }, { config });
+      await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+      const worker = f.claudes()[0];
+      if (!worker) throw new Error("Expected harness process");
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+      const reply = message("2", "queued after cancelled compaction", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: reply },
+        { config, workingUntil: (done) => held.push(done) },
+      );
+      await f.runtime.session(agent, place, "interrupt");
+      worker.finish();
+      await compacted;
+      await vi.waitFor(() =>
+        expect(worker.prompts[2]).toContain(
+          "queued after cancelled compaction",
+        ),
+      );
+      worker.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["thread", "channel"] as const)(
+  "stops only queued Claude work while compaction owns the harness (%s)",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    try {
+      await f.deliver({ type: "mention", event: root }, { config });
+      await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+      const worker = f.claudes()[0];
+      if (!worker) throw new Error("Expected harness process");
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+      const reply = message("2", "stopped queued input", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: reply },
+        { config, interruptible, workingUntil: (done) => held.push(done) },
+      );
+      await vi.waitFor(() => expect(interruptible).toHaveBeenCalledOnce());
+      await interruptible.mock.calls[0]?.[0]();
+      expect(
+        worker.received.filter(
+          (item) =>
+            item.type === "control_request" &&
+            (item.request as { subtype?: string }).subtype === "interrupt",
+        ),
+      ).toHaveLength(0);
+      worker.finish();
+      expect(await compacted).toBeUndefined();
+      await Promise.all(held);
+      expect(worker.prompts).toHaveLength(2);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

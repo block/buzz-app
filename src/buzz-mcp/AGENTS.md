@@ -25,8 +25,9 @@ deliberately.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base
-  prompt, `src/features/agent-harness/base_prompt.md`. A turn a mention or DM
-  starts also gets `mention_prompt.md` beside it. All of them name tools.
+  prompt, whose sections are in `src/features/agent-harness/sections/`. A turn
+  a mention or DM starts also gets
+  `src/features/agent-harness/mention_prompt.md`. All of them name tools.
 
 ## Interface
 

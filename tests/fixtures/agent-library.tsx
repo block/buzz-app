@@ -222,7 +222,9 @@ if (thinkingHarness === "claude") {
     data: {
       models: [model],
       defaultVoice: "cove",
-      voices: ["cove", "maple", "vale", "porto"],
+      ...(!new URLSearchParams(location.search).has("voicesUnavailable") && {
+        voices: ["cove", "maple", "vale", "porto"],
+      }),
       previews: Object.fromEntries(
         ["cove", "maple", "vale"].map((voice) => [
           voice,
@@ -239,7 +241,13 @@ if (thinkingHarness === "claude") {
     defaults: { model: "", effort: "" },
   };
   const provider = {
-    ...staticStore(providerState),
+    ...staticStore({
+      ...providerState,
+      ...(new URLSearchParams(location.search).has("modelsUnavailable") && {
+        data: undefined,
+        error: "Codex models could not be checked.",
+      }),
+    }),
     check: async () => {},
     recommended: () => null,
     resolve: (value: unknown) => ({
@@ -262,6 +270,7 @@ if (thinkingHarness === "claude") {
     key: "fixture/codex",
     id: "codex",
     title: "Codex",
+    settingsProposal: { voice: true, apps: true, compactAt: true },
     defaults: () => ({ config: { ...codexDefaults } }),
     tabs: [
       {
@@ -274,6 +283,19 @@ if (thinkingHarness === "claude") {
     ],
     CreateModel: tabs.CreateModel,
     CreateThinking: tabs.CreateThinking,
+    ...(settingsSync
+      ? {
+          tabs: [
+            {
+              id: "settings",
+              title: "Settings",
+              role: "settings" as const,
+              splitSettings: true,
+              component: tabs.SettingsTab,
+            },
+          ],
+        }
+      : {}),
   };
 }
 let snapshot = {
@@ -369,6 +391,9 @@ if (harness === "hosted") {
     type: hosted.key,
   }));
 }
+const proposingSettings = new URLSearchParams(location.search).has(
+  "proposeSettings",
+);
 const reviewing = new URLSearchParams(location.search).has("review");
 const changing = new URLSearchParams(location.search).has("change");
 const types = thinkingTypes[thinkingHarness ?? ""]
@@ -383,7 +408,13 @@ const types = thinkingTypes[thinkingHarness ?? ""]
       : changing
         ? [type, other]
         : [type];
-if (changing) snapshot.running = snapshot.agents;
+if (changing || proposingSettings) {
+  snapshot.agents = snapshot.agents.map((agent) => ({
+    ...agent,
+    relay: "wss://relay.example",
+  }));
+  snapshot.running = snapshot.agents;
+}
 let updates: readonly AgentUpdateRequest[] = changing
   ? [
       {
@@ -430,6 +461,26 @@ const dismissUpdate = () => {
 Object.assign(window, {
   creationReviewResult: () => reviewed,
   updateReviewResult: () => changed,
+  proposeFixtureSettings: (settings: AgentUpdateRequest["settings"]) => {
+    const agent = snapshot.agents[0];
+    if (!proposingSettings || !agent || !settings)
+      throw new Error("Missing settings proposal fixture");
+    updates = [
+      {
+        id: crypto.randomUUID(),
+        requester: agent.pubkey,
+        requesterName: agent.name,
+        owner: agent.owner,
+        community: "https://relay.example",
+        agent: agent.pubkey,
+        agentName: agent.name,
+        agentType: agent.type,
+        settings,
+        instructions: "Review the change.",
+      },
+    ];
+    for (const listener of listeners) listener();
+  },
 });
 const agents = {
   snapshot: () => snapshot,
@@ -450,6 +501,8 @@ const agents = {
   dismissUpdate,
   approveUpdate: async (_id: string, input: NewAgent) => {
     changed.push(input);
+    if (proposingSettings && snapshot.agents[0])
+      await agents.save(snapshot.agents[0].key, { config: input.config });
     dismissUpdate();
   },
   previewRetype: () => ({
@@ -508,6 +561,7 @@ const agents = {
         ? { ...agent, config: change.config ?? agent.config }
         : agent,
     );
+    if (proposingSettings) snapshot.running = snapshot.agents;
     if (settingsSync) {
       snapshot = { ...snapshot };
       localStorage.setItem(
@@ -600,6 +654,6 @@ createRoot(root).render(
       <AgentsPage agents={agents} relay={relay} />
     )}
     {reviewing && <CreationReview agents={agents} />}
-    {changing && <UpdateReview agents={agents} />}
+    {(changing || proposingSettings) && <UpdateReview agents={agents} />}
   </div>,
 );

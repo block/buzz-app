@@ -2248,15 +2248,18 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 ### Conversation identity icons (proposed)
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
-conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `ThreadIcon` (Tabler Message2) for thread tabs, thread links and Reply actions.
-Its text lines identify a conversation without the forward-like arrow in MessageReply.
+conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in
+navigation, headers, tabs and inline chat links.
+Use `ThreadIcon` (Tabler Message2) for message links, thread links, thread tabs,
+and Reply actions. The text lines identify links to messages and threads.
 Keep private Team channels' lock icon; privacy alone does not
-replace a Solo chat's identity icon. Accessible chat cards end with a right
-chevron. Unavailable chat cards retain a lock and unavailable accessible text;
-unknown access does not earn a chevron. Display chat cards as **Chat:**, while
-accepting legacy **Session:** and **Session ·** authored links without rewriting
-historical messages or their receipts.
+replace a Solo chat’s identity icon. A withheld link uses the lock.
+
+Chat links use the ordinary inline link treatment in the composer and messages;
+keep their authored position and label. New shares use the chat title as the label.
+Legacy **Chat:**, **Session:** and **Session ·** labels remain authored text without
+rewriting historical messages or their receipts. Rich previews use the existing
+link/preview contribution boundaries rather than chat-specific attachment chrome.
 
 
 ### Mobile-aligned onboarding

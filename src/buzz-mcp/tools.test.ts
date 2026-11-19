@@ -5273,3 +5273,51 @@ it("preserves ordinary attachment sends when snapshot hashing is unavailable", a
     hash.mockRestore();
   }
 });
+
+it("passes only explicit runtime settings through the owner review tool", async () => {
+  const { client } = fake([]);
+  client.updateAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  const settings = {
+    model: "",
+    effort: "high",
+    scope: "community",
+    voice: "maple",
+    apps: false,
+    workspace: "~/example",
+    compactAt: "150000",
+  };
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: "Self",
+      ...settings,
+      model: "  ",
+      effort: " high ",
+      voice: " maple ",
+    }),
+  ).resolves.toBe('{"requestId":"draft","saved":false}');
+  expect(client.updateAgent).toHaveBeenCalledWith({ agent: "Self", settings });
+  for (const invalid of [
+    { scope: "all" },
+    { apps: "false" },
+    { model: null },
+    { compactAt: "99000" },
+    { compactAt: "150500" },
+    { compactAt: 150000 },
+    { config: {} },
+  ])
+    await expect(
+      callTool(client, {}, "agent_update", {
+        agent: "Self",
+        ...invalid,
+      }),
+    ).rejects.toThrow();
+  expect(client.updateAgent).toHaveBeenCalledTimes(1);
+  await callTool(client, {}, "agent_update", { agent: "Self", compactAt: "" });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Self",
+    settings: { compactAt: "" },
+  });
+});

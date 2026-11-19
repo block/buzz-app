@@ -69,8 +69,9 @@ export function appClient(
   const threadsApart = agent.threadsApart;
   const plugins = agent.plugins;
   const { settings, soloWorkspaces } = agent;
+  const signal = options.callSignal ?? options.signal;
   const client: BuzzClient = {
-    ...(options.callSignal ? { signal: options.callSignal } : {}),
+    ...(signal ? { signal } : {}),
     ...(agent.protection
       ? {
           protect: async (

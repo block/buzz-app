@@ -34,6 +34,7 @@ import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadActio
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
+import { AppOverlays } from "../features/pages/AppOverlays";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useCallback,
@@ -833,6 +834,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
           <TeamUpdateReview agents={services.agents} />
+          <AppOverlays pages={services.pages} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&

@@ -925,6 +925,10 @@ function activity(
     },
     sessions: () => live,
     conversations: () => world.saved,
+    source: (_agent: string, key: string) => {
+      const [channelId = key, root] = key.split("/");
+      return { channelId, ...(root ? { root } : {}) };
+    },
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
     prompts: () => ({
@@ -2020,4 +2024,86 @@ describe("Recommended", () => {
       screen.getByRole("combobox", { name: "Provider" }),
     ).toBeInTheDocument();
   });
+});
+
+it("keeps an old community transcript out of ordinary Activity selection", async () => {
+  const fake = gooseHistory();
+  activity(
+    fake,
+    {
+      saved: [
+        { key: "@community", at: 2, sessions: ["community"] },
+        { key: "chan", at: 1, sessions: ["s1"] },
+      ],
+      runtime: {
+        source: (_agent: string, key: string) =>
+          key === "@community"
+            ? { channelId: "chan", community: true }
+            : { channelId: key },
+      },
+    },
+    undefined,
+    {
+      conversation: { channelId: "chan", rootId: ROOT },
+      initialTranscript: { opening: 1, done: vi.fn() },
+    },
+  );
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
+});
+
+it("blocks an unsupported proposal effort and lets the owner clear it", async () => {
+  const model = "claude-opus-5-5";
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(
+      fakeSpawn({
+        providers: PROVIDERS,
+        defaults: { providerId: "anthropic", modelId: model },
+        saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+        thinking: {
+          [model]: { current: "medium", levels: ["low", "medium", "high"] },
+        },
+      }),
+    ),
+    ...unused,
+  });
+  const save = vi.fn(async () => {});
+  const user = userEvent.setup();
+  render(
+    <SettingsTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: {
+            ...DEFAULT_CONFIG,
+            provider: "anthropic",
+            model,
+            effort: "max",
+          },
+        } as Agent<Config>
+      }
+      save={save}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  const submit = screen.getByRole("button", { name: "Save" });
+  await user.click(submit);
+  expect(
+    await screen.findByText(
+      /Choose a thinking level this Goose model supports/,
+    ),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Clear model and thinking overrides" }),
+  );
+  await user.click(submit);
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ model: "", effort: "" }),
+  );
 });

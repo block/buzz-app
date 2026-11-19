@@ -40,8 +40,10 @@ native agent session before execution. The argument type is
 The host verifies the request and selects the native conversation first.
 The hook receives both the source message's channel/thread and that native
 conversation. It cannot change session scope, reply placement or access.
-Solo keeps each agent's existing channel conversation. Thread-scoped agents
-keep their existing thread conversations.
+Community-scoped agents use one logical lifetime across their conversations,
+including DMs, Solo chats and huddles. The admission's `conversation.community`
+identifies it; `source` still names the current request. Other scopes retain
+Solo and DM channel conversations and their existing thread/channel selection.
 
 `ready()` opens only the plugin's local keyed storage. It must not wait for
 relay publication or sidebar loading. `matches()` selects the sources the
@@ -136,11 +138,11 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
-key from `agent_types`, new instructions or a new picture. An agent may propose
-changes to itself. Absent fields stay as they are. The
-owner reviews them in the New agent form, titled Edit and filled in with the
-agent's settings and the proposed changes, with the usual type-change preview;
-saving applies what the owner reviewed, and closing the review discards the
+key from `agent_types`, new instructions, or a new picture. On supported
+local harnesses the draft can also include model, thinking effort, session scope,
+workspace, and the Auto-compact threshold. Use a token count string such as `"150000"` for `compactAt`, or `""` to restore the harness default. Codex additionally accepts Huddle voice and its apps
+and plugins preference. For a Codex agent using an execution adapter, the target runtime checks the model and thinking overrides when it starts a turn. Its Huddle voice proposal can select the target’s default. For other harnesses, agents using an execution adapter cannot receive model or thinking proposals. The Edit dialog compares the saved and proposed runtime settings above the editable controls, with a separate preview for a harness change. Absent fields stay as
+they are. Settings that all match the saved values are omitted when queuing a draft. A settings-only proposal with matching values returns a message to the requester and skips owner review. Save applies the reviewed values. Closing the dialog discards the
 request. A type change carries what the new type adopts, as a manual one does. A proposed picture
 is a local PNG, JPEG, GIF or WebP file that the tool uploads to the community as
 the requesting agent once the request is valid, stripped of metadata as the
@@ -2060,13 +2062,21 @@ Source output accepts the same optional classifier questions as event watches. C
 
 The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Attention plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
+### Event watch read failures
+
+Plugins with the `agents` capability can read `ctx.agents.snapshot().watchReadFailures` and use `ctx.agents.subscribe` to observe changes. The read-only array covers the viewer's running agents on this device. Older hosts omit the field. An empty array means the host currently reports no event-watch history failures.
+
+Each row identifies the membership (`agentKey`), watch (`watchSlug`), and history source (`channelId`, or `null` for an all-channels stream). `summary` contains host-authored text. `consecutiveFailures` counts failed catch-up reads since the stream last recovered or reset. `failedAt` and `retryAt` are Unix milliseconds. The runner tries again no earlier than `retryAt`, when connected and able to read on its existing tick.
+
+The runner keeps the failure and its deadline across relay reconnects. The row clears on a successful read, an edit or removal of the watch, or when the watch or its Interest stops running. Failure status and backoff are runtime-only and start empty after app restart. Saved watch definitions and catch-up checkpoints keep their existing storage.
+
 ## Attention delivery destinations
 
 Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen: channels the agent is a member of, and public channels it has not joined (`all` hears those through catch-up, about every 30 seconds). A delivery address needs membership; the relay decides where the agent may post. Watches do not change who a mention wakes: a channel the owner's app hears only because a watch names it gives no mention turn, though the watch still hears its events. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
 
 Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
 
-Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
+When an agent creates or enables a watch, adds listening channels or changes its delivery channel, it needs confirmed access under the same policy used for event delivery. Removing or reordering an explicit listening list checks no unchanged channels; changing from all channels to an explicit list checks the full list. Other edits on active watches and timer rearms remain available if an unchanged channel later becomes unreachable or unconfirmed. An agent's write to an enabled completed source restarts it and requires confirmed destination membership. Disabled watches remain editable and removable. Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
 
 Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
 

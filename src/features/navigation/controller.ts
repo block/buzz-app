@@ -113,6 +113,7 @@ export function createNavigationController(
     resolve: (result: OpenResult) => void;
     pending: boolean;
     timer?: ReturnType<typeof setTimeout> | undefined;
+    deadline?: number | undefined;
     /** Cancels a failed visit's reopen after sign-in. */
     reauthorizing?: () => void;
     /** Timed out on the shown page, which stayed: it may still answer. */
@@ -181,6 +182,7 @@ export function createNavigationController(
   }
   function arm(operation: Operation) {
     if (!presenters || !operation.pending || operation.timer) return;
+    operation.deadline = performance.now() + timeoutMs;
     operation.timer = setTimeout(
       () =>
         transaction(() => {
@@ -628,7 +630,13 @@ export function createNavigationController(
         if (presenters) return;
         clearTimeout(active.timer);
         active.timer = undefined;
+        active.deadline = undefined;
       };
+    },
+    remaining(attempt: OpenAttempt) {
+      return active.pending && active.attempt === attempt && active.deadline
+        ? Math.max(0, active.deadline - performance.now())
+        : 0;
     },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
     resolve(attempt: OpenAttempt, input: OpenTarget, keepAddress = false) {

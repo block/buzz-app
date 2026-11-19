@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { messageLinkOffer, type PageNavigation } from "../navigation/service";
 
 /** Hold the ordinary reveal only while the admitted link has an offer pending. */
@@ -9,14 +9,18 @@ export function useMessageLinkOffer(
 ) {
   const offer = messageLinkOffer(navigation);
   const [settled, setSettled] = useState<typeof offer>();
-  const root = offer && verifiedRoot();
-  const awaitingRoot = !root && checking;
-  useEffect(() => {
+  const hasTime = !!offer?.remaining();
+  const root = hasTime ? verifiedRoot() : undefined;
+  const awaitingRoot = hasTime && !root && checking;
+  useLayoutEffect(() => {
     if (!offer || settled === offer) return;
     if (!root) {
       if (!awaitingRoot) return;
       // A reply can be ready independently of its root on older relays.
-      const timeout = setTimeout(() => setSettled(() => offer), 250);
+      const timeout = setTimeout(
+        () => setSettled(() => offer),
+        Math.min(250, offer.remaining()),
+      );
       return () => clearTimeout(timeout);
     }
     const request = new AbortController();
@@ -25,7 +29,7 @@ export function useMessageLinkOffer(
     void Promise.resolve().then(async () => {
       if (request.signal.aborted) return;
       try {
-        await offer(root, () => verifiedRoot() === root, request.signal);
+        await offer.run(root, () => verifiedRoot() === root, request.signal);
       } finally {
         if (!request.signal.aborted) setSettled(() => offer);
       }

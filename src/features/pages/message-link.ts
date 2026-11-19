@@ -9,13 +9,19 @@ export async function offerMessageLink(
   threadRootId: string,
   live: () => boolean,
   signal: AbortSignal,
+  remaining: number,
   resolve: (target: OpenTarget) => boolean,
 ) {
   const { channelId, messageId, scope } = target;
   if (!messageId) return;
   const link = Object.freeze({ channelId, messageId, scope, threadRootId });
   // A provider that does not answer must leave time for ordinary presentation.
-  const budget = AbortSignal.any([signal, AbortSignal.timeout(1000)]);
+  const duration = Math.min(remaining, 1000);
+  const deadline = performance.now() + duration;
+  const budget = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(Math.floor(duration)),
+  ]);
   const candidates = [...pages.snapshot()].sort((a, b) =>
     a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
   );
@@ -23,7 +29,7 @@ export async function offerMessageLink(
     const route = page.route;
     if (!route?.resolveMessageLink || !pages.snapshot().includes(page))
       continue;
-    if (budget.aborted || !live()) return;
+    if (budget.aborted || performance.now() >= deadline || !live()) return;
     const removed = new AbortController();
     const stop = pages.subscribe(() => {
       if (!pages.snapshot().includes(page)) removed.abort();
@@ -31,6 +37,7 @@ export async function offerMessageLink(
     const attempt = AbortSignal.any([budget, removed.signal]);
     let onAbort = () => {};
     try {
+      if (attempt.aborted) continue;
       const cancelled = new Promise<undefined>((done) => {
         onAbort = () => done(undefined);
         attempt.addEventListener("abort", onAbort, { once: true });
@@ -53,6 +60,7 @@ export async function offerMessageLink(
         next.route &&
         route.validate(next.route.params) &&
         !attempt.aborted &&
+        performance.now() < deadline &&
         live() &&
         pages.snapshot().includes(page) &&
         resolve(next)

@@ -38,7 +38,7 @@ const compare = (a: ThreadCursor, b: ThreadCursor) =>
 export type ThreadSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   root: ChannelMessage | undefined;
-  /** The live reader returned the root independently of any seeded row. */
+  /** Live root evidence, withdrawn when stream continuity is unknown. */
   rootVerified?: true | undefined;
   replies: readonly ChannelMessage[];
   error: string | undefined;
@@ -215,6 +215,8 @@ export function createThreadView({
   let disposed = false;
   let rootId: string | undefined;
   let verifiedRootId: string | undefined;
+  let rootProofAtDrop: string | undefined;
+  let rootProofEpoch = 0;
   let rootUnavailable = false;
   let targetStatus: ThreadSnapshot["targetStatus"] = exact
     ? "loading"
@@ -614,6 +616,8 @@ export function createThreadView({
   function purge(clear = false) {
     // A purged view no longer holds what the stream delivered before the drop.
     liveAtDrop = false;
+    verifiedRootId = undefined;
+    rootProofAtDrop = undefined;
     readAt = -Infinity;
     controller?.abort();
     selectionController?.abort();
@@ -655,6 +659,7 @@ export function createThreadView({
     selecting = false,
   ): Promise<ThreadRetarget> {
     if (!/^[0-9a-f]{64}$/.test(id)) return "unavailable";
+    const proofEpoch = rootProofEpoch;
     const active = () =>
       !disposed &&
       !owned.signal.aborted &&
@@ -771,6 +776,8 @@ export function createThreadView({
       publish();
       return "unavailable";
     }
+    if (proofEpoch === rootProofEpoch && !threadReference(event))
+      verifiedRootId = id;
     return "selected";
   }
   async function retarget(
@@ -857,6 +864,7 @@ export function createThreadView({
     // A read for a missing parent yields to the reads a person waits on.
     const yielding = sought ? { priority: "background" as const } : {};
     const startedAt = now();
+    const proofEpoch = rootProofEpoch;
     // A read after the drop can fail or replace the rows the stream kept live,
     // so only an untouched view may skip its establishment refresh.
     liveAtDrop = false;
@@ -992,8 +1000,9 @@ export function createThreadView({
           publish({ canLoadMore: false });
           throw new Error("The original thread message is unavailable.");
         }
-        const firstProof = verifiedRootId !== rootId;
-        verifiedRootId = rootId;
+        const firstProof =
+          proofEpoch === rootProofEpoch && verifiedRootId !== rootId;
+        if (firstProof) verifiedRootId = rootId;
         if (!retain(union(remote, related(root)))) return;
         if (firstProof) publish();
       }
@@ -1083,7 +1092,7 @@ export function createThreadView({
           publish({ canLoadMore: false });
           throw new Error("The original thread message is unavailable.");
         }
-        verifiedRootId = rootId;
+        if (proofEpoch === rootProofEpoch) verifiedRootId = rootId;
         // Count traversal rows before presentation filtering. The bridge may return
         // other content kinds, and appended auxiliaries do not consume its page limit.
         const replies = events.filter(isReply).sort(compare);
@@ -1263,17 +1272,22 @@ export function createThreadView({
      * refresh must reach. */
     stale() {
       // Only the first drop: a later one keeps the views the first took.
-      if (!dropped)
+      if (!dropped) {
+        rootProofAtDrop = verifiedRootId;
         liveAtDrop =
           snapshot.status === "ready" &&
           !controller &&
           !again &&
           !failed &&
           now() - readAt <= RESUME_READ_AGE;
+      }
       dropped = true;
       held ??= unverified();
+      rootProofEpoch++;
+      verifiedRootId = undefined;
       // A queued establishment was for the stream that just dropped.
       if (again === "established") again = "refresh";
+      if (snapshot.rootVerified) publishStatus({ rootVerified: undefined });
     },
     /** The stream is back: refresh, reaching the replies held across the drop.
      * When the channel's replay was continuous (`resumed`) and the view was
@@ -1286,9 +1300,14 @@ export function createThreadView({
         !controller &&
         snapshot.status === "ready";
       liveAtDrop = false;
+      const retainedProof = rootProofAtDrop;
+      rootProofAtDrop = undefined;
       if (!live) return run(true, true);
       dropped = false;
       held = undefined;
+      verifiedRootId ??= retainedProof;
+      if (snapshot.root && snapshot.root.id === verifiedRootId)
+        publishStatus({ rootVerified: true });
       return Promise.resolve();
     },
     localChanged() {

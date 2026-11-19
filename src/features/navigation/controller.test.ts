@@ -726,10 +726,12 @@ it("default resolution preserves visit, promise, signal and deadline while revok
   const pending = nav.open(page);
   const old = nav.snapshot().attempt;
   await vi.advanceTimersByTimeAsync(14_000);
+  expect(host.remaining(old)).toBe(1_000);
   expect(host.resolve(old, settings)).toBe(true);
   const current = nav.snapshot().attempt;
   expect(current.entry.id).toBe(old.entry.id);
   expect(current.signal).toBe(old.signal);
+  expect(host.remaining(current)).toBe(1_000);
   expect(old.signal.aborted).toBe(false);
   expect(current.entry.target).toEqual(settings);
   expect(host.complete(old, { status: "opened" })).toBe(false);

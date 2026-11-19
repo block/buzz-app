@@ -24,6 +24,25 @@ const destination = (page) =>
   page.getByText("Contributed message destination", { exact: true });
 const row = (page, id) => page.locator(`[data-message-id="${id}"]`);
 
+async function holdRead(page, matches) {
+  let intercepted;
+  const started = new Promise((resolve) => {
+    intercepted = resolve;
+  });
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/relay/primary/query", async (route) => {
+    if (route.request().postDataJSON().some(matches)) {
+      intercepted();
+      await held;
+    }
+    await route.continue().catch(() => {});
+  });
+  return { started, release };
+}
+
 async function links(page, app) {
   await open(page, app);
   const root = app.append("primary", "alpha", "Original message");
@@ -41,6 +60,7 @@ async function links(page, app) {
     `${href("alpha", reply.id)}&thread=${"f".repeat(64)}`,
     href("alpha", plain.id),
     href("beta", reply.id),
+    `${href("alpha", root.id)}&thread=${root.id}`,
   ];
   const source = app.append(
     "primary",
@@ -197,38 +217,198 @@ test("leaving while a provider decides aborts its offer and ignores its late res
   await expect(destination(page)).toHaveCount(0);
 });
 
+test("changing tabs cancels offers from retained thread and timeline readers", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  const { activate } = await links(page, app);
+  await page.evaluate(() => {
+    window.fixtureMessageLinks.mode = "hold";
+  });
+  await activate(0);
+  const conversation = page
+    .locator("[data-main-workspace]")
+    .getByRole("tab", { name: "Alpha", exact: true });
+  try {
+    await expect
+      .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+      .toBe(true);
+    await conversation.click();
+    await expect(conversation).toHaveAttribute("aria-selected", "true");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureMessageLinks.signal.reason?.name),
+      )
+      .toBe("AbortError");
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+  } finally {
+    await page.evaluate(() => window.fixtureMessageLinks.release?.());
+  }
+  await expect(conversation).toHaveAttribute("aria-selected", "true");
+  await expect(destination(page)).toHaveCount(0);
+
+  await page.evaluate(() => {
+    delete window.fixtureMessageLinks.release;
+  });
+  await activate(1);
+  const thread = page.locator(
+    '[data-main-workspace] [role="tab"][data-tab-value^="thread:"]',
+  );
+  try {
+    await expect
+      .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+      .toBe(true);
+    await thread.click();
+    await expect(thread).toHaveAttribute("aria-selected", "true");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureMessageLinks.signal.reason?.name),
+      )
+      .toBe("AbortError");
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+  } finally {
+    await page.evaluate(() => window.fixtureMessageLinks.release?.());
+  }
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(destination(page)).toHaveCount(0);
+});
+
+test("an explicit root link waits for fresh proof when a closed thread has a resume", async ({
+  page,
+  app,
+}) => {
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  const { root, reply, activate } = await links(page, app);
+  await page.evaluate((target) => window.fixtureNavigation.open(target), {
+    version: 1,
+    kind: "conversation",
+    scope: scope(app),
+    channelId: "alpha",
+    messageId: root.id,
+    threadRootId: root.id,
+  });
+  await expect(row(page, reply.id)).toBeVisible();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
+    )
+    .click();
+  await expect(row(page, reply.id)).toHaveCount(0);
+
+  await page.clock.pauseAt(base + 30_000);
+  const read = await holdRead(page, (filter) => filter.depth_limit);
+  try {
+    await activate(3);
+    await read.started;
+    await expect(row(page, reply.id)).toBeVisible();
+    expect((await state(page)).status).toBe("opening");
+    expect(await offers(page)).toEqual([]);
+  } finally {
+    read.release();
+    await page.clock.resume();
+  }
+  await expect(destination(page)).toBeVisible();
+  expect(await offers(page)).toEqual([
+    {
+      scope: scope(app),
+      channelId: "alpha",
+      messageId: root.id,
+      threadRootId: root.id,
+    },
+  ]);
+});
+
+const withCompanion = test.extend({ companionFixture: true });
+withCompanion(
+  "closing Settings returns to the same message visit and reevaluates the provider",
+  async ({ page, app }) => {
+    const { plain, activate } = await links(page, app);
+    await activate(1);
+    await expect(destination(page)).toBeVisible();
+    const visit = (await state(page)).entry.id;
+    const address = page.url();
+    const draft = page.getByRole("textbox", { name: "Destination draft" });
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
+      exact: true,
+    });
+    await page
+      .getByRole("button", { name: "Companion fixture", exact: true })
+      .and(page.locator("button[aria-expanded]"))
+      .click();
+    await expect(companion).toBeVisible();
+    const retainedCompanion = await companion.elementHandle();
+    await draft.fill("Keep this draft");
+    await draft.focus();
+    await page.evaluate(() => {
+      void window.fixtureNavigation.open({ version: 1, kind: "settings" });
+      window.fixtureMessageLinks.mode = "hold";
+    });
+    try {
+      const modal = page.getByRole("dialog", { name: "Settings", exact: true });
+      await expect(modal).toBeVisible();
+      await expect
+        .poll(() =>
+          modal.evaluate((element) => element.contains(document.activeElement)),
+        )
+        .toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(modal).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+        .toBe(true);
+    } finally {
+      await page.evaluate(() => window.fixtureMessageLinks.release?.());
+    }
+    await expect(draft).toHaveValue("Keep this draft");
+    await expect(draft).toBeFocused();
+    expect(
+      await retainedCompanion.evaluate((element) => element.isConnected),
+    ).toBe(true);
+    expect((await state(page)).entry.id).toBe(visit);
+    expect(await offers(page)).toHaveLength(2);
+
+    await openSettings(page);
+    await page.evaluate(() => {
+      window.fixtureMessageLinks.mode = "decline";
+    });
+    await closeSettings(page);
+    await expect(row(page, plain.id)).toBeVisible();
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+    await expect(draft).toHaveCount(0);
+    expect((await state(page)).entry.id).toBe(visit);
+    expect(page.url()).toBe(address);
+
+    await openSettings(page);
+    await page.evaluate(() => {
+      window.fixtureMessageLinks.mode = "match";
+    });
+    await closeSettings(page);
+    await expect(destination(page)).toBeVisible();
+    await expect(draft).toHaveValue("");
+    expect((await state(page)).entry.id).toBe(visit);
+    expect(page.url()).toBe(address);
+    expect(await offers(page)).toHaveLength(4);
+  },
+);
+
 test("a verified reply still reveals while a legacy thread read withholds its root", async ({
   page,
   app,
 }) => {
   const { reply, activate } = await links(page, app);
-  let intercepted;
-  const started = new Promise((resolve) => {
-    intercepted = resolve;
-  });
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/api/relay/primary/query", async (route) => {
-    if (
-      !route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.depth_limit)
-    )
-      return route.continue();
-    intercepted();
-    await held;
-    await route.continue().catch(() => {});
-  });
+  const read = await holdRead(page, (filter) => filter.depth_limit);
   try {
     await activate(0);
-    await started;
+    await read.started;
     await expect(row(page, reply.id)).toBeFocused();
     await expect.poll(async () => (await state(page)).status).toBe("opened");
     expect(await offers(page)).toEqual([]);
   } finally {
-    release();
+    read.release();
   }
 });

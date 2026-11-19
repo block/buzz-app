@@ -1062,13 +1062,6 @@ function ThreadMessages({
     navigation.target.threadRootId === messageId;
   const verifiedRoot = useCallback(() => {
     const { rootVerified, root, target, targetStatus } = view.snapshot();
-    if (
-      targetStatus === "ready" &&
-      target?.id === messageId &&
-      !target.threadRootId &&
-      !target.delivery
-    )
-      return target.id;
     if (!rootVerified || !root || root.delivery || root.threadRootId)
       return undefined;
     if (root.id === messageId) return root.id;
@@ -1081,10 +1074,11 @@ function ThreadMessages({
       return root.id;
   }, [view, messageId]);
   const offeringLink = useMessageLinkOffer(
-    navigation,
+    active ? navigation : undefined,
     verifiedRoot,
-    snapshot.status === "loading" &&
-      (snapshot.targetStatus === "ready" || snapshot.root?.id === messageId),
+    (snapshot.status === "loading" && snapshot.targetStatus === "ready") ||
+      ((snapshot.status === "loading" || snapshot.resumed) &&
+        snapshot.root?.id === messageId),
   );
   // Ordinary opens are positioned, not revealed; so is a return to a saved place.
   const positionedVisit = rootTarget || returning;

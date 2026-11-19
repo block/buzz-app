@@ -23,6 +23,7 @@ export const ChannelBody = memo(function ChannelBody({
   openThreadRootId,
   inlineTarget,
   marksRead,
+  offerMessageLinks,
   holding,
   onOpenThread,
   navigation,
@@ -41,6 +42,7 @@ export const ChannelBody = memo(function ChannelBody({
   inlineTarget?: ChannelTimelineProps["inlineTarget"];
   /** False: viewing rows marks nothing read. */
   marksRead?: boolean | undefined;
+  offerMessageLinks?: boolean | undefined;
   /** Show the loading notice instead of the list, as while a message is sought. */
   holding?: boolean | undefined;
   onOpenThread?:
@@ -145,6 +147,7 @@ export const ChannelBody = memo(function ChannelBody({
       openThreadRootId={openThreadRootId}
       inlineTarget={inlineTarget}
       marksRead={marksRead}
+      offerMessageLinks={offerMessageLinks}
       navigation={navigation}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}

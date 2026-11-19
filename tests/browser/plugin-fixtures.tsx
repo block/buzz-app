@@ -168,7 +168,21 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "message",
           title: "Message link fixture",
-          component: () => <p>Contributed message destination</p>,
+          companion: true,
+          component: function MessageDestination({ companion }) {
+            const [note, setNote] = useState("");
+            return (
+              <>
+                <p>Contributed message destination</p>
+                <input
+                  aria-label="Destination draft"
+                  value={note}
+                  onChange={(event) => setNote(event.currentTarget.value)}
+                />
+                {companion}
+              </>
+            );
+          },
           route: {
             version: 1,
             validate: (params) => typeof params === "string",

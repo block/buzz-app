@@ -6,7 +6,8 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
-import { clearNativeMedia, nativeChannelMedia, nativeMediaUrl } from "./native";
+import { nativeChannelMedia, nativeMediaUrl } from "./native";
+import { purgeRelayCache } from "./partition-purge";
 import { nativeIdentityEnabled } from "../identity/service";
 import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
@@ -299,18 +300,11 @@ export function provideRelay(
       // A reconnect may already have replaced the session with an empty one.
       ownerMentionStore?.clear();
       await store.clearCache().catch(() => {});
-      if (resume) {
-        // Saved images are optional; failing to forget them keeps the rest.
-        await clearNativeMedia(resume.scope).catch(() => {});
-        const disk = createHeadPersistence(resume.viewer, resume.scope);
-        try {
-          await disk.clear();
-        } catch {
-          /* Storage can be unavailable. */
-        } finally {
-          disk.close();
-        }
-      }
+      // Storage can be unavailable; the refusal is shown either way.
+      if (resume)
+        await purgeRelayCache(resume.scope, resume.viewer, (_, work) =>
+          work().catch(() => {}),
+        );
     }
     if (!live()) return;
     store.dispose();
@@ -579,14 +573,10 @@ export function provideRelay(
           const failures: unknown[] = [];
           const fail = (error: unknown) => void failures.push(error);
           await retainedStore.clearCache().catch(fail);
-          if (resume) {
-            await clearNativeMedia(resume.scope).catch(fail);
-            const disk = createHeadPersistence(resume.viewer, resume.scope);
-            await disk
-              .clear()
-              .catch(fail)
-              .finally(() => disk.close());
-          }
+          if (resume)
+            await purgeRelayCache(resume.scope, resume.viewer, (_, work) =>
+              work().catch(fail),
+            );
           if (failures.length)
             throw new AggregateError(failures, "Cached data was not cleared");
         })

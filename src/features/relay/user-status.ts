@@ -1,5 +1,6 @@
 import type { EventTemplate } from "nostr-tools";
 import { eventDto, type RelayEvent } from "./events";
+import { PROFILE_CACHE_BASE } from "./budget";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -19,10 +20,17 @@ export type UserStatus = Readonly<{
   expiresAt?: number;
 }>;
 export type StatusInput = Pick<UserStatus, "text" | "emoji" | "expiresAt">;
-/** Unwatched authors whose status stays loaded while the profiles stream is
- * live, so rows that scroll or switch back into view read nothing again. Live
- * traffic keeps them current. */
-const IDLE_AUTHORS = 500;
+/** Unwatched authors whose status stays held, as many as the profiles kept
+ * with them. While the profiles stream is live they stay loaded, so rows that
+ * scroll or switch back into view read nothing again. */
+const IDLE_AUTHORS = PROFILE_CACHE_BASE;
+/** Whether a status shows at all: set and not yet expired. */
+function shown(status: UserStatus, now = Date.now() / 1000) {
+  return (
+    (!!status.text || !!status.emoji) &&
+    (status.expiresAt === undefined || status.expiresAt > now)
+  );
+}
 
 function parse(event: RelayEvent): UserStatus | undefined {
   if (
@@ -63,10 +71,8 @@ export function createUserStatuses(
   notify = (listener: () => void) => listener(),
   emojiTags: (content: string) => string[][] = () => [],
 ) {
-  const records = new Map<
-    string,
-    { event: Pick<RelayEvent, "id" | "created_at">; status: UserStatus }
-  >();
+  // Signed events, so the session can save them for the next start.
+  const records = new Map<string, { event: RelayEvent; status: UserStatus }>();
   const watched = new Map<string, number>();
   const loaded = new Set<string>();
   /** Unwatched authors still held, oldest first. */
@@ -90,11 +96,7 @@ export function createUserStatuses(
     let deadline = Infinity;
     const next = new Map<string, UserStatus>();
     for (const [id, { status }] of records) {
-      if (
-        (!status.text && !status.emoji) ||
-        (status.expiresAt !== undefined && status.expiresAt <= now)
-      )
-        continue;
+      if (!shown(status, now)) continue;
       next.set(id, status);
       if (status.expiresAt !== undefined)
         deadline = Math.min(deadline, status.expiresAt);
@@ -134,10 +136,7 @@ export function createUserStatuses(
             old.event.id <= event.id))
       )
         continue;
-      records.set(event.pubkey, {
-        event: { id: event.id, created_at: event.created_at },
-        status,
-      });
+      records.set(event.pubkey, { event, status });
     }
     publish();
   }
@@ -185,6 +184,12 @@ export function createUserStatuses(
         pending = undefined;
       });
     return pending;
+  }
+  /** Bounds idle authors. Without live traffic their statuses may go stale:
+   * they stay shown and are read again when their rows return. */
+  function settleIdle() {
+    evictIdle(IDLE_AUTHORS);
+    if (!live) for (const id of idle) loaded.delete(id);
   }
   /** Drops the oldest idle authors beyond `limit`. */
   function evictIdle(limit: number) {
@@ -234,7 +239,7 @@ export function createUserStatuses(
         retryTimer = undefined;
         retryAttempt = 0;
       }
-      evictIdle(live ? IDLE_AUTHORS : 0);
+      settleIdle();
     };
   }
   async function save(input: StatusInput) {
@@ -402,11 +407,37 @@ export function createUserStatuses(
       schedule();
     },
     /** Whether the profiles stream is live. Without it nothing keeps an idle
-     * author's status current, so idle authors are dropped and read again
-     * when their rows return. */
+     * author's status current, so their rows read it again when they return. */
     live(next: boolean) {
       live = next;
-      if (!live) evictIdle(0);
+      settleIdle();
+    },
+    /** The statuses shown now, for a copy saved with the profiles. */
+    saved() {
+      const now = Date.now() / 1000;
+      return [...records.values()]
+        .flatMap(({ event, status }) => (shown(status, now) ? [event] : []))
+        .slice(-IDLE_AUTHORS);
+    },
+    /** Shows saved statuses at once. They are not loaded, so each row still
+     * reads its author's status and a newer one replaces the copy. */
+    restore(events: readonly RelayEvent[]) {
+      if (closed) return;
+      for (const event of events) {
+        const status = parse(event);
+        const old = records.get(event.pubkey);
+        if (
+          !status ||
+          !shown(status) ||
+          (old && old.event.created_at >= event.created_at)
+        )
+          continue;
+        records.set(event.pubkey, { event, status });
+        if (!watched.has(event.pubkey) && event.pubkey !== viewer)
+          idle.add(event.pubkey);
+      }
+      evictIdle(IDLE_AUTHORS);
+      publish();
     },
     dispose() {
       closed = true;

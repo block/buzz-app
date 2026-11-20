@@ -535,7 +535,9 @@ export function createRelaySession(
       channels.purgeAccess((events) => events.filter(visibility(events)));
       writes?.purgeConfirmed(visible);
       emoji.clear();
-      statuses.clear();
+      // Statuses are per person, not per channel, so they stay shown; reads
+      // the access change retired start again.
+      statuses.reconnect();
       activity.accessChanged();
       memories.clear();
       presence.clear();
@@ -1164,6 +1166,15 @@ export function createRelaySession(
           archiveAuthority: transport.archiveAuthority,
           channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
+          statuses: {
+            image: (author) => {
+              const url = statuses.queries.snapshot().get(author)?.emojiUrl;
+              return url && transport.media(url);
+            },
+            saved: () => statuses.saved(),
+            restore: (events) => statuses.restore(events),
+            subscribe: (listener) => statuses.queries.subscribe(listener),
+          },
           revokeAccess,
           rosterComplete: dropStrandedSends,
           // The viewer's own lookups make a channel known to the viewer's

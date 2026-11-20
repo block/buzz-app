@@ -29,6 +29,7 @@ import {
 } from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
+import { USER_STATUS_KIND } from "./user-status-policy";
 import {
   LARGE_READ_DEADLINE_MS,
   type RelayReader,
@@ -249,6 +250,15 @@ export function createChannelStore(
         /** Explicit NIP-11 self; only it may attribute messages to others. */
         archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
+        /** Statuses kept with the profiles: shown beside the same bylines and
+         * saved with the profile copy. */
+        statuses?: {
+          /** The display URL of an author's status image, if it has one. */
+          image(author: string): string | undefined;
+          saved(): readonly RelayEvent[];
+          restore(events: readonly RelayEvent[]): void;
+          subscribe(listener: () => void): () => void;
+        };
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
         /** A complete roster read applied. A replica can lag, so a channel it
@@ -721,23 +731,28 @@ export function createChannelStore(
     if (previous >= 0) mediaIntents.splice(previous, 1);
     mediaIntents.unshift(channelId);
     mediaIntents.length = Math.min(3, mediaIntents.length);
-    const urls = mediaIntents.flatMap(avatarUrlsFor);
+    const urls = mediaIntents.flatMap(mediaUrlsFor);
     relayDebug("media prepare", channelId.slice(0, 8), `${urls.length} urls`);
     media.prepare(urls);
   }
   /** Background head reads warm request-level avatars without displacing the
    * focused channel's intent window. */
   function prepareWarmMedia(channelId: string) {
-    media.warm(avatarUrlsFor(channelId));
+    media.warm(mediaUrlsFor(channelId));
   }
-  function avatarUrlsFor(id: string): string[] {
+  function mediaUrlsFor(id: string): string[] {
     const rows = heads.peek(id)?.rows ?? windows.get(id)?.snapshot.rows ?? [];
     const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
-    return authors.flatMap((author) => {
+    const avatars = authors.flatMap((author) => {
       const picture = directory.queries.snapshot().get(author)?.picture;
       const url = picture && transport?.media(picture, "small");
       return url ? [url] : [];
     });
+    const statuses = authors.flatMap((author) => {
+      const url = transport?.statuses?.image(author);
+      return url ? [url] : [];
+    });
+    return [...avatars, ...statuses];
   }
   async function fetchProfiles(
     rows: readonly ChannelMessage[],
@@ -1576,7 +1591,11 @@ export function createChannelStore(
         ...held,
       ].slice(-PROFILE_CACHE_BASE);
     }
-    const events = [...directory.recent(PROFILE_CACHE_BASE), ...savedVerified];
+    const events = [
+      ...directory.recent(PROFILE_CACHE_BASE),
+      ...savedVerified,
+      ...(transport?.statuses?.saved() ?? []),
+    ];
     // Sorted, so reads that only reorder the LRU never rewrite the mirror.
     const signature = events
       .map((event) => event.id)
@@ -1600,7 +1619,8 @@ export function createChannelStore(
       return;
     }
     try {
-      if (!Array.isArray(saved) || saved.length > 2 * PROFILE_CACHE_BASE)
+      // Names, verified names and statuses each hold up to the base count.
+      if (!Array.isArray(saved) || saved.length > 3 * PROFILE_CACHE_BASE)
         return;
       const profiles: RelayEvent[] = [];
       // Any host failure or bad record falls back to checking one by one.
@@ -1626,6 +1646,9 @@ export function createChannelStore(
       directory.restoreVerified(savedVerified);
       const names = profiles.filter((event) => event.kind === 0);
       directory.accept(names);
+      transport?.statuses?.restore(
+        profiles.filter((event) => event.kind === USER_STATUS_KIND),
+      );
       if (!options.cachedOnly && names.length)
         void directory
           .ensure(
@@ -4042,6 +4065,9 @@ export function createChannelStore(
     headMarks.set(events, mark);
     return mark;
   };
+  const unsubscribeStatuses = transport?.statuses?.subscribe(() => {
+    profileSave ??= setTimeout(saveProfiles, 1000);
+  });
   const unsubscribeProfiles = directory.queries.subscribe(() => {
     if (disposed || !transport) return;
     for (const [id, head] of heads.entries())
@@ -4363,6 +4389,7 @@ export function createChannelStore(
     referenceWake = undefined;
     unsubscribeLocal?.();
     unsubscribeProfiles();
+    unsubscribeStatuses?.();
     epoch++;
     creationReads.clear();
     media.dispose();

@@ -509,8 +509,9 @@ export type AgentSessions = Readonly<{
   list(agent: AgentKey): readonly AgentSession[];
   /** For a harness whose `list` can be behind its sessions, because it reads
    * them in the background or one is starting: resolves once `list` names
-   * them all, and rejects when they cannot be read. */
-  ready?(agent: AgentKey): Promise<void>;
+   * the conversation's session, if it has one or one is starting, and
+   * rejects when they cannot be read. */
+  ready?(agent: AgentKey, conversation: string): Promise<void>;
   subscribe(listener: () => void): () => void;
 }>;
 /** Token counts as the harness reported them. An absent count is unknown, not
@@ -5878,7 +5879,7 @@ export class AgentsService extends Service implements Agents {
     // Its session's history stays where it began, so a folder given later
     // would start it over.
     if (!storedFolder(this.storage, scope, key, conversation)) {
-      await type.sessions?.ready?.(key);
+      await type.sessions?.ready?.(key, conversation);
       if (
         type.sessions
           ?.list(key)

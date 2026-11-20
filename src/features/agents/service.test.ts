@@ -1939,7 +1939,7 @@ describe("a conversation folder", () => {
     ).rejects.toThrow(
       "This conversation already started in the agent's workspace",
     );
-    expect(loaded).toHaveBeenCalledWith(f.agent.key);
+    expect(loaded).toHaveBeenCalledWith(f.agent.key, `${channel}/${root}`);
     // Sessions it cannot read may hold the conversation.
     loaded.mockRejectedValue(new Error("The agent is not running"));
     const other = { channelId: channel, root: "f".repeat(64) };

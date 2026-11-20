@@ -204,11 +204,14 @@ type Entry = {
       }>;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
+      /** The handover that reads the conversation's folder now: this one's
+       * once it waits for no other turn, else an earlier one's. */
+      starting(): Promise<unknown> | undefined;
       cancel(): void;
     }
   >;
-  /** The folder each conversation's latest run here started in, when a
-   * plugin gave it one: its file reads use it while Buzz reconnects. */
+  /** The folder each conversation's latest run here started in: its tools
+   * read files from there. */
   folders: Map<string, string>;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
@@ -502,17 +505,15 @@ export class PiRuntime {
         };
       });
   }
-  /** Resolves once `sessions` lists the agent's conversations as Pi's
-   * storage has them; rejects when they cannot be read. */
-  async listed(agent: AgentKey) {
+  /** Resolves once `sessions` lists the conversation if Pi has it or a turn
+   * is starting it; rejects when they cannot be read. */
+  async listed(agent: AgentKey, conversation: string) {
     // Reading opens its storage, which only an agent running here may hold.
     if (!this.running.has(agent)) throw new Error("The agent is not running");
-    // A turn on its way to Pi makes its conversation when Pi takes it.
-    await Promise.allSettled(
-      [...(this.agents.get(agent)?.policies.values() ?? [])].map(
-        (policy) => policy.handed,
-      ),
-    );
+    // A turn on its way to Pi makes its conversation when Pi takes it. One
+    // still waiting for other turns, which may include the turn asking,
+    // reads the conversation's folder only once it goes on.
+    await this.agents.get(agent)?.policies.get(conversation)?.starting();
     await this.places(agent);
   }
   /** The usage of the agent's Buzz conversations and standalone turns'
@@ -777,6 +778,7 @@ export class PiRuntime {
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
+    let begun = false;
     const handoff = this.controls.deliver(control, async () => {
       await wait;
       if (interrupted || (wake && current && !current())) return;
@@ -795,6 +797,7 @@ export class PiRuntime {
       );
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
+      begun = true;
       entry.handle = agent;
       entry.team = team ?? "";
       const { seen } = await this.pi.request<{ seen: number }>("place", {
@@ -967,6 +970,8 @@ export class PiRuntime {
         prior?.cancel();
       },
       handed: handed.catch(() => undefined),
+      starting: (): Promise<unknown> | undefined =>
+        begun ? handed.catch(() => undefined) : prior?.starting(),
       settled: Promise.all([same ? prior?.settled : undefined, settled]).then(
         () => stopping?.catch(() => undefined),
       ),
@@ -1187,15 +1192,18 @@ export class PiRuntime {
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
         signingAuthority: relayKeyOf(this.reads(call.agent)),
         read: (path) => {
-          // Relative to where the conversation's runs work: only a thread's
-          // own conversation has a root.
+          // Relative to where the asking run works: its conversation's latest
+          // run here started there. Its conversation is the one it was
+          // admitted to; only a thread's own conversation has a root.
           const { channel, root } = call.context;
-          const key = root ? `${channel}/${root}` : channel;
-          // While Buzz reconnects, the folder its latest run here started in.
+          const key =
+            receipts[0]?.key ?? (root ? `${channel}/${root}` : channel);
           const cwd =
+            (key && entry.folders.get(key)) ||
             (this.reads(call.agent)
               ? this.folder(call.agent, key)
-              : key && entry.folders.get(key)) || entry.config.workspace;
+              : undefined) ||
+            entry.config.workspace;
           return entry.handle?.protection
             ? readFile(
                 this.spawn,
@@ -1613,7 +1621,7 @@ export class PiRuntime {
     const assigned = this.folder(agent, conversation);
     const resolve = this.host.resolveDirectory?.bind(this.host);
     const cwd = assigned ? await existingFolder(resolve, assigned) : workspace;
-    if (conversation && assigned) entry.folders.set(conversation, assigned);
+    if (conversation) entry.folders.set(conversation, cwd);
     return {
       provider: entry.config.provider,
       model: entry.config.model,

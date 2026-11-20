@@ -150,7 +150,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }),
     sessions: {
       list: (key) => runtime.sessions(key),
-      ready: (key) => runtime.listed(key),
+      ready: (key, conversation) => runtime.listed(key, conversation),
       subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [

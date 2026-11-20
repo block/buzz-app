@@ -1690,7 +1690,7 @@ it("lists a conversation whose first turn is on its way to Pi before it says its
   const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
   await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(1));
   let listed = false;
-  const ready = runtime.listed(self).then(() => {
+  const ready = runtime.listed(self, `${channel}/${root.id}`).then(() => {
     listed = true;
   });
   // Every microtask has run, so only Pi's answer is still waited for.
@@ -1718,13 +1718,77 @@ it("says when its sessions are all listed, for an agent that runs here", async (
     }),
   });
   // Its storage stays closed, so what it holds is unknown.
-  await expect(runtime.listed(self)).rejects.toThrow(
+  await expect(runtime.listed(self, key)).rejects.toThrow(
     "The agent is not running",
   );
   runtime.sync([{ ...agent, config: DEFAULT_CONFIG } as unknown as Agent]);
-  await runtime.listed(self);
+  await runtime.listed(self, key);
   expect(runtime.sessions(self)).toEqual([
     { channelId: channel, root: root.id, at: 105_000 },
+  ]);
+});
+
+it("does not wait for a turn that waits for the asking turn, as after a Solo chat became a channel", async () => {
+  const finished = deferred<unknown>();
+  const { runtime, deliver, host, agent, solo, session } = setup({
+    wait: () => finished.promise,
+    places: () => ({ places: [] }),
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+  runtime.sync([{ ...agent, config } as unknown as Agent]);
+  solo.add("solo-1");
+  const mention = (id: string) => ({
+    type: "mention" as const,
+    event: message(id, "@Pi look", { tags: [["h", "solo-1"]] }),
+  });
+  await deliver(mention("2"), { config, channelId: "solo-1" }).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(1));
+  // Converted to a channel, it keeps its conversation but not its posting
+  // policy, so the next turn waits for the running one to settle.
+  const listed = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: listed.channels.map((item) =>
+      item.id === "solo-1" ? { ...item, channelType: "stream" } : item,
+    ),
+  });
+  await deliver(mention("3"), { config, channelId: "solo-1" }).run;
+  // The running turn's tool asks, for its own conversation and another.
+  await runtime.listed(self, "solo-1");
+  await runtime.listed(self, "other-chat");
+  expect(host.requests("deliver")).toHaveLength(1);
+  finished.resolve(undefined);
+});
+
+it("reads a file a tool names where its run works, not in a folder its chat kept from another scope", async () => {
+  const f = setup();
+  const readFile = vi.fn(async () => new TextEncoder().encode("From a file"));
+  Object.assign(f.desktop, { readFile, resolveDirectory: folders() });
+  await assign(f.storage);
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const mention = reply("2", "@Pi look");
+  await f.deliver({ type: "mention", event: mention }, { config }).run;
+  await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+  expect(f.host.requests("deliver")[0]?.params.cwd).toBe(
+    DEFAULT_CONFIG.workspace,
+  );
+  f.runtime.event({
+    agent: self,
+    conversation: CONVERSATION,
+    type: "placed",
+    request: mention.id,
+    entry: 1,
+  });
+  const sent = await f.runtime.tool({
+    agent: self,
+    conversation: CONVERSATION,
+    context: { channel, root: root.id },
+    name: "send",
+    arguments: { path: "report.md", audience: "everyone" },
+  });
+  expect(sent.isError).not.toBe(true);
+  expect(readFile.mock.calls).toEqual([
+    ["report.md", { cwd: DEFAULT_CONFIG.workspace }],
   ]);
 });
 

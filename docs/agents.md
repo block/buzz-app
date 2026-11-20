@@ -804,7 +804,8 @@ because a session's history is found by the folder it ran in. For the same
 reason, a conversation that already has a session in the workspace rejects:
 the harness's `sessions` list names the conversations that do. A harness
 whose list can be behind (`sessions.ready`) is waited for first: Pi reads its
-sessions in the background, and Goose and Pi finish starting a first turn.
+sessions in the background, and Goose and Pi finish starting the
+conversation's first turn if one is under way.
 The call rejects when the sessions cannot be read, as for a Pi agent that is
 not running.
 If the folder later disappears, the conversation's next turn fails with an error naming it

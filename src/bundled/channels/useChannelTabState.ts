@@ -1,5 +1,6 @@
 import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
+import { singleThreadPreference } from "../../features/messages/single-thread-preference";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   useCallback,
@@ -182,6 +183,30 @@ export const threadTab = (
 /** Reply asks for the composer; select keeps the tab's requests; reveal asks
  * the reader to show `messageId` again. */
 export type ThreadIntent = "reply" | "select" | "reveal" | "focus";
+
+/** The state with its thread tabs closed; a pane that showed one loses its
+ * selection, and the side pane stays open only for what else it shows. */
+function withoutThreads(state: State): State {
+  const tabs = state.tabs.filter((tab) => tab.kind !== "thread");
+  const closed = (id: string | undefined) =>
+    id !== undefined && !tabs.some((tab) => tab.id === id);
+  return {
+    ...state,
+    tabs,
+    selected: closed(state.selected) ? "" : state.selected,
+    mainSelected: closed(state.mainSelected) ? undefined : state.mainSelected,
+    paneOpen:
+      state.paneOpen &&
+      !!(
+        tabs.some((tab) => tabPane(tab) === "side") ||
+        sideEntries(state).length ||
+        state.settings ||
+        state.thread ||
+        state.sidePanel ||
+        state.sideDrawer
+      ),
+  };
+}
 
 /** Opening a thread selects its existing tab or adds one in `pane`. */
 function withThread(
@@ -645,7 +670,11 @@ export function useChannelTabState(
     ) =>
       update((state) =>
         withThread(
-          state,
+          // One thread at a time: a new thread replaces the open ones. An
+          // already-open thread is selected and closes nothing.
+          singleThreadPreference() && !threadTab(state.tabs, channelId, rootId)
+            ? withoutThreads(state)
+            : state,
           channelId,
           messageId,
           rootId,

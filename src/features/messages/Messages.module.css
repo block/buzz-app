@@ -4268,6 +4268,9 @@ html[data-keyboard-navigation]
 .relayedHeader > .relayedChat > * {
   margin-inline: 0;
 }
+.relayedHeader:not([data-open]) > .relayedChat {
+  max-inline-size: 20rem;
+}
 .relayedPreview {
   flex: 1 1 0;
   min-inline-size: 0;

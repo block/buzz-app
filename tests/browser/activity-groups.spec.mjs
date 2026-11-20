@@ -13,17 +13,26 @@ test("a long relayed message fits the chat before and after opening", async ({
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
   await server.listen();
+  const fixture = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html`;
   try {
-    await page.setViewportSize({ width: 560, height: 700 });
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html?relayed`,
-    );
+    await page.setViewportSize({ width: 860, height: 700 });
+    await page.goto(`${fixture}?relayed`);
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
     const toggle = history.getByRole("button", {
       name: /Relayed fixture update/,
     });
+    const source = history.getByRole("link", {
+      name: "#quarterly-infrastructure-planning-and-roadmap-review-for-all-teams",
+    });
+    const sourceWidth = () =>
+      source.evaluate((link) => link.parentElement.clientWidth);
+    const sourceFits = () =>
+      source.evaluate((link) => {
+        const label = link.parentElement;
+        return label.scrollWidth === label.clientWidth;
+      });
     const fits = () =>
       toggle.evaluate((button) => {
         const history = button.closest(
@@ -38,6 +47,11 @@ test("a long relayed message fits the chat before and after opening", async ({
         );
       });
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect.poll(sourceWidth).toBe(320);
+    await expect.poll(sourceFits).toBe(false);
+    await expect(source.locator("..")).toHaveCSS("text-overflow", "ellipsis");
+    await expect.poll(fits).toBe(true);
+    await page.setViewportSize({ width: 560, height: 700 });
     await expect.poll(fits).toBe(true);
     await toggle.press("Enter");
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -47,6 +61,19 @@ test("a long relayed message fits the chat before and after opening", async ({
       ),
     ).toBeVisible();
     await expect.poll(fits).toBe(true);
+    await page.setViewportSize({ width: 860, height: 700 });
+    await expect.poll(sourceFits).toBe(true);
+    await page.setViewportSize({ width: 340, height: 700 });
+    await expect.poll(sourceFits).toBe(false);
+    await expect.poll(fits).toBe(true);
+
+    await page.setViewportSize({ width: 860, height: 700 });
+    await page.goto(`${fixture}?relayed=group`);
+    const group = history.getByRole("button", { name: /^Show 2 messages/ });
+    await expect.poll(sourceWidth).toBe(320);
+    await expect.poll(sourceFits).toBe(false);
+    await group.press("Enter");
+    await expect.poll(sourceFits).toBe(true);
   } finally {
     await server.close();
   }

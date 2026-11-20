@@ -493,7 +493,8 @@ Quitting Buzz also turns it off.
   chat. Two or more in a row fold into one line showing the latest one and how
   many more there are; it names their chat when they all came from the same
   one, or says they came from other chats. Select it to list each one. A claim
-  that cannot be verified shows as the sender's ordinary message.
+  that cannot be verified shows as the sender's ordinary message. Long chat
+  names end in an ellipsis. Expand the line to see more of the name.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

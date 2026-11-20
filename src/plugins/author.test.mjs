@@ -50,11 +50,11 @@ const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
 };
 const ExamplePreview = ({ close }: PagePreviewProps) =>
   createElement("button", { type: "button", onClick: close }, "Open");
-export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay", "seen"];
+export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
-  const seen: Seen = ctx.seen;
-  const welcomeSeen: boolean | undefined = seen.has("example.plugin/welcome");
-  if (welcomeSeen === false) seen.mark("example.plugin/welcome");
+  const seen: Seen | undefined = ctx.reflect.get("seen");
+  const key = "example.plugin/welcome";
+  if (seen?.has(key) === false) seen.mark(key);
   const sharingPolicy: GeneralAccessPolicy = { subject: "record", allowPublic: false, visibilityDescription: () => "Record access changes." };
   const general: ChannelGeneralAccessProps = { capability: ctx.relay.snapshot().session.channelDetails, channelId: "record", policy: sharingPolicy };
   const picker: ChannelMembersDialogProps = { session: ctx.relay.snapshot().session, channelId: "record", trigger: { current: null }, close() {},

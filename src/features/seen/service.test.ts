@@ -14,7 +14,7 @@ function windowFor(viewer?: string) {
   const root = new Context();
   roots.push(root);
   const listeners = new Set<() => void>();
-  new SeenService(root, {
+  const seen = new SeenService(root, {
     snapshot: () => (viewer ? { viewer } : {}),
     subscribe(listener) {
       listeners.add(listener);
@@ -22,7 +22,7 @@ function windowFor(viewer?: string) {
     },
   });
   return {
-    seen: root.seen,
+    seen,
     dispose: () => root.fiber.dispose(),
     identify(next?: string) {
       viewer = next;
@@ -121,6 +121,43 @@ it("keeps absence unknown when storage fails and retries unsaved marks", () => {
   expect(disk.has(storageKey)).toBe(false);
   seen.mark(key);
   expect(windowFor("alice").seen.has(key)).toBe(true);
+});
+
+it("lets plugins activate on a host without Seen", async () => {
+  const root = new Context();
+  roots.push(root);
+  const activation = vi.fn();
+  const plugin = root.plugin((ctx) => activation(ctx.reflect.get("seen")));
+  await plugin.await();
+  expect(activation).toHaveBeenCalledExactlyOnceWith(undefined);
+});
+
+it("stops notifying for storage and identity changes after teardown", async () => {
+  const { seen, identify, dispose } = windowFor("alice");
+  const changes = vi.fn();
+  seen.subscribe(changes);
+  storageChanged(storageKey);
+  expect(changes).toHaveBeenCalledOnce();
+
+  await dispose();
+  changes.mockClear();
+  storageChanged(storageKey);
+  identify("bob");
+  expect(changes).not.toHaveBeenCalled();
+  expect(seen.has(key)).toBeUndefined();
+});
+
+it("does not carry a failed-write mark to another identity", () => {
+  const { seen, identify } = windowFor("alice");
+  write.mockImplementationOnce(() => {
+    throw new Error("Quota exceeded");
+  });
+  seen.mark(key);
+  expect(seen.has(key)).toBe(true);
+  expect(disk.has(storageKey)).toBe(false);
+
+  identify("bob");
+  expect(seen.has(key)).toBe(false);
 });
 
 it("accepts open names up to 96 characters", () => {

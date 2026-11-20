@@ -391,21 +391,26 @@ state in namespaced `localStorage` keys.
 
 ### Remembering one-time experiences
 
-Add `"seen"` to the plugin's `inject` list to use `ctx.seen`. Choose a key in
-the form `<plugin-id>/<name>`, up to 96 Unicode code points. Use your plugin's
-ID as the prefix to avoid collisions. For an invalid key, `has()` returns
-`undefined` and `mark()` has no effect. Keys belong to the signed-in identity
-and are shared across communities on this device.
+Get Seen with `const seen = ctx.reflect.get("seen")`. Leave it out of the
+required `inject` list so your plugin still activates on older Buzz hosts.
+Skip the hint when the service is unavailable.
 
-Use `ctx.seen.has(key) === false` to decide whether to show a hint. A result
-of `true` means the experience already happened. A result of `undefined`
-means Buzz does not know yet. In React, pass `ctx.seen.subscribe` and
-`() => ctx.seen.has(key)` to `useSyncExternalStore` to rerender when the
-answer changes.
+Choose a key in the form `<plugin-id>/<name>`, up to 96 Unicode code points.
+Use your plugin's ID as the prefix to avoid collisions. For an invalid key or
+before sign-in, `has()` returns `undefined` and `mark()` has no effect. Keys
+belong to the signed-in identity and are shared across communities on this
+device.
 
-Call `ctx.seen.mark(key)` when the experience happens. Repeated marks are
-safe. Use a new key to show an updated experience again. If device storage
-cannot save a mark, it stays active in the current window for this run.
+Show the hint only when `seen?.has(key) === false`. A result of `true` means
+the experience already happened. A result of `undefined` means Buzz does not
+know yet. Once you have the service, a React component can use
+`useSyncExternalStore(seen.subscribe, () => seen.has(key))` to rerender when
+the answer changes.
+
+Call `seen?.mark(key)` when the experience happens. Repeated marks are safe.
+Use a new key to show an updated experience again. If device storage cannot
+save a mark, it stays active in the current window while that identity is
+signed in.
 
 Plugins are trusted code executing in the app's JavaScript context. They are not
 sandboxed: infinite loops, global changes, and external side effects cannot be

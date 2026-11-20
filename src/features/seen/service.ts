@@ -10,7 +10,7 @@ export interface Seen {
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    seen: Seen;
+    seen?: Seen;
   }
 }
 

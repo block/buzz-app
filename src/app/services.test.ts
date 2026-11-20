@@ -27,10 +27,10 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.page", name: "Test", apiVersion: 1 },
       module: {
-        inject: ["pages", "host", "seen"],
+        inject: ["pages", "host"],
         apply(ctx: Context) {
           plugin.host = ctx.host;
-          plugin.seen = ctx.seen;
+          plugin.seen = ctx.reflect.get("seen");
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -123,7 +123,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-it("injects Seen for the signed-in viewer even with no selected community", async () => {
+it("provides Seen through optional lookup even with no selected community", async () => {
   await vi.advanceTimersByTimeAsync(0);
   expect(services.communities.snapshot().selected).toBeNull();
   const key = "test.page/welcome";

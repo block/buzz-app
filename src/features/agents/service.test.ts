@@ -106,6 +106,7 @@ import { CATCH_UP_PREFIX, MENTIONS, readCheckpoints } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
+import { saveOwnerSections } from "./prompt-sections";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
@@ -5064,6 +5065,25 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   native.claim.mockClear();
   connect(true);
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+});
+
+it("gives a harness the owner's base section choices as they are saved now", async () => {
+  const { service, plugin, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const choices = () => plugin.agents.handle(bot)?.promptSections?.();
+  expect(choices()).toEqual({ owner: {} });
+  await saveOwnerSections(storage, {
+    progress: { mode: "off" },
+    etiquette: { mode: "custom", text: "Be brief." },
+  });
+  // Read at each call, so the next prompt has them without a restart.
+  expect(choices()).toEqual({
+    owner: {
+      progress: { mode: "off" },
+      etiquette: { mode: "custom", text: "Be brief." },
+    },
+  });
 });
 
 it("hands a plugin its own agents outside any run, while this copy runs them", async () => {

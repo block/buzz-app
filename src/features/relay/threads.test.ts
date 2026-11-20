@@ -395,6 +395,30 @@ it("reopens a closed thread at once from its last read and repairs it in the bac
   await next;
 });
 
+it("reopens a thread at once after a route retargeted it to its root", async () => {
+  const h = live();
+  const first = reply("first", 10);
+  const loaded = h.view.refresh();
+  h.next().respond([root, first]);
+  await loaded;
+  // Opening a thread from the timeline routes to its root, which the shown
+  // view verifies in place.
+  const selecting = h.view.retarget(root.id, new AbortController().signal);
+  h.next().respond([root]);
+  await flush();
+  h.next().respond([]);
+  expect(await selecting).toBe("selected");
+  h.view.dispose();
+  const view = h.session.thread("a", root.id);
+  expect(view.snapshot().status).toBe("ready");
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+
+  view.dispose();
+  const reopened = h.session.thread("a", root.id);
+  expect(reopened.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+  reopened.dispose();
+});
+
 it("reopens a thread from scratch after a cache clear, a close mid-read or an exact view", async () => {
   const h = live();
   const first = reply("first", 10);
@@ -478,6 +502,23 @@ async function closed() {
 }
 const replyIds = (thread: ReturnType<typeof direct>) =>
   thread.view.snapshot().replies.map((row) => row.id);
+
+it("leaves an earlier resume in place once a retarget selects a reply", async () => {
+  const select = async (thread: ReturnType<typeof direct>, id: string) =>
+    expect(await thread.view.retarget(id, new AbortController().signal)).toBe(
+      "selected",
+    );
+  const routed = direct([root, first]);
+  await routed.view.refresh();
+  await select(routed, root.id);
+  expect(routed.resume()).toMatchObject({ root: { id: root.id } });
+  // Its rows keep the selected reply even once routed back to the root.
+  const selected = direct([root, first]);
+  await selected.view.refresh();
+  await select(selected, first.id);
+  await select(selected, root.id);
+  expect(selected.resume()).toBe("keep");
+});
 
 it("drops a resumed row its repair does not read again", async () => {
   const resume = await closed();

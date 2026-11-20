@@ -1,7 +1,6 @@
 import {
   createContext,
   useContext,
-  type ComponentProps,
   type ComponentPropsWithoutRef,
   type ReactElement,
 } from "react";
@@ -44,34 +43,6 @@ const SCALES: Record<HeadingScale, string | undefined> = {
   inherit: undefined,
 };
 
-export function SharedLink({
-  href,
-  children,
-}: ComponentProps<"a"> & ExtraProps) {
-  const { openLink, session } = useContext(CapabilitiesContext);
-  if (!href) return children;
-  if (!openLink)
-    return (
-      <a href={href} target="_blank" rel="noreferrer">
-        {children}
-      </a>
-    );
-  // A raw autolink shows its destination's name, as in messages.
-  const label = labelText(children);
-  const raw = label === href;
-  return (
-    <MessageLink
-      url={href}
-      label={raw ? undefined : label}
-      registry={undefined}
-      session={session}
-      onOpenLink={openLink}
-    >
-      {raw ? undefined : children}
-    </MessageLink>
-  );
-}
-
 export function MarkdownTable({
   node: _node,
   ...props
@@ -82,7 +53,30 @@ export function MarkdownTable({
 /** Component types stay module-stable, so a re-render never remounts a
  * focused link or a plugin block; what changes per render is read here. */
 export const sharedComponents: Components = {
-  a: SharedLink,
+  a: function SharedLink({ href, children }) {
+    const { openLink, session } = useContext(CapabilitiesContext);
+    if (!href) return children;
+    if (!openLink)
+      return (
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      );
+    // A raw autolink shows its destination's name, as in messages.
+    const label = labelText(children);
+    const raw = label === href;
+    return (
+      <MessageLink
+        url={href}
+        label={raw ? undefined : label}
+        registry={undefined}
+        session={session}
+        onOpenLink={openLink}
+      >
+        {raw ? undefined : children}
+      </MessageLink>
+    );
+  },
   img: ({ alt }) =>
     alt ? <span className={styles.imageAlt}>{alt}</span> : null,
   pre: function SharedCode(props) {
@@ -124,7 +118,6 @@ export function MarkdownDocument({
       <CapabilitiesContext value={capabilities ?? {}}>
         <Markdown
           remarkPlugins={[...profile.syntax, ...profile.transforms]}
-          {...(profile.rehype ? { rehypePlugins: [...profile.rehype] } : {})}
           components={components}
           skipHtml={profile.html === "omit"}
           {...(transform ? { urlTransform: transform } : {})}

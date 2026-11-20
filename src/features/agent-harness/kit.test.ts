@@ -401,6 +401,31 @@ describe("harnessKit.systemPrompt", () => {
     );
   });
 
+  it("builds the base prompt with the sections the owner chose", async () => {
+    const { kit, agent, delivery } = setup();
+    const text = await kit.systemPrompt(
+      delivery(
+        { type: "mention", event: message("1", "x") },
+        {
+          agent: {
+            ...agent,
+            promptSections: () => ({
+              owner: {
+                progress: { mode: "off" },
+                etiquette: { mode: "custom", text: "Be brief." },
+              },
+            }),
+          } as unknown as Delivery["agent"],
+        },
+      ),
+      { scope: "thread", cwd: "~", instructions: "" },
+    );
+    expect(text).not.toContain("## Progress");
+    expect(text).toContain(
+      '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
+    );
+  });
+
   it("tells a session without tools that its final message is its reply", async () => {
     const { kit, delivery } = setup();
     const text = await kit.systemPrompt(

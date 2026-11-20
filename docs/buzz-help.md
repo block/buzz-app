@@ -1245,6 +1245,14 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+Agents use the lean base prompt by default: Buzz's contract without optional
+memory-hygiene, engineering, commit-identity and autonomy guidance. Turn off
+**Use lean base prompt** in **Settings → Agent setup → Agent behavior** to include
+full guidance. Explicit saved choices are preserved. Agents with settings access
+can also change `agents.lean_base_prompt`. This affects **agents using the shared Buzz prompt on this
+device**. Claude Code and Codex need a new session; Goose and Pi apply the change
+on their next turn.
+
 Agents can use `agent_update` to propose harness settings for your local agents in the same community, including the Auto-compact threshold on supported harnesses. **Proposed settings** compares the saved and proposed values. Review or edit the draft and select **Save** to apply it, or close the review to discard it. A Codex agent using an execution adapter can only propose the
 default Huddle voice.
 

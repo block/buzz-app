@@ -1,3 +1,4 @@
+import { leanBasePromptSetting } from "../features/agent-harness/lean-base-prompt-preference";
 import { autocorrectSetting } from "../features/messages/autocorrect-preference";
 import { followUpBehaviorSetting } from "../features/messages/follow-up-preference";
 import { rememberAgentsSetting } from "../features/messages/mention-preferences";
@@ -20,4 +21,5 @@ export const deviceSettings = (appearance: Appearance) =>
     autocorrectSetting,
     rememberAgentsSetting,
     unreadFirstSetting,
+    leanBasePromptSetting,
   ]);

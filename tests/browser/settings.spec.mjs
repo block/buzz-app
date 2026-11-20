@@ -581,6 +581,10 @@ confirmedPresence(
     await expect(
       page.getByRole("region", { name: "Agent setup", exact: true }),
     ).toBeVisible();
+    // The shell must expose the preference; state transitions live in the component tests.
+    await expect(
+      page.getByRole("switch", { name: "Use lean base prompt" }),
+    ).toBeVisible();
     const remember = page.getByRole("switch", {
       name: "Remember mentioned agents",
     });

@@ -1,3 +1,9 @@
+import { beforeEach } from "vitest";
+import { setLeanBasePromptPreference } from "../../features/agent-harness/lean-base-prompt-preference";
+
+// These tests pin the full guidance unless a case explicitly enables lean.
+beforeEach(() => setLeanBasePromptPreference(false));
+
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";

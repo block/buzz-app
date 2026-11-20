@@ -1,3 +1,9 @@
+import { beforeEach } from "vitest";
+import { setLeanBasePromptPreference } from "../../features/agent-harness/lean-base-prompt-preference";
+
+// These tests pin the full guidance unless a case explicitly enables lean.
+beforeEach(() => setLeanBasePromptPreference(false));
+
 import { expect, it } from "vitest";
 import { quoted } from "../../features/agent-harness/turn-records";
 import type { ConversationWake } from "../../features/agents/service";

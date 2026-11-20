@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { fromOwner } from "../agents/owner-attestation";
 import type { AgentHandle, Delivery } from "../agents/service";
@@ -6,6 +6,10 @@ import { eventDto, type EventData, type RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
 import { harnessKit } from "./kit";
+
+import { setLeanBasePromptPreference } from "./lean-base-prompt-preference";
+
+beforeEach(() => setLeanBasePromptPreference(false));
 
 const self = "c".repeat(64);
 const alice = "a".repeat(64);

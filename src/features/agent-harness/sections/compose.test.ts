@@ -1,3 +1,9 @@
+import { beforeEach } from "vitest";
+import { setLeanBasePromptPreference } from "../lean-base-prompt-preference";
+
+// These tests pin the full guidance unless a case explicitly enables lean.
+beforeEach(() => setLeanBasePromptPreference(false));
+
 import { describe, expect, it } from "vitest";
 import { systemPrompt } from "../../../bundled/claude-code/prompt";
 import { developerInstructions } from "../../../bundled/codex/prompt";
@@ -177,4 +183,67 @@ describe("the default texts", () => {
       }
     },
   );
+});
+
+describe("lean composition", () => {
+  const omitted = ["memory", "engineering", "commit-identity", "autonomy"];
+  const variants: readonly Facts[] = ["thread", "channel", "community"].flatMap(
+    (scope) =>
+      [undefined, "thread", "conversation", "standalone"].flatMap((place) =>
+        [undefined, workspace].map(
+          (ownFolder) => ({ scope, place, ownFolder }) as Facts,
+        ),
+      ),
+  );
+
+  it.each(variants)(
+    "preserves the exact remaining sections and host variants (%o)",
+    (facts) => {
+      const expected = SECTIONS.filter(({ id }) => !omitted.includes(id))
+        .map((section) => {
+          const body = defaultText(section, facts);
+          return section.title ? `## ${section.title}\n\n${body}` : body;
+        })
+        .join("\n\n");
+      expect(composeBase(facts, true).text).toBe(expected);
+      for (const id of omitted) {
+        const section = SECTIONS.find((section) => section.id === id);
+        if (!section) throw new Error(`Missing guidance section: ${id}`);
+        expect(section.owner).toBe(true);
+        expect(locked(section)).toBe(false);
+        expect(composeBase(facts, false).text).toContain(
+          defaultText(section, facts),
+        );
+        expect(composeBase(facts, true).text).not.toContain(
+          `## ${section.title}\n`,
+        );
+      }
+      expect(composeBase(facts, true).text.length).toBeLessThan(
+        composeBase(facts, false).text.length,
+      );
+    },
+  );
+
+  it("all harnesses use the selected mode while retaining identity, memory context and workspace", () => {
+    setLeanBasePromptPreference(true);
+    const facts = { scope: "thread", ownFolder: workspace } as const;
+    const lean = composeBase(facts, true).text;
+    const full = composeBase(facts, false).text;
+    const claude = systemPrompt({
+      scope: "thread",
+      cwd: folder,
+      workspace,
+      agent,
+      memory: "Remember this.",
+    });
+    const codex = developerInstructions(agent, "thread", workspace);
+    for (const prompt of [claude, codex]) {
+      expect(prompt).toContain(lean);
+      expect(prompt).not.toContain(full);
+      expect(prompt).toContain(agent.pubkey);
+      expect(prompt).not.toContain("## Engineering Discipline");
+    }
+    expect(claude).toContain("Remember this.");
+    expect(claude).toContain(folder);
+  });
 });

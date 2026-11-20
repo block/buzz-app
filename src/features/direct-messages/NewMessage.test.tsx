@@ -196,6 +196,7 @@ function setup({ archived = [] as string[] } = {}) {
   } as unknown as RelaySession;
   const onOpenThread = vi.fn();
   const onStarted = vi.fn();
+  const onPreparing = vi.fn();
   let controlState: LocalAgentsSnapshot = {
     status: "ready",
     agents: [
@@ -267,6 +268,7 @@ function setup({ archived = [] as string[] } = {}) {
       visit={visit}
       onOpenThread={onOpenThread}
       onStarted={onStarted}
+      onPreparing={onPreparing}
     />
   );
   const mount = (visit?: PageNavigation, to?: string, at?: number) => {
@@ -286,6 +288,7 @@ function setup({ archived = [] as string[] } = {}) {
     outbox,
     onOpenThread,
     onStarted,
+    onPreparing,
     mount,
     control,
     setArchived(keys: readonly string[]) {
@@ -2033,6 +2036,31 @@ it.each([true, false])(
     }
   },
 );
+
+it("does not open the DM when the page exits while agents are still loading", async () => {
+  const t = setup();
+  const view = t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  const ready = t.control.snapshot();
+  t.updateControl({ status: "loading", agents: [] });
+  let finish!: () => void;
+  const refresh = vi.fn(
+    () => new Promise<void>((resolve) => (finish = resolve)),
+  );
+  t.control.refresh = refresh;
+  await t.user.click(send());
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  view.unmount();
+  // The list arrives with the agent controlled: only the exit stops the send.
+  t.updateControl(ready);
+  await act(async () => finish());
+  expect(t.onPreparing).not.toHaveBeenCalled();
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+});
 
 it("distinguishes namesake options and chips without pictures", async () => {
   const t = setup();

@@ -771,6 +771,38 @@ it("stops additional invitations when the composing view closes during admission
   }
 });
 
+it.each([true, false])(
+  "cancels admission when the composing view closes during the library reread: read succeeds=%s",
+  async (succeeds) => {
+    const test = setup();
+    let active = true;
+    let release = () => {};
+    try {
+      await test.ready();
+      test.failLibraryRefresh();
+      await test.owner.session.agentLibrary.refresh();
+      test.failLibraryRefresh(!succeeds);
+      release = test.holdLibrary();
+      const reads = test.libraryReads();
+      const admission = test.owner.session.channelWrites.addAgents(
+        test.parent,
+        [test.agent],
+        () => active,
+      );
+      await vi.waitFor(() => expect(test.libraryReads()).toBe(reads + 1));
+      active = false;
+      release();
+      // Cancelled, not refused: a failed reread must not report a missing agent.
+      await expect(admission).rejects.toMatchObject({ name: "AbortError" });
+      expect(test.publish).not.toHaveBeenCalled();
+      expect(test.sign).not.toHaveBeenCalled();
+    } finally {
+      release();
+      test.owner.dispose();
+    }
+  },
+);
+
 it("does not accept a foreign-signed roster as fresh membership", async () => {
   const test = setup();
   try {

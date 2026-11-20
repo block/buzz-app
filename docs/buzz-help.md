@@ -949,7 +949,7 @@ Quitting Buzz also turns it off.
   local cleanup is triggered and no remote source is deleted.
 - **Dragging files in**: while files are dragged over a conversation, a dashed
   frame marks where they will attach and the messages stay visible. Rest the
-  drag for half a second on a channel, DM or chat in the sidebar, or on a
+  drag for about 0.7 seconds on a channel, DM or chat in the sidebar, or on a
   message's thread summary, and it opens, so the same drag can continue into
   that conversation or thread. The row highlights and blinks twice first; with
   reduced motion it only highlights. Releasing the files on a sidebar row

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type DragEvent } from "react";
 
 /** How long a file drag rests on a target before it opens, as in Finder. */
-export const SPRING_LOAD_DELAY_MS = 500;
+export const SPRING_LOAD_DELAY_MS = 700;
 /** The highlight waits this long, inside the delay, so a drag that only
  * passes over a target does not flash it. */
 export const SPRING_LOAD_GRACE_MS = 80;

@@ -341,8 +341,12 @@ export class ConversationService extends Service implements Conversation {
         <ImageViewer
           {...props}
           media={(url) => {
-            const relay = this.ctx.reflect.get("relay");
-            return relay ? relay.snapshot().session.media(url) : url;
+            // Only the relay's own media needs the session's signed read;
+            // other https images load directly, even with no transport.
+            const relay = this.ctx.reflect.get("relay")?.snapshot();
+            return relay?.origin && url.startsWith(`${relay.origin}/media/`)
+              ? relay.session.media(url)
+              : url;
           }}
         />
       ),

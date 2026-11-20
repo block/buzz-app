@@ -1834,8 +1834,24 @@ export function createChannelStore(
     started?: ReadonlyMap<string, RelayEvent>,
     cached = false,
     readProof = true,
+    deferPreviewAccessRestored = false,
   ) {
     if (disposed || !transport || !discovery) return;
+    const unreadable = new Set<string>();
+    if (
+      !cached &&
+      !deferPreviewAccessRestored &&
+      transport.previewAccessRestored
+    )
+      for (const event of events) {
+        if (
+          event.pubkey !== transport.relayAuthor ||
+          (event.kind !== 39000 && event.kind !== 39002)
+        )
+          continue;
+        const id = tag(event, "d");
+        if (id && !authorized(id)) unreadable.add(id);
+      }
     if (!cached) discoveryObserved = true;
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
@@ -1946,6 +1962,13 @@ export function createChannelStore(
     }
     if (!cached && !disposed && readProof)
       void readCreations(events).catch(() => {});
+    if (!disposed && appliedEpoch === epoch) {
+      for (const id of unreadable) {
+        if (!authorized(id)) continue;
+        transport.previewAccessRestored?.();
+        break;
+      }
+    }
     return !disposed && appliedEpoch === epoch;
   }
   /** The viewer's signed rosters among `batch`, at most DISCOVERY_CONFIRM_LIMIT
@@ -2519,6 +2542,8 @@ export function createChannelStore(
       undefined,
       false,
       settings?.consistency !== "strong",
+      // Exact-read omissions can deny access below.
+      true,
     );
     if (resumed.length) setList(list, true);
     // Exact viewer-scoped omission is complete for this ID, unlike a capped

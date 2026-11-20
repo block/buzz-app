@@ -7,7 +7,7 @@ import type { LiveCallbacks } from "./live";
 import { transportPartition } from "./partition";
 import { keypair, roster, scriptedTransport, signed } from "./testing";
 
-it.each(["CLOSED", "private metadata"])(
+it.each(["CLOSED", "private metadata", "concurrent readPage"])(
   "restores retained local activity after verified preview recovery from %s",
   async (loss) => {
     vi.useFakeTimers();
@@ -99,17 +99,42 @@ it.each(["CLOSED", "private metadata"])(
       activity.subscribe(onOtherActivity, "unrelated");
 
       const recovery =
-        loss === "private metadata"
+        loss !== "CLOSED"
           ? owner.session.channels.resolve?.([channelId])
           : undefined;
+      void recovery?.catch(() => {});
       await vi.advanceTimersByTimeAsync(0);
       const recheck = wire.pending.find(({ filters }) =>
         filters.some((filter) => filter["#d"]?.includes(channelId)),
       );
       expect(recheck).toBeDefined();
-      recheck?.respond([
-        loss === "CLOSED" ? publicPreview : metadata("public", 30),
-      ]);
+      const publicAgain =
+        loss === "CLOSED" ? publicPreview : metadata("public", 30);
+      if (loss === "concurrent readPage") {
+        const page = owner.session.readPage([
+          {
+            kinds: [39000],
+            authors: [relay.pubkey],
+            "#d": [channelId],
+            limit: 1,
+          },
+        ]);
+        void page.catch(() => {});
+        await vi.advanceTimersByTimeAsync(0);
+        const read = wire.pending.find(
+          ({ filters }) =>
+            filters.length === 1 && filters[0]?.["#d"]?.includes(channelId),
+        );
+        expect(read).toBeDefined();
+        read?.respond([publicAgain]);
+        await page;
+        expect(owner.session.channels.get?.(channelId)?.readOnly).toBe(true);
+        expect(snapshot().local).toMatchObject([
+          { messageId: failedId, state: "error" },
+        ]);
+        expect(snapshot().declined).toMatchObject([{ messageId: declinedId }]);
+      }
+      recheck?.respond([publicAgain]);
       await recovery;
       await vi.advanceTimersByTimeAsync(0);
       expect(owner.session.channels.get?.(channelId)?.readOnly).toBe(true);

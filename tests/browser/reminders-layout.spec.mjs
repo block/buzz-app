@@ -233,6 +233,105 @@ test("completion preserves section alignment and avatar opens its conversation",
   expect(errors).toEqual([]);
 });
 
+for (const message of [false, true]) {
+  test(`the ${message ? "message" : "standalone"} editor keeps focused fields clear of the title and actions at 200% text`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 480, height: 720 });
+    await page.goto(`${url}?width=480&demo`);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+      document.documentElement.dataset.colorMode = "dark";
+    });
+
+    await page
+      .getByRole("button", {
+        name: message ? "Set a reminder" : "New reminder",
+      })
+      .click();
+    const name = message ? "Remind me" : "New reminder";
+    const dialog = page.getByRole("dialog", { name });
+    const title = dialog.getByRole("heading", { name });
+    const note = dialog.getByRole("textbox", {
+      name: message ? "Note (optional)" : "Reminder text",
+    });
+    const when = dialog.getByRole("combobox", { name: "When" });
+    const cancel = dialog.getByRole("button", { name: "Cancel" });
+    const save = dialog.getByRole("button", { name: "Set reminder" });
+    const body = dialog.locator(".buzz-dialog-body");
+    const firstLineExposed = () =>
+      note.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return (
+          document.elementFromPoint(
+            rect.left +
+              el.clientLeft +
+              Number.parseFloat(style.paddingLeft) +
+              8,
+            rect.top +
+              el.clientTop +
+              Number.parseFloat(style.paddingTop) +
+              Number.parseFloat(style.lineHeight) / 2,
+          ) === el
+        );
+      });
+
+    await expect(message ? when : note).toBeFocused();
+    if (message) {
+      await page.keyboard.press("Tab");
+      await expect(note).toBeFocused();
+      await expect.poll(firstLineExposed).toBe(true);
+    }
+    await note.fill("Renew insurance\nReview deductible");
+    await expect.poll(firstLineExposed).toBe(true);
+    await page.keyboard.press(message ? "Shift+Tab" : "Tab");
+    await expect(when).toBeFocused();
+    const whenExposed = () =>
+      when.evaluate((el) => {
+        const { left, top, width, height } = el.getBoundingClientRect();
+        return el.contains(
+          document.elementFromPoint(left + width / 2, top + height - 2),
+        );
+      });
+    await expect.poll(whenExposed).toBe(true);
+
+    const box = await dialog.boundingBox();
+    await page.mouse.move(box.x + 12, box.y + box.height / 2);
+    await page.mouse.wheel(0, 1000);
+    await expect
+      .poll(() =>
+        body.evaluate(
+          (el) =>
+            el.scrollTop > 0 &&
+            el.scrollTop === el.scrollHeight - el.clientHeight,
+        ),
+      )
+      .toBe(true);
+    await expect(title).toBeInViewport();
+    await expect(save).toBeInViewport();
+    await expect.poll(whenExposed).toBe(!message);
+
+    await page.keyboard.press(message ? "Tab" : "Shift+Tab");
+    await expect(note).toBeFocused();
+    await expect.poll(firstLineExposed).toBe(true);
+    await expect(note).toHaveValue("Renew insurance\nReview deductible");
+    await page.keyboard.press(message ? "Shift+Tab" : "Tab");
+    await expect(when).toBeFocused();
+    await expect.poll(whenExposed).toBe(true);
+    if (message) {
+      await page.keyboard.press("Tab");
+      await expect(note).toBeFocused();
+      await expect.poll(firstLineExposed).toBe(true);
+    }
+    await page.keyboard.press("Tab");
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(save).toBeFocused();
+  });
+}
+
 test("native history restores the reminder draft, explicit dismissal retires it, and saved lines stay distinct", async ({
   page,
 }) => {

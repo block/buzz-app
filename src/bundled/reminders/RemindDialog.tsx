@@ -171,6 +171,7 @@ export function RemindDialog({
   return (
     <Dialog
       size="compact"
+      bodyLayout="scroll"
       open={isOpen}
       visit={visit}
       dismissOnOutsideClick={false}

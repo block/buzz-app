@@ -50,8 +50,8 @@ export type DialogProps = {
   closeLabel?: string;
   /** Reserve viewport-capped space for changing content; scroll only the body. */
   height?: "content" | "stable" | "stable-tall";
-  /** Let bounded content own its scrolling instead of the shared body. */
-  bodyLayout?: "flow" | "flex";
+  /** Scroll the body between title and actions with `scroll`, or let a child scroll with `flex`. */
+  bodyLayout?: "flow" | "scroll" | "flex";
   /** Compact dialogs; standard, wide, and expanded task modals. */
   size?: "compact" | "default" | "wide" | "expanded";
   /** Keep frequent surfaces such as search palettes immediate. */

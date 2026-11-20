@@ -189,6 +189,10 @@ make the gutter opaque, it also blocks input to the body beneath it.
 Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
 host surface when it differs from the default popover surface.
 `--scroll-edge-fill` can supply a stronger backing behind text within that fade.
+For a content-sized form whose fields must not pass under these bars, use
+`bodyLayout="scroll"`. The body scrolls between the title and actions, keeping
+focused fields clear of both. If the title and actions leave too little room
+for one control, the whole dialog can scroll as a fallback.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 

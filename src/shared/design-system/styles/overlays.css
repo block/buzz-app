@@ -843,8 +843,8 @@ html[data-keyboard-navigation]
   .buzz-dialog-bar-material {
     display: none;
   }
-  /* Ordinary form dialogs scroll beneath their full-height sticky chrome.
-     Stable-height dialogs keep their expanding body so actions stay put. */
+  /* Only ordinary flow dialogs scroll under sticky chrome. The scroll layout
+     keeps the bounded body above, so fields cannot scroll behind the bars. */
   .buzz-dialog:not([data-stepped]):not(
     [data-navigation]
   )[data-body-layout="flow"]:not([data-presentation="search"]):not(

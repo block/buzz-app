@@ -91,11 +91,14 @@ async function landedOnHeading(viewer: string | undefined) {
 }
 
 it("keeps the last confirmed Web Inspector state when native rejects a change", async () => {
-  const pending = Promise.withResolvers<boolean>();
+  let rejectChange!: (reason: Error) => void;
+  const pending = new Promise<boolean>((_resolve, reject) => {
+    rejectChange = reject;
+  });
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "credential_pairings_list") return [];
     if (command === "web_inspector" && !args) return false;
-    if (command === "web_inspector") return pending.promise;
+    if (command === "web_inspector") return pending;
     throw new Error(`Unexpected command ${command}`);
   });
 
@@ -119,7 +122,7 @@ it("keeps the last confirmed Web Inspector state when native rejects a change", 
         ),
     ).toEqual([["web_inspector", { enabled: true }]]);
   } finally {
-    pending.reject(new Error("Web Inspector is unavailable"));
+    rejectChange(new Error("Web Inspector is unavailable"));
   }
   expect(await screen.findByRole("alert")).toHaveTextContent("Try again");
   expect(control).not.toBeChecked();

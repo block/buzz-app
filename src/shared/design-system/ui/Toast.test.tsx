@@ -73,7 +73,8 @@ it("finishes toast removal after the exit animation while the host stays mounted
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
   const card = screen.getByRole("dialog", { name: "Saved" });
-  const item = card.closest("[data-sonner-toast]");
+  const item = card.closest<HTMLElement>("[data-sonner-toast]");
+  item?.style.setProperty("--buzz-toast-removal-ms", "275");
   fireEvent.keyDown(card, { key: "Escape" });
   expect(item).toHaveAttribute("data-removed", "true");
   await act(() => vi.advanceTimersByTimeAsync(274));

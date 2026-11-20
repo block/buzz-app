@@ -600,23 +600,44 @@
   transition-duration: 180ms;
   transition-timing-function: ease-out;
 }
-@media (prefers-reduced-motion: no-preference) {
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
   .buzz-toast-viewport
     [data-sonner-toast][data-front="true"][data-swiping="false"][data-swipe-out="false"] {
-    transition-property: transform, opacity, filter;
+    /* The Sonner patch reads this delay so the 250ms exit finishes before removal. */
+    --buzz-toast-removal-ms: 275;
+    transition-property: transform, opacity;
     transition-duration: var(--toast-motion-duration, 350ms);
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .buzz-toast-viewport [data-sonner-toast][data-front="true"] .buzz-toast {
     transform-origin: top center;
+    transition:
+      transform var(--toast-motion-duration, 350ms)
+      cubic-bezier(0.22, 1, 0.36, 1),
+      filter var(--toast-motion-duration, 350ms) cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .buzz-toast-viewport
-    [data-sonner-toast][data-front="true"][data-mounted="false"],
-  .buzz-toast-viewport
-    [data-sonner-toast][data-front="true"][data-removed="true"][data-swipe-out="false"] {
-    transform: translateY(-16px) scale(0.97);
-    filter: blur(2px);
+    [data-sonner-toast][data-front="true"]:is(
+      [data-mounted="false"],
+      [data-removed="true"][data-swipe-out="false"]
+    ) {
+    transform: translateY(-16px);
     opacity: 0;
     --toast-motion-duration: 250ms;
+  }
+
+  .buzz-toast-viewport
+    [data-sonner-toast][data-front="true"]:is(
+      [data-mounted="false"],
+      [data-removed="true"][data-swipe-out="false"]
+    )
+    .buzz-toast {
+    transform: scale(0.97);
+    filter: blur(2px);
   }
 }
 /* Keep every recovery reachable when expanded, including short windows. */

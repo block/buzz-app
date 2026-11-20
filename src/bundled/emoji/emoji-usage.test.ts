@@ -35,22 +35,23 @@ it("reads whole choices from the picker's counts for Unicode and community sugge
   expect(emojiUsage("wss://relay.test/a")("unicode/smile")).toBe(0);
 });
 
-it("seeds the default row below one choice, only into an empty store", () => {
-  seedEmojiUsage(["+1", "grinning"]);
-  const seeded = JSON.parse(
-    localStorage.getItem("emoji-mart.frequently") ?? "",
-  );
-  expect(seeded["+1"]).toBeGreaterThan(seeded.grinning);
-  expect(seeded["+1"]).toBeLessThan(1);
+it("seeds one default row below one choice, only into a store Mart treats as empty", () => {
+  const stored = () =>
+    JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "");
+  seedEmojiUsage(["+1", "grinning", "kissing_heart"], 2);
+  expect(Object.keys(stored())).toEqual(["+1", "grinning"]);
+  expect(stored()["+1"]).toBeGreaterThan(stored().grinning);
+  expect(stored()["+1"]).toBeLessThan(1);
   expect(emojiUsage("s")("unicode/+1")).toBe(0);
-  localStorage.setItem("emoji-mart.frequently", '{"smile":1}');
-  seedEmojiUsage(["+1"]);
-  expect(localStorage.getItem("emoji-mart.frequently")).toBe('{"smile":1}');
-  // A poisoned empty map gets the default row back.
-  localStorage.setItem("emoji-mart.frequently", "{}");
-  seedEmojiUsage(["+1"]);
-  expect(emojiUsage("s")("unicode/+1")).toBe(0);
-  expect(localStorage.getItem("emoji-mart.frequently")).not.toBe("{}");
+  localStorage.setItem("emoji-mart.frequently", JSON.stringify({ smile: 1 }));
+  seedEmojiUsage(["+1"], 1);
+  expect(stored()).toEqual({ smile: 1 });
+  // Empty and malformed stores get the default row back.
+  for (const value of ["{}", "[]", "null", "", "0", "false", "garbage"]) {
+    localStorage.setItem("emoji-mart.frequently", value);
+    seedEmojiUsage(["+1"], 1);
+    expect(Object.keys(stored())).toEqual(["+1"]);
+  }
 });
 
 // Mart caches its counts for the module's lifetime, so this runs as one story.
@@ -63,8 +64,9 @@ it("records through Mart so picker and suggestion choices share one seeded histo
   const stored = JSON.parse(
     localStorage.getItem("emoji-mart.frequently") ?? "",
   );
-  expect(Object.keys(stored)).toEqual(
-    expect.arrayContaining([...FrequentlyUsed.DEFAULTS, party]),
+  // Without a picker width, the seed is the widest picker row.
+  expect(Object.keys(stored).sort()).toEqual(
+    [...FrequentlyUsed.DEFAULTS.slice(0, 8), party].sort(),
   );
   expect(uses()("unicode/joy")).toBe(0);
   // A picker choice of a default and a suggestion choice add whole choices.

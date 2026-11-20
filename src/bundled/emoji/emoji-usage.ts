@@ -2,6 +2,8 @@
 // row and the counts that rank colon suggestions. Mart keeps at most the
 // picker's two rows, plus the latest choice, whenever a picker opens.
 const STORE = "emoji-mart.frequently";
+/** The composer picker's most columns. */
+const WIDEST_ROW = 8;
 
 /** The picker's ID for a community emoji, scoped like its catalog. */
 export const customEmojiId = (scope: string, shortcode: string) =>
@@ -15,22 +17,29 @@ function usageId(scope: string, id: string) {
   return undefined;
 }
 
-/** Seed Mart's default row with weights below one choice before Mart reads
- * an empty store; Mart's own seed would save its defaults as whole choices. */
-export function seedEmojiUsage(defaults: readonly string[]) {
+/** Seed Mart's one default row, `perLine` wide, with weights below one choice
+ * before Mart reads a store it treats as empty; Mart's own seed would save its
+ * defaults as whole choices. */
+export function seedEmojiUsage(defaults: readonly string[], perLine: number) {
   try {
-    const stored = localStorage.getItem(STORE);
-    if (stored !== null && stored !== "{}") return;
+    if (!emptyStore(localStorage.getItem(STORE))) return;
+    const row = defaults.slice(0, perLine);
     const seed = Object.fromEntries(
-      defaults.map((id, index) => [
-        id,
-        (defaults.length - index) / (defaults.length + 1),
-      ]),
+      row.map((id, index) => [id, (row.length - index) / (row.length + 1)]),
     );
     localStorage.setItem(STORE, JSON.stringify(seed));
     localStorage.removeItem("emoji-mart.last");
   } catch {
     /* Like Mart, selection works without localStorage. */
+  }
+}
+
+function emptyStore(stored: string | null) {
+  try {
+    const counts: unknown = JSON.parse(stored || "null");
+    return !counts || typeof counts !== "object" || !Object.keys(counts).length;
+  } catch {
+    return true;
   }
 }
 
@@ -60,7 +69,8 @@ export function recordEmojiUsage(scope: string, id: string) {
   if (!key) return;
   void import("emoji-mart")
     .then(({ FrequentlyUsed }) => {
-      seedEmojiUsage(FrequentlyUsed.DEFAULTS);
+      // Without a picker width, seed the widest picker row.
+      seedEmojiUsage(FrequentlyUsed.DEFAULTS, WIDEST_ROW);
       FrequentlyUsed.add({ id: key });
     })
     .catch(() => {

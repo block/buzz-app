@@ -32,6 +32,10 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
     await search.fill("");
     await expect(frequent.first()).toBeVisible();
   };
+  const counts = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+    );
   const closePicker = async () => {
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
@@ -54,6 +58,8 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   // A picker choice ranks first among its prefix matches.
   await input.fill("");
   await openPicker();
+  // A fresh picker shows one row of defaults, as Emoji Mart seeds it.
+  await expect(frequent).toHaveCount(8);
   await search.fill("smirk");
   await expect(
     page.locator('em-emoji-picker .category button[aria-label="😏"]').first(),
@@ -81,14 +87,14 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   await input.press("ArrowDown");
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", ":party-parrot-wave: ");
+  // Recording finishes once Emoji Mart's module resolves.
+  await expect.poll(counts).toMatchObject({
+    "buzz-custom/a/party-parrot-wave": 1,
+  });
   await input.fill(":party-p");
   await expect.poll(labels).toEqual([":party-parrot-wave:", ":party-parrot:"]);
   await input.press("Escape");
   await input.fill("");
-  const counts = () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
-    );
   const stored = await counts();
   expect(stored).toMatchObject({
     smirk: 3,
@@ -111,4 +117,31 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   await expect(frequent.locator('img[src*="wave.png"]')).toHaveCount(1);
   await closePicker();
   expect(errors.unexplained()).toEqual([]);
+});
+
+test("a first suggestion choice in a narrow window seeds at most one wide row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/tests/fixtures/emoji.html");
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  await input.fill(":smirk");
+  await expect(page.getByRole("option").first()).toHaveText(/:smirk:/);
+  await input.press(":");
+  await expect(input).toHaveJSProperty("value", "😏 ");
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("emoji-mart.frequently")),
+    )
+    .toContain("smirk");
+  await page
+    .getByRole("button", { name: "Emoji and GIFS", exact: true })
+    .click();
+  const frequent = page.locator(
+    'em-emoji-picker .category[data-id="frequent"] button',
+  );
+  await expect(frequent.first()).toBeVisible();
+  // Without the picker width, the choice joins the widest row of defaults,
+  // which wraps here: no more than that.
+  await expect(frequent).toHaveCount(9);
 });

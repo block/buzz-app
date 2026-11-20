@@ -146,7 +146,7 @@ export function mountEmojiMart({
     ];
   });
   // Also restores the default row if storage contains a poisoned empty map.
-  seedEmojiUsage(FrequentlyUsed.DEFAULTS);
+  seedEmojiUsage(FrequentlyUsed.DEFAULTS, perLine);
   const picker = new Picker({
     data,
     custom: emojis.length

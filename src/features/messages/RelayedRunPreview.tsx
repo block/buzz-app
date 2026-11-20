@@ -114,12 +114,16 @@ export function RelayedRunPreview({
         <span className={styles.relayedAvatar} aria-hidden="true">
           <AvatarStack size="mini" items={named} />
         </span>
-        <span className={styles.relayedName} aria-hidden="true">
-          {latest?.name}
-        </span>
+        {/* Opened, each line below names its sender, so only the source stays. */}
+        {!expanded && (
+          <span className={styles.relayedName} aria-hidden="true">
+            {latest?.name}
+          </span>
+        )}
         {(chat || !sameSource) && (
           <span className={styles.relayedSubtle} aria-hidden="true">
-            {chat ? "from" : "from other chats"}
+            {expanded ? "From" : "from"}
+            {!chat && " other chats"}
           </span>
         )}
         {chat && (

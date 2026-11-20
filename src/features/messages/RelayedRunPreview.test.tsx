@@ -119,10 +119,12 @@ it("names the one chat once, not on each line inside", () => {
     />,
   );
   expect(sameSource(view)).toHaveTextContent("ab");
-  // Opened, the line keeps its sender and chat and drops its preview.
+  // Opened, the line keeps only its chat; each line below names its sender.
   expect(
     screen.getByRole("button", { name: /^Collapse 2 messages from #rebase/ }),
   ).toBeVisible();
+  expect(view.container).toHaveTextContent(/^ZFrom#rebase/);
+  expect(view.container).not.toHaveTextContent("Zerk");
   expect(view.container).not.toHaveTextContent("+1");
   view.rerender(
     <RelayedRunPreview

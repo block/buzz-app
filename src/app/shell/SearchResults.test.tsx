@@ -58,6 +58,7 @@ import type {
 import type { SearchGroup } from "./SearchChoices";
 import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { messageSortPreference } from "../../features/search/message-sort-preference";
+import { MatchRank } from "../../features/search/match";
 import { SearchResults } from "./SearchResults";
 import { useSearchMessages } from "./useSearchMessages";
 import { useSearchSettings } from "./SearchSettings";
@@ -10065,7 +10066,7 @@ it.each([
   },
   {
     name: "keeps a chat holding the whole text first when it contains the agent found word by word",
-    channel: "build-scout-notes",
+    channel: "bui-launch-ld-scout-notes",
     chat: "scout build log",
     agentInChat: true,
     groups: ["Chats", "Agents", "Channels"],
@@ -10082,11 +10083,19 @@ it.each([
   },
   {
     name: "lets a message hit pass an agent found word by word when nothing holds the whole text",
-    channel: "build-scout-notes",
+    channel: "bui-launch-ld-scout-notes",
     hit: true,
     groups: ["Messages", "Agents", "Chats", "Channels"],
     chats: ["Plan the week"],
     first: /scout build is green/,
+  },
+  {
+    name: "lists a setting holding the whole text before an agent found word by word",
+    channel: "bui-launch-ld-scout-notes",
+    setting: true,
+    groups: ["Settings", "Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /Scout build defaults/,
   },
 ])(
   "$name",
@@ -10095,6 +10104,7 @@ it.each([
     chat: chatName,
     agentInChat,
     hit,
+    setting,
     groups,
     chats: chatOrder,
     first,
@@ -10171,8 +10181,33 @@ it.each([
           openNewMessage={() => {}}
           openConversation={vi.fn()}
           openAgentSession={vi.fn()}
+          inlineSettings={
+            setting
+              ? [
+                  {
+                    label: "Settings",
+                    destinations: [
+                      {
+                        key: "scout-setting",
+                        label: "Scout build defaults",
+                        rank: MatchRank.prefix,
+                        icon: ChatCircleIcon,
+                        content: (
+                          <button type="button">Scout build defaults</button>
+                        ),
+                        run: vi.fn(),
+                      },
+                    ],
+                  },
+                ]
+              : undefined
+          }
         />,
       );
+      // A setting with a control turns the list into a grid.
+      const [list, group, row] = setting
+        ? (["grid", "rowgroup", "row"] as const)
+        : (["listbox", "group", "option"] as const);
       if (hit) {
         // Message search is scripted; the one hit answers after the debounce.
         await waitFor(() => expect(wire.pending).toHaveLength(1));
@@ -10184,19 +10219,21 @@ it.each([
             ]),
         );
       }
-      await screen.findByRole("group", { name: "Channels" });
-      await screen.findByRole("group", { name: "Agents" });
-      const chats = within(await screen.findByRole("group", { name: "Chats" }));
+      await screen.findByRole(group, { name: "Channels" });
+      await screen.findByRole(group, { name: "Agents" });
+      const chats = within(await screen.findByRole(group, { name: "Chats" }));
       await waitFor(() =>
-        expect(
-          chats.getAllByRole("option").map((row) => row.textContent),
-        ).toEqual(chatOrder.map((name) => expect.stringContaining(name))),
+        expect(chats.getAllByRole(row).map((chat) => chat.textContent)).toEqual(
+          chatOrder.map((name) => expect.stringContaining(name)),
+        ),
       );
-      const labels = within(screen.getByRole("listbox"))
-        .getAllByRole("group")
-        .map((group) => group.getAttribute("aria-label"));
+      const labels = within(screen.getByRole(list))
+        .getAllByRole(group)
+        .map((each) => each.getAttribute("aria-label"));
       expect(labels.slice(0, groups.length)).toEqual(groups);
-      expect(screen.getAllByRole("option")[0]?.textContent).toMatch(first);
+      const top = screen.getAllByRole(row)[0];
+      expect(top?.textContent).toMatch(first);
+      if (setting) expect(top).toHaveAttribute("aria-selected", "true");
     } finally {
       cleanup();
       owner.dispose();

@@ -1,3 +1,8 @@
+import {
+  networkContext,
+  networkCancellation,
+} from "../developer/network-context.ts";
+import { networkRecorder } from "../developer/network-diagnostics.ts";
 import type { ReadFilter } from "./events.ts";
 import { ReadError } from "./errors.ts";
 
@@ -358,10 +363,27 @@ export function createApiAdmission() {
       )
         return Promise.reject(new ApiCapacity());
       return new Promise((resolve, reject) => {
+        const began = performance.now();
+        if (networkRecorder.enabled("debug"))
+          networkRecorder.record({
+            level: "debug",
+            event: "admission.queued",
+            ...networkContext(signal),
+            count: queue.length,
+            detail: priority,
+          });
         const ticket: Ticket = {
           priority,
           signal,
           start() {
+            if (networkRecorder.enabled("debug"))
+              networkRecorder.record({
+                level: "debug",
+                event: "admission.dispatched",
+                ...networkContext(signal),
+                ms: performance.now() - began,
+                count: active,
+              });
             active++;
             if (artifact) activeArtifacts++;
             const finish = () => {
@@ -379,6 +401,14 @@ export function createApiAdmission() {
           },
           reject,
           abort() {
+            if (networkRecorder.enabled("debug"))
+              networkRecorder.record({
+                level: "debug",
+                event: "admission.cancelled",
+                ...networkContext(signal),
+                cancellation: networkCancellation(signal),
+                ms: performance.now() - began,
+              });
             remove(ticket);
             reject(
               signal?.reason ?? new DOMException("Cancelled", "AbortError"),

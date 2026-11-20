@@ -82,6 +82,7 @@ mod reshow;
 #[cfg(any(target_os = "macos", test))]
 mod webkit_reaper;
 
+mod network_diagnostics;
 mod notifications;
 mod os_idle;
 mod packaged_plugins;
@@ -735,6 +736,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         credential_service::credential_pairings_list,
         credential_service::credential_pairing_revoke,
         window_state::onboarding_preserve_window,
+        network_diagnostics::network_diagnostics_configure,
+        network_diagnostics::network_diagnostics_read,
+        network_diagnostics::network_diagnostics_clear,
+        network_diagnostics::network_diagnostics_append,
+        network_diagnostics::network_diagnostics_export,
         huddle_window_reset_incoming,
         huddle_window_open,
         huddle_window_update,
@@ -1068,6 +1074,7 @@ pub fn run() {
             #[cfg(unix)]
             quit_signal::install(app.handle());
             relay::set_user_agent(&app.package_info().version);
+            network_diagnostics::initialize(app.handle());
             relay::watch_refusals(app.handle().clone());
             app.state::<federated_identity::FederatedIdentity>()
                 .watch(app.handle().clone());
@@ -1388,6 +1395,7 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
+                network_diagnostics::flush_on_exit();
                 #[cfg(target_os = "macos")]
                 relaunch::on_exit(app);
                 // AppKit exits through libc exit(), whose C++ static destructors can

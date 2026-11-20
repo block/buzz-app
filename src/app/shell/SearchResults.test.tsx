@@ -1630,7 +1630,7 @@ it.each([
   },
 );
 
-it("tells the reranker which hits agents wrote, whoever owns the agent, and where the searcher is a member now", async () => {
+it("tells the reranker which hits agents or workflows wrote, whoever owns them, and where the searcher is a member now", async () => {
   vi.useFakeTimers();
   const relay = keypair(),
     viewer = keypair(),
@@ -1648,6 +1648,7 @@ it("tells the reranker which hits agents wrote, whoever owns the agent, and wher
   ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    archiveAuthority: relay.pubkey,
     query(filters) {
       if (filters.some((filter) => filter.search !== undefined))
         return Promise.resolve([
@@ -1660,6 +1661,13 @@ it("tells the reranker which hits agents wrote, whoever owns the agent, and wher
             tags: [["h", "crew"]],
           }),
           message(ownAgent, "left", "deploy by my agent", 1700000501),
+          // Relay-signed workflow output names its owner, not as their own.
+          eventDto(
+            message(relay, "crew", "deploy by a workflow", 1700000500, [
+              ["buzz:workflow", "true"],
+              ["buzz:workflow-owner", colleague.pubkey],
+            ]),
+          ),
         ]);
       return Promise.resolve(
         discovery.filter((event) =>
@@ -1724,21 +1732,31 @@ it("tells the reranker which hits agents wrote, whoever owns the agent, and wher
     const { candidates } = JSON.parse(requests[0]?.state ?? "{}") as {
       candidates: {
         text: string;
+        author: string;
         from_agent?: true;
         searcher_in_conversation?: true;
       }[];
     };
     expect(
-      candidates.map(({ text, from_agent, searcher_in_conversation }) => [
-        text,
-        from_agent,
-        searcher_in_conversation,
-      ]),
+      candidates.map(
+        ({ text, author, from_agent, searcher_in_conversation }) => [
+          text,
+          author,
+          from_agent,
+          searcher_in_conversation,
+        ],
+      ),
     ).toEqual([
-      ["deploy by a person", undefined, true],
-      ["deploy by an agent", true, true],
-      ["deploy from an envelope", true, true],
-      ["deploy by my agent", true, undefined],
+      ["deploy by a person", "Colleague", undefined, true],
+      ["deploy by an agent", "Helper", true, true],
+      ["deploy from an envelope", expect.any(String), true, true],
+      ["deploy by my agent", expect.any(String), true, undefined],
+      [
+        "deploy by a workflow",
+        "Workflow · owned by Colleague",
+        undefined,
+        true,
+      ],
     ]);
   } finally {
     cleanup();

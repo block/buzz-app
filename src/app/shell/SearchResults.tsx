@@ -1859,10 +1859,10 @@ export function SearchResults({
           channel?.channelType === "dm"
             ? `Direct message: ${whereOf(message.channelId)}`
             : whereOf(message.channelId),
-        author: nameOf(
-          message.workflowOwnerId ?? message.authorId,
-          message.channelId,
-        ),
+        // As the row shows it: a workflow's output isn't its owner's own.
+        author: message.workflowOwnerId
+          ? workflowLabel(nameOf(message.workflowOwnerId, message.channelId))
+          : nameOf(message.authorId, message.channelId),
         mine: message.authorId === session.viewer,
         // As message rows decide: whoever owns the agent, its profile or
         // envelope says so; the viewer's own agents are known here too.

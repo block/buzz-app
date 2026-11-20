@@ -32,9 +32,10 @@ export function mergeLegacyWorkspaces(
     sections,
     ...(soloCount
       ? {
+          // The old Solo sidebar listed workspaces above its loose chats.
           sectionOrder: [
-            "solo",
             ...groupKeys.slice(0, soloCount),
+            "solo",
             "starred",
             ...groupKeys.slice(soloCount),
           ],

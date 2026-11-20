@@ -101,8 +101,8 @@ it("preserves both sets of filings, template coordinates and ordering when legac
       { id: "second", name: "Later", order: 2 },
     ],
     sectionOrder: [
-      "solo",
       "group:work",
+      "solo",
       "starred",
       "group:legacy-team:work",
       "group:second",
@@ -159,8 +159,8 @@ it.each([
     const legacy = mergeLegacyWorkspaces(team, solo);
     const expected = [
       "pages",
-      "solo",
       ...before,
+      "solo",
       "starred",
       ...after,
       "channels",
@@ -194,8 +194,8 @@ it("seeds the split for an existing unified record without a reorder", () => {
   const withDefaults = importWorkspaceFallback(current, legacy);
   expect(workspaceSectionOrder(projectWorkspaceGroups(withDefaults))).toEqual([
     "pages",
-    "solo",
     "group:notes",
+    "solo",
     "starred",
     "group:release",
     "channels",
@@ -239,8 +239,8 @@ it("uses legacy membership and retains the unified ordering within each section"
     sectionOrder: [],
   };
   expect(importWorkspaceFallback(current, legacy).sectionOrder).toEqual([
-    "solo",
     "group:notes",
+    "solo",
     "starred",
     "group:release",
     "group:backlog",

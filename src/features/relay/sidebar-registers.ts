@@ -318,10 +318,11 @@ export function importWorkspaceFallback(
     merged.sectionOrder.length
   )
     return merged;
-  // Legacy heads identify the two groups of workspaces. The unified record
-  // still owns their relative order after import.
+  // Legacy heads identify the two groups of workspaces: Solo workspaces come
+  // before Starred, Team workspaces after it. The unified record still owns
+  // their relative order after import.
   const starred = order.indexOf("starred");
-  const legacySolo = new Set(order.slice(1, starred));
+  const legacySolo = new Set(order.slice(0, starred));
   const legacyTeam = new Set(order.slice(starred + 1));
   const keys = [...(merged.sections as SidebarGroups["sections"])]
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
@@ -329,7 +330,8 @@ export function importWorkspaceFallback(
   const solo = keys.filter((key) => legacySolo.has(key));
   if (!solo.length) return merged;
   const team = keys.filter((key) => legacyTeam.has(key));
-  const sectionOrder = ["solo", ...solo, "starred", ...team];
+  // The old Solo sidebar listed workspaces above its loose chats.
+  const sectionOrder = [...solo, "solo", "starred", ...team];
   return { ...merged, sectionOrder, [WORKSPACE_DEFAULT_ORDER]: sectionOrder };
 }
 

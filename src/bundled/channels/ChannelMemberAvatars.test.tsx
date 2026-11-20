@@ -261,6 +261,51 @@ it("shows only participating agents in Solo and updates when one leaves", () => 
   expect(screen.getByTitle("Remote agent")).toBeInTheDocument();
 });
 
+it("holds Solo agents shown with library avatars when a profile picture arrives", () => {
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const list = {
+    channels: [
+      {
+        id: "solo",
+        channelType: "solo",
+        members: ["first", "second", "third", "fourth"],
+      },
+    ],
+  };
+  const choices = {
+    identities: ["First", "Second", "Third", "Fourth"].map((name) => ({
+      pubkey: name.toLowerCase(),
+      name,
+      avatar: `https://example.test/${name.toLowerCase()}-library.png`,
+    })),
+  };
+  let profiles = new Map<string, { name: string; picture?: string }>();
+  const session = {
+    channels: { subscribeList: subscribe, list: () => list },
+    profiles: {
+      subscribe,
+      snapshot: () => profiles,
+      ensure: vi.fn().mockResolvedValue(undefined),
+    },
+    agentChoices: { subscribe, snapshot: () => choices },
+    media: (url: string) => url,
+  } as unknown as RelaySession;
+  const { container } = render(
+    <ChannelMemberAvatars session={session} channelId="solo" />,
+  );
+  expect(titles(container)).toEqual(["First", "Second", "Third"]);
+
+  act(() => {
+    profiles = new Map([["fourth", photo("Fourth")]]);
+    for (const listener of listeners) listener();
+  });
+  expect(titles(container)).toEqual(["First", "Second", "Third"]);
+});
+
 it("skips header renders on unrelated list publishes and updates on membership change", () => {
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {

@@ -1,5 +1,11 @@
 import { useProfileGeneration } from "../../features/relay/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useHeaderChannel } from "../../features/relay/listed-channel";
 import type { RelaySession } from "../../features/relay/session";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -59,6 +65,11 @@ export function ChannelMemberAvatars({
     () => new Map(choices.identities.map((agent) => [agent.pubkey, agent])),
     [choices],
   );
+  // What the preview shows: relay artwork, else a library agent's avatar.
+  const picture = useCallback(
+    (id: string) => profiles.get(id)?.picture ?? agents.get(id)?.avatar,
+    [profiles, agents],
+  );
   const preview = useMemo(
     () =>
       members
@@ -68,17 +79,13 @@ export function ChannelMemberAvatars({
             : !agents.has(id) && !profiles.get(id)?.isAgent,
         )
         // Prefer recognizable photos over key-only placeholders.
-        .sort(
-          (a, b) =>
-            Number(!!profiles.get(b)?.picture) -
-            Number(!!profiles.get(a)?.picture),
-        ),
-    [members, solo, agents, profiles],
+        .sort((a, b) => Number(!!picture(b)) - Number(!!picture(a))),
+    [members, solo, agents, profiles, picture],
   );
   // Shown members with a photo keep their slot for this mount, so a profile
   // arriving later fills an unknown slot instead of re-sorting the preview.
   // Only a held member who leaves or no longer qualifies is replaced.
-  const pictured = (id: string) => !!profiles.get(id)?.picture;
+  const pictured = (id: string) => !!picture(id);
   const [held, setHeld] = useState(() =>
     preview.slice(0, shown).filter(pictured),
   );
@@ -115,10 +122,7 @@ export function ChannelMemberAvatars({
                   formatPublicKey(id) ??
                   "Member",
               ),
-              src: avatarMedia(
-                profiles.get(id)?.picture ?? agents.get(id)?.avatar,
-                session.media,
-              ),
+              src: avatarMedia(picture(id), session.media),
               shape: solo ? "squircle" : "circle",
             }
           : { id, name: "", shape: solo ? "squircle" : "circle" },

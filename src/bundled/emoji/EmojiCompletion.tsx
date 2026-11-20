@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import { CustomEmoji } from "./CustomEmoji";
+import { emojiUsage, prioritizeEmoji, rememberEmoji } from "./emoji-usage";
 import {
   exactEmoji,
   searchEmoji,
@@ -105,6 +106,7 @@ function NativeEmojiPreview({ emoji }: { emoji: string }) {
 
 export function EmojiCompletion({
   session,
+  scope,
   query,
   publish,
 }: ComposerCompletionProps) {
@@ -122,11 +124,12 @@ export function EmojiCompletion({
     let live = true;
     let withdraw: (() => void) | false = false;
     const custom = catalog.entries.filter((item) => !!session.media(item.url));
+    const usage = emojiUsage(scope);
     const items = (matches: readonly EmojiMatch[]) => {
       const counts = new Map<string, number>();
       for (const item of matches)
         counts.set(item.shortcode, (counts.get(item.shortcode) ?? 0) + 1);
-      return matches.map((item) => ({
+      return prioritizeEmoji(query.query, matches, usage).map((item) => ({
         id: item.id,
         label: `:${item.shortcode}:`,
         ...((counts.get(item.shortcode) ?? 0) > 1
@@ -141,6 +144,7 @@ export function EmojiCompletion({
           <NativeEmojiPreview emoji={item.text} />
         ),
         edit: { text: item.text },
+        onSelect: () => rememberEmoji(scope, item.id),
       }));
     };
     // Suggestions may be partial; automatic replacement needs both catalogs.
@@ -187,6 +191,6 @@ export function EmojiCompletion({
       unsubscribe();
       if (withdraw) withdraw();
     };
-  }, [session, query.query, publish, catalog, attempt]);
+  }, [session, scope, query.query, publish, catalog, attempt]);
   return null;
 }

@@ -69,6 +69,7 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  remember = false,
   gifRequests = relayGifRequests,
   externalTrigger,
   gifShortcut,
@@ -79,8 +80,11 @@ export function EmojiPicker({
   addEmoji?: Pick<AddEmoji, "snapshot" | "subscribe"> | undefined;
   scope: string;
   disabled: boolean;
-  insert(value: string): void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Existing form consumers return void; composers return false when insertion is rejected.
+  insert(value: string): boolean | void;
   reaction?: boolean;
+  /** Opt in for message and reaction choices; form/icon pickers stay unrecorded. */
+  remember?: boolean;
   gifRequests?: GifRequests | undefined;
   externalTrigger?: {
     ref: RefObject<HTMLButtonElement | null>;
@@ -293,6 +297,7 @@ export function EmojiPicker({
           host: container,
           colorMode,
           preview: true,
+          remember,
           scope,
           perLine,
           emojiSize,
@@ -306,9 +311,10 @@ export function EmojiPicker({
           entries,
           media: session.media,
           select: (value) => {
-            onInsert.current(value);
+            if (onInsert.current(value) === false) return false;
             accepted.current = true;
             setOpen(false);
+            return true;
           },
           close: () => setOpen(false),
           skinToneChange: (tone, menuOpen) =>
@@ -352,6 +358,7 @@ export function EmojiPicker({
     tab,
     host,
     colorMode,
+    remember,
   ]);
   const addEmojiAction =
     mart &&

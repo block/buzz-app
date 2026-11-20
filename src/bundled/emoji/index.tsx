@@ -80,6 +80,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       insertText,
     }: ComposerToolProps) => (
       <EmojiPicker
+        remember
         gifShortcut={gifShortcut}
         addEmoji={addEmoji}
         session={session}

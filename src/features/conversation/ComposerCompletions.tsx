@@ -427,7 +427,14 @@ function OwnedCompletion({
       observation,
       key,
     );
-    if (accepted) current.current.editor.invalidate();
+    if (accepted) {
+      current.current.editor.invalidate();
+      try {
+        item.onSelect?.();
+      } catch (error) {
+        console.error("Completion selection callback failed", error);
+      }
+    }
     return accepted;
   }
   useLayoutEffect(() => {

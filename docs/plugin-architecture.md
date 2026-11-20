@@ -3374,6 +3374,10 @@ detail/decorative previews, an optional `agent` flag (marked and announced only
 for the bundled mention and channel providers) and either text, an exact `{ pubkey, name }` mention,
 or a `mentions` array of up to 32 such recipients. Batch edit primitives are
 copied and frozen before display, and accepted as a single editor transaction.
+An optional suggestion `onSelect()` callback runs after a successful edit and
+editor invalidation. Rejected, stale or dismissed choices never call it; callback
+errors are contained so an applied edit remains accepted. Providers can use it
+to remember choices without observing the editor or changing acceptance policy.
 The host copies edit/query primitives and caps publications at 50 choices. A
 publication returns its own withdrawal disposer (or `false` after revocation).
 Providers must withdraw synchronously when the data supporting a displayed choice

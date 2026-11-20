@@ -955,7 +955,10 @@ Quitting Buzz also turns it off.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
-- **Emoji suggestions** appear when you type `:` and an emoji name. If a name
+- **Emoji suggestions** appear when you type `:` and an emoji name. Buzz learns
+  from emoji you choose in messages and reactions and prioritizes frequently
+  chosen matches, while keeping exact names first. This history stays on this
+  device for your current account and community. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
   by a space, unless one already follows, so you can keep typing.

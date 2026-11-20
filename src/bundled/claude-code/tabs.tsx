@@ -840,6 +840,10 @@ export function createTabs({
     const signingIn =
       state.running === "sign-in" ||
       (status?.state === "signed-out" && !state.running);
+    // `claude auth status` reads only local settings, so a sign-in whose
+    // refresh Anthropic refused still reads as ready: a build that signs in
+    // interactively offers it again here, and shows its progress.
+    const signingInAgain = ready && state.running === "sign-in";
     // Credentials pasted here, not an interactive sign-in.
     const keyEntry = !setup.auth.signIn;
     const line =
@@ -888,7 +892,7 @@ export function createTabs({
             {state.notice}
           </p>
         )}
-        <div className="grid gap-2" hidden={ready}>
+        <div className="grid gap-2" hidden={ready && !signingInAgain}>
           {/* A key's own form takes the dialog over: it says what is missing. */}
           {!state.running && !(keyEntry && status?.state === "signed-out") && (
             <p
@@ -961,13 +965,20 @@ export function createTabs({
               Refresh
             </Button>
           )}
+          {ready && setup.auth.signIn && !state.running && (
+            <Button onClick={() => void setup.run("sign-in")}>
+              Sign in again
+            </Button>
+          )}
           <Button
             ref={done}
             onClick={() =>
-              state.running && !ready ? void setup.cancel() : onClose()
+              (state.running && !ready) || signingInAgain
+                ? void setup.cancel()
+                : onClose()
             }
           >
-            {ready ? "Done" : "Cancel"}
+            {ready && !signingInAgain ? "Done" : "Cancel"}
           </Button>
           {!ready && action && !state.running && !state.checking && (
             <Button

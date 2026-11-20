@@ -1734,6 +1734,9 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   keeps Claude selected. An interactive sign-in continues if you navigate Back;
   returning to creation restores its pending controls with **Cancel**, without
   starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  In those builds, Claude's dialog in **Settings → Agent setup** also offers
+  **Sign in again** while Claude reads as set up, for a sign-in that stopped
+  working (such as one Anthropic could not refresh); **Cancel** stops it.
   **Model**, **Thinking**, and agent creation wait until credentials are saved.
   Agents on execution targets use that target's credentials, not a key on this
   computer. Buzz keeps the API key in the system's secure credential store

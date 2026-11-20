@@ -207,6 +207,24 @@ function storedAsExistingReaction(item: OutgoingEvent) {
   const refusal = error.slice(RETRY_BLOCKED_PREFIX.length);
   return SAVED_EXISTING_REACTION_ERRORS.has(refusal);
 }
+/** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
+export const NIP01_PREFIX =
+  /^(invalid|blocked|restricted|forbidden|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
+
+/** Whether `message` is the relay's own words for a refusal: the write was
+ * sent and its `reason` is relay-shaped text. Status summaries, client-side
+ * rejections and prefixed text kept for writers to match on are not, so
+ * writers show their fixed copy for those. */
+export function isRelayRefusal(error: unknown): error is PublishRejected {
+  if (!(error instanceof PublishRejected) || error instanceof PublishNotSent)
+    return false;
+  const prefix = NIP01_PREFIX.exec(error.reason ?? "");
+  return (
+    !!prefix &&
+    !!error.reason?.slice(prefix[0].length).trim() &&
+    !NIP01_PREFIX.test(error.message)
+  );
+}
 
 export { browserOutboxStorage } from "./outbox-storage";
 /** The desktop host's answer to a retry the relay would refuse as too old,
@@ -836,14 +854,6 @@ export function createOutbox(
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
-      if (latest && awaitsReceipt(latest.event))
-        onReceipt(
-          latest.signed ?? latest.event,
-          undefined,
-          error instanceof PublishRejected && !(error instanceof PublishNotSent)
-            ? clip(error.message)
-            : undefined,
-        );
       if (
         latest &&
         !latest.recovery &&
@@ -861,6 +871,15 @@ export function createOutbox(
             : publishing && !(error instanceof PublishRejected)
               ? "unknown"
               : failedDelivery(attempt));
+      // Only a failed attempt was refused; an echoed command stays unknown.
+      if (latest && awaitsReceipt(latest.event))
+        onReceipt(
+          latest.signed ?? latest.event,
+          undefined,
+          delivery === "failed" && isRelayRefusal(error)
+            ? clip(error.message)
+            : undefined,
+        );
       const message = error instanceof Error ? error.message : String(error);
       if (latest && delivery)
         saveStatus({

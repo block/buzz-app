@@ -118,8 +118,11 @@ export function ModelFamilyMenu({
   onChange(id: string): void;
   onCustom?: (() => void) | undefined;
 }) {
+  // Routes are listed on their own up front, beside Default, not in a family.
+  const routes = models.filter((model) => model.route);
   const families = new Map<string, ModelChoice[]>();
   for (const model of models) {
+    if (model.route) continue;
     const family = modelFamily(model);
     families.set(family, [...(families.get(family) ?? []), model]);
   }
@@ -129,9 +132,9 @@ export function ModelFamilyMenu({
   // Fast models get their own section up front, so the quick choices are one
   // click away; they stay in their families too. A catalog of only fast (or
   // no fast) models gains nothing from a separate section.
-  const fastModels = models.filter((model) => model.fast);
+  const fastModels = models.filter((model) => model.fast && !model.route);
   const fastSection =
-    fastModels.length > 0 && fastModels.length < models.length;
+    fastModels.length > 0 && fastModels.length < models.length - routes.length;
   const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${valueSuffix ?? (inherited && selected.description ? ` · ${selected.description}` : "")}`;
   const choiceRow = (model: ModelChoice, inFastSection: boolean) => {
     const leading = inFastSection && hasFamilyLogos && (
@@ -227,6 +230,33 @@ export function ModelFamilyMenu({
               />
             </MenuRadioItem>
           </MenuRadioGroup>
+        )}
+        {routes.length > 0 && (
+          <>
+            <MenuRadioGroup
+              value={inherited ? "" : selected.id}
+              onValueChange={(id) => onChange(id)}
+            >
+              {routes.map((model) => (
+                <MenuRadioItem
+                  key={model.id}
+                  value={model.id}
+                  aria-label={model.label}
+                  aria-description={model.description}
+                  closeOnClick
+                >
+                  {hasFamilyLogos && (
+                    <span className="buzz-select-leading" aria-hidden="true" />
+                  )}
+                  <ChoiceRow
+                    label={model.label}
+                    description={model.description}
+                  />
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            {families.size > 0 && <MenuSeparator />}
+          </>
         )}
         {fastSection && (
           <>

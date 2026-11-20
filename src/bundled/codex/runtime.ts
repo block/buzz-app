@@ -35,6 +35,7 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
+import { routeOf } from "../../features/agents/model-routes";
 import {
   composeBase,
   sectionsKey,
@@ -1124,6 +1125,9 @@ export class CodexRuntime {
       });
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
+      // A saved route is the current choice; the agents service lists it.
+      if (routeOf(settings.model))
+        return { current: settings.model, models: offered, sendDefaults: true };
       return !model || models.some((row) => row.model === model)
         ? { current: model ?? "", models: offered, sendDefaults: true }
         : {

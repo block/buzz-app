@@ -19,8 +19,13 @@ import {
 import {
   AISettings,
   Checking,
+  RouteLine,
   UsesLine,
 } from "../../features/agents/AISettings";
+import {
+  activeRoute,
+  useModelRoutes,
+} from "../../features/agents/model-routes";
 import {
   bounded,
   followRecommended,
@@ -357,6 +362,9 @@ export function AgentCreateDialog({
   const [asked, setAsked] = useState(0);
   const recommendation = useRecommendedPick(types, recommendable, asked);
   const { pick } = recommendation.status === "found" ? recommendation : {};
+  // A plugin's route that Automatic runs on for the pick's harness.
+  useModelRoutes(pick?.type.id ?? "");
+  const automaticRoute = pick && activeRoute(pick.type.id, "", true);
   // No local harness can run an Automatic agent here: one thing to set up.
   const nothingSetUp =
     automatic && recommendable && recommendation.status === "none";
@@ -805,7 +813,7 @@ export function AgentCreateDialog({
                 <AISettings
                   automatic={automatic}
                   harnessIcon={automatic ? pick?.type.icon : type?.icon}
-                  modelName={pick?.candidate.label}
+                  modelName={automaticRoute?.label ?? pick?.candidate.label}
                   disabled={pending}
                   onChange={chooseAutomatic}
                   summary={
@@ -814,13 +822,21 @@ export function AgentCreateDialog({
                     ) : undefined
                   }
                   model={
-                    pick && (
-                      <UsesLine
+                    automaticRoute ? (
+                      <RouteLine
                         icon={pick.type.icon}
                         title={pick.type.title}
-                        candidate={pick.candidate}
-                        skipped={pick.skipped[0]?.title}
+                        route={automaticRoute}
                       />
+                    ) : (
+                      pick && (
+                        <UsesLine
+                          icon={pick.type.icon}
+                          title={pick.type.title}
+                          candidate={pick.candidate}
+                          skipped={pick.skipped[0]?.title}
+                        />
+                      )
                     )
                   }
                 >

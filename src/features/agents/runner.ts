@@ -28,9 +28,11 @@ import type {
   TeamUpdateInput,
   AgentHandoff,
   RegisteredAgentType,
+  SessionPlace,
   Trigger,
   Agents,
 } from "./service";
+import type { RoutedPick } from "./model-routes";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import type { MentionRefusal } from "./owner-attestation";
 import { threadReference } from "../relay/thread-reference";
@@ -578,6 +580,16 @@ export type RunnerHost = {
   progress(key: AgentKey, progress: TimerProgress): void;
   /** The team sections of its prompt; empty without a team. */
   team(key: AgentKey): string;
+  /** The model and effort a turn starts with, given the owner's `pick`
+   * for it: a model route's choice when the agent runs on one. */
+  route?(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    pick: Readonly<{ model?: string; effort?: string }>,
+    signal: AbortSignal,
+  ): Promise<RoutedPick>;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown> | Promise<Start<unknown>>;
   prepareSession?(
@@ -3266,7 +3278,31 @@ export class AgentRunners {
         anchor,
         signal,
       );
-      const pick = await pickFor(job.trigger, agent, type);
+      const owned = await pickFor(job.trigger, agent, type);
+      const result: RoutedPick =
+        (await this.host.route?.(
+          agent,
+          type,
+          trigger,
+          trigger.type === "mention"
+            ? {
+                channelId: job.channelId ?? channelOf(trigger.event) ?? "",
+                root:
+                  threadReference(trigger.event)?.rootId ?? trigger.event.id,
+              }
+            : anchor && {
+                channelId: anchor.channel,
+                ...(anchor.root ? { root: anchor.root } : {}),
+              },
+          owned,
+          signal,
+        )) ?? owned;
+      const { routed, ...pick } = result;
+      // The turn's activity says what its route chose, and why.
+      if (routed && !routed.kept)
+        job.work?.notice(
+          `${routed.route.label}${routed.fallback ? " fell back to" : " chose"} ${pick.model || "the default model"}${pick.effort ? ` · ${pick.effort}` : ""}${routed.rationale ? `: ${routed.rationale}` : ""}`,
+        );
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);

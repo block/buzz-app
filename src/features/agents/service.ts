@@ -129,6 +129,7 @@ import {
   conversationSections as storedSections,
   forgetConversationSections,
   setConversationSections as storeSections,
+  sectionsClaims,
   usableSections,
 } from "./conversation-sections";
 import { pluginSection } from "../agent-harness/sections";
@@ -5968,19 +5969,16 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A community session has one prompt for every conversation, so it takes no conversation sections",
       );
-    // A save that is still being written claims the conversation too.
-    const manager = storedSections(
-      this.storage,
-      scope,
-      key,
-      conversation,
-      true,
-    );
+    // A save that is still being written claims the conversation too, and a
+    // removal frees it only once it is saved.
+    const claims = sectionsClaims(this.storage, scope, key, conversation);
     if (
-      manager &&
-      manager.plugin !== owner.id &&
-      // Also while it starts, updates or failed to start: it is still on.
-      this.ctx.pluginStatus.on?.(manager.plugin)
+      [...claims].some(
+        (plugin) =>
+          plugin !== owner.id &&
+          // Also while it starts, updates or failed to start: it is still on.
+          this.ctx.pluginStatus.on?.(plugin),
+      )
     )
       throw new Error("Another plugin manages this conversation");
     await storeSections(

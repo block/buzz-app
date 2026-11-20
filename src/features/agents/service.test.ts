@@ -2556,6 +2556,66 @@ describe("a conversation's sections", () => {
     });
   });
 
+  it("stay claimed by their plugin until its removal is saved", async () => {
+    // The device's file write for the removal is held, then fails.
+    let write: Promise<void> | undefined;
+    let entered = () => {};
+    const storage = fileStore(new Map(), async () => {
+      if (!write) return;
+      entered();
+      await write;
+    });
+    const f = await ready({ storage });
+    const other = another(f);
+    await f.plugin.agents.setConversationSections(f.agent.key, thread, {
+      progress: "Report to the task.",
+    });
+    let fail = () => {};
+    write = new Promise<void>((_, reject) => {
+      fail = () => reject(new Error("Disk full"));
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const clear = f.plugin.agents.setConversationSections(
+      f.agent.key,
+      thread,
+      {},
+    );
+    await started;
+    try {
+      // The removal shows at once, and the other plugin still may not take over.
+      expect(saved(f)).toHaveLength(0);
+      for (const sections of [{ progress: "Mine." }, {}])
+        await expect(
+          other.setConversationSections(f.agent.key, thread, sections),
+        ).rejects.toThrow("Another plugin manages this conversation");
+    } finally {
+      fail();
+    }
+    await expect(clear).rejects.toThrow("Disk full");
+    write = undefined;
+    expect(saved(f)).toHaveLength(1);
+    // It still manages the conversation, and its record is still used.
+    const agent = await handle(f);
+    expect(agent.promptSections?.(channel, root)?.plugin).toEqual({
+      id: "example",
+      sections: { progress: "Report to the task." },
+    });
+    await expect(
+      other.setConversationSections(f.agent.key, thread, { progress: "Mine." }),
+    ).rejects.toThrow("Another plugin manages this conversation");
+    // Once its removal is saved, the other plugin can take over.
+    await f.plugin.agents.setConversationSections(f.agent.key, thread, {});
+    await other.setConversationSections(f.agent.key, thread, {
+      progress: "Mine.",
+    });
+    expect(agent.promptSections?.(channel, root)?.plugin).toEqual({
+      id: "other",
+      sections: { progress: "Mine." },
+    });
+  });
+
   it("use only the sections the plugin's manifest declares now", async () => {
     const f = await ready();
     await f.plugin.agents.setConversationSections(f.agent.key, thread, {

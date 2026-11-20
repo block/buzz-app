@@ -75,28 +75,16 @@ export function checkedSections(
   return checked;
 }
 
-/** Each store's saved value of a record while a save to it is still being
- * written, and how many are. A store shows a value as soon as it is
- * written, and puts the saved one back if the write fails. */
+/** Each store's saved value of a record while saves to it are still being
+ * written, and the plugin of each of those saves, in order: none for one
+ * that removes it. A store shows a value as soon as it is written, and puts
+ * the saved one back if the write fails. */
 const saving = new WeakMap<
   Pick<AgentStore, "get">,
-  Map<string, { saved: string | null; count: number }>
+  Map<string, { saved: string | null; plugins: (string | undefined)[] }>
 >();
 
-/** The conversation's saved record; undefined when it has none or it cannot
- * be read. A turn must not take a record whose save then fails. With
- * `latest`, the record of the latest save, also while it is being written:
- * the plugin that started it claims the conversation from then on. */
-export function conversationSections(
-  store: Pick<AgentStore, "get">,
-  scope: string,
-  agent: AgentKey,
-  conversation: string,
-  latest = false,
-): ConversationSections | undefined {
-  const key = storageKey(scope, agent, conversation);
-  const pending = latest ? undefined : saving.get(store)?.get(key);
-  const saved = pending ? pending.saved : store.get(key);
+const parsed = (saved: string | null): ConversationSections | undefined => {
   if (!saved) return undefined;
   try {
     const { plugin, sections } = JSON.parse(
@@ -113,6 +101,38 @@ export function conversationSections(
     // Unreadable, as if it had none.
   }
   return undefined;
+};
+
+/** The conversation's saved record; undefined when it has none or it cannot
+ * be read. A turn must not take a record whose save then fails. */
+export function conversationSections(
+  store: Pick<AgentStore, "get">,
+  scope: string,
+  agent: AgentKey,
+  conversation: string,
+): ConversationSections | undefined {
+  const key = storageKey(scope, agent, conversation);
+  const pending = saving.get(store)?.get(key);
+  return parsed(pending ? pending.saved : store.get(key));
+}
+
+/** The plugins that claim the conversation: the one whose record is saved,
+ * and each one with a save that is still being written. A plugin claims it
+ * from the start of its save until a removal of its record is saved. */
+export function sectionsClaims(
+  store: Pick<AgentStore, "get">,
+  scope: string,
+  agent: AgentKey,
+  conversation: string,
+): ReadonlySet<string> {
+  const key = storageKey(scope, agent, conversation);
+  const pending = saving.get(store)?.get(key);
+  const saved = parsed(pending ? pending.saved : store.get(key))?.plugin;
+  return new Set(
+    [saved, ...(pending?.plugins ?? [])].filter(
+      (plugin): plugin is string => !!plugin,
+    ),
+  );
 }
 
 /** The record's texts that a prompt may use now: those `declared`, the
@@ -148,15 +168,20 @@ export async function setConversationSections(
     : null;
   const writes = saving.get(store) ?? new Map();
   saving.set(store, writes);
-  const pending = writes.get(key) ?? { saved: store.get(key), count: 0 };
-  pending.count += 1;
+  const pending = writes.get(key) ?? {
+    saved: store.get(key),
+    plugins: [] as (string | undefined)[],
+  };
+  pending.plugins.push(value ? plugin : undefined);
   writes.set(key, pending);
   try {
     await store.set(key, value);
     // Writes are saved in order, so this is now the saved value.
     pending.saved = value;
   } finally {
-    if (!--pending.count) writes.delete(key);
+    // Writes settle in order, so this one is the first still listed.
+    pending.plugins.shift();
+    if (!pending.plugins.length) writes.delete(key);
   }
 }
 

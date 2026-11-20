@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
@@ -95,28 +96,13 @@ export function UpdateSettings({
         icon={<ArrowsClockwiseIcon />}
         title={version ? `Version ${version}` : "Update status"}
         description={
-          <>
-            <span role="status">
-              {status.state === "error" ? (
-                <span className="error">Update failed: {status.message}</span>
-              ) : (
-                messages[status.state]
-              )}
-            </span>
-            {isTauri() && (
-              <>
-                <br />
-                <span>
-                  Native image source: {describeBuildIdentity(nativeIdentity)}
-                </span>
-                <br />
-                <span>
-                  Loaded frontend source:{" "}
-                  {describeBuildIdentity(frontendIdentity)}
-                </span>
-              </>
+          <span role="status">
+            {status.state === "error" ? (
+              <span className="error">Update failed: {status.message}</span>
+            ) : (
+              messages[status.state]
             )}
-          </>
+          </span>
         }
         action={
           <Button
@@ -132,6 +118,28 @@ export function UpdateSettings({
           </Button>
         }
       />
+      {isTauri() && (
+        <Accordion
+          variant="settings"
+          items={[
+            {
+              value: "Build details",
+              title: "Build details",
+              content: (
+                <div className="grid gap-2 text-body-sm wrap-anywhere">
+                  <p>
+                    Native image source: {describeBuildIdentity(nativeIdentity)}
+                  </p>
+                  <p>
+                    Loaded frontend source:{" "}
+                    {describeBuildIdentity(frontendIdentity)}
+                  </p>
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
     </section>
   );
 }

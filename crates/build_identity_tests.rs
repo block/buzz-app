@@ -118,6 +118,15 @@ fn incremental_native_build_refreshes_dependency_and_git_only_changes() {
     fs::create_dir_all(root.join("dependency/src")).unwrap();
     fs::create_dir_all(root.join("crates")).unwrap();
     fs::create_dir_all(root.join("src/bundled/mesh-compute/compute")).unwrap();
+    for (path, contents) in [
+        ("src/features/archive/schema.sql", "schema"),
+        ("src/bundled/example/manifest.json", "manifest"),
+        ("public/example.svg", "asset"),
+    ] {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
     fs::write(root.join(".gitignore"), "/target/\n").unwrap();
     fs::write(
         root.join("Cargo.toml"),
@@ -163,8 +172,14 @@ fn main() {
     .unwrap();
     fs::write(
         native.join("src/main.rs"),
-        "fn main() { println!(\"{} {} {}\", env!(\"BUZZ_NATIVE_SOURCE_REVISION\"), \
-         env!(\"BUZZ_NATIVE_SOURCE_STATE\"), identity_dependency::version()); }\n",
+        r#"fn main() {
+    println!("{} {} {} {}|{}|{}", env!("BUZZ_NATIVE_SOURCE_REVISION"),
+        env!("BUZZ_NATIVE_SOURCE_STATE"), identity_dependency::version(),
+        include_str!("../../src/features/archive/schema.sql"),
+        include_str!("../../src/bundled/example/manifest.json"),
+        include_str!("../../public/example.svg"));
+}
+"#,
     )
     .unwrap();
     let cargo = |root: &Path, command: &str| {
@@ -206,7 +221,10 @@ fn main() {
         ],
     );
     let revision = capture(&worktree).revision.unwrap();
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.1.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.1.0 schema|manifest|asset")
+    );
     let build_count = || {
         fs::read(worktree.join("target/identity-build-count"))
             .unwrap()
@@ -217,12 +235,41 @@ fn main() {
         &worktree,
         &["update-ref", "refs/remotes/origin/fixture", "HEAD"],
     );
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.1.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.1.0 schema|manifest|asset")
+    );
     assert_eq!(
         build_count(),
         initial_count,
         "unrelated remote ref rebuilt native image"
     );
+
+    for (path, original, expected) in [
+        (
+            "src/features/archive/schema.sql",
+            "schema",
+            "changed|manifest|asset",
+        ),
+        (
+            "src/bundled/example/manifest.json",
+            "manifest",
+            "schema|changed|asset",
+        ),
+        ("public/example.svg", "asset", "schema|manifest|changed"),
+    ] {
+        fs::write(worktree.join(path), "changed").unwrap();
+        assert_eq!(
+            cargo(&worktree, "run"),
+            format!("{revision} dirty 0.1.0 {expected}"),
+            "included input {path} did not refresh native source state"
+        );
+        fs::write(worktree.join(path), original).unwrap();
+        assert_eq!(
+            cargo(&worktree, "run"),
+            format!("{revision} clean 0.1.0 schema|manifest|asset")
+        );
+    }
 
     // Cargo relinks a normal dependency, without changing the build script or Rust sources.
     fs::write(
@@ -230,21 +277,53 @@ fn main() {
         manifest.replace("0.1.0", "0.2.0"),
     )
     .unwrap();
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} dirty 0.2.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} dirty 0.2.0 schema|manifest|asset")
+    );
 
     run_git(&worktree, &["add", "."]);
     run_git(&worktree, &["commit", "--quiet", "-m", "update dependency"]);
     let revision = capture(&worktree).revision.unwrap();
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
     run_git(&worktree, &["pack-refs", "--all"]);
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
     let packed_count = build_count();
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
     assert_eq!(
         build_count(),
         packed_count,
         "unchanged packed ref rebuilt native image"
     );
+    run_git(
+        &root,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "unrelated branch",
+        ],
+    );
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
+    assert_eq!(
+        build_count(),
+        packed_count,
+        "unrelated worktree commit rebuilt native image"
+    );
+    run_git(&worktree, &["config", "core.logAllRefUpdates", "false"]);
     run_git(
         &worktree,
         &[
@@ -256,5 +335,24 @@ fn main() {
         ],
     );
     let revision = capture(&worktree).revision.unwrap();
-    assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
+
+    fs::remove_file(root.join(".git/logs/refs/heads/fixture")).unwrap();
+    run_git(&worktree, &["pack-refs", "--all"]);
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
+    run_git(
+        &worktree,
+        &["commit", "--quiet", "--allow-empty", "-m", "without reflog"],
+    );
+    let revision = capture(&worktree).revision.unwrap();
+    assert_eq!(
+        cargo(&worktree, "run"),
+        format!("{revision} clean 0.2.0 schema|manifest|asset")
+    );
 }

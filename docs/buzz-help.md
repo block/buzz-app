@@ -149,9 +149,9 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   Authorize only keys you recognize: the proof has no time or event-kind limits. Your private key stays
   in Buzz. This does not join the agent to a community or sign it in to an organization.
 - **Settings → Buzz → Software updates** shows the app version and, on desktop,
-  separate native-image and loaded-frontend source revisions. Their clean, dirty,
-  or unknown labels describe build-time source state; they do not attest to files
-  or APIs currently running on a host.
+  separate native-image and loaded-frontend source revisions under **Build details**.
+  Their clean, dirty, or unknown labels describe build-time source state; they do
+  not attest to files or APIs currently running on a host.
 - The back of your Identity badge shows known backup and recovery details below
   the private-key strip and scrolls when its details run long. Buzz starts checking
   when the Identity page opens. The back always explains that the key is stored

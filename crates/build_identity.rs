@@ -52,7 +52,8 @@ pub fn configure_native_build(manifest_dir: &Path) {
         "Cargo.toml",
         "Cargo.lock",
         "crates",
-        "src/bundled/mesh-compute/compute",
+        "src",
+        "public",
     ] {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }
@@ -66,8 +67,17 @@ pub fn configure_native_build(manifest_dir: &Path) {
         {
             if let Some(path) = git(root, &["rev-parse", "--git-path", name]) {
                 let path = root.join(path.trim());
-                // A packed branch may gain a loose ref on commit. Watch its existing parent,
-                // but skip absent packed-refs so a no-op Cargo build stays a no-op.
+                // A packed branch may gain a loose ref on commit. Prefer its existing
+                // reflog to the shared parent directory; keep the parent fallback without
+                // a reflog, and skip absent packed-refs so no-op builds stay no-ops.
+                let path = if name.starts_with("refs/") && !path.exists() {
+                    git(root, &["rev-parse", "--git-path", &format!("logs/{name}")])
+                        .map(|log| root.join(log.trim()))
+                        .filter(|log| log.is_file())
+                        .unwrap_or(path)
+                } else {
+                    path
+                };
                 let watched = if name.starts_with("refs/") {
                     path.ancestors().find(|path| path.exists())
                 } else {

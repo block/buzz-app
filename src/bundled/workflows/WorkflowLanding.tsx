@@ -1441,6 +1441,7 @@ export function WorkflowLanding({
   onSelect,
   reveal: requested,
   onRevealed,
+  onRevealMissing,
 }: {
   /** Live identity names; offline diagnostic fixtures use public-key labels. */
   session?: RelaySession | undefined;
@@ -1461,7 +1462,10 @@ export function WorkflowLanding({
   reveal?: Readonly<{ entryId: string; owner: string; id: string }> | undefined;
   /** The request is answered for good and its owner withdraws it: the
    * workflow opened, or was not found in a complete channel list. */
-  onRevealed?: ((entryId: string) => void) | undefined;
+  onRevealed?: ((entryId: string, opened: boolean) => void) | undefined;
+  /** The workflow is not in the channels read for the request. Its owner
+   * tells the reader, once per visit; a partial list leaves it unanswered. */
+  onRevealMissing?: ((entryId: string) => void) | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
   onFilterChange: (channelIds: readonly string[]) => void;
@@ -1655,20 +1659,16 @@ export function WorkflowLanding({
   // that it is not here.
   const revealAbsent =
     !!reveal && !revealItem && channelsSettled && ordered.every(revealRead);
-  const noticed = useRef<string>(undefined);
   useEffect(() => {
     if (!reveal || (!revealItem && !revealAbsent)) return;
     if (!revealItem) {
-      // Said once per visit, however often the list is read again.
-      if (noticed.current !== reveal.entryId) setError(WORKFLOW_NOT_FOUND);
-      noticed.current = reveal.entryId;
+      onRevealMissing?.(reveal.entryId);
       // A partial list may still be listing channels page by page, so the
       // visit stays open for a channel that arrives later.
-      if (!channelsPartial) onRevealed?.(reveal.entryId);
+      if (!channelsPartial) onRevealed?.(reveal.entryId, false);
       return;
     }
-    onRevealed?.(reveal.entryId);
-    setError((current) => (current === WORKFLOW_NOT_FOUND ? null : current));
+    onRevealed?.(reveal.entryId, true);
     if (!revealShown) {
       onFilterChange([]);
       setMineOnly(false);
@@ -1689,6 +1689,7 @@ export function WorkflowLanding({
     onFilterChange,
     onSelect,
     onRevealed,
+    onRevealMissing,
   ]);
   const cleared = visible.some(
     (channel) =>

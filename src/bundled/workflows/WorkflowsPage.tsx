@@ -177,16 +177,32 @@ export function WorkflowCommunity({
   // The landing answers a linked visit, but never mounts without a channel:
   // a settled list with none answers it here.
   const unlisted = settled && !eligible.length ? pending?.entryId : undefined;
-  const [notFound, setNotFound] = useState<string>();
+  // One notice per visit, held here whichever of the page and the landing
+  // reports the workflow missing: it stays through later channel lists, and
+  // is not raised again once dismissed. Only the workflow opening removes it.
+  const [notFound, setNotFound] = useState<{
+    entryId: string;
+    shown: boolean;
+  }>();
+  const reportMissing = useCallback(
+    (entryId: string) =>
+      setNotFound((current) =>
+        current?.entryId === entryId ? current : { entryId, shown: true },
+      ),
+    [],
+  );
+  const answer = useCallback(
+    (entryId: string, opened: boolean) => {
+      if (opened) setNotFound(undefined);
+      onRevealed?.(entryId);
+    },
+    [onRevealed],
+  );
   useEffect(() => {
     if (!unlisted) return;
-    setNotFound(unlisted);
+    reportMissing(unlisted);
     if (!partial) onRevealed?.(unlisted);
-  }, [unlisted, partial, onRevealed]);
-  // A partial list that then lists a channel hands the still unanswered visit
-  // to the landing, which opens the workflow or reports it missing itself.
-  if (notFound && notFound === pending?.entryId && eligible.length)
-    setNotFound(undefined);
+  }, [unlisted, partial, onRevealed, reportMissing]);
   const visit = useRef({ navigation, navigator, reveal });
   visit.current = { navigation, navigator, reveal };
   const selectDetail = useCallback((key: string | undefined, name?: string) => {
@@ -392,7 +408,8 @@ export function WorkflowCommunity({
                   selected={detail?.key}
                   onSelect={selectDetail}
                   reveal={pending}
-                  onRevealed={onRevealed}
+                  onRevealed={answer}
+                  onRevealMissing={reportMissing}
                   onCreate={beginCreate}
                   onDelete={deleteWorkflow}
                   onOpen={(definition, nextChannel) =>
@@ -436,10 +453,12 @@ export function WorkflowCommunity({
           </aside>
         )}
       </div>
-      {notFound && (
+      {notFound?.shown && (
         <ToastNotice
           title={WORKFLOW_NOT_FOUND}
-          onDismiss={() => setNotFound(undefined)}
+          onDismiss={() =>
+            setNotFound((current) => current && { ...current, shown: false })
+          }
         />
       )}
       {deleteError && (

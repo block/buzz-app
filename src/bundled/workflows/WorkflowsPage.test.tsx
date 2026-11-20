@@ -2303,8 +2303,10 @@ it("does not report a linked workflow missing again when a reconnect remounts th
     // reads again and still finds nothing, but this visit was already told.
     expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
     await nothingListed();
+    // A withdrawn notice leaves the screen a moment later; one raised again
+    // would have been drawn before the barrier and would stay.
     await visit.settled();
-    expect(screen.queryByText(notFound)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
     expect(detailShown()).toBeNull();
   } finally {
     cleanup();
@@ -2470,7 +2472,7 @@ it("reports a linked workflow missing once when a partial channel list completes
     );
     await visit.settled();
     expect(detailShown()).toBeNull();
-    expect(screen.queryByText(notFound)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
   } finally {
     cleanup();
     visit.dispose();
@@ -2525,13 +2527,42 @@ it("opens a linked workflow reported missing from a partial channel list with no
     expect(await screen.findByText(notFound)).toBeVisible();
     expect(screen.getByText("The channel list is partial.")).toBeVisible();
     expect(detailShown()).toBeNull();
-    // The delayed second page: the visit was not spent on that notice.
+    // A later page with another channel only: the notice stays.
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    await visit.settled();
+    expect(screen.getByText(notFound)).toBeVisible();
+    // The page that lists its channel: the visit was not spent on that notice.
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("withdraws the notice for a partial channel list with no channel for this page when the next page lists the workflow's channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
     visit.setChannels({ status: "ready", channels: [workflowChannel] });
     expect(
       await detailPane().findByRole("tab", { name: "Message helper" }),
     ).toBeVisible();
     await visit.settled();
-    expect(screen.queryByText(notFound)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
   } finally {
     cleanup();
     visit.dispose();
@@ -2571,18 +2602,79 @@ it("reports a linked workflow missing once when a partial channel list with no c
   const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
   try {
     visit.open(fixtureDefinition);
-    expect(await screen.findByText(notFound)).toBeVisible();
-    // The landing that now mounts reports the workflow missing itself.
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    // The landing that now mounts finds the workflow missing as well, in a
+    // read made for this visit.
+    const read = visit.fixture.definitions.created();
     visit.setChannels({
       status: "ready",
       coverage: "partial",
       channels: [emptyChannel],
     });
     await nothingListed();
-    await waitFor(() => expect(screen.getByText(notFound)).toBeVisible());
+    expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
     await visit.settled();
-    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    // The same notice, not one withdrawn and raised again: that would be a
+    // second element, drawn before the barrier.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
     expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again after the reader dismissed that notice", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    // Channels arrive without the workflow: the landing finds it missing.
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    // The list completes without it, which answers the visit, silently.
+    visit.setChannels({ status: "ready", channels: [emptyChannel] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again when a dismissed partial channel list with no channel for this page completes", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    visit.setChannels({ status: "ready", channels: [] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
   } finally {
     cleanup();
     visit.dispose();

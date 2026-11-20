@@ -850,6 +850,8 @@ function ThreadMessages({
     { id: string; top: number; ancestors: readonly string[] } | undefined
   >(undefined);
   const olderDemand = useRef(false);
+  // The reading anchor's id while its row is detached, until it remounts.
+  const remounted = useRef<{ id: string; top: number } | undefined>(undefined);
   const targetAnchor = useRef<number | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
@@ -1488,6 +1490,7 @@ function ThreadMessages({
       positionedLatestRequest.current = latestRequest;
       targetAnchor.current = undefined;
       olderAnchor.current = undefined;
+      remounted.current = undefined;
       lineTop.current = undefined;
       jumpingToLatest.current = false;
       follow.current = true;
@@ -1547,12 +1550,31 @@ function ThreadMessages({
       targetAnchor.current === undefined &&
       !follow.current &&
       !jumpingToLatest.current &&
-      reading?.anchor &&
-      (reading.scrollTop === element.scrollTop || clamped || reshown) &&
-      element.contains(reading.anchor.element)
+      reading &&
+      (reading.scrollTop === element.scrollTop || clamped || reshown)
     ) {
-      correctScrollTop(element, readingDrift(element, reading.anchor));
-      if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
+      // A row remounted in place, as when a group folds and then opens around
+      // it, keeps the saved offset on its replacement. The commit between may
+      // anchor on another row; the remounted one still wins when it returns.
+      const saved = reading.anchor;
+      const id = saved?.element.dataset.messageId;
+      if (saved && id && !element.contains(saved.element))
+        remounted.current = { id, top: saved.top };
+      const pending = remounted.current;
+      const row =
+        pending &&
+        element.querySelector<HTMLElement>(`[data-message-id="${pending.id}"]`);
+      if (row) remounted.current = undefined;
+      const anchor =
+        pending && row
+          ? { element: row, top: pending.top }
+          : saved && element.contains(saved.element)
+            ? saved
+            : undefined;
+      if (anchor) {
+        correctScrollTop(element, readingDrift(element, anchor));
+        if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
+      }
     }
     // An exact target holds its own place through a page: a second anchor
     // would correct for the same page again.
@@ -1789,6 +1811,7 @@ function ThreadMessages({
   };
   const keepReadingPosition = () => {
     jumpingToLatest.current = false;
+    remounted.current = undefined;
     if (jumpTimer.current !== undefined) {
       clearTimeout(jumpTimer.current);
       jumpTimer.current = undefined;
@@ -1827,7 +1850,7 @@ function ThreadMessages({
     );
     const groups = [
       ...presentation.groups,
-      ...relayedRuns(chronologicalSiblings, unreadBoundary ?? undefined),
+      ...relayedRuns(chronologicalSiblings, lineRow ?? undefined),
     ].filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );

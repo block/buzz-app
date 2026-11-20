@@ -160,6 +160,9 @@ const PATHS: &[&str] = &[
     "CODEX_HOME",
     // Goose's config and sessions, which Buzz reads from another goose.
     "GOOSE_PATH_ROOT",
+    // Goose's `config.yaml` and `secrets.yaml` on Linux and macOS, which
+    // Buzz's goose setup writes.
+    "XDG_CONFIG_HOME",
     // Pi's settings and keys, which Buzz's Pi settings save to `~/.pi/agent`.
     "PI_CODING_AGENT_DIR",
     // Windows's home folder, where Pi finds `~/.pi/agent`.

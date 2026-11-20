@@ -174,6 +174,7 @@ async fn every_blocked_name_is_rejected_in_any_case() {
             "PI_CODING_AGENT_DIR",
             "USERPROFILE",
             "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
             "LOCALAPPDATA",
         ])
     {

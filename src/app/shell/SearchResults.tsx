@@ -1866,8 +1866,10 @@ export function SearchResults({
         mine: message.authorId === session.viewer,
         // As message rows decide: whoever owns the agent, its profile or
         // envelope says so; the viewer's own agents are known here too.
+        // Workflow output is automation too, not its owner's own message.
         agent:
           !!message.agentEnvelope ||
+          !!message.workflowOwnerId ||
           !!profiles.get(message.authorId)?.isAgent ||
           knownAgents.has(message.authorId),
         member: !!channel && joined(channel),

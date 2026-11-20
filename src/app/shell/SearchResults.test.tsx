@@ -1751,12 +1751,7 @@ it("tells the reranker which hits agents or workflows wrote, whoever owns them, 
       ["deploy by an agent", "Helper", true, true],
       ["deploy from an envelope", expect.any(String), true, true],
       ["deploy by my agent", expect.any(String), true, undefined],
-      [
-        "deploy by a workflow",
-        "Workflow · owned by Colleague",
-        undefined,
-        true,
-      ],
+      ["deploy by a workflow", "Workflow · owned by Colleague", true, true],
     ]);
   } finally {
     cleanup();

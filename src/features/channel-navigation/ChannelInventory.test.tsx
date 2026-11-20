@@ -2476,7 +2476,7 @@ it("keeps owned and unfiled shared Solo chats out of Team without removing acces
     .getByLabelText("Team", { selector: "summary" })
     .closest("[data-sidebar-section]");
   const solo = screen
-    .getByLabelText("Solo", { selector: "summary" })
+    .getByLabelText("Solo chats", { selector: "summary" })
     .closest("[data-sidebar-section]");
   expect(solo).toContainElement(screen.getByRole("button", { name: "beta" }));
   expect(team).not.toContainElement(

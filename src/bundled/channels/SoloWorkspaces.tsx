@@ -99,10 +99,17 @@ export const SOLO_CHAT_CAP = 7;
 export const SOLO_CHAT_STEP = 10;
 const workspaceSectionKey = (id: string) => (id ? `group:${id}` : "solo");
 
-function soloMenuFocusTarget(id: string) {
+function soloMenuFocusTarget(id: string, disclosure = false) {
   const row = document.querySelector(
     `[data-solo-menu-id="${CSS.escape(id)}"]:not([inert] *)`,
   );
+  if (disclosure)
+    return (
+      row?.querySelector<HTMLElement>("[data-solo-disclosure]") ??
+      row?.querySelector<HTMLElement>(
+        "button[aria-expanded]:not([aria-haspopup])",
+      )
+    );
   return (
     row?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
     row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
@@ -131,7 +138,6 @@ export function SoloWorkspaces({
   drafts?: readonly {
     id: string;
     projectId?: string | undefined;
-    selected: boolean;
     content: ReactNode;
   }[];
   onConverted?: ((id: string) => void) | undefined;
@@ -191,7 +197,6 @@ export function SoloWorkspaces({
         key === "solo" ? [""] : key.startsWith("group:") ? [key.slice(6)] : [],
       )
     : localCollapsed;
-  const toggleWorkspaceSection = workspaceComposition?.toggle;
   // Extra chats each workspace shows past the cap, remembered like collapse.
   const [expanded, setExpanded] = useState<Record<string, number>>(() => {
     const saved = readView<unknown>(scope, expandedKey, {});
@@ -249,11 +254,10 @@ export function SoloWorkspaces({
       )?.id ?? "";
     // Resolve against current visibility when focus is restored, including when
     // collapse was requested after the asynchronous save began.
-    const target =
-      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed
-        ? `project-${project}`
-        : rowFocus;
-    soloMenuFocusTarget(target)?.focus({ preventScroll: true });
+    const closed =
+      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed;
+    const target = closed ? `project-${project}` : rowFocus;
+    soloMenuFocusTarget(target, closed)?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, collapsed, snapshot.data]);
   // Show more and Show fewer each unmount once spent; focus stays on the row,
@@ -320,25 +324,6 @@ export function SoloWorkspaces({
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
-  const activeDraft = drafts.find((draft) => draft.selected);
-  const draftProject = activeDraft
-    ? ids.has(activeDraft.projectId ?? "")
-      ? (activeDraft.projectId ?? "")
-      : ""
-    : undefined;
-  useEffect(() => {
-    if (draftProject === undefined) return;
-    if (toggleWorkspaceSection) {
-      toggleWorkspaceSection(workspaceSectionKey(draftProject), true);
-      return;
-    }
-    setCollapsed((current) => {
-      if (!current.includes(draftProject)) return current;
-      const next = current.filter((id) => id !== draftProject);
-      writeView(scope, collapsedKey, next);
-      return next;
-    });
-  }, [draftProject, scope, toggleWorkspaceSection]);
   const projects = [
     ...groups.map((group) => ({
       ...group,
@@ -367,7 +352,6 @@ export function SoloWorkspaces({
     }
     setProjectError("");
     const saving = preferences.assign(id, projectId);
-    toggle(projectId ?? "", true);
     hold([id]);
     setRowFocus(id);
     void saving.catch(() => {
@@ -1140,7 +1124,6 @@ export function SoloWorkspaces({
               throw new Error("Workspaces are unavailable. Try again.");
             return preferences.createAndAssign(creatingFor.id, section);
           }}
-          onCreated={(id) => toggle(id, true)}
         />
       )}
     </>

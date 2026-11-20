@@ -100,6 +100,7 @@ export type ThreadPanelProps = {
   revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
+  latestRequest?: AbortSignal | undefined;
   /** An opening that reads the thread as it opens it names the thread's read
    * time from before that read; each new request decides the divider again. */
   unreadRequest?: { readThrough: number } | undefined;
@@ -553,6 +554,7 @@ function ThreadMessages({
   revealSelected,
   revealFocus,
   revealRequest,
+  latestRequest,
   unreadRequest,
   requireReadyRoot,
   onDraftSaved,
@@ -587,6 +589,7 @@ function ThreadMessages({
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
+  latestRequest?: AbortSignal | undefined;
   unreadRequest?: ThreadPanelProps["unreadRequest"];
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
@@ -746,6 +749,7 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
@@ -974,11 +978,20 @@ function ThreadMessages({
     opening?: object | undefined;
     id?: string | null;
     failed?: true;
+    shown?: string | null | undefined;
   }>(() => ({ opening }));
-  if (opening && opening !== boundary.opening) setBoundary({ opening });
+  // A route can arrive after its opening already showed a line; keep that line
+  // on screen until the new decision replaces it, rather than blinking it out.
+  if (opening && opening !== boundary.opening)
+    setBoundary({
+      opening,
+      shown: boundary.id === undefined ? boundary.shown : boundary.id,
+    });
   const unreadBoundary = boundary.id;
+  const shownBoundary =
+    unreadBoundary === undefined ? boundary.shown : unreadBoundary;
   // The line stays with a reply that moved under its late parent.
-  const lineRow = tree.parents.get(unreadBoundary ?? "") ?? unreadBoundary;
+  const lineRow = tree.parents.get(shownBoundary ?? "") ?? shownBoundary;
   const placed = useRef<typeof boundary>(undefined);
   // Focus as this panel opened, and whether pointer or keyboard input has
   // come since: either way the person owns focus now.
@@ -1018,6 +1031,7 @@ function ThreadMessages({
     if (
       revealSelected ||
       returning ||
+      (latestRequest && positionedLatestRequest.current === latestRequest) ||
       (navigation && !rootTarget) ||
       (snapshot.status === "ready" && snapshot.root?.id !== messageId)
     ) {
@@ -1121,6 +1135,7 @@ function ThreadMessages({
     active,
     unreadRequest,
     revealSelected,
+    latestRequest,
     returning,
     navigation,
     rootTarget,
@@ -1404,6 +1419,12 @@ function ThreadMessages({
       revealed.current = navigation.signal;
       navigation.complete({ status: "opened" });
     }
+    const openLatest =
+      active &&
+      element.clientHeight > 0 &&
+      latestRequest &&
+      !latestRequest.aborted &&
+      positionedLatestRequest.current !== latestRequest;
     if (
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
@@ -1413,7 +1434,7 @@ function ThreadMessages({
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore))) ||
-      (!positioned.current && unreadBoundary === undefined)
+      (!positioned.current && unreadBoundary === undefined && !openLatest)
     )
       return;
     // Native scroll anchoring is off here, so this panel owns ordinary reading
@@ -1434,7 +1455,14 @@ function ThreadMessages({
     // Back/Forward returns once to where this visit was left: its row, with
     // the branch holding it reopened, or else its nearest ancestor shown.
     // When neither is loaded the visit opens again as it first did.
-    if (
+    if (openLatest) {
+      positionedLatestRequest.current = latestRequest;
+      targetAnchor.current = undefined;
+      olderAnchor.current = undefined;
+      lineTop.current = undefined;
+      jumpingToLatest.current = false;
+      follow.current = true;
+    } else if (
       navigation &&
       returning &&
       restoredVisit.current !== navigation.signal
@@ -1518,7 +1546,7 @@ function ThreadMessages({
     const placing = unreadBoundary !== undefined && placed.current !== boundary;
     if (placing) placed.current = boundary;
     const line =
-      placing && unreadBoundary
+      !openLatest && placing && unreadBoundary
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
     if (line) {
@@ -1566,6 +1594,7 @@ function ThreadMessages({
   }, [
     captureResizePosition,
     active,
+    latestRequest,
     revealSelected,
     inlineReveal,
     revealSignal,

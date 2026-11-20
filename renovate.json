@@ -2,6 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "rebaseWhen": "conflicted",
+  "postUpdateOptions": ["pnpmDedupe"],
   "packageRules": [
     {
       "description": "Tauri 2 requires the GTK 0.18 native-link and type family.",
@@ -46,6 +47,12 @@
       "matchManagers": ["cargo"],
       "matchPackageNames": ["rusqlite"],
       "allowedVersions": "<0.41"
+    },
+    {
+      "description": "mdast-util-to-markdown 2.2 drops the attentionEncodeSurroundingInfo state the composer's strikethrough serializer sets.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["mdast-util-to-markdown"],
+      "allowedVersions": "<2.2"
     },
     {
       "description": "Upgrade virtua only with a reviewed port of its WebKit scroll patch.",

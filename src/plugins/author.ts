@@ -30,6 +30,7 @@ export type {
   PageSidebarProps,
   Pages,
 } from "../features/pages/service";
+export type { Seen } from "../features/seen/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
 export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
@@ -80,6 +81,11 @@ export type {
   GeneralAccessPolicy,
 } from "../bundled/channels/ChannelGeneralAccess";
 export type { MemberChange } from "../features/channel-members/administration-protocol";
+export type {
+  DocumentEditorProps,
+  DocumentEditorHandle,
+  DocumentEditorSelection,
+} from "../features/messages/DocumentEditor";
 export type {
   ConversationWorkspaceProps,
   PageTabTarget,

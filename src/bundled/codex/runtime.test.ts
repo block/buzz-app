@@ -1262,6 +1262,42 @@ it("rejects failed terminal cleanup and retries the same agent without ending th
     "BACK",
   ]);
 });
+it("retires an agent whose idle thread Codex closed and resumes that thread on its return", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("answer"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "ANSWERED");
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessionState(
+        { ...b.agent, config: f.delivery("unused").config } as unknown as Agent,
+        { channelId: "channel", root: "7".repeat(64) },
+      ),
+    ).toBe("idle"),
+  );
+  // As Codex answers for a thread it unloaded after its last turn.
+  f.failures.set(
+    "thread/backgroundTerminals/clean",
+    `thread not found: ${thread}`,
+  );
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  await driver.retire(b.agent.key);
+  f.failures.delete("thread/backgroundTerminals/clean");
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: thread });
+  await f.complete(2, "BACK");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual(["ANSWERED", "BACK"]);
+  expect(f.process.end).not.toHaveBeenCalled();
+});
 it("does not clean or log a cleanup error after the last agent closes the server", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start a dev server"));

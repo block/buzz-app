@@ -36,7 +36,10 @@ Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;
 another channel's thread uses the side pane. When that channel isn't readable
-there, it opens as a click would. Other internal `buzz://` links and links outside
+there, it opens as a click would. When the linked channel is withheld from the
+reader, the link, its preview card and **Open link** don't open anything, while
+**Copy link** and selection copy keep the URL; the link opens again once a recheck
+admits the reader. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -186,9 +189,10 @@ Filtered sections with no visible channels show only their header, retaining the
 The currently open channel remains visible in its section regardless of its filter,
 however it was opened. Navigating away removes that exception. When a filter hides
 channels, the **Filter** submenu appends those eligible channels below its three
-options and a separator, in the existing section order; choosing one opens
-the section and channel without changing the filter. Choices reuse the sidebar's
-channel-type icons, unread emphasis, attention/thread dots and working-agent
+options and a separator, in the existing section order. Choosing a Solo chat
+opens the chat and preserves the section's disclosure. Choosing another channel
+opens both the section and channel. The filter stays in place. Choices reuse
+the sidebar's channel-type icons, unread emphasis, attention/thread dots and working-agent
 indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
 their header and menu so the filter can be changed or a hidden row opened.
 Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups
@@ -889,7 +893,10 @@ preserved while private; explicitly choosing Public or View only selects the
 corresponding admission default without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Guests and readers of Guest-default channels
+without calling the editing capability. Owners and admins see the editable policy
+from the live channel summary the same way, with no read when the dialog opens;
+choosing a change reads fresh signed details before the confirmation, and saving
+verifies their version. Guests and readers of Guest-default channels
 see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
 Member-default channel instead sees “New people can participate. People already in
 the channel keep their access.” Other previews identify defaults that could not be
@@ -992,8 +999,10 @@ to its underlying conversation/message without that panel.
 
 The header **Access** button opens the one access dialog every conversation uses.
 It is titled **Channel access** in channels and **Chat access** in a Solo chat (see
-[Sharing a Solo chat](solo/sharing.md)). A Solo chat owner can remove people and
-agents there but cannot change roles.
+[Sharing a Solo chat](solo/sharing.md)). A Solo chat owner can remove current
+non-owner members. In a Private Solo chat on a relay that supports role updates,
+the owner can lower their access, restore participation for verified agents,
+and grant Admin to their own verified agents.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
 With an empty query, channels and Solo chats show invitations only when the viewer is
@@ -1250,18 +1259,21 @@ disposal, but cannot retract a request already sent. Unsent work is canceled;
 recovery is in-memory, not durable across session disposal or restart.
 
 The development broker and native transport advertise a separate
-`memberAdministration` capability and admit only exact `9000` Admin/Member/Guest
-changes, the signer's own ownership transfer or `9001` other-member removals
-through purpose-bound routes. Generic
-invitation signing is unchanged; the relay still enforces the authoritative ACL.
+`memberAdministration` capability. Its purpose-bound routes admit ordinary
+channel `9000` Admin/Member/Guest changes and the signer's own ownership transfer,
+as well as `9001` other-member removals. The relay enforces the authoritative ACL.
 Hosts without this writer can read verified roles but expose no management controls.
 Native support requires a rebuilt binary; no unrestricted writer fallback is used.
 
-**Accepted protocol limitation:** role commands are existing relay upserts, not
-conditional updates. A departure after final preflight can be undone by the role
-command re-adding the target; a concurrent role edit can be overwritten. Client
-checks/readback reduce uncertainty but do not provide atomic conflict rejection.
-Preventing these races requires separately scoped relay support.
+In Private Solo chats, the writer uses kind `9050` for role changes when the
+relay advertises `buzz-solo-member-role` in its NIP-11 information document.
+The command includes the target's expected current role. The relay updates an
+existing member only if that role still matches, so it rejects the edit if the
+member left or their role changed before the write.
+
+Ordinary channel `9000` role changes are unconditional relay upserts. A command
+can re-add a member who departed after the final preflight or overwrite a
+concurrent role edit. Client checks and readback reduce uncertainty.
 
 Regression coverage lives in `administration.test.ts`,
 `MemberAdministration.test.tsx`, `native.test.ts`, and `browser-host/relay-broker-api.test.mjs`;

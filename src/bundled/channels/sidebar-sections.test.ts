@@ -148,7 +148,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
   ).toEqual(["forum", "solo", "star"]);
   expect(sidebarSections([])).toEqual([
     { key: "starred", title: "Starred", icon: undefined, rows: [] },
-    { key: "solo", title: "Solo", icon: undefined, rows: [] },
+    { key: "solo", title: "Solo chats", icon: undefined, rows: [] },
     { key: "channels", title: "Team", icon: undefined, rows: [] },
     { key: "forums", title: "Forums", icon: undefined, rows: [] },
     { key: "dms", title: "Direct messages", icon: undefined, rows: [] },

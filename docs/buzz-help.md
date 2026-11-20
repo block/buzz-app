@@ -514,6 +514,10 @@ and are asked to sign in again in Buzz.
   one to remove it (the last agent stays selected). Rows stay in place while you
   toggle; reopen to refresh their order. Search ranks matching choices by
   relevance, including exact names.
+  Collapsed Solo sections and workspaces stay closed when you open or move a
+  chat, click **In Solo**, or refresh. Use the heading or its chevron to open
+  the group. **In Solo** scrolls to and focuses the chat row or the section heading
+  that represents it.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your personal workspace IDs with
@@ -529,6 +533,11 @@ and are asked to sign in again in Buzz.
   the chat; anyone else outside the chat is only named: not added and not
   notified, and the picker row says so. People already in the chat are notified
   as usual. The toolbar's agent menu lists agents only.
+  In a **Private** Solo chat on a relay that supports role updates, the owner can
+  use a current member’s menu in **Share access** to lower their access.
+  The owner can restore **Participating** for a verified
+  agent and grant **Admin** to their own verified agents. **Viewing only**
+  gives read-only access to that chat.
   New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
   which archives the chat after a set time without activity. To start every new
   chat temporary, open the community's **Settings → Local settings** and choose
@@ -592,7 +601,8 @@ and are asked to sign in again in Buzz.
   Folders are optional unless **Work in a new worktree** is on.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
-  remove it and pick again with **#**.
+  remove it and pick again with **#**. A sent chip shows the channel's current
+  name, so it follows a rename; a link with your own text keeps that text.
 - **Folder chips.** In the desktop app, type **!** and part of a folder name in
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the
@@ -770,7 +780,9 @@ and are asked to sign in again in Buzz.
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their
   community, so one from another community looks like a private or missing
-  channel. The card still opens the link.
+  channel. The card still opens the link, unless the channel is private
+  to you: then the link and its card don't open anything, and the link can
+  still be copied. Once you have access, the link opens again.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.
@@ -2088,29 +2100,6 @@ Canvas, shared notes and repository pages. Those, plus the memory panel, agent
 transcript replies and plugin READMEs, offer **Copy code block** on each code
 block.
 
-### Reading shared files beside a conversation
-
-The optional **File viewer** plugin, off until turned on in Settings → Plugins,
-opens PDFs, Markdown, code, text, CSV and TSV files shared in a conversation in a
-tab beside it. Choose the file's card to open it; the card's download button
-still saves the file. PDFs show every page in one scrolling column: turn pages
-with ‹ and › or the arrow keys, and zoom with **−**, **+** or **Fit to width**.
-**Copy text** copies a file's text; for a PDF it reads the pages when pressed,
-and says when a scanned PDF has none.
-
-- Only files shared in the current community open. Text files open up to 20 MB
-  and PDFs up to 100 MB, laid out to the first 1,000 pages.
-- Markdown, code and text files of any length read in parts, loaded as you
-  scroll. In a Markdown file with three or more headings, **Outline** goes to
-  any section, and `#` links do too. Code is highlighted, with line numbers.
-- The header shows when the file was shared, and a Markdown file's reading time
-  and words, or a code or text file's lines.
-- CSV and TSV files show as a table of the first 5,000 rows and 200 columns,
-  up to 50,000 cells.
-- Markdown follows the Notes rules: no raw HTML. Images shared in the current
-  community are drawn; other images show as their alt text.
-- Office files, images, video and audio are not opened by the viewer.
-
 ### Saved External apps approval
 
 External apps can request saved approval. The app can renew valid approval
@@ -2188,3 +2177,11 @@ not clear saved drafts or bypass conflict checks.
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
+
+### App notifications
+
+Desktop toast notifications appear at the top right, 12px from the top on Mac and below the app headers on Windows/Linux. Hover the stack to
+expand it and pause timed notifications; F6 focuses notifications for keyboard
+access. Tab and Shift+Tab also expand the stack, which stays expanded while it
+contains keyboard focus. Dismissible notices show their close button on hover or keyboard focus.
+Recovery notices remain until resolved or dismissed where allowed.

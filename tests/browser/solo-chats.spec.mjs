@@ -361,7 +361,7 @@ test("dragging a chat between a workspace and Solo saves and reloads like Move t
   await expect(inProject("Alpha")).toBeVisible();
   const work = (await published(1))[id];
 
-  await drag("Alpha", "Solo");
+  await drag("Alpha", "Solo chats");
   await expect(chat("Alpha")).toBeFocused();
   await expect(inProject("Alpha")).toHaveCount(0);
   expect(await published(2)).toEqual({});

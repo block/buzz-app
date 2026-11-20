@@ -165,7 +165,7 @@ export type SoloWorkspaceProps = Readonly<{
   headerAccessory?: ReactNode;
   /** Compact, non-interactive content shown in place of quiet header actions. */
   headerMetadata?: ReactNode;
-  /** Reveal a moved or externally opened child; selection alone does not expand. */
+  /** @deprecated Legacy no-op. Use the workspace disclosure to open it. */
   reveal?: string;
   dropTarget?: boolean;
   children?: ReactNode;

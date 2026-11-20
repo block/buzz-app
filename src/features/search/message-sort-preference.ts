@@ -57,7 +57,7 @@ export const messageSortSetting: DeviceSetting = {
     "The order a new search of one conversation starts with: most relevant or most recent.",
   schema: { type: "string", enum: ["relevance", "newest"] },
   applies:
-    "New searches of one conversation with text, where the relay supports sorting; other searches stay most relevant.",
+    "New searches of one conversation with text, where the relay supports sorting; other searches with text stay most relevant.",
   read: () => ({
     value: messageSortPreference(),
     unsaved:

@@ -817,8 +817,8 @@ Quitting Buzz also turns it off.
     **Sort messages** in the field orders text matches by most relevant or
     most recent for that search. **Sort messages by** in Settings →
     Appearance → Conversations sets the order each new search starts with on
-    this device; unset, it is most relevant. Searches across conversations,
-    and relays without sorting, stay most relevant.
+    this device; unset, it is most relevant. Text searches across
+    conversations, and on relays without sorting, stay most relevant.
   - `after:`, `before:`, `on:` a date (`YYYY-MM-DD`, `today`, `yesterday`), and
     `during:` a day, month (`2026-10`, `october`), or year, in local time, or a
     rolling period ending today (`7d`, `4w`, `3m`, `1y`). `after:` includes its

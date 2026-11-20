@@ -63,7 +63,11 @@ test.beforeEach(async ({ page }) => {
         void context.resume();
         const source = context.createOscillator();
         const gain = context.createGain();
-        gain.gain.value = 0.2;
+        // "late" models a microphone that opens before it delivers audio.
+        gain.gain.value = mic.mode === "late" ? 0 : 0.2;
+        mic.speak = () => {
+          gain.gain.value = 0.2;
+        };
         const destination = context.createMediaStreamDestination();
         source.connect(gain);
         gain.connect(destination);
@@ -192,6 +196,31 @@ test("record, preview, send and play the chat card with speed and seeking", {
     page.getByRole("group", { name: "Voice note", exact: true }),
   ).toHaveCount(2);
   expect(errors.unexplained()).toEqual([]);
+});
+test("shows recording only once the microphone delivers audio", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
+  await page.evaluate(() => {
+    window.voiceMic.mode = "late";
+  });
+  await page
+    .getByRole("button", { name: "Record voice note", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.voiceMic.context?.currentTime ?? 0))
+    .toBeGreaterThan(0.6);
+  const waiting = page
+    .getByRole("status")
+    .filter({ hasText: "Waiting for microphone…" });
+  const stop = page.getByRole("button", {
+    name: "Stop recording",
+    exact: true,
+  });
+  await expect(waiting).toBeVisible();
+  await expect(stop).toBeDisabled();
+  await page.evaluate(() => window.voiceMic.speak());
+  await expect(stop).toBeEnabled();
+  await expect(waiting).toHaveCount(0);
 });
 test("permission cancellation, denial and plugin removal release microphones", {
   tag: "@media-recorder",

@@ -253,9 +253,9 @@ function RegionFrame({
   const { active } = destination;
   useLayoutEffect(() => {
     if (!revealRequest) return;
-    if (revealRequest === current) revealAgain();
+    if (revealRequest === current) revealAgain(sectionKey);
     setRevealRequest(undefined);
-  }, [current, revealAgain, revealRequest]);
+  }, [current, revealAgain, revealRequest, sectionKey]);
   const reveal = useEffectEvent((id: string, explicit: boolean) => {
     if (!region.channels.some((channel) => channel.id === id)) return false;
     if (explicit && id === current) setRevealRequest(id);

@@ -145,9 +145,11 @@ re-arm viewport ownership. Missing plugins use generic recovery copy, and catalo
 loading does not imply that a plugin is uninstalled.
 
 Navigation and the header chip keep manually collapsed Solo regions and
-workspaces closed. The header chip scrolls to the visible row or its collapsed
-region heading. The host still delivers an explicit chip request to the
-source, which should also preserve manual collapse. The legacy workspace
+workspaces closed. The header chip scrolls to and focuses the current row within
+its Solo region. A disclosure heading represents a hidden row. If the source
+omits the row, the chip focuses the region heading. The host also sends the
+source an explicit chip request. The source should preserve manual collapse.
+The legacy workspace
 `reveal` prop no longer changes disclosure. Recovery rows use the same
 destination marker. Removing a focused row restores focus to a remaining row,
 then the region heading; removing the region restores focus to the Solo heading.

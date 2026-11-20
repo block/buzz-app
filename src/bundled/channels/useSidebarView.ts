@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { focusWithKeyboard } from "../../shared/design-system/useKeyboardFocusVisibility";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
 import { contributedSidebarSectionKey } from "./sidebar-sections";
 
@@ -58,12 +59,18 @@ export function expandSidebarSection(scope: string, key: string) {
 /**
  * Show the current destination (`aria-current="page"`) in the sidebar
  * viewport. Rows hidden by a collapsed section or session list are shown
- * through the header or parent row that represents them. Returns false while
- * no current entry is laid out yet; otherwise returns the offset that shows it.
+ * through the header or parent row that represents them. Wait for a current
+ * entry with layout before choosing the target and its scroll offset.
  */
-function revealCurrent(viewport: HTMLElement): number | false {
+function revealCurrent(viewport: HTMLElement, sectionKey?: string) {
+  const section = sectionKey
+    ? viewport.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(sectionKey)}"]`,
+      )
+    : viewport;
+  if (!section) return;
   const owners = [
-    ...viewport.querySelectorAll<HTMLElement>('[aria-current="page"]'),
+    ...section.querySelectorAll<HTMLElement>('[aria-current="page"]'),
   ].map((entry) => {
     let owner = entry;
     for (let node: HTMLElement | null = entry; node && node !== viewport; ) {
@@ -71,7 +78,7 @@ function revealCurrent(viewport: HTMLElement): number | false {
         // A notice can sit between the section heading and its panel.
         const heading = node.id
           ? node.parentElement?.querySelector<HTMLElement>(
-              `summary[aria-controls="${CSS.escape(node.id)}"]`,
+              `:is(summary,button)[aria-controls="${CSS.escape(node.id)}"]`,
             )
           : undefined;
         const proxy = heading ?? node.previousElementSibling;
@@ -79,26 +86,36 @@ function revealCurrent(viewport: HTMLElement): number | false {
       }
       node = node.parentElement;
     }
-    return owner.getBoundingClientRect();
+    return { target: owner, rect: owner.getBoundingClientRect() };
   });
-  const rects = owners.filter((rect) => rect.height);
-  const rect = rects[0];
-  if (!rect) return false;
+  const laidOut = owners.filter(({ rect }) => rect.height);
+  if (!laidOut.length && sectionKey) {
+    const target = section.querySelector<HTMLElement>("summary");
+    const rect = target?.getBoundingClientRect();
+    if (target && rect?.height) laidOut.push({ target, rect });
+  }
+  const first = laidOut[0];
+  if (!first) return;
   const top = viewport.getBoundingClientRect().top;
   const bottom = top + viewport.clientHeight;
   // A visible copy (for example, a starred channel) already shows it.
-  if (rects.some((rect) => rect.top >= top && rect.bottom <= bottom))
-    return viewport.scrollTop;
+  const visible = laidOut.find(
+    ({ rect }) => rect.top >= top && rect.bottom <= bottom,
+  );
+  if (visible) return { target: visible.target, top: viewport.scrollTop };
+  const { target, rect } = first;
   // Center an offscreen entry clear of the unread edge cues; nudge a clipped
   // one only as far as needed so the row under the pointer does not jump.
-  return (
-    viewport.scrollTop +
-    (rect.bottom <= top || rect.top >= bottom
-      ? rect.top - top - (viewport.clientHeight - rect.height) / 2
-      : rect.top < top
-        ? rect.top - top
-        : rect.bottom - bottom)
-  );
+  return {
+    target,
+    top:
+      viewport.scrollTop +
+      (rect.bottom <= top || rect.top >= bottom
+        ? rect.top - top - (viewport.clientHeight - rect.height) / 2
+        : rect.top < top
+          ? rect.top - top
+          : rect.bottom - bottom),
+  };
 }
 
 /** Scrolls to `top`; returns the new offset if the viewport moved. */
@@ -146,9 +163,14 @@ export function useSidebarView(
     [scope],
   );
   // The destination waiting for its entry to render.
-  const reveal = useRef<{ location: string; explicit?: true } | undefined>(
-    undefined,
-  );
+  const reveal = useRef<
+    | {
+        location: string;
+        explicit?: true;
+        sectionKey?: string | undefined;
+      }
+    | undefined
+  >(undefined);
   // Until the first reveal or scroll, the saved destination keeps the
   // restored position.
   const restored = useRef(view.location);
@@ -204,28 +226,36 @@ export function useSidebarView(
   // retry after each commit until it exists. Runs after the restore above.
   const attempt = useRef(() => {});
   // Only an explicit reveal of the current destination may reclaim the viewport.
-  const revealAgain = useCallback(() => {
+  const revealAgain = useCallback((sectionKey?: string) => {
     if (latestLocation.current === undefined) return;
-    reveal.current = { location: latestLocation.current, explicit: true };
+    reveal.current = {
+      location: latestLocation.current,
+      explicit: true,
+      sectionKey,
+    };
     attempt.current();
   }, []);
   const retryReveal = useCallback(() => {
     // Children can retry before this hook's layout effects clear an old reveal.
-    if (
-      !preserve ||
-      (reveal.current?.explicit && reveal.current.location === location)
-    )
+    const pending = reveal.current;
+    if (pending?.explicit ? pending.location === location : !preserve)
       attempt.current();
   }, [preserve, location]);
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;
-      const top = revealCurrent(list.current);
-      if (top === false) return;
+      const destination = revealCurrent(
+        list.current,
+        reveal.current.sectionKey,
+      );
+      if (!destination) return;
+      const { target, top } = destination;
+      const { explicit, location } = reveal.current;
       moved.current = scroll(list.current, top) ?? moved.current;
-      intent.current = { ...intent.current, location: reveal.current.location };
+      intent.current = { ...intent.current, location };
       reveal.current = undefined;
       restored.current = undefined;
+      if (explicit) focusWithKeyboard(target);
     };
     attempt.current();
   });

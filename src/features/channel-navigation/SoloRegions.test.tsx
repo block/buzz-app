@@ -1227,7 +1227,17 @@ it.each([true, false])(
     );
     const h = fixture();
     await h.register({
-      component: Body,
+      component: function FilterableBody(props) {
+        const [filtered, setFiltered] = useState(false);
+        return (
+          <>
+            <button type="button" onClick={() => setFiltered(true)}>
+              Filter chats
+            </button>
+            {!filtered && <Body {...props} />}
+          </>
+        );
+      },
       actions: () => [
         {
           id: "fail",
@@ -1259,6 +1269,7 @@ it.each([true, false])(
     });
     const View = () => {
       const sidebar = useSidebarView(h.scope, true, "conversation:owned");
+      const [showCopy, setShowCopy] = useState(false);
       return (
         <ToastProvider>
           <SoloHeading
@@ -1268,7 +1279,15 @@ it.each([true, false])(
             onLifecycle={() => {}}
             onMove={() => {}}
           />
+          <button type="button" onClick={() => setShowCopy(true)}>
+            Show another link to the current chat
+          </button>
           <nav ref={sidebar.list} data-testid="region-viewport">
+            {showCopy && (
+              <button type="button" aria-current="page">
+                Chat shortcut
+              </button>
+            )}
             <SoloRegions
               session={h.session}
               scope={h.scope}
@@ -1292,6 +1311,10 @@ it.each([true, false])(
     fireEvent.click(screen.getByRole("button", { name: "Run action" }));
     expect(await screen.findByRole("alert")).toBeVisible();
     const reveal = screen.getByRole("button", { name: "In Work" });
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(screen.getByLabelText("Work")).toHaveFocus();
+    expect(viewport.scrollTop).toBe(0);
     viewport.scrollTop = 400;
     fireEvent.scroll(viewport);
     fireEvent.click(reveal);
@@ -1302,6 +1325,18 @@ it.each([true, false])(
     fireEvent.click(screen.getByLabelText("Work"));
     fireEvent.click(reveal);
     expect(viewport.scrollTop).toBe(160);
+    expect(screen.getByRole("button", { name: "Owned" })).toHaveFocus();
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "Filter chats" }));
+    expect(screen.queryByRole("button", { name: "Owned" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Show another link to the current chat",
+      }),
+    );
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(screen.getByLabelText("Work")).toHaveFocus();
     expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
   },
 );

@@ -190,7 +190,7 @@ function railInsetError(row) {
 
 const newOptions = (page) =>
   page.locator('[data-sidebar-section="solo"]').getByRole("button", {
-    name: "New chat in Solo",
+    name: "New Solo chat",
     exact: true,
   });
 

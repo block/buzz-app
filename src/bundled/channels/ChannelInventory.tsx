@@ -1951,7 +1951,7 @@ export function ChannelInventory({
                           ) : section.key === "solo" ? (
                             <IconButton
                               size="compact"
-                              aria-label={`New chat in ${section.title}`}
+                              aria-label="New Solo chat"
                               title="New chat"
                               icon={<PlusIcon size={15} strokeWidth={2.5} />}
                               onClick={() => newChat()}

@@ -58,6 +58,7 @@ type PendingNotificationAction = {
   store: Updates;
   update: PluginUpdate;
   queueId?: string;
+  returnFocus?: (() => HTMLElement | null) | undefined;
 };
 
 export function PluginUpdates({
@@ -79,7 +80,7 @@ export function PluginUpdates({
   const pendingAction = useRef<PendingNotificationAction | undefined>(
     undefined,
   );
-  const [pendingActionId, setPendingActionId] = useState<string>();
+  const [pendingUpdate, setPendingUpdate] = useState<PluginUpdate>();
   const reviewLeaseRevision = useRef<number | undefined>(undefined);
   const returnFocus = useRef<(() => HTMLElement | null) | undefined>(undefined);
   const state = useSyncExternalStore(plugins.subscribe, plugins.snapshot);
@@ -179,7 +180,7 @@ export function PluginUpdates({
     (intent: NonNullable<typeof pendingAction.current>) => {
       if (pendingAction.current !== intent) return false;
       pendingAction.current = undefined;
-      setPendingActionId(undefined);
+      setPendingUpdate(undefined);
       return true;
     },
     [],
@@ -222,14 +223,17 @@ export function PluginUpdates({
     focusTarget?: () => HTMLElement | null,
   ) => {
     if (state.busy || action || pendingAction.current) return;
-    returnFocus.current = focusTarget;
     if (!store || !update.token) {
       openPluginSettings(update.id);
       return;
     }
-    const intent: PendingNotificationAction = { store, update };
+    const intent: PendingNotificationAction = {
+      store,
+      update,
+      returnFocus: focusTarget,
+    };
     pendingAction.current = intent;
-    setPendingActionId(update.id);
+    setPendingUpdate(update);
     const queued = store.capability.queueUpdates([update.token]);
     if (queued) {
       intent.queueId = queued.id;
@@ -265,7 +269,9 @@ export function PluginUpdates({
     if (intent && notificationReview) clearPendingAction(intent);
     reviewLeaseRevision.current = installRequests.reviewRevision();
     // A notification can wait for another review while the person moves focus.
-    if (!notificationReview || !returnFocus.current) {
+    if (notificationReview && intent.returnFocus) {
+      returnFocus.current = intent.returnFocus;
+    } else {
       const focused = document.activeElement as HTMLElement;
       returnFocus.current = () => focused;
     }
@@ -422,6 +428,19 @@ export function PluginUpdates({
       setChecking((ids) => ids.filter((item) => item !== id));
     }
   };
+  const visibleUpdates = updates.filter(
+    (update) =>
+      // A failed check stays on its Settings row.
+      update.candidate &&
+      (!store?.hidden(update) || pendingUpdate?.id === update.id) &&
+      update.id !== action?.id,
+  );
+  const notices =
+    pendingUpdate &&
+    pendingUpdate.id !== action?.id &&
+    !visibleUpdates.some((update) => update.id === pendingUpdate.id)
+      ? [...visibleUpdates, pendingUpdate]
+      : visibleUpdates;
   return (
     <Context
       value={{
@@ -429,7 +448,7 @@ export function PluginUpdates({
         open,
         checking,
         checkAgain,
-        busy: state.busy || !!action || !!pendingActionId,
+        busy: state.busy || !!action || !!pendingUpdate,
         recommended: pendingManaged(managed).map((entry) => entry.id),
       }}
     >
@@ -464,52 +483,44 @@ export function PluginUpdates({
           }}
         />
       )}
-      {updates
-        .filter(
-          (update) =>
-            // A failed check stays on its Settings row.
-            update.candidate &&
-            (!store?.hidden(update) || pendingActionId === update.id) &&
-            update.id !== action?.id,
-        )
-        .map((update) => {
-          const plugin = catalog?.plugins.find(
-            (p) => p.manifest.id === update.id,
-          );
-          const name = plugin?.manifest.name ?? update.id;
-          const manage = {
-            label: `Manage ${name} update checks`,
-            open: () => openPluginSettings(update.id),
-          };
-          const review = needsReview(update);
-          return (
-            <ToastNotice
-              key={update.id}
-              title={`Update ${name}`}
-              description="Save unfinished forms and stop active plugin workers first. Updating an enabled plugin reloads it immediately."
-              tone="info"
-              onDismiss={() => dismiss(update)}
-              closeLabel="Dismiss plugin update notice"
-              navigation={manage}
+      {notices.map((update) => {
+        const plugin = catalog?.plugins.find(
+          (p) => p.manifest.id === update.id,
+        );
+        const name = plugin?.manifest.name ?? update.id;
+        const manage = {
+          label: `Manage ${name} update checks`,
+          open: () => openPluginSettings(update.id),
+        };
+        const review = needsReview(update);
+        return (
+          <ToastNotice
+            key={update.id}
+            title={`Update ${name}`}
+            description="Save unfinished forms and stop active plugin workers first. Updating an enabled plugin reloads it immediately."
+            tone="info"
+            onDismiss={() => dismiss(update)}
+            closeLabel="Dismiss plugin update notice"
+            navigation={manage}
+          >
+            <Button
+              size="sm"
+              disabled={state.busy || !!action || !!pendingUpdate}
+              focusableWhenDisabled={pendingUpdate?.id === update.id}
+              onClick={() => open(update)}
             >
-              <Button
-                size="sm"
-                disabled={state.busy || !!action || !!pendingActionId}
-                focusableWhenDisabled={pendingActionId === update.id}
-                onClick={() => open(update)}
-              >
-                {pendingActionId === update.id
-                  ? "Preparing update…"
-                  : review
-                    ? "Review permissions"
-                    : "Update and reload"}
-              </Button>
-              <Button size="sm" onClick={() => dismiss(update)}>
-                Later
-              </Button>
-            </ToastNotice>
-          );
-        })}
+              {pendingUpdate?.id === update.id
+                ? "Preparing update…"
+                : review
+                  ? "Review permissions"
+                  : "Update and reload"}
+            </Button>
+            <Button size="sm" onClick={() => dismiss(update)}>
+              Later
+            </Button>
+          </ToastNotice>
+        );
+      })}
       {validAction && catalog && (
         <PluginImport
           key={`${action.id}:${updateSourceKey(action.source)}:${action.token}`}

@@ -116,6 +116,9 @@ function fixture() {
   };
   const installRequests = createPluginInstallRequests();
   const relay = { snapshot: () => ({ session: {} }) } as AppServices["relay"];
+  const profileTrigger: { current: HTMLButtonElement | null } = {
+    current: null,
+  };
   const tree = (plugins = manager) => (
     <ToastProvider>
       <PluginUpdates
@@ -132,14 +135,18 @@ function fixture() {
           }
         />
         <MenuRoot>
-          <MenuTrigger>Profile</MenuTrigger>
+          <MenuTrigger
+            ref={(node) => {
+              profileTrigger.current = node;
+            }}
+          >
+            Profile
+          </MenuTrigger>
           <MenuPopup>
             <PluginUpdatesMenu
               recommendations={0}
               onManage={vi.fn()}
-              returnFocus={() =>
-                screen.queryByRole("button", { name: "Profile" })
-              }
+              returnFocus={() => profileTrigger.current}
             />
           </MenuPopup>
         </MenuRoot>
@@ -1102,20 +1109,270 @@ it.each(["Later", "Dismiss plugin update notice"])(
     await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
     fireEvent.click(update);
     fireEvent.click(screen.getByRole("button", { name: dismissLabel }));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Update Notes" })).toBeNull(),
-    );
 
     await act(async () => {
       releaseCheck();
       await refresh;
     });
 
-    expect(screen.queryByRole("dialog", { name: "Update Notes" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Update Notes" })).toBeNull(),
+    );
     expect(f.navigation.open).not.toHaveBeenCalled();
     expect(f.installImport).not.toHaveBeenCalled();
   },
 );
+
+it.each(["error", "up to date"] as const)(
+  "keeps a pending notice cancellable when its candidate disappears (%s) before a later check finishes",
+  async (outcome) => {
+    const f = fixture();
+    const configuration = f.state().configuration;
+    if (configuration.status !== "ready") throw new Error("Expected catalog");
+    const otherSource = {
+      repository: "https://example.com/other.git",
+      reference: "main",
+      path: "other",
+    };
+    const other: PluginInfo = {
+      ...f.plugin,
+      manifest: { ...f.plugin.manifest, id: "example.other", name: "Other" },
+      updateSource: otherSource,
+    };
+    const otherDiscovered: ImportPreview = {
+      token: "other-metadata",
+      source: otherSource.repository,
+      commit: "b".repeat(40),
+      candidates: [
+        {
+          path: otherSource.path,
+          manifest: other.manifest,
+          revision: other.revision,
+          publisher: null,
+        },
+      ],
+      warnings: [],
+    };
+    f.emit({
+      configuration: {
+        ...configuration,
+        catalog: { ...configuration.catalog, plugins: [f.plugin, other] },
+      },
+    });
+    f.imports.checkGit
+      .mockResolvedValueOnce(f.discovered)
+      .mockResolvedValueOnce(otherDiscovered);
+    f.mount();
+    const update = await screen.findByRole("button", {
+      name: "Update and reload",
+    });
+    const capability = f.installRequests.updates;
+    if (!capability) throw new Error("Expected an update capability");
+
+    let releaseNotes!: () => void;
+    let releaseOther!: () => void;
+    f.imports.checkGit
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            releaseNotes = () =>
+              outcome === "error"
+                ? reject(new Error("Notes repository failed"))
+                : resolve({
+                    ...f.discovered,
+                    candidates: [
+                      { ...f.candidate, revision: f.plugin.revision },
+                    ],
+                  });
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseOther = () => resolve(otherDiscovered);
+          }),
+      );
+
+    const refresh = capability.refresh();
+    try {
+      await waitFor(() => expect(releaseNotes).toBeTypeOf("function"));
+      fireEvent.click(update);
+      expect(
+        await screen.findByRole("button", { name: "Preparing update…" }),
+      ).toHaveAttribute("aria-disabled", "true");
+
+      await act(async () => {
+        releaseNotes();
+      });
+      await waitFor(() => expect(releaseOther).toBeTypeOf("function"));
+      await waitFor(() =>
+        expect(capability.getSnapshot().candidates).toEqual([]),
+      );
+      expect(
+        screen.getByRole("button", { name: "Preparing update…" }),
+      ).toBeVisible();
+      expect(screen.getByRole("button", { name: "Later" })).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Dismiss plugin update notice" }),
+      ).toBeVisible();
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: outcome === "error" ? "Later" : "Dismiss plugin update notice",
+        }),
+      );
+    } finally {
+      await act(async () => {
+        releaseOther?.();
+        await refresh;
+      });
+    }
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Update Notes" })).toBeNull(),
+    );
+    expect(f.navigation.open).not.toHaveBeenCalled();
+    expect(f.installImport).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps Profile focus tied to its own request when another queued review runs first", async () => {
+  const user = userEvent.setup();
+  const f = fixture();
+  const configuration = f.state().configuration;
+  if (configuration.status !== "ready") throw new Error("Expected catalog");
+  const otherSource = {
+    repository: "https://example.com/other.git",
+    reference: "main",
+    path: "other",
+  };
+  const other: PluginInfo = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "example.other", name: "Other" },
+    updateSource: otherSource,
+  };
+  const otherCandidate = {
+    path: otherSource.path,
+    manifest: other.manifest,
+    revision: "new-other",
+    publisher: null as string | null,
+  };
+  const otherDiscovered: ImportPreview = {
+    token: "other-metadata",
+    source: otherSource.repository,
+    commit: "b".repeat(40),
+    candidates: [otherCandidate],
+    warnings: [],
+  };
+  const otherFresh: ImportPreview = {
+    ...otherDiscovered,
+    token: "other-immutable-preview",
+    candidates: [{ ...otherCandidate }],
+  };
+  f.emit({
+    configuration: {
+      ...configuration,
+      catalog: { ...configuration.catalog, plugins: [f.plugin, other] },
+    },
+  });
+  f.imports.checkGit
+    .mockResolvedValueOnce(f.discovered)
+    .mockResolvedValueOnce(otherDiscovered);
+  f.imports.git
+    .mockResolvedValueOnce(otherFresh)
+    .mockResolvedValueOnce(f.fresh);
+  const releaseReview = f.installRequests.tryHoldReview();
+  if (!releaseReview) throw new Error("Expected to hold the review lease");
+  f.mount();
+  await waitFor(() =>
+    expect(f.installRequests.updates?.getSnapshot().candidates).toHaveLength(2),
+  );
+  const market = f.installRequests.updatesFor("example.market");
+  const otherToken = market
+    ?.getSnapshot()
+    .candidates.find((c) => c.id === "example.other")?.token;
+  if (!market || !otherToken)
+    throw new Error("Expected a fresh token for Other");
+
+  const profile = screen.getByRole("button", { name: "Profile" });
+  const details = screen.getByRole("button", { name: "View Notes details" });
+  try {
+    act(() => {
+      if (!market.queueUpdates([otherToken]))
+        throw new Error("Expected Other review to queue");
+    });
+
+    profile.focus();
+    await user.keyboard("{ArrowDown}");
+    const plugins = await screen.findByRole("menuitem", { name: /Plugins/ });
+    plugins.focus();
+    await user.keyboard("{ArrowRight}");
+    const menuUpdate = await screen.findByRole("menuitem", {
+      name: "Update Notes",
+    });
+    menuUpdate.focus();
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("button", { name: "Preparing update…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+
+    details.focus();
+    expect(details).toHaveFocus();
+  } finally {
+    act(() => releaseReview());
+  }
+
+  const otherDialog = await screen.findByRole("dialog", {
+    name: "Update Other",
+  });
+  await user.click(within(otherDialog).getByRole("button", { name: "Close" }));
+  const notesDialog = await screen.findByRole("dialog", {
+    name: "Update Notes",
+  });
+  await user.click(within(notesDialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(profile).toHaveFocus());
+  expect(f.installImport).not.toHaveBeenCalled();
+});
+
+it("reviews a newer candidate discovered during a stale notice refresh without auto-installing", async () => {
+  const f = fixture();
+  f.mount();
+  const update = await screen.findByRole("button", {
+    name: "Update and reload",
+  });
+  await waitFor(() =>
+    expect(f.installRequests.updates?.getSnapshot().status).toBe("fresh"),
+  );
+
+  f.plugin.revision = "changed before review";
+  const newerManifest = { ...f.plugin.manifest, host: { files: true } };
+  const newerCandidate = {
+    ...f.candidate,
+    manifest: newerManifest,
+    revision: "v2-during-refresh",
+  };
+  f.imports.checkGit.mockResolvedValueOnce({
+    ...f.discovered,
+    candidates: [newerCandidate],
+  });
+  f.imports.git.mockResolvedValueOnce({
+    ...f.fresh,
+    candidates: [{ ...newerCandidate }],
+  });
+
+  fireEvent.click(update);
+
+  const confirm = await screen.findByRole("button", { name: /^Update$/ });
+  const review = confirm.closest<HTMLElement>('[role="dialog"]');
+  if (!review) throw new Error("Expected the update review dialog");
+  expect(review).toHaveAccessibleName("Update Notes");
+  expect(
+    await within(review).findByText("Read your files (added)"),
+  ).toBeVisible();
+  expect(confirm).toBeEnabled();
+  expect(f.installImport).not.toHaveBeenCalled();
+  expect(f.navigation.open).not.toHaveBeenCalled();
+});
 
 it("opens actionable plugin settings when a clicked update disappears", async () => {
   const f = fixture();

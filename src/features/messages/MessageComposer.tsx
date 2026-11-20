@@ -774,7 +774,13 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(!!reopenedConflict);
   function reportConflict(draft = valueRef.current) {
-    if (!conflictDraft.current) {
+    // Keep the chooser in this editor, but don't restore a deleted revision
+    // on reopen unless the editor contains a different draft.
+    if (
+      !conflictDraft.current &&
+      (viewRevision(scope, draftKey) !== null ||
+        JSON.stringify(draft) !== revision.current)
+    ) {
       conflictDraft.current = { draft, saved: undefined };
       flushConflict();
     }

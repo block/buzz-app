@@ -12609,23 +12609,45 @@ it("reopens an already saved local version when another window replaces it", () 
   expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
 });
 
-it("does not recover another window's conflict after leaving the community", () => {
-  const h = mount();
-  h.fill("Local work");
-  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
-  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
-  const key = conflictDraftKey("scope", "draft:channel");
-  const backup = sessionStorage.getItem(key);
-  if (backup === null) throw new Error("Expected a conflict backup");
+it.each([false, true])(
+  "does not recover another window's conflict after leaving the community (quota blocked first write: %s)",
+  (quotaLimited) => {
+    const h = mount();
+    h.fill("Local work");
+    act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+    const key = conflictDraftKey("scope", "draft:channel");
+    const backup = sessionStorage.getItem(key);
+    if (backup === null) throw new Error("Expected a conflict backup");
 
-  h.unmount();
-  clearViewScope("scope");
-  // Leaving in another window cannot access this window's session storage.
-  sessionStorage.setItem(key, backup);
-  const reopened = mount();
-  expect(reopened.input()).toHaveValue("");
-  expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
-});
+    h.unmount();
+    const setItem = Storage.prototype.setItem;
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (
+          quotaLimited &&
+          this === localStorage &&
+          readView("scope", "draft:channel", null)
+        )
+          throw new DOMException(
+            "Storage quota exceeded",
+            "QuotaExceededError",
+          );
+        setItem.call(this, name, value);
+      });
+    try {
+      clearViewScope("scope");
+    } finally {
+      write.mockRestore();
+    }
+    // Leaving in another window cannot access this window's session storage.
+    sessionStorage.setItem(key, backup);
+    const reopened = mount();
+    expect(reopened.input()).toHaveValue("");
+    expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+  },
+);
 
 it("reports a failed Keep my draft save and leaves both choices available", () => {
   const h = mount();
@@ -12692,7 +12714,17 @@ it("empties for a draft cleared elsewhere, and a stale composer never restores i
   act(() => h.input().blur());
   act(() => clearDraft({ scope: "scope" }, "draft:channel"));
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  h.remount();
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+
+  h.fill("Saved revision");
+  act(() => h.input().blur());
   h.fill("Edited here, still typing");
+  act(() => clearDraft({ scope: "scope" }, "draft:channel"));
+  h.remount();
+  expect(h.input()).toHaveValue("Edited here, still typing");
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
   expect(viewRevision("scope", "draft:channel")).toBeNull();
 });
 

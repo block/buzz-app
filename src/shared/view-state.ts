@@ -265,10 +265,17 @@ export function clearViewScope(scope: string) {
   const keyPrefix = `${JSON.stringify([scope]).slice(0, -1)},`;
   const purgeKey = viewScopePurgeKey(scope);
   const token = crypto.randomUUID();
+  let retry = false;
   try {
     localStorage.setItem(purgeKey, token);
+  } catch {
+    // Removing the old scope can free enough quota to record the purge.
+    retry = true;
+  }
+  clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
+  try {
+    if (retry) localStorage.setItem(purgeKey, token);
   } finally {
-    clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
     changed(scope);
     if (typeof sessionStorage !== "undefined")
       clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);

@@ -378,29 +378,49 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
                 startChat={
                   newTask && <MenuItem onClick={newTask}>New task</MenuItem>
                 }
-                afterDetails={props.headerMenuActions?.map((action) => {
-                  const item = (
-                    <MenuItem
-                      key={action.id}
-                      onClick={() => {
-                        if (eligible(current()))
-                          void context.runAction(() => action.onSelect());
-                      }}
-                    >
-                      {action.icon != null && (
-                        <MenuIcon>{action.icon}</MenuIcon>
-                      )}
-                      {action.label}
-                    </MenuItem>
-                  );
-                  return action.hint ? (
-                    <Tooltip key={action.id} content={action.hint} side="right">
-                      {item}
-                    </Tooltip>
-                  ) : (
-                    item
-                  );
-                })}
+                afterDetails={(close) =>
+                  props.headerMenuActions?.map((action) => {
+                    const item = (
+                      <MenuItem
+                        key={action.id}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key !== "Escape" ||
+                            event.nativeEvent.isComposing ||
+                            !event.currentTarget.hasAttribute(
+                              "aria-describedby",
+                            )
+                          )
+                            return;
+                          // The hint would otherwise consume Escape before the menu.
+                          event.preventDefault();
+                          event.stopPropagation();
+                          close();
+                        }}
+                        onClick={() => {
+                          if (eligible(current()))
+                            void context.runAction(() => action.onSelect());
+                        }}
+                      >
+                        {action.icon != null && (
+                          <MenuIcon>{action.icon}</MenuIcon>
+                        )}
+                        {action.label}
+                      </MenuItem>
+                    );
+                    return action.hint ? (
+                      <Tooltip
+                        key={action.id}
+                        content={action.hint}
+                        side="right"
+                      >
+                        {item}
+                      </Tooltip>
+                    ) : (
+                      item
+                    );
+                  })
+                }
               />
             </>
           }

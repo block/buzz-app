@@ -2932,6 +2932,14 @@ it("shows channel actions with artwork and help below details for the row that s
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "Inspect the catalog for this channel",
   );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger).toHaveFocus();
+  expect(inspect).toHaveBeenCalledTimes(1);
+
+  await user.keyboard("{ArrowDown}");
+  await screen.findByRole("menu");
+  await user.keyboard("{End}");
   await user.keyboard("{Enter}");
   expect(inspect).toHaveBeenCalledTimes(2);
   expect(inspect).toHaveBeenLastCalledWith(channel.id);

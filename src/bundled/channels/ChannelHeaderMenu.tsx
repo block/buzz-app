@@ -45,7 +45,7 @@ export function ChannelHeaderMenu({
   openDetails(): void;
   leadingAction?: ReactNode;
   startChat?: ReactNode;
-  afterDetails?: ReactNode;
+  afterDetails?: (close: () => void) => ReactNode;
   size?: "toolbar" | "compact";
   label?: string;
   finishConversion?: (() => void) | undefined;
@@ -108,7 +108,7 @@ export function ChannelHeaderMenu({
         </MenuIcon>
         View channel details
       </MenuItem>
-      {afterDetails}
+      {afterDetails?.(surface.close)}
       {menuPanels?.map((panel) => (
         <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
           <MenuIcon>

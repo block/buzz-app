@@ -2344,6 +2344,46 @@ it("reports the failure of a run an earlier app left unfinished in its thread, o
   expect(runtime.working(self)).not.toContain(left.conversation);
 });
 
+it("reads a file a run an earlier app left names from its folder while Buzz reconnects", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          ...left,
+          key: `${channel}/${root.id}`,
+          context: { channel, root: root.id },
+        },
+      ],
+    }),
+    wait: () => new Promise(() => {}),
+  });
+  const readFile = vi.fn(async () => new TextEncoder().encode("From a file"));
+  Object.assign(f.desktop, { readFile, resolveDirectory: folders() });
+  await assign(f.storage);
+  // Another thread's delivery continues the run in the folder's thread.
+  await f.deliver({
+    type: "mention",
+    event: message("5", "@Pi elsewhere", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  }).run;
+  f.link.status = "connecting";
+  await f.runtime.tool({
+    agent: self,
+    conversation: left.conversation,
+    context: { channel, root: root.id },
+    name: "send",
+    arguments: { path: "report.md", audience: "everyone" },
+  });
+  expect(readFile.mock.calls).toEqual([
+    ["report.md", { cwd: "/repos/worktree" }],
+  ]);
+});
+
 it("reports a run an earlier app left unfinished that fails, and stays silent for one stopped", async () => {
   const { deliver, published } = setup({
     unfinished: () => ({

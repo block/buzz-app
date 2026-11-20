@@ -1289,14 +1289,16 @@ export class PiRuntime {
         signingAuthority: relayKeyOf(this.reads(call.agent)),
         read: (path) => {
           // Relative to where the asking run works: its conversation's latest
-          // run here started there. Its conversation is the one it was
-          // admitted to; only a thread's own conversation has a root.
+          // run here started there, or, for a run an earlier app left, the
+          // folder it was given, which cannot change once it ran. Its
+          // conversation is the one it was admitted to; only a thread's own
+          // conversation has a root.
           const { channel, root } = call.context;
           const key =
             receipts[0]?.key ?? (root ? `${channel}/${root}` : channel);
           const cwd =
             (key && entry.folders.get(key)) ||
-            (this.reads(call.agent)
+            (this.scope(call.agent)
               ? this.folder(call.agent, key)
               : undefined) ||
             entry.config.workspace;

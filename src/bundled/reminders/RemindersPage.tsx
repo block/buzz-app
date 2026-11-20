@@ -71,6 +71,7 @@ import {
   isDisplayable,
   navigableTarget,
   presetHint,
+  type ReminderGroup,
 } from "./model";
 import { scopeOf, useReminders } from "./react";
 import styles from "./Reminders.module.css";
@@ -104,8 +105,11 @@ export function RemindersPage({
   }, []);
   const scope = scopeOf(connection);
   const groups = groupReminders(state.reminders, now, endOfToday());
-  const done = groups.find((group) => group.label === "Done");
-  const active = groups.filter((group) => group !== done);
+  // Done and Cancelled collapse under the pending groups.
+  const handled = groups.filter(
+    (group) => group.label === "Done" || group.label === "Cancelled",
+  );
+  const active = groups.filter((group) => !handled.includes(group));
   const run = (action: Promise<unknown>) => {
     setError(undefined);
     action.catch(() =>
@@ -202,7 +206,7 @@ export function RemindersPage({
               session={connection.session}
               reminders={reminders}
               active={active}
-              done={done?.reminders}
+              handled={handled}
               now={now}
               open={scope ? open : undefined}
               run={run}
@@ -218,15 +222,15 @@ function ReminderSections({
   session,
   reminders,
   active,
-  done,
+  handled,
   now,
   open,
   run,
 }: {
   session: RelaySession;
   reminders: Reminders;
-  active: readonly { label: string; reminders: Reminder[] }[];
-  done: readonly Reminder[] | undefined;
+  active: readonly ReminderGroup[];
+  handled: readonly ReminderGroup[];
   now: number;
   open: ((reminder: Reminder, conversation?: boolean) => void) | undefined;
   run(action: Promise<unknown>): void;
@@ -280,7 +284,7 @@ function ReminderSections({
       cancelAnimationFrame(frame);
     };
   }, [restoreCompletionFocus]);
-  const all = [...active.flatMap((group) => group.reminders), ...(done ?? [])];
+  const all = [...active, ...handled].flatMap((group) => group.reminders);
   const authorKey = [
     ...new Set(all.flatMap((item) => item.target?.authorPubkey || [])),
   ]
@@ -407,36 +411,38 @@ function ReminderSections({
               <motion.div key="empty" layout="position" initial={false}>
                 <EmptyState
                   icon={<AlarmIcon size={24} />}
-                  title={done ? "You're all caught up" : "No reminders yet"}
+                  title={
+                    handled.length ? "You're all caught up" : "No reminders yet"
+                  }
                   description="Choose Remind me from any message's menu to bring it back here when it matters."
                 />
               </motion.div>
             )}
-            {done && (
+            {handled.map((group) => (
               <motion.section
-                key="done"
+                key={group.label}
                 layout="position"
                 initial={false}
-                aria-label="Done"
+                aria-label={group.label}
                 className={styles.group}
               >
                 <Accordion
                   variant="section"
                   items={[
                     {
-                      value: "done",
+                      value: group.label.toLowerCase(),
                       title: (
                         <span className={styles.groupHeading}>
-                          Done{" "}
+                          {group.label}{" "}
                           <span className="text-caption text-subtle">
-                            {done.length}
+                            {group.reminders.length}
                           </span>
                         </span>
                       ),
                       content: (
                         <ul className={styles.list}>
                           <AnimatePresence initial={false} mode="popLayout">
-                            {done.map(row)}
+                            {group.reminders.map(row)}
                           </AnimatePresence>
                         </ul>
                       ),
@@ -444,7 +450,7 @@ function ReminderSections({
                   ]}
                 />
               </motion.section>
-            )}
+            ))}
           </AnimatePresence>
         </LayoutGroup>
       </motion.div>
@@ -509,6 +515,12 @@ function ReminderRow({
     run(action().finally(() => setBusy(false)));
   };
   const pending = reminder.status === "pending";
+  const handled =
+    reminder.status === "done"
+      ? "Done"
+      : reminder.status === "cancelled"
+        ? "Cancelled"
+        : undefined;
   const overdue =
     pending && reminder.notBefore !== undefined && reminder.notBefore <= now;
   const preview = reminder.target?.preview
@@ -520,8 +532,8 @@ function ReminderRow({
     reminder.notBefore !== undefined &&
     isDisplayable(reminder.notBefore)
       ? dueLabel(reminder.notBefore, now)
-      : reminder.status === "done"
-        ? `Done ${relativeTimestamp(reminder.createdAt, now)}`
+      : handled
+        ? `${handled} ${relativeTimestamp(reminder.createdAt, now)}`
         : undefined;
   const due =
     pending &&
@@ -537,8 +549,8 @@ function ReminderRow({
           .replace(/^Tomorrow/, "tomorrow")
           .replace(/^Yesterday/, "yesterday")}`}
       </time>
-    ) : reminder.status === "done" ? (
-      <span className="text-caption text-subtle">Done</span>
+    ) : handled ? (
+      <span className="text-caption text-subtle">{handled}</span>
     ) : null;
   const snoozeItems = TIME_PRESETS.map((preset) => (
     <MenuItem
@@ -598,12 +610,14 @@ function ReminderRow({
                 update(() => reminders.complete(reminder.id));
               }}
             />
-          ) : (
+          ) : reminder.status === "done" ? (
             <CheckIcon
               size={20}
               aria-label="Completed"
               className="text-subtle"
             />
+          ) : (
+            <XIcon size={20} aria-label="Cancelled" className="text-subtle" />
           )}
         </span>
         {open ? (

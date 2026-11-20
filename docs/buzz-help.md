@@ -1004,6 +1004,9 @@ Quitting Buzz also turns it off.
   Open the original message to reveal them.
 - **Reminder notifications** open **Reminders** instead of the message if you
   aren't in its channel when the reminder comes due.
+- **Done and cancelled reminders** stay in **Reminders** under collapsed
+  **Done** and **Cancelled** sections, newest first. Use **Remind me again** on
+  either to bring it back.
 - **Inline code** in single backticks wraps with prose, with rounded ends on
   each line. In tables, code follows the non-wrapping columns and scrolls with
   the table. Fenced code blocks wrap long lines while preserving indentation and

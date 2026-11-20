@@ -526,7 +526,7 @@ function useDestinationFocus(
       if (!node || (owner ? owner !== node : !focused.current)) return;
       const departing =
         owner === node && active instanceof HTMLElement ? active : node;
-      recoverSidebarFocus(departing, () => {
+      const candidates = () => {
         if (document.activeElement !== document.body) return;
         // The ref can capture the final order after this effect cleans up.
         const rows = neighbors.current;
@@ -556,7 +556,8 @@ function useDestinationFocus(
             '[data-sidebar-section^="solo-region:"] summary',
           ),
         ];
-      });
+      };
+      recoverSidebarFocus(departing, candidates, { preferVisibleRows: true });
     };
   }, [root, channelId, visible]);
   return {

@@ -107,6 +107,7 @@ import {
 import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
+import { USER_STATUS_KIND } from "./user-status-policy";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
@@ -142,7 +143,7 @@ import {
   browserThreadFollows,
   type ThreadFollowStorage,
 } from "./thread-follows";
-import { createMessages } from "./messages";
+import { createMessages, replyInvocationIntents } from "./messages";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
@@ -187,15 +188,20 @@ export const ROSTER_BACKSTOP_INTERVAL = 15 * 60_000;
  * no signal: a channel the relay pruned from a batch, or a dropped fan-out. */
 export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
 
-/** A read of named authors' profiles only. Profiles do not depend on channels,
- * so no channel access change, including a denied channel list, can stale it. */
+/** A read of named authors' profiles, or the general statuses read with them.
+ * The relay stores both per user, not per channel, so no channel access change,
+ * including a denied channel list, can stale it. */
 function isProfileFilter(filter: ReadFilter) {
+  const status =
+    filter.kinds?.[0] === USER_STATUS_KIND &&
+    filter["#d"]?.length === 1 &&
+    filter["#d"][0] === "general";
   return (
     filter.kinds?.length === 1 &&
-    filter.kinds[0] === 0 &&
+    (filter.kinds[0] === 0 || status) &&
     !!filter.authors?.length &&
     Object.keys(filter).every((key) =>
-      ["kinds", "authors", "limit"].includes(key),
+      ["kinds", "authors", "limit", ...(status ? ["#d"] : [])].includes(key),
     )
   );
 }
@@ -535,7 +541,9 @@ export function createRelaySession(
       channels.purgeAccess((events) => events.filter(visibility(events)));
       writes?.purgeConfirmed(visible);
       emoji.clear();
-      statuses.clear();
+      // Statuses are per person, not per channel, so they stay shown; reads
+      // the access change retired start again.
+      statuses.reconnect();
       activity.accessChanged();
       memories.clear();
       presence.clear();
@@ -1048,6 +1056,8 @@ export function createRelaySession(
         }
       : undefined,
     archives.queries,
+    // Created below; only reads after construction use it.
+    { prefetch: (authors) => statuses.prefetch(authors) },
   );
   const presence = withHostedAgents(
     observedPresence,
@@ -1164,7 +1174,17 @@ export function createRelaySession(
           archiveAuthority: transport.archiveAuthority,
           channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
+          statuses: {
+            image: (author) => {
+              const url = statuses.queries.snapshot().get(author)?.emojiUrl;
+              return url && transport.media(url);
+            },
+            saved: () => statuses.saved(),
+            restore: (events) => statuses.restore(events),
+            subscribe: (listener) => statuses.queries.subscribe(listener),
+          },
           revokeAccess,
+          previewAccessRestored: activity.refreshLocal,
           rosterComplete: dropStrandedSends,
           // The viewer's own lookups make a channel known to the viewer's
           // traffic, as without any `attend`; rechecks do not.
@@ -1679,6 +1699,41 @@ export function createRelaySession(
       throw new Error(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
+  }
+  function invocationScope(
+    channelId: string,
+    root: string,
+  ): ((agentPubkey: string) => boolean) | undefined {
+    const optIn = replyInvocationIntents.get(session);
+    const owner = transport?.viewer;
+    const communityOrigin = transport?.scope;
+    if (!optIn || !owner || !communityOrigin) return;
+    const channel = channels.queries.get?.(channelId);
+    if (
+      !channel ||
+      channel.cached ||
+      channel.metadataCached ||
+      channel.metadataPending ||
+      channel.pending ||
+      channel.archived ||
+      channel.huddle ||
+      (channel.channelType !== "stream" && channel.channelType !== "forum")
+    )
+      return;
+    const scope = { agentChoices, archives: archives.queries, viewer: owner };
+    const { selectable } = agentChoices.snapshot();
+    return (agentPubkey) =>
+      !agentUnavailable(scope, agentPubkey) &&
+      (profiles.queries.owner?.(agentPubkey) === owner ||
+        selectable.some(
+          (agent) => agent.managed && agent.pubkey === agentPubkey,
+        )) &&
+      optIn({
+        communityOrigin,
+        owner,
+        source: { channelId, root },
+        agentPubkey,
+      });
   }
   function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 40100) return;
@@ -3049,6 +3104,7 @@ export function createRelaySession(
               .map((event) => [event.id, event]),
           ).values(),
         ],
+        invocationScope,
       ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {
@@ -3079,6 +3135,7 @@ export function createRelaySession(
       options?: {
         exact?: boolean;
         priority?: Priority;
+        subthread?: boolean;
         /** A person reads this view: see createThreadView's `recover`. */
         reading?: boolean;
       },
@@ -3138,6 +3195,7 @@ export function createRelaySession(
         targetReader,
         admitTarget: (events) => accept(events, false),
         exact: options?.exact ?? false,
+        subthread: options?.subthread ?? false,
         priority: options?.priority,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed,
@@ -3215,7 +3273,8 @@ export function createRelaySession(
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
-    media: (url: string, size?: "small") => transport?.media(url, size),
+    media: (url: string, size?: "small", channel?: string) =>
+      transport?.media(url, size, channel),
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
     /** People by profile name only; see `createProfileSearch`. */

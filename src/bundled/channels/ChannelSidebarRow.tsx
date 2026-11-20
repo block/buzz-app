@@ -156,6 +156,7 @@ export function ChannelSidebarRow({
       icon={
         <span
           className={styles.iconSpace}
+          data-channel-row-icon=""
           data-dm-visual={dmVisualSpacing || undefined}
         >
           {icon}

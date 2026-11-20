@@ -148,6 +148,8 @@ export interface BuzzClient {
    * cannot tell yet. Unless it says yes, a conversation with no thread is the
    * whole channel. */
   threadsApart?(channel: string): boolean | undefined;
+  /** An exact, saved task anchor for this agent. */
+  isTaskThread?(channel: string, root: string): boolean;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
@@ -156,7 +158,9 @@ export interface BuzzClient {
    * needs it for verified names, so no other tool waits for it. `undefined`
    * when the relay has no key; rejects when the key cannot be learned. */
   readonly relayAuthorLookup?: () => Promise<string | undefined>;
-  readonly signingAuthority?: string | undefined;
+  /** The relay's NIP-11 self key as the app host knows it: `null` when the
+   * relay advertises none; absent when the host can't tell. */
+  readonly signingAuthority?: string | null;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Latest live attachment state, read as this agent from a primary snapshot. */
@@ -224,6 +228,8 @@ export type Context = Readonly<{
   session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;
   root?: string;
+  /** The physical thread when root is an invocation subthread. */
+  sourceRoot?: string;
   topLevel?: boolean;
   wholeChannel?: boolean;
 }>;

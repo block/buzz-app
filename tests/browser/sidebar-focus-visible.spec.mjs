@@ -186,20 +186,27 @@ test.describe("passive channel removal", () => {
           .poll(() => app.relay.hasRoute("primary", "beta"))
           .toBe(true);
       await departing.focus();
-      // Leave space for the removed row's height and exercise focus with
-      // native scroll anchoring disabled. Layout anchoring has its own tests.
+      // Leave room for an offscreen row to exit while keeping the target in view.
       const inset = keepViewport
-        ? await sidebar.evaluate((viewport) => {
-            viewport.style.overflowAnchor = "none";
-            return viewport.clientHeight / 3;
-          })
+        ? await sidebar.evaluate((viewport) => viewport.clientHeight / 3)
         : 10;
-      await (keepViewport ? anchor : departing).evaluate((row, offset) => {
+      const visibleRow = keepViewport ? anchor : departing;
+      await visibleRow.evaluate(async (row, offset) => {
         const viewport = row.closest('nav[aria-label="Subscribed channels"]');
+        const previous = viewport.scrollTop;
+        const listeners = new AbortController();
+        const scrolled = new Promise((resolve) =>
+          viewport.addEventListener("scroll", resolve, {
+            once: true,
+            signal: listeners.signal,
+          }),
+        );
         viewport.scrollTop +=
           row.getBoundingClientRect().top -
           viewport.getBoundingClientRect().top -
           offset;
+        if (viewport.scrollTop !== previous) await scrolled;
+        listeners.abort();
       }, inset);
       await expect(departing).toBeFocused();
       if (keepViewport) {
@@ -209,7 +216,12 @@ test.describe("passive channel removal", () => {
         await expect(departing).toBeInViewport({ ratio: 1 });
         await expect.poll(() => heading.evaluate(unseen)).not.toBe("");
       }
-      const scrollTop = await sidebar.evaluate((nav) => nav.scrollTop);
+      const offset = (row) =>
+        row.getBoundingClientRect().top -
+        row
+          .closest('nav[aria-label="Subscribed channels"]')
+          .getBoundingClientRect().top;
+      const before = keepViewport ? await anchor.evaluate(offset) : 0;
       if (removeSolo) {
         await page.evaluate(
           (id) => window.fixtureSoloRegion.present([id], []),
@@ -229,10 +241,9 @@ test.describe("passive channel removal", () => {
           sidebar.locator("button[data-solo-destination-id]:focus"),
         ).toBeInViewport({ ratio: 1 });
         await expect(anchor).toBeInViewport({ ratio: 1 });
-        if (removeSolo)
-          expect(await sidebar.evaluate((nav) => nav.scrollTop)).toBe(
-            scrollTop,
-          );
+        expect(
+          Math.abs((await anchor.evaluate(offset)) - before),
+        ).toBeLessThanOrEqual(1);
       } else {
         await expect(heading).toBeFocused();
         // Browser focus can align the heading to a fractional scroll pixel.

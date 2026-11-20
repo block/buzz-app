@@ -130,9 +130,10 @@ export function sidebarScrollAnchor(
             ]
           : [];
       });
+      const primary = positions.filter(({ fallback }) => !fallback);
       // A single surviving sample far from view may have been promoted. Keep
       // the current scroll offset and sample the rows that remain nearby.
-      if (positions.length === 1 && positions[0]?.outside) {
+      if (primary.length === 1 && primary[0]?.outside) {
         capture();
         return;
       }
@@ -145,7 +146,6 @@ export function sidebarScrollAnchor(
         if (slideSettled) capture();
         return;
       }
-      const primary = positions.filter(({ fallback }) => !fallback);
       const nearby = primary.filter(({ outside }) => !outside);
       const farther = positions.find(
         ({ fallback, outside }) => fallback && !outside,

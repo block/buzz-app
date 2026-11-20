@@ -268,12 +268,55 @@ it("delivers context gathered before the deadline and starts no callbacks after 
       undefined,
       joinText,
     );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const resolved = expect(result).resolves.toBe("a");
     await vi.advanceTimersByTimeAsync(2500);
     await resolved;
     finish("b");
     await Promise.resolve();
     expect(later).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    // The callback that didn't answer and the one that never ran are named.
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "Agent hook dispatch timed out; delivering context gathered so far",
+      ["hook-1", "hook-2"],
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("warns when slow context leaves a later policy callback unasked", async () => {
+  const { dispatchAgentHooks } = await import("./hooks");
+  vi.useFakeTimers();
+  try {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const deny = vi.fn(() => ({ deny: true }));
+    const result = dispatchAgentHooks(
+      hookList([
+        () => "a",
+        // Answers in time, but uses up the rest of the budget.
+        () => {
+          vi.setSystemTime(Date.now() + 2500);
+          return "b";
+        },
+        deny,
+      ]),
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      2500,
+      undefined,
+      joinText,
+    );
+    await expect(result).resolves.toBe("a|b");
+    expect(deny).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "Agent hook dispatch timed out; delivering context gathered so far",
+      ["hook-2"],
+    );
     expect(vi.getTimerCount()).toBe(0);
   } finally {
     vi.useRealTimers();

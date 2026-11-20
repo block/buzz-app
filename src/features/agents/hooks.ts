@@ -77,12 +77,27 @@ export function dispatchAgentHooks(
   const message = "Agent hook dispatch timed out";
   // Responses that only add context, kept while later callbacks run.
   const joined: unknown[] = [];
+  // The callback running now, or the next one to start.
+  let next = 0;
+  let expired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // A policy callback that never ran or answered must not vanish silently
+  // behind context that arrived in time.
+  const deliverGathered = () => {
+    expired = true;
+    console.warn(
+      "Agent hook dispatch timed out; delivering context gathered so far",
+      hooks.slice(next).map((hook) => hook.id),
+    );
+    return join?.(joined);
+  };
   const dispatch = (async () => {
     const errors: unknown[] = [];
-    for (const hook of hooks) {
+    for (const [index, hook] of hooks.entries()) {
+      next = index;
+      if (expired) return undefined;
       if (Date.now() >= deadline) {
-        if (joined.length) break;
+        if (joined.length) return deliverGathered();
         throw new Error(message);
       }
       try {
@@ -103,12 +118,12 @@ export function dispatchAgentHooks(
   })();
   // Context already gathered is delivered at the deadline; otherwise the
   // dispatch fails, as a callback that never answers would make it.
-  const expired = new Promise<unknown>((resolve, reject) => {
+  const timeout = new Promise<unknown>((resolve, reject) => {
     timer = setTimeout(
       () =>
-        joined.length ? resolve(join?.(joined)) : reject(new Error(message)),
+        joined.length ? resolve(deliverGathered()) : reject(new Error(message)),
       milliseconds,
     );
   });
-  return Promise.race([dispatch, expired]).finally(() => clearTimeout(timer));
+  return Promise.race([dispatch, timeout]).finally(() => clearTimeout(timer));
 }

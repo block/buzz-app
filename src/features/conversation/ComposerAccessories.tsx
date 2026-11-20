@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerAccessory,
@@ -61,7 +67,7 @@ export function ComposerAccessories({
     </>
   );
 }
-function OwnedAccessory({
+const OwnedAccessory = memo(function OwnedAccessory({
   entry,
   registry,
   ...props
@@ -108,4 +114,4 @@ function OwnedAccessory({
   ) : (
     (props.renderMessageSummary?.() ?? null)
   );
-}
+});

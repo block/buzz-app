@@ -251,6 +251,7 @@ export function createChannelStore(
         media(url: string, size?: "small"): string | undefined;
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
+        previewAccessRestored?(): void;
         /** A complete roster read applied. A replica can lag, so a channel it
          * left out may still list the viewer; `unlisted` asks the writer. */
         rosterComplete?(): void;
@@ -2478,7 +2479,7 @@ export function createChannelStore(
       throw new Error("Channel discovery exceeded its read budget");
     // Successful verified lookup may restore the same public version after CLOSED.
     // Missing/failed evidence leaves a suspension recoverable rather than granting access.
-    let resumed = false;
+    const resumed: string[] = [];
     for (const id of ids) {
       if (
         events.some(
@@ -2488,8 +2489,8 @@ export function createChannelStore(
             (event.kind === 39000 ||
               (event.kind === 39002 && hasTag(event, "p", transport.viewer))),
         )
-      )
-        resumed =
+      ) {
+        if (
           discovery.resume(
             id,
             events.find(
@@ -2498,7 +2499,10 @@ export function createChannelStore(
                 event.pubkey === transport.relayAuthor &&
                 tag(event, "d") === id,
             ),
-          ) || resumed;
+          )
+        )
+          resumed.push(id);
+      }
     }
     for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants
@@ -2513,7 +2517,7 @@ export function createChannelStore(
       false,
       settings?.consistency !== "strong",
     );
-    if (resumed) setList(list, true);
+    if (resumed.length) setList(list, true);
     // Exact viewer-scoped omission is complete for this ID, unlike a capped
     // global roster. Cached membership cannot fall back to public metadata.
     for (const id of ids) {
@@ -2542,6 +2546,7 @@ export function createChannelStore(
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
+    if (resumed.some(authorized)) transport.previewAccessRestored?.();
     if (settings?.viewerLookup) transport.resolved?.(ids);
     if (settings?.consistency === "strong")
       await readCreations(

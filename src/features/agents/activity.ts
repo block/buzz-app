@@ -839,6 +839,9 @@ export function createAgentActivity(
     accessChanged() {
       restart();
     },
+    refreshLocal() {
+      if (!closed && local) publish();
+    },
     clear: restart,
     dispose() {
       if (closed) return;

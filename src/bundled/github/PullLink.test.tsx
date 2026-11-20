@@ -249,13 +249,18 @@ function renderers() {
   } as never);
   apply({
     host: {},
+    effect: () => {},
     panels: { register: () => {} },
     conversation: {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
+      registerMessage: () => {},
       registerLink: register("buzz.github"),
     },
-    relay: {},
+    relay: {
+      snapshot: () => ({ status: "connecting" }),
+      subscribe: () => () => {},
+    },
     agents: { addTool: () => {} },
     inject: () => {},
     provide: () => {},

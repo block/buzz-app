@@ -16,7 +16,12 @@ import { ChannelMembersButton } from "./ChannelMembersDialog";
 
 afterEach(cleanup);
 
-it("keeps the people preview and overflow current as profiles and membership arrive", () => {
+const titles = (container: HTMLElement) =>
+  [...container.querySelectorAll("[title]")].map((node) =>
+    node.getAttribute("title"),
+  );
+
+it("keeps the shown people in place as profiles arrive and replaces only departures", () => {
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -45,7 +50,9 @@ it("keeps the people preview and overflow current as profiles and membership arr
     agentChoices: { subscribe, snapshot: () => choices },
     media: (url: string) => url,
   } as unknown as RelaySession;
-  render(<ChannelMemberAvatars session={session} channelId="channel" />);
+  const { container } = render(
+    <ChannelMemberAvatars session={session} channelId="channel" />,
+  );
   expect(session.profiles.ensure).toHaveBeenLastCalledWith(
     members,
     "background",
@@ -63,25 +70,85 @@ it("keeps the people preview and overflow current as profiles and membership arr
     });
     for (const listener of listeners) listener();
   });
+  // A picture arriving after the first render does not reorder the preview.
+  expect(titles(container)).toEqual(["Alice", "Bob", "Carol"]);
+  expect(screen.getByText("+1")).toBeInTheDocument();
+
+  // A shown member later found to be an agent is replaced at the end.
+  act(() => {
+    profiles = new Map(profiles).set("bob", { name: "Bob", isAgent: true });
+    for (const listener of listeners) listener();
+  });
+  expect(titles(container)).toEqual(["Alice", "Carol", "Dana"]);
   expect(screen.getByTitle("Dana").querySelector("img")).toHaveAttribute(
     "src",
     "https://example.test/dana.png",
   );
-  expect(screen.queryByTitle("Carol")).not.toBeInTheDocument();
-  expect(screen.getByText("+1")).toBeInTheDocument();
+  expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
 
   act(() => {
-    members = ["bob"];
+    members = ["carol"];
     list = { channels: [{ id: "channel", members }] };
     for (const listener of listeners) listener();
   });
   expect(session.profiles.ensure).toHaveBeenLastCalledWith(
-    ["bob"],
+    ["carol"],
     "background",
   );
-  expect(screen.getByTitle("Bob")).toBeInTheDocument();
-  expect(screen.queryByTitle("Dana")).not.toBeInTheDocument();
+  expect(titles(container)).toEqual(["Carol"]);
   expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
+});
+
+it("picks the preview again for each channel the header opens", () => {
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const members = ["alice", "bob", "carol", "dana"];
+  const list = {
+    channels: [
+      { id: "first", members, viewerRole: "member" },
+      { id: "second", members, viewerRole: "member" },
+    ],
+  };
+  let profiles = new Map<string, { name: string; picture?: string }>([
+    ["alice", { name: "Alice" }],
+    ["bob", { name: "Bob" }],
+    ["carol", { name: "Carol" }],
+    ["dana", { name: "Dana" }],
+  ]);
+  const choices = { identities: [] };
+  const session = {
+    channels: { subscribeList: subscribe, list: () => list },
+    profiles: {
+      subscribe,
+      snapshot: () => profiles,
+      ensure: vi.fn().mockResolvedValue(undefined),
+    },
+    agentChoices: { subscribe, snapshot: () => choices },
+    media: (url: string) => url,
+  } as unknown as RelaySession;
+  const header = (channelId: string) => (
+    <ChannelMembersButton
+      session={session}
+      channelId={channelId}
+      conversationName="General"
+    />
+  );
+  const { rerender } = render(header("first"));
+  act(() => {
+    profiles = new Map(profiles).set("dana", {
+      name: "Dana",
+      picture: "https://example.test/dana.png",
+    });
+    for (const listener of listeners) listener();
+  });
+  expect(titles(screen.getByRole("button"))).toEqual(["Alice", "Bob", "Carol"]);
+
+  // Opening another channel starts from the profiles now known.
+  rerender(header("second"));
+  expect(titles(screen.getByRole("button"))).toEqual(["Dana", "Alice", "Bob"]);
 });
 
 it("rereads the names it shows after an access purge empties the directory", async () => {

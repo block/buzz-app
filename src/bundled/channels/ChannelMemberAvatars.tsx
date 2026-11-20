@@ -1,5 +1,5 @@
 import { useProfileGeneration } from "../../features/relay/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useHeaderChannel } from "../../features/relay/listed-channel";
 import type { RelaySession } from "../../features/relay/session";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -11,6 +11,7 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { PROFILE_CACHE_BASE } from "../../features/relay/budget";
 
 const noMembers: readonly string[] = [];
+const shown = 3;
 
 /** Preview people in channels/DMs and participating agents in Solo chats. */
 export function ChannelMemberAvatars({
@@ -74,6 +75,14 @@ export function ChannelMemberAvatars({
         ),
     [members, solo, agents, profiles],
   );
+  // Pick the shown members once per mount. A profile arriving later fills in
+  // its picture in place instead of sorting it ahead of those already shown;
+  // only a shown member who leaves or no longer qualifies is replaced.
+  const [picked, setPicked] = useState(() => preview.slice(0, shown));
+  const kept = picked.filter((id) => preview.includes(id));
+  const ordered = [...kept, ...preview.filter((id) => !kept.includes(id))];
+  const front = ordered.slice(0, shown);
+  if (front.join(":") !== picked.join(":")) setPicked(front);
   if (!preview.length) {
     const Icon = solo ? RobotIcon : UsersIcon;
     return (
@@ -86,12 +95,11 @@ export function ChannelMemberAvatars({
       />
     );
   }
-  const shown = 3;
   return (
     <AvatarStack
       size="small"
       max={shown}
-      items={preview.map((id, index) =>
+      items={ordered.map((id, index) =>
         // Members past the shown ones only count.
         index < shown
           ? {

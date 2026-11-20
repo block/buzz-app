@@ -1,4 +1,5 @@
 import {
+  type CollisionDetection,
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -8,6 +9,7 @@ import {
 } from "@dnd-kit/core";
 import {
   createContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -184,6 +186,21 @@ export function CommunityPicker({
     else communities.select(id);
   };
   const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
+  const popupRef = useRef<HTMLDivElement>(null);
+  // A row scrolled out of the switcher keeps its bounds past the edge. Only a
+  // pointer inside the switcher is over a row that shows.
+  const shownRows = useCallback<CollisionDetection>((args) => {
+    const pointer = args.pointerCoordinates;
+    const shown = popupRef.current?.getBoundingClientRect();
+    return pointer &&
+      shown &&
+      pointer.x >= shown.left &&
+      pointer.x <= shown.right &&
+      pointer.y >= shown.top &&
+      pointer.y <= shown.bottom
+      ? pointerWithin(args)
+      : [];
+  }, []);
   const [draggingId, setDragging] = useState<string>();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const offeringRemoval = leaving?.intent === "remove" && !leaving.pending;
@@ -299,6 +316,7 @@ export function CommunityPicker({
             }
           />
           <PopoverPopup
+            ref={popupRef}
             aria-label="Switch community"
             onKeyDown={(event) => {
               if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key))
@@ -343,7 +361,7 @@ export function CommunityPicker({
             />
             <DndContext
               sensors={sensors}
-              collisionDetection={pointerWithin}
+              collisionDetection={shownRows}
               // Drag announcements live outside the switcher, as the sidebar's do.
               accessibility={{ container: document.body }}
               onDragStart={({ active }) => setDragging(String(active.id))}

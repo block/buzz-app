@@ -86,3 +86,74 @@ test("dragging a community reorders the switcher, its numbered shortcuts and the
   await page.keyboard.press(`${modifier}+3`);
   await expect(communitySwitcher(page, "Primary")).toBeVisible();
 });
+
+test.describe("a switcher too tall for its window", () => {
+  // The congestion fixture is the one with more than two saved communities;
+  // twelve more in a short window make the switcher scroll.
+  test.use({ iconCongestion: 12, viewport: { width: 900, height: 320 } });
+
+  // A row scrolled out of the switcher keeps its bounds, and only a laid-out,
+  // clipped list can put those bounds under a pointer outside the switcher.
+  test("a release beside a scrolled switcher lands on no hidden community", async ({
+    page,
+    app,
+  }) => {
+    try {
+      await page.clock.install();
+      await page.goto(app.origin);
+      const modifier = await mod(page);
+      const picker = await openCommunityPicker(page);
+      const before = await order(picker);
+      const saved = () =>
+        page.evaluate(() =>
+          Object.entries(localStorage)
+            .filter(([key]) => key.startsWith("buzz-client.v1:"))
+            .flatMap(([, value]) =>
+              JSON.parse(value).memberships.map(({ name }) => name),
+            ),
+        );
+      expect(await saved()).toEqual(before);
+      // Auto-scroll runs on a timer; held, the hidden row stays under the pointer.
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+      const pulled = picker.getByRole("button", { name: "Switch to Saved 4" });
+      for (const [hidden, side] of [
+        ["Primary", -1],
+        ["Saved 11", 1],
+      ]) {
+        const target = picker.getByRole("button", {
+          name: `Switch to ${hidden}`,
+        });
+        const bounds = await picker.boundingBox();
+        if (!bounds) throw new Error("The switcher must have layout");
+        // Four pixels beyond the switcher's edge, inside the window.
+        const y = side < 0 ? bounds.y - 4 : bounds.y + bounds.height + 4;
+        const [, at] = await centre(target);
+        await picker.evaluate((node, by) => {
+          node.scrollTop += by;
+        }, at - y);
+        const [x, hiddenY] = await centre(target);
+        expect(hiddenY).toBeCloseTo(y, 0);
+        await expect(pulled).toBeInViewport();
+        const [fromX, fromY] = await centre(pulled);
+        await page.mouse.move(fromX, fromY);
+        await page.mouse.down();
+        await page.mouse.move(x, y, { steps: 8 });
+        await expect(picker.locator("[data-dragging]")).toHaveCount(1);
+        await expect(picker.locator("[data-drop-edge]")).toHaveCount(0);
+        await page.mouse.up();
+        await expect(picker.locator("[data-dragging]")).toHaveCount(0);
+        expect(await order(picker)).toEqual(before);
+        expect(await saved()).toEqual(before);
+      }
+      await page.clock.resume();
+      await page.keyboard.press("Escape");
+      await expect(picker).toBeHidden();
+      await page.keyboard.press(`${modifier}+3`);
+      await expect(communitySwitcher(page, "Secondary")).toBeVisible();
+      await page.keyboard.press(`${modifier}+2`);
+      await expect(communitySwitcher(page, "Primary")).toBeVisible();
+    } finally {
+      app.iconCongestion.release();
+    }
+  });
+});

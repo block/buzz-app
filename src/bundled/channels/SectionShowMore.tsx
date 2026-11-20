@@ -1,9 +1,10 @@
-import { CaretDownIcon } from "../../shared/design-system/icons";
+import { CaretDownIcon, CaretUpIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SectionCap } from "./sidebar-section-caps";
 import styles from "./Channels.module.css";
 
-/** Show more and Show fewer share one row below a capped section's rows. */
+/** Show more and Show fewer below a capped section's rows, starting at the
+ * row titles. They share a line when it fits and stack otherwise. */
 export function SectionShowMore({
   sectionKey,
   title,
@@ -24,13 +25,9 @@ export function SectionShowMore({
         <NavigationItem
           variant="text"
           data-show-more-expand=""
-          label="Show more"
-          aria-label={`Show more in ${title}`}
-          icon={
-            <span className={styles.sectionShowMoreIcon} aria-hidden="true">
-              <CaretDownIcon size={16} />
-            </span>
-          }
+          label={`Show ${cap.next} more`}
+          aria-label={`Show ${cap.next} more in ${title}`}
+          trailing={<CaretDownIcon size={14} aria-hidden="true" />}
           onClick={more}
         />
       )}
@@ -40,6 +37,7 @@ export function SectionShowMore({
           data-show-more-fold=""
           label="Show fewer"
           aria-label={`Show fewer in ${title}`}
+          trailing={<CaretUpIcon size={14} aria-hidden="true" />}
           onClick={fewer}
         />
       )}

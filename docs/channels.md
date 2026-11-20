@@ -158,6 +158,14 @@ then **Solo**, **Starred**, the previous Team workspaces and **Team**.
 Reorder them by dragging their headings or using **Move up** and **Move down**.
 The saved order syncs with workspace placement.
 
+**Solo** and the workspaces listed in the legacy Solo record start capped at
+their newest 7 rows. **Show N more** reveals the next hidden rows, up to 10;
+**Show fewer** returns to 7. Other sections, including workspaces created after
+the upgrade, start fully listed and offer **Show fewer** past 7 rows. The open
+chat, unread chats and chats an agent is working in stay listed past the cap.
+Limits are device-local view state; a Solo workspace's starting limit is saved
+there once the legacy Solo record has been read, with any step v1.0.5 saved.
+
 Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
 its home section. The row’s **Move to…** menu offers the same destinations.
 Moving out of Starred clears the star. The drop target above the first

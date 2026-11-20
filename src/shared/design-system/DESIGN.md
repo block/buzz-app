@@ -1636,7 +1636,10 @@ Selected rows can expand without painting the entire branch in the accent color.
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
-focus. Use it where a fill would read as another destination.
+focus. Use it where a fill would read as another destination. A capped list
+labels them **Show N more** and **Show fewer**, each with a small trailing caret,
+where N is how many hidden rows the next step reveals. Both start at the row
+titles, share a line when it fits, and stack at that edge when it doesn't.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
 an identity's full npub. Focus opens every preview at once, so immediate Tab

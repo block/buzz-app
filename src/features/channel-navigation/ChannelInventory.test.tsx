@@ -4373,11 +4373,11 @@ it("caps Solo at its newest chats and remembers Show more and Show fewer", async
   expect(
     screen.queryByRole("button", { name: "Show fewer in Solo" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Show more in Solo" }));
+  await user.click(screen.getByRole("button", { name: "Show 3 more in Solo" }));
   expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3);
   // Show more is spent; focus stays on the row's remaining action.
   expect(
-    screen.queryByRole("button", { name: "Show more in Solo" }),
+    screen.queryByRole("button", { name: /^Show \d+ more in Solo$/ }),
   ).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Show fewer in Solo" }),
@@ -4420,7 +4420,7 @@ it("keeps the open chat listed past Solo's cap", async () => {
     ]),
   );
   expect(
-    screen.getByRole("button", { name: "Show more in Solo" }),
+    screen.getByRole("button", { name: "Show 2 more in Solo" }),
   ).toBeVisible();
 });
 
@@ -4453,11 +4453,11 @@ it("starts other workspaces expanded and lets them show fewer", async () => {
     expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP + 2),
   );
   expect(
-    screen.queryByRole("button", { name: "Show more in Work" }),
+    screen.queryByRole("button", { name: /^Show \d+ more in Work$/ }),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Show fewer in Work" }));
   expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP);
-  await user.click(screen.getByRole("button", { name: "Show more in Work" }));
+  await user.click(screen.getByRole("button", { name: "Show 2 more in Work" }));
   expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP + 2);
 });
 
@@ -4517,7 +4517,7 @@ it("starts old Solo workspaces capped with their saved steps and Team ones expan
       expect(sectionRows("group:buzz")).toHaveLength(SECTION_ROW_CAP),
     );
     expect(
-      screen.getByRole("button", { name: "Show more in Buzz" }),
+      screen.getByRole("button", { name: "Show 5 more in Buzz" }),
     ).toBeVisible();
     expect(sectionRows("group:reviews")).toHaveLength(12);
     expect(
@@ -4527,7 +4527,7 @@ it("starts old Solo workspaces capped with their saved steps and Team ones expan
     expect(sectionRows("group:uptop")).toHaveLength(12);
     expect(sectionRows("group:fresh")).toHaveLength(12);
     expect(
-      screen.queryByRole("button", { name: "Show more in Uptop" }),
+      screen.queryByRole("button", { name: /^Show \d+ more in Uptop$/ }),
     ).not.toBeInTheDocument();
   };
   const { unmount } = render(h.view("uptop-0"));

@@ -1759,10 +1759,10 @@ function Composer({
       }
       // An explicit successful recovery may replace only the cleared follow-up,
       // never a meaningful unsaved edit. Ordinary external revisions keep their
-      // conflict behavior.
+      // conflict behavior. The storage notification may have just backed up
+      // that empty follow-up before the explicit recovery reaches this editor.
       if (
         recovering &&
-        !conflictDraft.current &&
         !valueRef.current.text.trim() &&
         !valueRef.current.recipients.length &&
         !composerMarkdown(valueRef.current).trim() &&

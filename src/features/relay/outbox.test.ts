@@ -5,6 +5,8 @@ import {
   PublishNotSent,
   PublishRejected,
   createOutbox,
+  isRelayRefusal,
+  relayRefusal,
   type OutboxStorage,
   type OutgoingEvent,
 } from "./outbox";
@@ -1915,4 +1917,36 @@ it("restores an entry saved before held sends existed and retries it as before",
   h.outbox.retry(event.id);
   await flush();
   expect(h.publications.map(({ event }) => event.id)).toEqual([event.id]);
+});
+
+it.each([
+  [
+    "the relay's own words",
+    true,
+    new PublishRejected("Bad tag", "invalid: bad tag"),
+  ],
+  // The reason's prefix decides, whatever the transport made of the message.
+  [
+    "a kept prefix",
+    false,
+    new PublishRejected("Sign in", "auth-required: sign in"),
+  ],
+  [
+    "a prefixed message",
+    true,
+    new PublishRejected("invalid: bad tag", "invalid: bad tag"),
+  ],
+  [
+    "no relay reason",
+    false,
+    new PublishRejected("Relay rejected the message (403)"),
+  ],
+  [
+    "a write that was not sent",
+    false,
+    new PublishNotSent("Bad tag", "invalid: bad tag"),
+  ],
+])("%s is a relay refusal: %s", (_, refused, error) => {
+  expect(isRelayRefusal(error)).toBe(refused);
+  expect(relayRefusal(error)).toBe(refused ? error.message : undefined);
 });

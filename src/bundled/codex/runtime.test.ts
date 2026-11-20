@@ -1603,6 +1603,39 @@ it("starts an agent with its own list on its own server, and the rest on the sha
     f.runtime.dispose();
   }
 });
+it("moves a restarted agent to its own server on its first list, and back on its last", async () => {
+  const f = fixture();
+  const b = second(f);
+  const other = "9".repeat(64);
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  try {
+    await f.runtime.run(f.delivery("@Codex first"));
+    await f.runtime.run(b.delivery("@Other shared"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(servers(f)).toHaveLength(1);
+    await f.complete(1, "SHARED");
+    await f.complete(0, "FIRST");
+    env.own.add(other);
+    await driver.retire(other);
+    await f.runtime.run(b.delivery("@Other own"));
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(servers(f)[1]?.[1]?.envAgent).toBe(other);
+    env.own.delete(other);
+    await driver.retire(other);
+    await f.runtime.run(b.delivery("@Other shared again"));
+    // Its own server goes; its next start is on one without its list.
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(3));
+    expect(servers(f).map(([, options]) => options?.envAgent)).toEqual([
+      undefined,
+      other,
+      undefined,
+    ]);
+  } finally {
+    env.own.clear();
+    f.runtime.dispose();
+  }
+});
 it("starts an agent's own server only once the disconnected shared process has exited", async () => {
   vi.useFakeTimers();
   const f = fixture();

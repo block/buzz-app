@@ -5,7 +5,7 @@
 //! for it, name the agent and run a local, unprotected agent (`may_have`),
 //! after the login shell's and before the harness's own, so a harness's
 //! variable wins. A saved list reaches processes started after the save;
-//! running ones keep the list they started with until Buzz restarts.
+//! running ones keep the list they started with until the agent restarts.
 //!
 //! Like the Claude key (`claude_key.rs`), a value reaches every command the
 //! agent runs, and this trusts installed plugin code.

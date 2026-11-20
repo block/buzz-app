@@ -147,7 +147,9 @@ if that desktop app is up and running.
   over the shared Claude key. Names that choose a model, provider or
   endpoint, `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent
   processes started afterward; running ones keep the old list until
-  **Restart Buzz**, which the notice after saving offers. A Codex or Pi agent
+  **Restart agent**, which stops only that agent's processes in every
+  community so its next message starts them with the saved list. It asks
+  first, and it's refused while the agent is answering or in a call. A Codex or Pi agent
   with its own list runs in its own process. Removing the agent from its last
   community on this computer deletes its list.
 - **Instructions** change how an agent behaves. They don't give it new tools,

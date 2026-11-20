@@ -1780,6 +1780,11 @@ export type Agents = {
     agent: Agent,
     options?: NoteChange,
   ): Promise<Readonly<{ previous: ModelSettings }>>;
+  /** Bundled plugins only: stops a local agent's processes in every
+   * community it is in, with each type's `retire`, so its next turn starts
+   * them again. Refused while it answers or is in a call, and for protected,
+   * hosted and execution-target agents. */
+  restartAgent(pubkey: string): Promise<void>;
   /** Undoes a switch: off Automatic, with `previous` back, saved the same
    * way. */
   restoreSettings(
@@ -3961,6 +3966,29 @@ export class AgentsService extends Service implements Agents {
       config: note === undefined ? config : withNote(config, plugin, note),
       // Only the settings change, so only they are saved and checked.
       base: { settings: agent.configBase.settings },
+    });
+  }
+  async restartAgent(pubkey: string) {
+    this.bundledCaller("restartAgent");
+    const members = this.identities.filter(
+      (agent) => agent.pubkey === pubkey && !agent.deleted,
+    );
+    const agent = members[0];
+    if (!this.native || !agent) throw new Error("No such agent on this device");
+    if (agent.protection)
+      throw new Error("A protected agent can't be restarted here");
+    const type = this.types().find((type) => type.key === agent.type);
+    if (!type || type.remote)
+      throw new Error("A hosted agent can't be restarted here");
+    if (!type.retire)
+      throw new Error("This agent's provider can't restart one agent");
+    for (const member of members)
+      if (await this.executions.inspect(member.key))
+        throw new Error(
+          "An agent on another execution target can't be restarted here",
+        );
+    await this.runners.restart(agent.key, agent.name, async () => {
+      for (const member of members) await type.retire?.(member.key);
     });
   }
   async switchToAutomatic(agent: Agent, options: NoteChange = {}) {

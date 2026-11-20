@@ -21,18 +21,17 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 let names: string[];
-let saved: boolean;
+const restartAgent = vi.fn(async () => {});
 beforeEach(() => {
   names = ["SAVED_KEY"];
-  saved = false;
+  restartAgent.mockReset().mockResolvedValue(undefined);
   native.invoke.mockReset().mockImplementation(async (command, args) => {
-    if (command === "agent_env_status") return { names, saved };
+    if (command === "agent_env_status") return { names };
     if (command === "agent_env_set") {
       const rows = (args as { rows: { name: string }[] }).rows;
       if (rows.some((row) => row.name === "GOOSE_MODEL"))
         throw "GOOSE_MODEL chooses a model, provider or endpoint.";
       names = rows.map((row) => row.name);
-      saved = true;
     }
     return undefined;
   });
@@ -46,9 +45,9 @@ const newName = () =>
     .getAllByRole("textbox", { name: "Variable name" })
     .at(-1) as HTMLElement;
 
-it("adding a row keeps the hidden saved values and shows the restart notice", async () => {
+it("adding a row keeps the hidden saved values", async () => {
   const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.click(await screen.findByRole("button", { name: "Add variable" }));
   await user.type(newName(), "FOO");
   await user.type(screen.getByLabelText("Value of FOO"), "bar");
@@ -61,64 +60,75 @@ it("adding a row keeps the hidden saved values and shows the restart notice", as
       { name: "FOO", value: "bar" },
     ],
   });
-  expect(
-    await screen.findByText("Agents already running still use the old list"),
-  ).toBeInTheDocument();
+  await waitFor(() => expect(calls("agent_env_status")).toHaveLength(2));
 });
 
-it("a rejected save shows why and no notice", async () => {
+it("a rejected save shows why", async () => {
   const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.click(await screen.findByRole("button", { name: "Add variable" }));
   await user.type(newName(), "GOOSE_MODEL");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("GOOSE_MODEL");
-  expect(
-    screen.queryByText("Agents already running still use the old list"),
-  ).toBeNull();
 });
 
-it("the notice stays after Settings reopens, and restarting asks first", async () => {
-  saved = true;
+it("restarting the agent asks first, then stops only its processes", async () => {
   const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} />);
-  await user.click(await screen.findByRole("button", { name: "Restart Buzz" }));
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(calls("update_restart")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: "Restart Buzz" }));
+  expect(restartAgent).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Restart agent" }));
   await user.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(calls("update_restart")).toHaveLength(1));
+  await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
+  expect(calls("update_restart")).toHaveLength(0);
+});
+
+it("shows why a restart was refused", async () => {
+  restartAgent.mockRejectedValueOnce(
+    new Error("Echo is answering; restart it when it finishes"),
+  );
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Echo is answering; restart it when it finishes",
+  );
 });
 
 it("offers no restart while a save is still being written", async () => {
-  saved = true;
   const user = userEvent.setup();
   let finish = () => {};
   native.invoke.mockImplementation(async (command) => {
-    if (command === "agent_env_status") return { names, saved };
+    if (command === "agent_env_status") return { names };
     if (command === "agent_env_set")
       await new Promise<void>((resolve) => {
         finish = resolve;
       });
     return undefined;
   });
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
   await user.click(screen.getByRole("button", { name: "Save" }));
-  await user.click(screen.getByRole("button", { name: "Restart Buzz" }));
+  await user.click(screen.getByRole("button", { name: "Restart agent" }));
   expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
   finish();
   await waitFor(() =>
     expect(screen.getByLabelText("Value of SAVED_KEY")).toBeEnabled(),
   );
-  await user.click(screen.getByRole("button", { name: "Restart Buzz" }));
+  await user.click(screen.getByRole("button", { name: "Restart agent" }));
   await user.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(calls("update_restart")).toHaveLength(1));
+  await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
 });
 
 it("removing a saved row deletes it on save", async () => {
   const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.click(
     await screen.findByRole("button", { name: "Remove SAVED_KEY" }),
   );
@@ -130,14 +140,14 @@ it("locks the list while a save runs, so no edit is lost when it finishes", asyn
   const user = userEvent.setup();
   let finish = () => {};
   native.invoke.mockImplementation(async (command) => {
-    if (command === "agent_env_status") return { names, saved };
+    if (command === "agent_env_status") return { names };
     if (command === "agent_env_set")
       await new Promise<void>((resolve) => {
         finish = resolve;
       });
     return undefined;
   });
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(screen.getByLabelText("Value of SAVED_KEY")).toBeDisabled();
@@ -162,9 +172,9 @@ it("offers Retry for a list it cannot read, never an empty one", async () => {
   native.invoke.mockImplementation(async (command) => {
     if (command !== "agent_env_status") return undefined;
     if (!readable) throw "The credential store is locked";
-    return { names, saved };
+    return { names };
   });
-  render(<AgentEnvironment agent={AGENT} />);
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The credential store is locked",
   );
@@ -188,7 +198,7 @@ it("tells the agent's page about unsaved edits, through the save and its reload"
         await new Promise<void>((resolve) => {
           finishReload = resolve;
         });
-      return { names, saved };
+      return { names };
     }
     if (command === "agent_env_set")
       await new Promise<void>((resolve) => {
@@ -198,7 +208,7 @@ it("tells the agent's page about unsaved edits, through the save and its reload"
   });
   render(
     <AgentSaveState value={(state) => state && reports.push(state)}>
-      <AgentEnvironment agent={AGENT} />
+      <AgentEnvironment agent={AGENT} restartAgent={restartAgent} />
     </AgentSaveState>,
   );
   const last = () => reports.at(-1);
@@ -217,7 +227,7 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
   native.invoke
     .mockReset()
     .mockImplementation(async (command) =>
-      command === "agent_env_status" ? { names: [], saved: false } : undefined,
+      command === "agent_env_status" ? { names: [] } : undefined,
     );
   const user = userEvent.setup();
   const agent = {
@@ -263,7 +273,9 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
       channels={[]}
       settingsHost={{}}
       memories={undefined}
-      settingsContent={<AgentEnvironment agent={AGENT} />}
+      settingsContent={
+        <AgentEnvironment agent={AGENT} restartAgent={restartAgent} />
+      }
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Add variable" }));

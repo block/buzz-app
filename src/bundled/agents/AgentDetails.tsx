@@ -651,7 +651,10 @@ export function AgentDetails({
                     !agent.protection &&
                     type &&
                     OWN_ENV_TYPES.has(type.pluginId) && (
-                      <AgentEnvironment agent={agent.pubkey} />
+                      <AgentEnvironment
+                        agent={agent.pubkey}
+                        restartAgent={() => agents.restartAgent(agent.pubkey)}
+                      />
                     )}
                 </div>
               }

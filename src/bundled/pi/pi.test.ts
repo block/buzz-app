@@ -504,6 +504,38 @@ it("starts an agent with its own list in its own host, and chooses again when a 
   }
 });
 
+it("moves a restarted agent to its own host on its first list, and back on its last", async () => {
+  const ada = "a".repeat(64);
+  const bo = "b".repeat(64);
+  const host = fakeHost({ ping: (params) => ({ agent: params.agent }) });
+  const pi = new Pi(
+    () => host.spawn,
+    handlers(),
+    () => undefined,
+  );
+  try {
+    await pi.request("ping", { agent: ada });
+    await pi.request("ping", { agent: bo });
+    expect(host.processes).toHaveLength(1);
+    env.own.set(ada, true);
+    await pi.retire(ada);
+    await pi.request("ping", { agent: ada });
+    expect(host.processes.map((process) => process.options.envAgent)).toEqual([
+      undefined,
+      ada,
+    ]);
+    env.own.set(ada, false);
+    await pi.retire(ada);
+    await pi.request("ping", { agent: ada });
+    expect(host.processes).toHaveLength(2);
+    expect(host.processes[1]?.gone).toBe(true);
+    expect(host.processes[0]?.requests.at(-1)?.params.agent).toBe(ada);
+  } finally {
+    env.own.clear();
+    await pi.dispose();
+  }
+});
+
 /** A host whose `acquire` takes the agent's storage lock, as the SQLite
  * lockfile does: one process at a time, until it closes or exits. */
 function lockingHost() {

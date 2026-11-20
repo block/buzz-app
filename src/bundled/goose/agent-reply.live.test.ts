@@ -48,10 +48,16 @@ const until = async <T>(
 };
 
 /** A model that answers every turn with one `buzz__send` of `pong <nonce>`,
- * where the nonce is the one in the owner's mention, then says it is done.
- * `requests` records what goose asked it, and what its tool call returned. */
+ * where the nonce is the one in the owner's mention, then says it is done. It
+ * answers in words only when goose did not offer `buzz__send`. `requests`
+ * records what goose asked it, and what its tool call returned. */
 async function scriptedModel() {
-  const requests: { tools: number; last: string; toolResult?: string }[] = [];
+  const requests: {
+    tools: number;
+    send: boolean;
+    last: string;
+    toolResult?: string;
+  }[] = [];
   const server = createServer(async (request, response) => {
     if (request.method === "GET") {
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -67,12 +73,17 @@ async function scriptedModel() {
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body) as {
       messages: { role: string; content?: unknown }[];
-      tools?: unknown[];
+      tools?: { function?: { name?: string } }[];
     };
     const tail = input.messages.at(-1);
     const last = tail?.role ?? "";
+    // Like any model, it can only call a tool goose offered it.
+    const send = (input.tools ?? []).some(
+      (tool) => tool.function?.name === "buzz__send",
+    );
     requests.push({
       tools: (input.tools ?? []).length,
+      send,
       last,
       // What the agent's tool call came back with, when it made one.
       ...(last === "tool"
@@ -81,8 +92,11 @@ async function scriptedModel() {
     });
     const nonce = /e2e-[0-9a-f]{8}/.exec(body)?.[0] ?? "no-nonce";
     const delta =
-      last === "tool"
-        ? { role: "assistant", content: "done" }
+      last === "tool" || !send
+        ? {
+            role: "assistant",
+            content: last === "tool" ? "done" : "I have no tool to send with",
+          }
         : {
             role: "assistant",
             tool_calls: [
@@ -106,7 +120,7 @@ async function scriptedModel() {
       {
         index: 0,
         delta: {},
-        finish_reason: last === "tool" ? "stop" : "tool_calls",
+        finish_reason: last === "tool" || !send ? "stop" : "tool_calls",
       },
     ])
       response.write(

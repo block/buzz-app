@@ -101,13 +101,48 @@ retain the physical root and use the invocation as their reply parent. Explicit
 other destinations retain their existing behavior. Prompts retain source context
 for the initial request and identify the source thread for later reads.
 
+When `ctx.agents.invocationTurnContext === true`, a successful route can
+include optional text `turnContext`. Codex, Claude and the shared harness
+kit include it in the prompt for that request. The host saves only the
+route's root and parent. The router can supply fresh text for each
+invocation, follow-up or retry. A failed start leaves no text for another
+request. Use this field for invocation-specific instructions.
+
 Return `undefined` only for a positively unrouted turn. Throw on incomplete
 ancestry or unconfirmed task publication; rejection stops admission without a
 fallback to the source session. The plugin owns task ancestry and shared binding
 publication. It must confirm that binding before returning a new route.
+
+An agent type declares `invocationRouting: true` when it resolves
+`Delivery.routeConversation` before selecting the provider session. Codex
+and Claude declare this capability. A signed invocation intent addressed to
+an agent whose type lacks this capability remains retryable in Buzz. The
+provider starts after a compatible type and its router are available.
 Local host receipts do not establish cross-device task identity. Existing admitted
 invocations keep their previous placement. Older plugins without `route` keep
 the existing behavior.
+
+Hosts with `ctx.agents.invocationIntentVersion === 1` include `communityOrigin`
+in router admission. It is the normalized HTTPS origin of the actual runner's
+community. The router can also implement a synchronous, read-only
+`invocationIntent({ communityOrigin, owner, source, agentPubkey })` predicate.
+`source` contains the channel ID and physical thread root. Return `true` only
+for recipients this router can admit. The host calls active routers for
+addressed agents the sending viewer owns in a writable stream or forum with a
+verified reply target.
+
+The host appends `["buzz:invocation-intent", "1", agentPubkey]` to the signed
+kind-9 reply before computing its ID. The recipient is lowercase 64-digit hex
+and must also be present in a signed `p` tag. Retry keeps the original signed
+event. The tag carries no authority or task identity. To read intent, verify
+the author, community, recipients and reply ancestry. Unknown versions,
+malformed tags and unmarked replies supply no pending-intent evidence. Reuse
+confirmed bindings for older replies. A marked ancestor without a confirmed
+binding can be a continuation of an earlier invocation. Reconcile against that
+ancestor chain with a bounded wait. Throw on an unconfirmed outcome so retry
+can try the same invocation again. A marked reply for its owner's agent needs
+a matching router that implements `invocationIntent`. If that router is
+unavailable, admission fails and the same invocation can retry.
 
 A page-owned `Workspace` can select `{ channelId, threadId: sourceRoot,
 subthreadId: invocationId }`. It shows and composes within that branch. Drafts

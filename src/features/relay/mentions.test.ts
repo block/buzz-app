@@ -1,6 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
+import { foldMessages } from "./fold";
 import type { LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
 import {
@@ -8,6 +9,9 @@ import {
   sendWithOwnerMentions,
 } from "./owner-mentions";
 import { localAgentsFixture } from "../agents/local-testing";
+import type { AgentInvocationIntent } from "../agents/session-admission";
+import { replyInvocationIntents } from "./messages";
+import { PublishRejected } from "./outbox";
 import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import {
   flush,
@@ -502,6 +506,128 @@ it.each([false, true])(
     expect(h.sign).toHaveBeenCalledTimes(1);
     // Actual publication acknowledgement is not execution completion.
     expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
+  },
+);
+
+it.each([
+  ["reply", 9, 9],
+  ["forward", 9, 9],
+  ["reply", 40002, 9],
+  ["forward", 9, 40002],
+] as const)(
+  "signs invocation intent for an opted-in owned recipient in a %s to kinds %i/%i and keeps it on retry",
+  async (kind, rootKind, parentKind) => {
+    const origin = "https://relay.example.test";
+    const local = localAgentsFixture([
+      {
+        pubkey: honey.pubkey,
+        name: "Honey",
+        relayUrl: origin,
+        owner: viewer.pubkey,
+      },
+    ]);
+    const invocationIntent = vi.fn<(input: AgentInvocationIntent) => boolean>(
+      () => true,
+    );
+    const h = setup(false, true, local);
+    replyInvocationIntents.set(h.session, invocationIntent);
+    await h.members(
+      undefined,
+      undefined,
+      undefined,
+      metadata(relay, "c", "General", undefined, [["t", "stream"]]),
+    );
+    h.live().state({ status: "connected", routes: [] });
+    const root = eventDto(
+      signed(viewer, {
+        kind: rootKind,
+        content: "Discussion",
+        created_at: 1700000001,
+        tags: [["h", "c"]],
+      }),
+    );
+    const parent = eventDto(
+      signed(namesake, {
+        kind: parentKind,
+        content: "Earlier reply",
+        created_at: 1700000002,
+        tags: [
+          ["h", "c"],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+    );
+    h.live().receive([root, parent], { phase: "live", channelId: "c" });
+    h.publish.mockRejectedValueOnce(new PublishRejected("try again"));
+    const tags = ["buzz:invocation-intent", "1", honey.pubkey];
+    const send = (content: string, mentions: readonly string[]) => {
+      if (kind === "reply")
+        return h.session.messages.reply(
+          "c",
+          root.id,
+          content,
+          mentions,
+          [],
+          parent.id,
+        );
+      const row = foldMessages("c", viewer.pubkey, [root])[0];
+      assert.exists(row);
+      return h.session.messages.forward(
+        "c",
+        row,
+        "Author",
+        content,
+        undefined,
+        {
+          rootId: root.id,
+          parentId: parent.id,
+          mentions,
+        },
+      );
+    };
+    const id = send("Please take this", [honey.pubkey, namesake.pubkey]);
+    await vi.waitFor(() =>
+      expect(
+        h.session.outbox?.snapshot().find((item) => item.event.id === id)
+          ?.delivery,
+      ).toBe("failed"),
+    );
+    const first = eventDto(structuredClone(h.publish.mock.calls[0]?.[0]));
+    expect(first).toMatchObject({ id, pubkey: viewer.pubkey, kind: 9 });
+    expect(first.tags).toEqual(
+      expect.arrayContaining([
+        ["h", "c"],
+        ["e", root.id, "", "root"],
+        ["e", parent.id, "", "reply"],
+        ["p", honey.pubkey],
+        ["p", namesake.pubkey],
+        tags,
+      ]),
+    );
+    expect(
+      first.tags.filter(([name]) => name === "buzz:invocation-intent"),
+    ).toEqual([tags]);
+    expect(invocationIntent).toHaveBeenCalledExactlyOnceWith({
+      communityOrigin: origin,
+      owner: viewer.pubkey,
+      source: { channelId: "c", root: root.id },
+      agentPubkey: honey.pubkey,
+    });
+
+    replyInvocationIntents.delete(h.session);
+    h.session.messages.retry(id);
+    await vi.waitFor(() =>
+      expect(
+        h.session.outbox?.snapshot().find((item) => item.event.id === id)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publish.mock.calls[1]?.[0]).toEqual(first);
+    expect(h.sign).toHaveBeenCalledTimes(1);
+
+    send("Legacy reply", [honey.pubkey]);
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledTimes(3));
+    expect(h.publish.mock.calls[2]?.[0].tags).not.toContainEqual(tags);
   },
 );
 it("mentions a just-added member despite an older replica roster", async () => {

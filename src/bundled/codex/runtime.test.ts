@@ -1,5 +1,6 @@
 import { promptSections } from "../../features/agents/activity-transcript";
 import { openVoice } from "./voice";
+import { Context } from "@deepseek-ai/cordis";
 import { matchFilters } from "nostr-tools/filter";
 import {
   createToolOperation,
@@ -18,6 +19,8 @@ import {
   conversationKey,
 } from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
+import { createSessionAdmissions } from "../../features/agents/session-admission";
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -756,6 +759,206 @@ function fixture(
     release,
   };
 }
+it("keeps resumed Codex idle until a marked reply can route in the runner's community", async () => {
+  const f = fixture();
+  const signer = keypair();
+  const communityOrigin = "https://background.example.org";
+  const event = eventDto(
+    signed(signer, {
+      kind: 9,
+      content: "Continue the invocation",
+      tags: [
+        ["h", "channel"],
+        ["e", root, "", "reply"],
+        ["p", pubkey],
+        ["buzz:invocation-intent", "1", pubkey],
+      ],
+    }),
+  );
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const admissions = createSessionAdmissions(ctx, memoryStorage());
+  let reachableOrigin = "https://selected.example.org";
+  const startedRouting = deferred<void>();
+  const confirmedBinding = deferred<{ root: string; parent: string }>();
+  const route = vi.fn(() => {
+    startedRouting.resolve();
+    return confirmedBinding.promise;
+  });
+  const routeResult = { root, parent: "d".repeat(64) };
+  const base = f.delivery(event.content);
+  const delivery: Delivery = {
+    ...base,
+    agent: { ...base.agent, owner: signer.pubkey },
+    trigger: { type: "mention", event, resumed: true },
+    routeConversation: (placement) =>
+      admissions.route(
+        {
+          ...placement,
+          agent: pubkey,
+          owner: signer.pubkey,
+          harness: "example/codex",
+          communityOrigin,
+          invocationId: event.id,
+          event,
+          resumed: true,
+          signal: base.signal,
+        },
+        true, // Native placement recorded before the signed intent was recognized.
+      ),
+  };
+  try {
+    await ctx
+      .extend({ pluginOwner: { id: "example", revision: "one" } })
+      .plugin((plugin) => {
+        admissions.register(plugin, {
+          id: "tasks",
+          ready: async () => {},
+          matches: (input) => input.communityOrigin === reachableOrigin,
+          invocationIntent: () => true,
+          route,
+          prepare: async () => undefined,
+        });
+      })
+      .await();
+    await expect(f.runtime.run(delivery)).rejects.toThrow(
+      "invocation router is unavailable",
+    );
+    expect(f.starts()).toHaveLength(0);
+
+    reachableOrigin = communityOrigin;
+    const retry = f.runtime.run(delivery);
+    const admitted = expect(retry).resolves.toBeUndefined();
+    try {
+      await Promise.race([
+        startedRouting.promise,
+        retry.then(() => {
+          throw new Error("The retry skipped invocation routing");
+        }),
+      ]);
+      expect(f.starts()).toHaveLength(0);
+    } finally {
+      confirmedBinding.resolve(routeResult);
+    }
+    await admitted;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.runtime.sessions(pubkey)).toMatchObject([
+      { key: JSON.stringify(["channel", routeResult.parent]) },
+    ]);
+    await f.complete();
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+it("keeps invocation context with its provider turn across a failed start and retry", async () => {
+  const f = fixture();
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const storage = memoryStorage();
+  const admissions = createSessionAdmissions(ctx, storage);
+  const anchor = "d".repeat(64);
+  const calls = new Map<string, number>();
+  const delivery = (text: string) => {
+    const base = f.delivery(text);
+    const { trigger } = base;
+    if (trigger.type !== "mention") throw new Error("Expected mention");
+    return {
+      ...base,
+      config: { ...(base.config as object), scope: "channel" },
+      routeConversation: (
+        placement: Parameters<NonNullable<Delivery["routeConversation"]>>[0],
+      ) =>
+        admissions.route({
+          ...placement,
+          agent: pubkey,
+          owner: base.agent.owner,
+          harness: "example/codex",
+          communityOrigin: "https://relay.example.org",
+          invocationId: trigger.event.id,
+          event: trigger.event,
+          resumed: false,
+          signal: base.signal,
+        }),
+    };
+  };
+  try {
+    await ctx
+      .extend({ pluginOwner: { id: "example", revision: "one" } })
+      .plugin((plugin) => {
+        admissions.register(plugin, {
+          id: "tasks",
+          ready: async () => {},
+          matches: () => true,
+          route: async ({ event, invocationId, savedRoute }) => {
+            if (event?.content !== "TASK_REQUEST") return;
+            const count = (calls.get(invocationId) ?? 0) + 1;
+            calls.set(invocationId, count);
+            if (count > 1) expect(savedRoute).toEqual({ root, parent: anchor });
+            return {
+              root,
+              parent: anchor,
+              turnContext: `TASK_ONLY_CONTEXT_${count}`,
+            };
+          },
+          prepare: async () => undefined,
+        });
+      })
+      .await();
+
+    const task = delivery("TASK_REQUEST");
+    f.failing.add("thread/start");
+    await f.runtime.run(task);
+    await vi.waitFor(() =>
+      expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+        content: expect.stringContaining("thread/start failed"),
+      }),
+    );
+    expect(f.starts()).toHaveLength(0);
+    const savedPlacement = Array.from(
+      { length: storage.length },
+      (_, index) => {
+        const key = storage.key(index);
+        return key && storage.getItem(key);
+      },
+    ).filter(Boolean);
+    expect(savedPlacement).toContain(JSON.stringify({ root, parent: anchor }));
+    expect(savedPlacement.join("")).not.toContain("TASK_ONLY_CONTEXT");
+    f.failing.delete("thread/start");
+
+    const ordinary = delivery("ORDINARY_REQUEST");
+    await f.runtime.run({
+      ...ordinary,
+      sessionContext: "ORDINARY_ONLY_CONTEXT",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run(task);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+
+    const ordinaryPrompt = JSON.stringify(f.starts()[0]?.params);
+    const taskPrompt = JSON.stringify(f.starts()[1]?.params);
+    expect(ordinaryPrompt).toContain("ORDINARY_ONLY_CONTEXT");
+    expect(ordinaryPrompt).not.toContain("TASK_ONLY_CONTEXT");
+    expect(taskPrompt).toContain("TASK_ONLY_CONTEXT_2");
+    expect(taskPrompt).not.toContain("TASK_ONLY_CONTEXT_1");
+    expect(taskPrompt).not.toContain("ORDINARY_ONLY_CONTEXT");
+    const [ordinaryStart, taskStart] = f.starts();
+    expect((taskStart?.params as { threadId: string })?.threadId).not.toBe(
+      (ordinaryStart?.params as { threadId: string })?.threadId,
+    );
+    await f.complete(0);
+    await f.complete(1);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
   await f.runtime.run({
@@ -8394,6 +8597,39 @@ it("keeps New disabled during an open and lets Stop cancel that open", async () 
   await failed;
   expect(target.signal.aborted).toBe(true);
   expect(guest.spawn).not.toHaveBeenCalled();
+});
+
+it("carries the first invocation context into connected Codex execution", async () => {
+  const guest = fixture();
+  const target = guestTarget(guest);
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => target,
+  );
+  const placement = { root, parent: "d".repeat(64) };
+  const routeConversation = vi
+    .fn<NonNullable<Delivery["routeConversation"]>>()
+    .mockResolvedValue(placement)
+    .mockResolvedValueOnce({
+      ...placement,
+      turnContext: "Use only the task role",
+    });
+  try {
+    await f.runtime.run({ ...f.delivery("Do the task"), routeConversation });
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    expect(JSON.stringify(guest.starts()[0]?.params)).toContain(
+      "Use only the task role",
+    );
+    expect(routeConversation).toHaveBeenCalledOnce();
+    await guest.complete();
+  } finally {
+    await f.runtime.retire(pubkey);
+  }
 });
 
 it("retries a refused first turn but requires New when an accepted remote rollout is missing", async () => {

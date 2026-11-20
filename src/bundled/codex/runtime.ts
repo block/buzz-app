@@ -193,6 +193,7 @@ type Request = {
   team: string;
   session?: Delivery["session"];
   sessionContext?: string;
+  invocationContext?: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
   /** `project` for a turn that works where `worksElsewhere` says. */
@@ -504,6 +505,7 @@ function noteOf(request: Request) {
     ) ?? [];
   const notes = [
     request.sessionContext,
+    request.invocationContext,
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,
     turnNote(
@@ -2433,6 +2435,7 @@ export class CodexRuntime {
       event,
       ...(!topLevel ? { replyRoot: route?.parent ?? rootOf(event) } : {}),
       ...(route ? { sourceRoot: route.root } : {}),
+      ...(route?.turnContext ? { invocationContext: route.turnContext } : {}),
       ...(wake ? { wake } : {}),
       ...(delivery.wakeText ? { wakeText: delivery.wakeText } : {}),
       agent,

@@ -15563,6 +15563,76 @@ it("shows a request whose run failed before handing anything over as failed, wit
   }
 });
 
+it("keeps signed task requests retryable without starting an incompatible adapter", async () => {
+  const owner = keypair();
+  const f = await setup({
+    resumes: true,
+    identities: [{ ...echo, owner: owner.pubkey }],
+  });
+  const snapshot = f.communities.snapshot.bind(f.communities);
+  vi.spyOn(f.communities, "snapshot").mockImplementation(() => ({
+    ...snapshot(),
+    viewer: owner.pubkey,
+  }));
+  f.signIn(owner.pubkey);
+  f.confirm(channel, [owner.pubkey, bot]);
+  await vi.waitFor(() =>
+    expect(f.service.snapshot().running.map((agent) => agent.pubkey)).toContain(
+      bot,
+    ),
+  );
+  const root = message(owner, channel, "Discussion", nowSeconds());
+  const request = eventDto(
+    message(owner, channel, "Take this task", root.created_at + 1, [
+      ["e", root.id, "", "reply"],
+      ["p", bot],
+      ["buzz:invocation-intent", "1", bot],
+    ]),
+  );
+  try {
+    f.emit({ events: [request], channelId: channel });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        messageId: request.id,
+        state: "error",
+        retryable: true,
+        error: expect.stringContaining("Invocation routing is unavailable"),
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+    const failed = f.activity.reader.work()[0];
+    if (!failed) throw new Error("Missing task failure");
+    f.activity.reader.retry?.(failed);
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      messageId: request.id,
+      state: "waiting",
+    });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        messageId: request.id,
+        state: "error",
+        retryable: true,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+
+    const ordinary = eventDto(
+      message(owner, channel, "Ordinary mention", root.created_at + 2, [
+        ["e", root.id, "", "reply"],
+        ["p", bot],
+      ]),
+    );
+    f.emit({ events: [ordinary], channelId: channel });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "mention",
+      event: { id: ordinary.id },
+    });
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("retries a failed request as the same mention, which stays seen and is saved as working only while it runs", async () => {
   const f = await setup({ resumes: true });
   await f.service.create({ type: "example/echo", name: "Echo" });

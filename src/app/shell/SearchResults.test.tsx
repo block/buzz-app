@@ -10030,6 +10030,140 @@ it.each([
   }
 });
 
+// "build" matches bui-launch-ld by word runs only when tried as its own
+// term; unlike build-scout-notes, upstream's unordered-word rule misses it.
+it.each([
+  {
+    name: "lists a channel holding the whole text before an agent found word by word",
+    channel: "scout-build-notes",
+    groups: ["Channels", "Agents", "Chats"],
+    chats: ["Plan the week"],
+    first: /^scout-build-notes/,
+  },
+  {
+    name: "keeps an agent found word by word ahead of a channel found the same way",
+    channel: "bui-launch-ld-scout-notes",
+    groups: ["Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /Build Scout.*New chat/,
+  },
+  {
+    name: "lists a chat holding the whole text before the agent's own chats",
+    channel: "bui-launch-ld-scout-notes",
+    chat: "scout build log",
+    groups: ["Chats", "Agents", "Channels"],
+    chats: ["scout build log", "Plan the week"],
+    first: /^scout build log/,
+  },
+  {
+    name: "lets a message hit pass an agent found word by word",
+    channel: "scout-build-notes",
+    hit: true,
+    groups: ["Messages", "Channels", "Agents", "Chats"],
+    chats: ["Plan the week"],
+    first: /scout build/,
+  },
+])(
+  "$name",
+  async ({ channel, chat: chatName, hit, groups, chats: chatOrder, first }) => {
+    localStorage.clear();
+    const relay = keypair(),
+      viewer = keypair(),
+      mine = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const chat = (id: string, name: string, at: number, members: string[]) => [
+      metadata(relay, id, name, at, [
+        ["t", "stream"],
+        ["private"],
+        ["t", "buzz.solo"],
+      ]),
+      roster(relay, id, [viewer.pubkey, ...members]),
+    ];
+    const discovery = [
+      ...chat("agent-chat", "Plan the week", 1700000002, [mine.pubkey]),
+      ...(chatName ? chat("named-chat", chatName, 1700000003, []) : []),
+      metadata(relay, channel, channel),
+      roster(relay, channel, [viewer.pubkey]),
+      profile(mine, { name: "Build Scout", is_agent: true }),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      query(filters, signal) {
+        if (filters.some((filter) => filter.search !== undefined))
+          return hit && !filters.some((filter) => filter.kinds?.includes(0))
+            ? wire.transport.query(filters, signal)
+            : Promise.resolve([]);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      },
+    });
+    const source = owner.session.agentChoices;
+    const identities = [
+      { pubkey: mine.pubkey, name: "Build Scout", managed: true },
+    ];
+    const choices = {
+      ...source.snapshot(),
+      identities,
+      selectable: identities,
+    };
+    const session = {
+      ...owner.session,
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof owner.session;
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="scout build"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          usageScope={usage}
+          openNewMessage={() => {}}
+          openConversation={vi.fn()}
+          openAgentSession={vi.fn()}
+        />,
+      );
+      if (hit) {
+        // Message search is scripted; the one hit answers after the debounce.
+        await waitFor(() => expect(wire.pending).toHaveLength(1));
+        await act(async () =>
+          wire
+            .next()
+            .respond([
+              message(viewer, channel, "scout build is green", 1700000005),
+            ]),
+        );
+      }
+      await screen.findByRole("group", { name: "Channels" });
+      await screen.findByRole("group", { name: "Agents" });
+      const chats = within(await screen.findByRole("group", { name: "Chats" }));
+      await waitFor(() =>
+        expect(
+          chats.getAllByRole("option").map((row) => row.textContent),
+        ).toEqual(chatOrder.map((name) => expect.stringContaining(name))),
+      );
+      const labels = within(screen.getByRole("listbox"))
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"));
+      expect(labels.slice(0, groups.length)).toEqual(groups);
+      expect(screen.getAllByRole("option")[0]?.textContent).toMatch(first);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it.each([
   {
     name: "keeps an exactly named chat ahead of an exact agent's many chats",

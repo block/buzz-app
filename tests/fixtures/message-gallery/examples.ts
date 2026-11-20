@@ -149,7 +149,13 @@ export const groups: Group[] = [
             "@Sam Rivera Message from Studio assistant (relayed as the owner)\n\nRebase the icon fix on main before review; the grouping change landed there this morning.",
             {
               mentions: [teammate],
-              relayedFrom: { agent, channelId: "gallery", verified: true },
+              relayedFrom: {
+                agent,
+                channelId: "gallery",
+                notice:
+                  "@Sam Rivera Message from Studio assistant (relayed as the owner)",
+                verified: true,
+              },
             },
           ),
         ],

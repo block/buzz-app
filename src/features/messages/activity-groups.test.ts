@@ -500,6 +500,16 @@ it("folds two or more consecutive verified relayed messages in one conversation 
   expect(ids([relayed("a"), relayed("b", { threadRootId: "root" })])).toEqual(
     [],
   );
+  // The first unread message starts its own run.
+  expect(
+    relayedRuns(
+      [relayed("a"), relayed("b"), relayed("c"), relayed("d")],
+      "c",
+    ).map((run) => run.ids),
+  ).toEqual([
+    ["a", "b"],
+    ["c", "d"],
+  ]);
   expect(
     ids([relayed("a"), relayed("b", { createdAt: 100 + 2 * 24 * 60 * 60 })]),
   ).toEqual([]);

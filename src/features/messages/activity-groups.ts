@@ -38,7 +38,11 @@ export type RelayedRun = { ids: string[]; relayed: ChannelMessage[] };
  * one local day, fold together. Any other row breaks the run. Agent-only rows
  * belong to activity runs, so they break it too, and a message with a thread
  * stays its own line so its replies stay in view. */
-export function relayedRuns(rows: readonly ChannelMessage[]): RelayedRun[] {
+export function relayedRuns(
+  rows: readonly ChannelMessage[],
+  /** The first unread message starts a run, so the New messages line stays above it. */
+  unreadBoundary?: string,
+): RelayedRun[] {
   const runs: ChannelMessage[][] = [];
   let run: ChannelMessage[] | undefined;
   for (const row of rows) {
@@ -54,6 +58,7 @@ export function relayedRuns(rows: readonly ChannelMessage[]): RelayedRun[] {
     const previous = run?.at(-1);
     if (
       !run ||
+      row.id === unreadBoundary ||
       previous?.channelId !== row.channelId ||
       previous.threadRootId !== row.threadRootId ||
       new Date(previous.createdAt * 1000).toDateString() !==

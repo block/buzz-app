@@ -32,6 +32,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.relayedFrom?.agent === right.relayedFrom?.agent &&
     left.relayedFrom?.channelId === right.relayedFrom?.channelId &&
     left.relayedFrom?.verified === right.relayedFrom?.verified &&
+    left.relayedFrom?.notice === right.relayedFrom?.notice &&
     left.request === right.request &&
     !!left.diff === !!right.diff &&
     left.diff?.filePath === right.diff?.filePath &&

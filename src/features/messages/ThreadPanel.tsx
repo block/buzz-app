@@ -693,22 +693,25 @@ function ThreadMessages({
   );
   const activityVisit = useRef<unknown[]>([]);
   useLayoutEffect(() => {
-    const request = [messageId, navigation?.signal, revealRequest];
-    if (
-      !messageId ||
-      request.every((part, index) => part === activityVisit.current[index]) ||
-      !snapshot.replies.some((row) => row.id === messageId)
-    )
+    if (!messageId || !snapshot.replies.some((row) => row.id === messageId))
       return;
-    activityVisit.current = request;
     const group = [...tree.children.values()]
       .flatMap((rows) => [
         ...activityRuns(rows),
         ...relayedRuns(rows).map((run) => run.relayed),
       ])
       .find((group) => group.some((row) => row.id === messageId));
+    // A target that joins a group later, as a relay does once its owner
+    // verifies, opens that group; an unchanged one stays as the reader left it.
     const first = group?.[0]?.id;
-    if (first) setExpandedActivity((current) => new Set([...current, first]));
+    const request = [messageId, navigation?.signal, revealRequest, first];
+    if (request.every((part, index) => part === activityVisit.current[index]))
+      return;
+    activityVisit.current = request;
+    // Every id, so a group split at the unread line opens where the target is.
+    const ids = group?.map((row) => row.id) ?? [];
+    if (ids.length)
+      setExpandedActivity((current) => new Set([...current, ...ids]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
@@ -1783,7 +1786,7 @@ function ThreadMessages({
     );
     const groups = [
       ...presentation.groups,
-      ...relayedRuns(chronologicalSiblings),
+      ...relayedRuns(chronologicalSiblings, unreadBoundary ?? undefined),
     ].filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );

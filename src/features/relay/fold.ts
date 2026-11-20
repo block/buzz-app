@@ -4,7 +4,7 @@ import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
-import { relayedFromClaim } from "./relayed-from";
+import { relayedFromClaim, relayNotice } from "./relayed-from";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
@@ -469,11 +469,18 @@ export function foldMessages(
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
-        ...(relayed && relayed.agent !== authorId
+        // Only the signer's own agent: an attributed author signed nothing here.
+        ...(relayed && relayed.agent !== event.pubkey
           ? {
               relayedFrom: Object.freeze({
                 ...relayed,
-                verified: agentOwner?.(relayed.agent) === authorId,
+                ...(() => {
+                  const notice = relayNotice(event.content);
+                  return notice ? { notice } : {};
+                })(),
+                verified:
+                  authorId === event.pubkey &&
+                  agentOwner?.(relayed.agent) === event.pubkey,
               }),
             }
           : {}),

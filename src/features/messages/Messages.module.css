@@ -4147,7 +4147,21 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 .relayedTime {
   flex: none;
+  margin-inline-start: auto;
   color: var(--text-subtle);
+}
+/* A relayed line spans the row: avatar in the message gutter, time at the end. */
+.relayedEntry {
+  padding-inline-start: 0;
+  max-inline-size: 100%;
+}
+.relayedLine {
+  margin-inline-start: 0;
+}
+.relayedLine:not([data-panel-open]) {
+  inline-size: auto;
+  max-inline-size: 100%;
+  align-self: stretch;
 }
 .relayedFooter {
   margin: var(--space-1) 0 0;

@@ -1480,6 +1480,7 @@ it("honours a relayed-from claim only while the author owns the named agent", ()
   expect(fold(claim, alice.pubkey)?.relayedFrom).toEqual({
     agent: bob.pubkey,
     channelId: "source-chat",
+    notice: "@Juno Notice (relayed)",
     verified: true,
   });
   // Unverified or forged: the claim is kept so its profile loads, never honoured.
@@ -1489,7 +1490,25 @@ it("honours a relayed-from claim only while the author owns the named agent", ()
   expect(fold(claim, alice.pubkey)?.content).toContain("Notice");
   expect(
     fold(relayed([["relayed-from", bob.pubkey]]), alice.pubkey)?.relayedFrom,
-  ).toEqual({ agent: bob.pubkey, verified: true });
+  ).toMatchObject({ agent: bob.pubkey, verified: true });
+  // A relay-signed message attributed to the owner was not signed by them.
+  const attributed = signed(relay, {
+    kind: 9,
+    content: "Notice\n\nText",
+    created_at: 10,
+    tags: [
+      ["h", channel],
+      ["actor", alice.pubkey],
+      ["relayed-from", bob.pubkey],
+    ],
+  });
+  const [row] = foldMessages(channel, relay.pubkey, [attributed], {
+    signingAuthority: relay.pubkey,
+    agentOwner: (pubkey: string) =>
+      pubkey === bob.pubkey ? alice.pubkey : undefined,
+  });
+  expect(row?.authorId).toBe(alice.pubkey);
+  expect(row?.relayedFrom?.verified).toBe(false);
   for (const tags of [
     [
       ["relayed-from", bob.pubkey],

@@ -121,8 +121,10 @@ function harness(
     disabled = false,
     onFocusedRemoval,
     audience,
+    relayed = false,
   }: {
     audience?: "agents";
+    relayed?: boolean;
     disabled?: boolean;
     onFocusedRemoval?: () => void;
   }) {
@@ -130,7 +132,11 @@ function harness(
       (fn) => owner.session.channels.subscribeWindow("c", fn),
       () => owner.session.channels.window("c"),
     );
-    const row = state.rows[0];
+    const first = state.rows[0];
+    const row =
+      first && relayed
+        ? { ...first, relayedFrom: { agent: other.pubkey, verified: true } }
+        : first;
     return (
       row && (
         <>
@@ -1042,4 +1048,12 @@ it("keeps the raw emoji when the name table fails to load, and the next reveal r
     process.off("unhandledRejection", unhandled);
     warned.mockRestore();
   }
+});
+
+it("offers the first reaction on a relayed line, which has no message toolbar", () => {
+  const h = harness();
+  const view = render(<h.Controls />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls relayed />);
+  expect(screen.getByTestId("inline-add-reaction")).toBeTruthy();
 });

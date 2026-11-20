@@ -5584,6 +5584,7 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     content: "@Juno Nexus message from Zerk (relayed)\n\nRebase on main",
     relayedFrom: {
       agent: "zerk",
+      notice: "@Juno Nexus message from Zerk (relayed)",
       verified,
       ...(channelId ? { channelId } : {}),
     },

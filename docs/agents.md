@@ -1817,8 +1817,10 @@ every member sees the same row. Content up to and including the first blank
 line is the relaying sender's notice for clients that do not read the tag.
 
 The app honours the tag only while the agent's cryptographically verified owner
-(`profiles.queries.owner`) is the message's author, and only for one
-well-formed tag naming someone other than the author. `relayedFrom.verified`
+(`profiles.queries.owner`) signed the message as its author, and only for one
+well-formed tag naming someone other than the signer. A relay-signed message
+attributed to the owner does not qualify. The row omits the signed original's
+notice only while the shown text, after any edit, still starts with it. `relayedFrom.verified`
 records that check in the fold, which refolds when the owner verdict changes.
 `rowProfileIds` includes the claimed agent so its profile, and with it the
 verdict, loads with the row. A verified row is drawn as the agent's collapsed

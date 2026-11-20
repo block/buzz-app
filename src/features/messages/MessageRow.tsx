@@ -2124,7 +2124,7 @@ function RelayedMessageRow(props: MessageRowProps) {
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const shown = useMemo(() => {
-    const content = withoutRelayNotice(row.content);
+    const content = withoutRelayNotice(row.content, row.relayedFrom?.notice);
     const removed = row.content.length - content.length;
     // Attachment seams are offsets into the content, so they move with it.
     const attachmentSeams = row.attachmentSeams?.flatMap((seam) =>
@@ -2181,7 +2181,7 @@ function RelayedMessageRow(props: MessageRowProps) {
           <Collapsible.Root
             open={open}
             onOpenChange={setOpen}
-            className={styles.audienceEntry}
+            className={`${styles.audienceEntry} ${styles.relayedEntry}`}
             data-highlight-surface=""
             data-thread-open={props.threadOpen || undefined}
             aria-current={props.threadOpen ? true : undefined}
@@ -2190,7 +2190,7 @@ function RelayedMessageRow(props: MessageRowProps) {
             <Collapsible.Trigger
               ref={trigger}
               data-buzz-ui=""
-              className={styles.audienceLine}
+              className={`${styles.audienceLine} ${styles.relayedLine}`}
               aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${row.replyCount > 0 ? `, ${row.replyCount === 1 ? "1 reply" : `${row.replyCount} replies`}` : ""}`}
             >
               <span className={styles.audienceAvatar} title={agent.name}>

@@ -789,8 +789,11 @@ function Timeline({
   );
   // Relayed runs fold, focus and restore through the same disclosures as activity.
   const activity = useMemo(
-    () => [...presentation.groups, ...relayedRuns(chronologicalRows)],
-    [presentation.groups, chronologicalRows],
+    () => [
+      ...presentation.groups,
+      ...relayedRuns(chronologicalRows, newMessageBoundaryId),
+    ],
+    [presentation.groups, chronologicalRows, newMessageBoundaryId],
   );
   const stableActivity = useStableRowActivity(chronologicalRows);
   const rowsById = useMemo(
@@ -2320,8 +2323,19 @@ function Timeline({
                 />
               );
             };
+            const newMessages = row.id === newMessageBoundaryId && (
+              <div className={styles.newMessages} data-new-messages-boundary>
+                <hr className="sr-only select-none" aria-label="New messages" />
+                <span className="select-none" aria-hidden="true">
+                  New messages
+                </span>
+              </div>
+            );
+            // A relayed run starts at the first unread message, so the line goes above it.
+            const unreadRun = !!disclosure && "relayed" in disclosure;
             return (
               <Fragment key={row.id}>
+                {unreadRun && newMessages}
                 {disclosure && (
                   <div
                     className={styles.activityDisclosure}
@@ -2367,20 +2381,7 @@ function Timeline({
                     )}
                   </div>
                 )}
-                {row.id === newMessageBoundaryId && (
-                  <div
-                    className={styles.newMessages}
-                    data-new-messages-boundary
-                  >
-                    <hr
-                      className="sr-only select-none"
-                      aria-label="New messages"
-                    />
-                    <span className="select-none" aria-hidden="true">
-                      New messages
-                    </span>
-                  </div>
-                )}
+                {!unreadRun && newMessages}
                 <ActivityExpansion
                   open={!hidden && !containedOwners.has(row.id)}
                   enabled={

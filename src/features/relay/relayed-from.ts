@@ -17,9 +17,20 @@ export function relayedFromClaim(
   return channelId ? { agent, channelId } : { agent };
 }
 
-/** Text before the first blank line is the relaying sender's notice for clients
- * that do not read the tag. A client that draws attribution from the tag omits it. */
-export function withoutRelayNotice(content: string) {
+/** Text before the first blank line of the signed original is the relaying
+ * sender's notice for clients that do not read the tag. */
+export function relayNotice(content: string) {
   const end = content.indexOf("\n\n");
-  return end < 0 ? content : content.slice(end + 2).replace(/^\n+/, "");
+  return end > 0 ? content.slice(0, end) : undefined;
+}
+
+/** A client that draws attribution from the tag omits the notice, but only
+ * while the shown text still starts with it: an edit may have replaced it. */
+export function withoutRelayNotice(
+  content: string,
+  notice: string | undefined,
+) {
+  return notice && content.startsWith(notice)
+    ? content.slice(notice.length).replace(/^\s*\n/, "")
+    : content;
 }

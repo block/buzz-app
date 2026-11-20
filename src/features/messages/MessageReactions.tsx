@@ -545,7 +545,8 @@ export function MessageReactions(
           );
         })}
       {active &&
-        reactions.length > 0 &&
+        // A relayed line has no message toolbar, so its first reaction starts here.
+        (reactions.length > 0 || row.relayedFrom?.verified) &&
         row.audience !== "agents" &&
         !props.disabled && (
           <span

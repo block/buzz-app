@@ -2687,6 +2687,8 @@ export class AgentsService extends Service implements Agents {
           resolveChannels: true,
         });
       },
+      readAsAgent: (agent, filter, signal) =>
+        this.inbox(agent.key)?.read(filter, signal),
       resolveChannels: async (agent, ids, signal) => {
         const channels = this.bindingOf(agent)?.session.channels;
         const unknown = ids.filter(

@@ -129,27 +129,32 @@ export class AgentInbox {
     for (const listener of this.listeners) listener();
   }
 
-  async mentions(filter: ReadFilter, signal: AbortSignal) {
-    try {
-      const events = await this.reader.reader.read([filter], {
-        signal: AbortSignal.any([this.lifetime, signal]),
-        priority: "background",
-        fresh: true,
-      });
-      const ids = [
-        ...new Set(
-          events.flatMap((event) =>
-            event.tags.flatMap(([key, value]) =>
-              key === "h" && value ? [value] : [],
-            ),
+  async read(filter: ReadFilter, signal: AbortSignal) {
+    const events = await this.reader.reader.read([filter], {
+      signal: AbortSignal.any([this.lifetime, signal]),
+      priority: "background",
+      fresh: true,
+    });
+    const ids = [
+      ...new Set(
+        events.flatMap((event) =>
+          event.tags.flatMap(([key, value]) =>
+            key === "h" && value ? [value] : [],
           ),
         ),
-      ];
-      const known = await Promise.all(ids.map((id) => this.owner.channel(id)));
-      await this.resolve(
-        ids.filter((_, index) => !known[index]),
-        signal,
-      );
+      ),
+    ];
+    const known = await Promise.all(ids.map((id) => this.owner.channel(id)));
+    await this.resolve(
+      ids.filter((_, index) => !known[index]),
+      signal,
+    );
+    return events;
+  }
+
+  async mentions(filter: ReadFilter, signal: AbortSignal) {
+    try {
+      const events = await this.read(filter, signal);
       this.schedule(0);
       return events;
     } catch (error) {

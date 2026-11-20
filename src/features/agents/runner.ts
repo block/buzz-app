@@ -510,6 +510,13 @@ export type RunnerHost = {
     filter: ReadFilter,
     signal: AbortSignal,
   ): Promise<readonly RelayEvent[]>;
+  /** Reads as the agent itself, resolving the channels of what it returns,
+   * or undefined when the agent has no read of its own here. */
+  readAsAgent?(
+    agent: Agent,
+    filter: ReadFilter,
+    signal: AbortSignal,
+  ): Promise<readonly RelayEvent[]> | undefined;
   /** Resolves listening metadata before an enabled watch is admitted. */
   resolveChannels?(
     agent: Agent,
@@ -1813,48 +1820,45 @@ export class AgentRunners {
       return this.unmark(runner.key, ids);
     }
     this.host.resumeFollowUps?.(agent, left);
+    const filter = { ids, limit: ids.length };
+    const { signal } = community.controller;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
-    void community.session
-      .readRemote([{ ids, limit: ids.length }], {
-        signal: community.controller.signal,
-        fresh: true,
-      })
-      .then(
-        (events) => {
-          // A turn's own run forgets it when it settles.
-          const kept = new Set<string>();
-          // Oldest first, as they were sent: a later correction stays last.
-          const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
-            (a, b) =>
-              a.created_at - b.created_at ||
-              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-          );
-          for (const event of proven) {
-            const channel = left[event.id];
-            if (channel === undefined) continue;
-            if (!this.hasSeen(runner, event.id, channelOf(event)))
-              this.markSeen(runner, event.id, channelOf(event));
-            const queued = this.enqueue(runner, {
-              trigger: { type: "mention", event, resumed: true },
-              ...(channel ? { channelId: channel } : {}),
-            });
-            if (queued) kept.add(event.id);
-          }
-          const forgotten = Object.fromEntries(
-            Object.entries(left).filter(([id]) => !kept.has(id)),
-          );
-          this.host.abandonFollowUps?.(agent, forgotten);
-          this.unmark(runner.key, Object.keys(forgotten));
-        },
-        (error) => {
-          this.left = { ...this.left, [runner.key]: left };
-          if (!community.controller.signal.aborted)
-            console.warn(
-              `Agent ${agent.name} could not resume its turns`,
-              error,
-            );
-        },
-      );
+    void (
+      this.host.readAsAgent?.(agent, filter, signal) ??
+      community.session.readRemote([filter], { signal, fresh: true })
+    ).then(
+      (events) => {
+        // A turn's own run forgets it when it settles.
+        const kept = new Set<string>();
+        // Oldest first, as they were sent: a later correction stays last.
+        const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
+          (a, b) =>
+            a.created_at - b.created_at ||
+            (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        );
+        for (const event of proven) {
+          const channel = left[event.id];
+          if (channel === undefined) continue;
+          if (!this.hasSeen(runner, event.id, channelOf(event)))
+            this.markSeen(runner, event.id, channelOf(event));
+          const queued = this.enqueue(runner, {
+            trigger: { type: "mention", event, resumed: true },
+            ...(channel ? { channelId: channel } : {}),
+          });
+          if (queued) kept.add(event.id);
+        }
+        const forgotten = Object.fromEntries(
+          Object.entries(left).filter(([id]) => !kept.has(id)),
+        );
+        this.host.abandonFollowUps?.(agent, forgotten);
+        this.unmark(runner.key, Object.keys(forgotten));
+      },
+      (error) => {
+        this.left = { ...this.left, [runner.key]: left };
+        if (!community.controller.signal.aborted)
+          console.warn(`Agent ${agent.name} could not resume its turns`, error);
+      },
+    );
   }
   /** Saves the mention `id` as working, in `channel` or "" without one. */
   private mark(key: AgentKey, id: string, channel: string) {

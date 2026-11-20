@@ -28,6 +28,7 @@ import {
   type ConfigBinding,
   type Delivery,
 } from "./service";
+import { writeInterrupted } from "./interrupted";
 import { fakeNative } from "./service-testing";
 import { memoryStorage } from "./test-fakes";
 import type { AgentStore } from "./store";
@@ -173,9 +174,11 @@ async function setup<Config>(
   heads: [Subject, RelayEvent][],
   binding: ConfigBinding,
   initialMessages: RelayEvent[] = [],
+  prepare?: (storage: AgentStore) => unknown,
 ) {
   const storage = memoryStorage();
   seed(storage, heads);
+  await prepare?.(storage);
   const counted = countedTransport([
     metadata(relayKey, channel, "general"),
     roster(relayKey, channel, [owner.pubkey, agentKey.pubkey]),
@@ -877,109 +880,130 @@ it.each(["thread", "channel"] as const)(
   },
 );
 
+const privateChannel = "4b7939a2-f852-42ae-ab59-2d1588b0d337";
+
+/** An agent-only DM between a sibling and the agent, which the owner cannot
+ * read, answered by the agent's native query alone. */
+async function agentOnlyDm({
+  owned = true,
+  member = true,
+  at = Math.floor(Date.now() / 1000) + 1,
+} = {}) {
+  const sibling = keypair();
+  const conditions = "kind=9";
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(
+        `nostr:agent-auth:${sibling.pubkey}:${conditions}`,
+      ),
+    ),
+  );
+  const auth = [
+    "auth",
+    owner.pubkey,
+    conditions,
+    bytesToHex(schnorr.sign(digest, owner.secret)),
+  ];
+  const earlier = message(
+    sibling,
+    privateChannel,
+    "Prior private context",
+    at - 1,
+  );
+  const sent = message(sibling, privateChannel, "Private assignment", at, [
+    ["p", agentKey.pubkey],
+    ...(owned ? [auth] : []),
+  ]);
+  const records = eventsDto([
+    metadata(relayKey, privateChannel, "Agent DM", at - 2, [
+      ["t", "dm"],
+      ["private"],
+      ["hidden"],
+    ]),
+    roster(
+      relayKey,
+      privateChannel,
+      member ? [sibling.pubkey, agentKey.pubkey] : [sibling.pubkey],
+      at - 2,
+    ),
+    earlier,
+    sent,
+  ]);
+  const query = async (_member: unknown, filters: readonly object[]) =>
+    (filters as readonly ReadFilter[]).flatMap((filter) =>
+      records
+        .filter(
+          (event) =>
+            matchFilter(filter as Filter, event) &&
+            (!filter.before_id ||
+              event.created_at < (filter.until ?? Infinity) ||
+              event.id > (filter.before_id ?? "")),
+        )
+        .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+        .slice(0, filter.limit),
+    );
+  return { sent, query };
+}
+
+async function gooseSetup(prepare?: (storage: AgentStore) => unknown) {
+  const { goose, host } = gooseHost();
+  const { seeded } = heads("buzz/goose", {
+    model: "synced-model",
+    provider: "synced-provider",
+    scope: "thread",
+  });
+  const f = await setup(
+    "goose",
+    (relay, reads, core) =>
+      gooseRun(
+        new GooseRuntime(
+          host,
+          relay,
+          core,
+          memoryStorage(),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          reads,
+        ),
+      ),
+    { ...GOOSE_LOCAL },
+    seeded,
+    synced(),
+    [],
+    prepare,
+  );
+  return { ...f, goose };
+}
+
+const privateRead = (f: Fixture) =>
+  f.requests.some((request) =>
+    request.filters.some((filter) => filter["#h"]?.includes(privateChannel)),
+  );
+
 it.each(["authorized", "unauthorized", "removed"])(
   "delivers an agent-only DM through native catch-up with sender authority preserved (%s)",
   async (authority) => {
     const owned = authority !== "unauthorized";
     const member = authority !== "removed";
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { goose, host } = gooseHost();
-    const { seeded } = heads("buzz/goose", {
-      model: "synced-model",
-      provider: "synced-provider",
-      scope: "thread",
-    });
-    const f = await setup(
-      "goose",
-      (relay, reads, core) =>
-        gooseRun(
-          new GooseRuntime(
-            host,
-            relay,
-            core,
-            memoryStorage(),
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            reads,
-          ),
-        ),
-      { ...GOOSE_LOCAL },
-      seeded,
-      synced(),
-    );
-    const sibling = keypair();
-    const privateChannel = "4b7939a2-f852-42ae-ab59-2d1588b0d337";
-    const at = Math.floor(Date.now() / 1000) + 1;
-    const conditions = "kind=9";
-    const digest = new Uint8Array(
-      await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(
-          `nostr:agent-auth:${sibling.pubkey}:${conditions}`,
-        ),
-      ),
-    );
-    const auth = [
-      "auth",
-      owner.pubkey,
-      conditions,
-      bytesToHex(schnorr.sign(digest, owner.secret)),
-    ];
-    const earlier = message(
-      sibling,
-      privateChannel,
-      "Prior private context",
-      at - 1,
-    );
-    const sent = message(sibling, privateChannel, "Private assignment", at, [
-      ["p", agentKey.pubkey],
-      ...(owned ? [auth] : []),
-    ]);
-    const records = eventsDto([
-      metadata(relayKey, privateChannel, "Agent DM", at - 2, [
-        ["t", "dm"],
-        ["private"],
-        ["hidden"],
-      ]),
-      roster(
-        relayKey,
-        privateChannel,
-        member ? [sibling.pubkey, agentKey.pubkey] : [sibling.pubkey],
-        at - 2,
-      ),
-      earlier,
-      sent,
-    ]);
-    f.native.query.mockImplementation(async (_member, filters) =>
-      filters.flatMap((filter) =>
-        records
-          .filter(
-            (event) =>
-              matchFilter(filter as Filter, event) &&
-              (!(filter as ReadFilter).before_id ||
-                event.created_at < ((filter as ReadFilter).until ?? Infinity) ||
-                event.id > ((filter as ReadFilter).before_id ?? "")),
-          )
-          .sort(
-            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, (filter as ReadFilter).limit),
-      ),
-    );
+    const f = await gooseSetup();
+    const dm = await agentOnlyDm({ owned, member });
+    f.native.query.mockImplementation(dm.query);
     expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
     await vi.advanceTimersByTimeAsync(50_000);
     expect(f.deliveries).toHaveLength(member ? 1 : 0);
     if (owned && member) {
-      await vi.waitFor(() => expect(goose.geese[0]?.turns).toHaveLength(1));
-      const text = goose.geese[0]?.turns[0]?.text;
+      await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
+      const text = f.goose.geese[0]?.turns[0]?.text;
       expect(text).toContain("Scope: dm");
       expect(text).toContain("Private assignment");
       expect(text).toContain("Prior private context");
       expect(text).toContain("Session scope: dm conversation");
     } else {
-      expect(goose.geese).toHaveLength(0);
+      expect(f.goose.geese).toHaveLength(0);
     }
     expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
     expect(f.native.query).toHaveBeenCalledWith(
@@ -989,14 +1013,35 @@ it.each(["authorized", "unauthorized", "removed"])(
       }),
       expect.any(Array),
     );
-    expect(
-      f.requests.some((request) =>
-        request.filters.some((filter) =>
-          filter["#h"]?.includes(privateChannel),
-        ),
-      ),
-    ).toBe(false);
+    expect(privateRead(f)).toBe(false);
     await vi.advanceTimersByTimeAsync(50_000);
     expect(f.deliveries).toHaveLength(member ? 1 : 0);
   },
 );
+
+it("resumes an interrupted agent-only DM turn by reading it as the agent", async () => {
+  const dm = await agentOnlyDm({ at: Math.floor(Date.now() / 1000) - 3_600 });
+  const f = await gooseSetup((storage) =>
+    writeInterrupted(storage, agentKey.pubkey, {
+      [dm.sent.id]: privateChannel,
+    }),
+  );
+  f.native.query.mockImplementation(dm.query);
+  await vi.waitFor(() =>
+    expect(
+      f.service.snapshot().interrupted.map((agent) => agent.pubkey),
+    ).toEqual([agentKey.pubkey]),
+  );
+  expect(f.deliveries).toHaveLength(0);
+  f.service.resumeInterrupted();
+  await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
+  expect(f.deliveries).toHaveLength(1);
+  expect(f.deliveries[0]?.trigger).toMatchObject({
+    type: "mention",
+    resumed: true,
+    event: { id: dm.sent.id },
+  });
+  expect(f.goose.geese[0]?.turns[0]?.text).toContain("Private assignment");
+  expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
+  expect(privateRead(f)).toBe(false);
+});

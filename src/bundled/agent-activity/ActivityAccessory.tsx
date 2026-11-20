@@ -70,6 +70,7 @@ import { RemoteAgentHint } from "../../features/messages/RemoteAgentHint";
 import { remoteWorkDetail } from "../../features/agents/execution-location";
 
 const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
 export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
@@ -136,15 +137,17 @@ function MessageActivity(
     );
     return work.live.length > 0 || work.stopped.length > 0;
   });
-  const snapshot = useSyncExternalStore(hasWork ? subscribe : noSubscribe, () =>
-    session.agentActivity.snapshot(channelId),
+  // An idle row holds no snapshot, so it cannot pin superseded turn arrays.
+  const snapshot = useSyncExternalStore(
+    hasWork ? subscribe : noSubscribe,
+    hasWork ? () => session.agentActivity.snapshot(channelId) : noSnapshot,
   );
   const work = useMemo(
     () =>
-      messageId && hasWork
+      messageId && snapshot
         ? messageWork(snapshot, channelId, messageId)
         : { live: noWork, stopped: noWork },
-    [snapshot, channelId, messageId, hasWork],
+    [snapshot, channelId, messageId],
   );
   const entries = [...work.live, ...work.stopped].filter((entry) => {
     const outcome = settledOutcome(entry);
@@ -194,7 +197,7 @@ function MessageActivity(
       props.threadScoped ??
       (props.messageLayout === "thread" || !!message?.threadRootId);
     if (!threadScoped) {
-      const local = (snapshot.local ?? []).filter(
+      const local = (snapshot?.local ?? []).filter(
         (work) =>
           work.agent === entry.agent &&
           work.channelId === channelId &&

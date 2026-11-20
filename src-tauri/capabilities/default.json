@@ -106,6 +106,7 @@
     "allow-media-lift-subject-supported",
     "allow-clipboard-write-text",
     "allow-draft-diagnostics-save",
+    "allow-web-inspector",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
     "allow-system-hour-cycle",

@@ -365,6 +365,14 @@ until you pair it again. Signing out revokes all of them, and a pairing unused
 for 30 days expires. If your sign-in expires, paired tools keep their pairing
 and are asked to sign in again in Buzz.
 
+## Inspect Buzz Beta on macOS
+
+In Buzz Beta on macOS 13.3 or later, open **Settings → Security** and turn on
+**Allow Safari Web Inspector**. In Safari, use the **Develop** menu to select
+the Buzz Beta window. Safari can inspect data in that window and capture
+JavaScript profiles and heap snapshots. Turn the switch off to end access.
+Quitting Buzz also turns it off.
+
 ## Conversations and communities
 
 - Notification sounds and their Settings previews do not become media players;
@@ -598,7 +606,11 @@ and are asked to sign in again in Buzz.
   from **Filter**, or choose **All** to show them in the sidebar again.
   Plugins can add tasks, Lead conversations and workspace actions.
   When starting a chat, type **#** to choose a workspace and load its settings.
-  Folders are optional unless **Work in a new worktree** is on.
+  Folders are optional unless **Work in a new worktree** is on. An agent that
+  changes a repository makes a new worktree of it and leaves the main worktree
+  as it is. **Work in a new worktree** sets where that worktree goes and the
+  branch it starts from. A conversation that a plugin gave its own folder works
+  in that folder instead.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**. A sent chip shows the channel's current
@@ -607,8 +619,9 @@ and are asked to sign in again in Buzz.
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the
   message shows the folder's name. When you send it to your own Claude or Codex
-  agent on this device, the agent is told the folder's path, and Claude may also
-  work in that folder for the rest of the conversation. A chip someone else
+  agent on this device, the agent is told the folder's path as context, and
+  Claude can also reach that folder for the rest of the conversation. A chip
+  does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
@@ -832,8 +845,10 @@ and are asked to sign in again in Buzz.
   conversation**) to search a conversation's full history.
 - **Search results** list the best match's group first: channels, people,
   pages and messages are ordered by how well they match, each heading showing
-  a count and why it ranks there. Messages lead when the text reads like a
-  phrase. Each message shows the words around the match. A panel beside the
+  a count and why it ranks there. **Top results** shows the first few rows of
+  each group; a group cut short says how many it shows, such as "Top 5 of
+  60+", and keeps its heading and **Show all** button in view while you
+  scroll. Messages lead when the text reads like a phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
   and after it, or a channel's or person's latest messages. Up and Down move
   the highlight, as do Control+J or Control+N and Control+K or Control+P on
@@ -841,11 +856,20 @@ and are asked to sign in again in Buzz.
   result** and **Next search result** in Settings → Shortcuts, and the key
   hints show them. Up and Down keep working. Tab, Control+L or Control+F
   shows the next group whole and Shift+Tab, Control+H or Control+B the
-  previous one, as do the group filter buttons above the results and choosing
-  a group's heading when it has more; Escape goes back. Groups reorder as
+  previous one, as do the group filter buttons above the results and a
+  group's **Show all**; Escape goes back. Groups reorder as
   slower results arrive until you move the highlight; after that they stay
   put and later groups join at the end. The panel and key hints hide in
   narrow windows.
+- **Reranked messages**: when this device has a Decisions API provider set up
+  (Settings → Decisions API), searching messages by relevance reads the first
+  60 matches, then has the provider reorder them by how well each answers what
+  you typed. The keyword order shows first; the reordered list replaces it a
+  moment later, and a small sparkle appears at the end of the Messages heading
+  (hover it to see **Reranked**). If you've already moved the
+  highlight or chosen a result, the order stays as it is. The provider sees the query and those
+  messages' text, conversation names and authors. Newest-first and filter-only
+  searches aren't reranked.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat
@@ -937,6 +961,13 @@ and are asked to sign in again in Buzz.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
+- **Dragging files in**: while files are dragged over a conversation, a dashed
+  frame marks where they will attach and the messages stay visible. Rest the
+  drag for about 0.7 seconds on a channel, DM or chat in the sidebar, or on a
+  message's thread summary, and it opens, so the same drag can continue into
+  that conversation or thread. The row highlights and blinks twice first; with
+  reduced motion it only highlights. Releasing the files on a sidebar row
+  attaches nothing. An image dragged from a message works the same way.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
@@ -1158,7 +1189,16 @@ and are asked to sign in again in Buzz.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections** collapse independently through their headings. Buzz
+- **Sidebar sections** default to **Solo**, **Starred**, your workspaces,
+  **Team**, **Forums**, then **Direct messages**. After an upgrade from the
+  separate Solo and Team sidebars, Buzz keeps their order: workspaces from the
+  previous Solo sidebar, **Solo**, **Starred**, workspaces from the previous
+  Team sidebar, then **Team**. A saved section order takes precedence.
+  **Solo** and workspaces from the previous Solo sidebar list their newest 7
+  chats; **Show more** reveals up to 10 more and **Show fewer** returns to 7.
+  Other sections start fully listed and offer **Show fewer** past 7 rows. These
+  choices are saved on this device only.
+  Sections collapse independently through their headings. Buzz
   remembers collapsed sections for each community and identity. Unread messages
   or thread replies highlight the headings of collapsed sections. Muted
   conversations are excluded from these highlights.
@@ -1850,6 +1890,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   sources at startup and once per hour while the app is visible. Checks do not
   install or reload plugins. A notice offers **Update and reload**, or
   **Review permissions** when access increases; either opens the update review.
+  While a request waits for a check or another review, it shows **Preparing update…**;
+  **Later** cancels that pending request. Other Update actions wait until it finishes.
   Even when access is unchanged, choose **Update** in that review to install and
   reload the candidate.
   Click the notice body to open that plugin’s update checkbox in Manage plugins.

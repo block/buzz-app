@@ -1512,9 +1512,10 @@ function Timeline({
     };
     let height = list.style.height;
     const since = intent.current;
-    // Virtua re-observes moved rows in the next frame and, as patched, applies
-    // their sizes in the frame after (patches/README.md), whether or not their
-    // height changed. Input that ended before then releases the frame after.
+    // Virtua re-observes moved rows and applies their sizes in the next frame,
+    // or the one after for a row it mounted during observer delivery, whether
+    // or not their height changed. Input that ended before then releases the
+    // frame after.
     let measured = false;
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {

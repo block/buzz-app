@@ -151,10 +151,20 @@ coordinates must satisfy the recipe contract.
 
 Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
 list. When the pinned rows run out of vertical space, scroll their area to see
-the rest. The conversation sections default to **Starred**, personal
-workspaces, **Solo**, **Team**, **Forums**, and **Direct messages**. Reorder them
-by dragging their headings or using **Move up** and **Move down**. The saved
-order syncs with workspace placement.
+the rest. The conversation sections default to **Solo**, **Starred**,
+workspaces, **Team**, **Forums**, and **Direct messages**. After an upgrade from
+the separate Solo and Team sidebars, the previous Solo workspaces come first,
+then **Solo**, **Starred**, the previous Team workspaces and **Team**.
+Reorder them by dragging their headings or using **Move up** and **Move down**.
+The saved order syncs with workspace placement.
+
+**Solo** and the workspaces listed in the legacy Solo record start capped at
+their newest 7 rows. **Show more** reveals the next hidden rows, up to 10;
+**Show fewer** returns to 7. Other sections, including workspaces created after
+the upgrade, start fully listed and offer **Show fewer** past 7 rows. The open
+chat, unread chats and chats an agent is working in stay listed past the cap.
+Limits are device-local view state; a Solo workspace's starting limit is saved
+there once the legacy Solo record has been read, with any step v1.0.5 saved.
 
 Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
 its home section. The row’s **Move to…** menu offers the same destinations.
@@ -256,8 +266,12 @@ Like sorting, this is whole-record last-write-wins; another client sees changes
 when it loads or refreshes preferences, without a new automatic reconciliation loop.
 
 Workspaces use a compact encrypted `channel-workspaces` record with sections,
-assignments, section order, and removal markers. The first edit saves the
-combined legacy projection. Older desktop and mobile clients read their
+assignments, section order, and removal markers. Until that record exists,
+the sidebar shows the combined legacy projection, in the upgrade order above.
+The first edit of any kind saves that projection, including its section
+order, so the order no longer depends on the legacy records. Loading never
+saves. A saved record without a section order, such as one saved by an earlier
+build, uses the default order. Older desktop and mobile clients read their
 original coordinates. Their writes cannot replace the unified record. An
 upgraded client can import previously unseen workspaces and filings. A saved
 unified placement or removal of a known legacy entry takes precedence, even

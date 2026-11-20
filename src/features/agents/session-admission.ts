@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import type { JsonValue } from "../navigation/targets";
+import { unframed } from "../agent-harness/plugin-wake";
 import type { RelayEvent } from "../relay/events";
 import type { AgentKey } from "./membership";
 import type { AgentStore } from "./store";
@@ -273,8 +274,9 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
           router: saved.router,
           association: structuredClone(saved.association),
         }),
+        // A plugin's text: it cannot open Buzz's own sections of a turn.
         ...(!saved.contextAcknowledged && saved.context
-          ? { context: saved.context }
+          ? { context: unframed(saved.context) }
           : {}),
       });
     },

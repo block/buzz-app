@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { useSpringLoaded } from "../messages/spring-loaded-drag";
 import { SoloChatTitle } from "../solo/SoloChatTitle";
 import {
   type ReactNode,
@@ -296,6 +297,7 @@ function ConversationLink(props: SoloConversationLinkProps) {
       ? state.rename
       : undefined,
   );
+  const springLoaded = useSpringLoaded(() => state?.open(), state?.selected);
   if (!state) return null;
   return (
     <NavigationItem
@@ -319,6 +321,7 @@ function ConversationLink(props: SoloConversationLinkProps) {
       multiline={!!props.multiline}
       selected={primary && state.selected}
       {...activation}
+      {...springLoaded}
     />
   );
 }
@@ -464,6 +467,11 @@ export function RecoveryDestination({ channelId }: { channelId: string }) {
     if (context?.current === channelId) context.retryReveal();
   });
   const channel = context?.channels.find((channel) => channel.id === channelId);
+  const open = () => {
+    if (context)
+      void context.navigator.open(conversationTarget(context.scope, channelId));
+  };
+  const springLoaded = useSpringLoaded(open, context?.current === channelId);
   if (!context || !channel) return null;
   return (
     <div data-solo-destination-root={channelId} {...focusProps}>
@@ -478,11 +486,8 @@ export function RecoveryDestination({ channelId }: { channelId: string }) {
             preserveUnread
           />
         }
-        onClick={() => {
-          void context.navigator.open(
-            conversationTarget(context.scope, channelId),
-          );
-        }}
+        onClick={open}
+        {...springLoaded}
       />
     </div>
   );

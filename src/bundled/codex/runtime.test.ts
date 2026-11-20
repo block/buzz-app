@@ -50,6 +50,8 @@ import { codexRun } from "./run";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { wake } from "../../features/agent-harness/wakes";
+import { composeBase } from "../../features/agent-harness/sections/compose";
+import { workspaceCanvas } from "../../features/solo/workspace";
 import type { Wire } from "./rpc";
 
 vi.mock("./voice", () => ({
@@ -4599,12 +4601,26 @@ it("splits turn context into ordered values that Codex does not truncate", async
       new TextEncoder().encode(context[key]?.value).length,
     ).toBeLessThanOrEqual(4_000);
   }
-  const text = keys.map((key) => context[key]?.value).join("");
+  // Each part names the whole's revision on its first line.
+  const header = /^\[Buzz turn context ([0-9a-f]{16}), part (\d+) of (\d+)\]\n/;
+  const revisions = new Set(
+    keys.map((key, index) => {
+      const [, revision, part, count] = context[key]?.value.match(header) ?? [];
+      expect([Number(part), Number(count)]).toEqual([index + 1, keys.length]);
+      return revision;
+    }),
+  );
+  expect(revisions.size).toBe(1);
+  const text = keys
+    .map((key) => context[key]?.value.replace(header, ""))
+    .join("");
   expect(text).toContain(
     `<agent-instructions>\n${instructions}\n</agent-instructions>`,
   );
   expect(text).toContain(`CORE START ${"c".repeat(6_000)} CORE END`);
-  expect(context["buzz.instructions.001"]?.value).toMatch(/^Rule \d+\.\n/);
+  expect(context["buzz.instructions.001"]?.value.replace(header, "")).toMatch(
+    /^Rule \d+\.\n/,
+  );
 });
 
 it("gives a resumed conversation the agent's current name", async () => {
@@ -7511,6 +7527,77 @@ describe("voice seats", () => {
     f.complete(1, "DONE");
     await f.connection.close();
   });
+  it("sends a typed turn on an open seat the sections the owner changed since", async () => {
+    const f = await seated();
+    const context = (wire: Wire | undefined) =>
+      Object.values(
+        (
+          wire?.params as
+            | { additionalContext?: Record<string, { value: string }> }
+            | undefined
+        )?.additionalContext ?? {},
+      )
+        .map(({ value }) => value)
+        .join("");
+    await f.runtime.run(f.delivery("@Codex first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(context(f.starts()[0])).not.toContain("<base-section-updates>");
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    // The owner turns a section off while the seat stays open.
+    const d = f.delivery("@Codex again");
+    await f.runtime.run({
+      ...d,
+      agent: {
+        ...d.agent,
+        promptSections: () => ({ owner: { progress: { mode: "off" } } }),
+      },
+    } as Delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(context(f.starts()[1])).toContain(
+      "\n\n## Progress\n</base-section-updates>",
+    );
+    f.complete(1, "DONE");
+    await f.connection.close();
+  });
+  it("ends a seat on a thread from before sections were kept once the owner changes one, and goes on in a fresh thread", async () => {
+    const f = await seated({}, (f) =>
+      f.storage.set(
+        `buzz.codex.sessions.v18:${scope}:${pubkey}`,
+        JSON.stringify({
+          [JSON.stringify(["channel", "channel"])]: {
+            threadId: "kept",
+            workspace: "/tmp/codex-test",
+          },
+        }),
+      ),
+    );
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ threadId: "kept" });
+    // The owner turns a section off while the seat stays open.
+    const d = f.delivery("@Codex again");
+    await f.runtime.run({
+      ...d,
+      agent: {
+        ...d.agent,
+        promptSections: () => ({ owner: { progress: { mode: "off" } } }),
+      },
+    } as Delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.ended).toHaveBeenCalledWith(
+      new Error(
+        "The base instructions changed. Join the huddle again to use them.",
+      ),
+    );
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(true);
+    expect(
+      (f.starts()[0]?.params as { threadId?: string } | undefined)?.threadId,
+    ).not.toBe("kept");
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await f.connection.close();
+  });
   it("does not let queued text overwrite a backend turn arriving during media open", async () => {
     const pending = deferred<Awaited<ReturnType<typeof openVoice>>>();
     const entered = deferred<void>();
@@ -8742,6 +8829,345 @@ it("keeps thread session context and defers its admission during New", async () 
   await f.complete();
 });
 
+describe("a thread that keeps the base sections it started with", () => {
+  const conversation = JSON.stringify(["channel", root]);
+  const bindings = `buzz.codex.sessions.v18:${scope}:${pubkey}`;
+  const current = composeBase({ scope: "thread", place: "thread" });
+  const context = (wire: Wire | undefined) =>
+    Object.values(
+      (
+        wire?.params as
+          | { additionalContext?: Record<string, { value: string }> }
+          | undefined
+      )?.additionalContext ?? {},
+    )
+      .map(({ value }) => value)
+      .join("");
+  const binding = (f: ReturnType<typeof fixture>) =>
+    JSON.parse(f.storage.get(bindings) ?? "{}")[conversation];
+  const resumed = (sections?: unknown) => {
+    const f = fixture();
+    f.storage.set(
+      bindings,
+      JSON.stringify({
+        [conversation]: {
+          threadId: "kept",
+          workspace: "/tmp/codex-test",
+          ...(sections ? { sections } : {}),
+        },
+      }),
+    );
+    return f;
+  };
+
+  it("saves them with a new thread and sends no update while they are current", async () => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(binding(f).sections).toEqual({ layout: 1, parts: current.parts });
+    expect(context(f.starts()[0])).not.toContain("base-section-updates");
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(context(f.starts()[1])).not.toContain("base-section-updates");
+    expect(binding(f).sections).toEqual({ layout: 1, parts: current.parts });
+  });
+
+  it("sends a resumed thread the sections that changed, never a locked one, and shows them in its saved prompt", async () => {
+    const started = {
+      layout: 1,
+      parts: { ...current.parts, progress: "older", trust: "older" },
+    };
+    const f = resumed(started);
+    f.storage.set(
+      `buzz.session-prompts.v1:codex:${pubkey}`,
+      JSON.stringify({
+        version: 1,
+        texts: ["The first prompt."],
+        sessions: [["kept", [["base", 0]]]],
+      }),
+    );
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ threadId: "kept" });
+    const sent = context(f.starts()[0]);
+    expect(sent).toContain(
+      "<base-section-updates>\nThese sections replace the sections with the same titles in your base instructions. An empty section is off now.\n\n## Progress\n\n",
+    );
+    expect(sent.match(/^## /gm)).toEqual(["## "]);
+    expect(sent).not.toContain("## Trust");
+    // The thread keeps what it started with, so the next turn gets them too.
+    expect(binding(f).sections).toEqual({ ...started, shown: current.key });
+    const [[, parts]] = savedPrompts(f.storage) as [
+      [string, [string, string][]],
+    ];
+    expect(parts).toHaveLength(2);
+    expect(parts[1]?.[0]).toMatch(/^base-section-updates \d{4}-/);
+    expect(parts[1]?.[1]).toMatch(
+      /^These sections replace.*\n\n## Progress\n\n/,
+    );
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(context(f.starts()[1])).toContain("## Progress");
+    // Shown once: nothing changed since.
+    expect(savedPrompts(f.storage)[0]?.[1]).toHaveLength(2);
+  });
+
+  it("tells a thread that a section it was sent is as it started again", async () => {
+    // An earlier turn sent it other sections, which its saved prompt showed.
+    const f = resumed({
+      layout: 1,
+      parts: current.parts,
+      shown: "the sections of an earlier turn",
+    });
+    f.storage.set(
+      `buzz.session-prompts.v1:codex:${pubkey}`,
+      JSON.stringify({
+        version: 1,
+        texts: ["The first prompt."],
+        sessions: [["kept", [["base", 0]]]],
+      }),
+    );
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const sent = context(f.starts()[0]);
+    expect(sent).not.toContain("<base-section-updates>");
+    expect(sent).toContain(
+      "Current base section updates replace all prior base section updates. None means your base instructions apply as written.",
+    );
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(binding(f).sections.shown).toBe(current.key);
+    const [[, parts]] = savedPrompts(f.storage) as [
+      [string, [string, string][]],
+    ];
+    expect(parts.at(-1)?.[0]).toMatch(/^base-section-updates \d{4}-/);
+    expect(parts.at(-1)?.[1]).toBe(
+      "Every section is as the thread's base instructions give it.",
+    );
+  });
+
+  it("tells a thread and its saved prompt about the same choices when the owner saves during its resume", async () => {
+    const f = resumed({ layout: 1, parts: current.parts });
+    f.storage.set(
+      `buzz.session-prompts.v1:codex:${pubkey}`,
+      JSON.stringify({
+        version: 1,
+        texts: ["The first prompt."],
+        sessions: [["kept", [["base", 0]]]],
+      }),
+    );
+    let choices = {};
+    const naming = deferred<void>();
+    f.held.set("thread/name/set", naming.promise);
+    const turn = (text: string) => {
+      const d = f.delivery(text);
+      return f.runtime.run({
+        ...d,
+        agent: { ...d.agent, promptSections: () => choices },
+      } as Delivery);
+    };
+    await turn("hello");
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "thread/name/set")).toBe(
+        true,
+      ),
+    );
+    choices = { owner: { progress: { mode: "off" } } };
+    naming.resolve();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    // This turn was composed before the save, so it is told nothing.
+    expect(context(f.starts()[0])).not.toContain("<base-section-updates>");
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(savedPrompts(f.storage)[0]?.[1]).toHaveLength(1);
+    // The next turn is told, and its saved prompt shows it.
+    await turn("again");
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(context(f.starts()[1])).toContain(
+      "## Progress\n</base-section-updates>",
+    );
+    expect(savedPrompts(f.storage)[0]?.[1]).toHaveLength(2);
+  });
+
+  it("gives a voice seat's resumed thread the sections that changed, at both starts, and shows them in its saved prompt", async () => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const started = {
+      layout: 1,
+      parts: { ...current.parts, progress: "older" },
+    };
+    // A room's conversation is keyed by the room twice.
+    const room = JSON.stringify(["channel", "channel"]);
+    const f = fixture();
+    f.storage.set(
+      bindings,
+      JSON.stringify({
+        [room]: {
+          threadId: "kept",
+          workspace: "/tmp/codex-test",
+          sections: started,
+        },
+      }),
+    );
+    f.storage.set(
+      `buzz.session-prompts.v1:codex:${pubkey}`,
+      JSON.stringify({
+        version: 1,
+        texts: ["The first prompt."],
+        sessions: [["kept", [["base", 0]]]],
+      }),
+    );
+    f.huddleChannels.add("channel");
+    const d = f.delivery("unused");
+    const connection = await f.runtime.voice(
+      {
+        config: d.config,
+        agent: { ...d.agent, config: d.config } as unknown as Agent,
+        conversation: { channelId: "channel" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ threadId: "kept" });
+    const injected = (
+      f.sent.find((wire) => wire.method === "thread/inject_items")?.params as
+        | { items: { content: { text: string }[] }[] }
+        | undefined
+    )?.items[0]?.content[0]?.text;
+    expect(injected).toContain(
+      "<base-section-updates>\nThese sections replace",
+    );
+    // Realtime start adds its instructions as a later developer message, so
+    // they must not say that no sections changed.
+    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toBe(injected);
+    const [[, parts]] = savedPrompts(f.storage) as [
+      [string, [string, string][]],
+    ];
+    expect(parts.at(-1)?.[0]).toMatch(/^base-section-updates \d{4}-/);
+    // The thread keeps what it started with.
+    expect(JSON.parse(f.storage.get(bindings) ?? "{}")[room].sections).toEqual({
+      ...started,
+      // A room is a whole conversation.
+      shown: composeBase({ scope: "thread", place: "conversation" }).key,
+    });
+    await connection.close();
+  });
+
+  it("does not carry what an old thread's saved prompt showed to its fresh replacement", async () => {
+    const f = resumed({
+      layout: 1,
+      parts: { ...current.parts, progress: "older" },
+      shown: "the sections of an earlier turn",
+    });
+    // The kept thread's rollout is gone, so a fresh thread replaces it.
+    f.failures.set("thread/resume", "no rollout found for thread id kept");
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(binding(f).threadId).not.toBe("kept");
+    expect(binding(f).sections).toEqual({ layout: 1, parts: current.parts });
+  });
+
+  it("continues a thread saved before its sections were kept, with no update", async () => {
+    const f = resumed();
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+    expect(context(f.starts()[0])).not.toContain("base-section-updates");
+    // The binding is saved again once the turn is accepted.
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(binding(f)).toMatchObject({ threadId: "kept" });
+    expect(binding(f)).not.toHaveProperty("sections");
+  });
+
+  describe("when the owner chose other sections", () => {
+    const choices = {
+      owner: {
+        progress: { mode: "off" },
+        etiquette: { mode: "custom", text: "Be brief." },
+      },
+    } as const;
+    const chosen = composeBase({ scope: "thread", place: "thread" }, choices);
+    /** A delivery to the agent as the host hands it the owner's choices. */
+    const delivery = (f: ReturnType<typeof fixture>, content: string) => {
+      const result = f.delivery(content);
+      return {
+        ...result,
+        agent: { ...result.agent, promptSections: () => choices },
+      } as Delivery;
+    };
+    const instructions = (f: ReturnType<typeof fixture>) =>
+      String(
+        (
+          f.sent.find((wire) => wire.method === "thread/start")?.params as
+            | { developerInstructions?: string }
+            | undefined
+        )?.developerInstructions,
+      );
+
+    it("starts a new thread on them", async () => {
+      const f = fixture();
+      await f.runtime.run(delivery(f, "first"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(instructions(f)).toContain(
+        '\n\n## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>\n\n## ',
+      );
+      expect(instructions(f)).not.toContain("## Progress");
+      expect(binding(f).sections).toEqual({ layout: 1, parts: chosen.parts });
+      expect(context(f.starts()[0])).not.toContain("base-section-updates");
+    });
+
+    it("sends them to a thread that started on the default ones", async () => {
+      const f = resumed({ layout: 1, parts: current.parts });
+      await f.runtime.run(delivery(f, "hello"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+      expect(context(f.starts()[0])).toContain(
+        '\n\n## Progress\n\n## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>\n</base-section-updates>',
+      );
+      expect(binding(f).sections).toEqual({
+        layout: 1,
+        parts: current.parts,
+        shown: chosen.key,
+      });
+    });
+
+    // Its prompt has no sections for an update to name, so it cannot be
+    // told which ones are off or replaced.
+    it("starts a thread saved before its sections were kept over, once", async () => {
+      const f = resumed();
+      await f.runtime.run(delivery(f, "hello"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(
+        false,
+      );
+      expect(instructions(f)).toContain('<owner-section id="etiquette">');
+      expect(binding(f).threadId).not.toBe("kept");
+      expect(binding(f).sections).toEqual({ layout: 1, parts: chosen.parts });
+      f.complete(0, "DONE");
+      await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+      await f.runtime.run(delivery(f, "again"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(
+        f.sent.filter((wire) => wire.method === "thread/start"),
+      ).toHaveLength(1);
+    });
+  });
+});
+
 describe("a conversation given its own folder", () => {
   const folders = (missing = new Set<string>()) =>
     vi.fn(async (path: string, options?: { create?: boolean }) => {
@@ -8776,6 +9202,129 @@ describe("a conversation given its own folder", () => {
     );
     return f;
   };
+
+  it("tells a Solo chat that works there to read its Canvas's folders, not to make a worktree", async () => {
+    const f = await withFolder(folders(), "/repos/worktree", "channel");
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    await f.runtime.run(f.delivery("@Codex solo", root));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      String(
+        (
+          f.sent.find((wire) => wire.method === "thread/start")?.params as
+            | { developerInstructions?: string }
+            | undefined
+        )?.developerInstructions,
+      ),
+    ).toContain(
+      "This conversation has its own folder, and it is your working directory.",
+    );
+    const turn = inputText(f.starts()[0]);
+    expect(turn).toContain(
+      "These folders hold code that is relevant to this chat: `/repos/app`, `/repos/trees`. They are for reading.",
+    );
+    expect(turn).not.toContain("create a new worktree");
+  });
+
+  it("states the Canvas's rule from a folder that the chat's admission assigned", async () => {
+    // Another conversation's folder: this chat has none when its Canvas is read.
+    const f = await withFolder(folders(), "/repos/other", `other/${root}`);
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    await f.runtime.run({
+      ...f.delivery("@Codex solo", root),
+      prepareSession: async () => {
+        await assignConversationFolder(
+          f.store,
+          scope,
+          pubkey,
+          "channel",
+          "/repos/worktree",
+        );
+        return undefined;
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const turn = inputText(f.starts()[0]);
+    expect(turn).toContain(
+      "These folders hold code that is relevant to this chat: `/repos/app`, `/repos/trees`. They are for reading.",
+    );
+    expect(turn).not.toContain("create a new worktree");
+  });
+
+  it("steers a Solo chat's running turn with the Canvas rule of where it works", async () => {
+    // Another conversation's folder: this chat has none as its turn starts.
+    const f = await withFolder(folders(), "/repos/other", `other/${root}`);
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    await f.runtime.run(f.delivery("@Codex first", root));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(inputText(f.starts()[0])).toContain("create a new worktree");
+    // Assigned while that turn runs in the agent's workspace.
+    await assignConversationFolder(
+      f.store,
+      scope,
+      pubkey,
+      "channel",
+      "/repos/worktree",
+    );
+    await f.runtime.run(f.delivery("@Codex more", root));
+    const steer = () => f.sent.find((wire) => wire.method === "turn/steer");
+    await vi.waitFor(() => expect(steer()).toBeDefined());
+    expect(inputText(steer())).toContain("create a new worktree");
+    expect(inputText(steer())).not.toContain("They are for reading.");
+  });
+
+  it("keeps the Canvas's worktree rule for a community session when the chat kept a folder", async () => {
+    // Assigned while the agent's sessions were per conversation: a community
+    // session works in the agent's workspace instead.
+    const f = await withFolder(folders(), "/repos/worktree", "channel");
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    const d = f.delivery("@Codex solo", root);
+    await f.runtime.run({ ...d, config: scoped(d).config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const turn = inputText(f.starts()[0]);
+    expect(turn).toContain("create a new worktree");
+    expect(turn).not.toContain("They are for reading.");
+  });
 
   it("starts its thread there and names the agent's workspace", async () => {
     const resolveDirectory = folders();

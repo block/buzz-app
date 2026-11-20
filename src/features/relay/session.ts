@@ -1992,8 +1992,11 @@ export function createRelaySession(
   })();
   let legacyWorkspaceEpoch = new AbortController();
   let legacyWorkspaceCache: SidebarGroups | undefined;
+  // Workspaces the old Solo sidebar listed; they keep its Show more cap.
+  let legacySoloCache: readonly string[] | undefined;
   function invalidateLegacyWorkspaces() {
     legacyWorkspaceCache = undefined;
+    legacySoloCache = undefined;
     legacyWorkspaceEpoch.abort(
       new Error("Saved workspaces changed while loading. Try again."),
     );
@@ -2007,7 +2010,11 @@ export function createRelaySession(
     const decode = transport?.decodeSidebarPreferences;
     if (!transport?.workspaceMigration || !decode) return undefined;
     const epoch = legacyWorkspaceEpoch;
-    if (!fresh && legacyWorkspaceCache) return { groups: legacyWorkspaceCache };
+    if (!fresh && legacyWorkspaceCache)
+      return {
+        groups: legacyWorkspaceCache,
+        soloWorkspaces: legacySoloCache ?? [],
+      };
     const active = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
     const [team, solo] = await Promise.allSettled([
       preferenceReader
@@ -2030,9 +2037,14 @@ export function createRelaySession(
       channelKit.readLegacyGroups(active),
     ]);
     signal.throwIfAborted();
+    const soloWorkspaces =
+      solo.status === "fulfilled"
+        ? (solo.value?.groups.map(({ id }) => id) ?? [])
+        : undefined;
     if (team.status === "rejected")
       return solo.status === "fulfilled"
         ? {
+            soloWorkspaces,
             partial: mergeLegacyWorkspaces(
               { sections: [], assignments: {} },
               solo.value,
@@ -2046,8 +2058,11 @@ export function createRelaySession(
     } catch {
       return { partial: team.value };
     }
-    if (legacyWorkspaceEpoch === epoch) legacyWorkspaceCache = groups;
-    return { groups };
+    if (legacyWorkspaceEpoch === epoch) {
+      legacyWorkspaceCache = groups;
+      legacySoloCache = soloWorkspaces;
+    }
+    return { groups, soloWorkspaces };
   }
   const readPreferences = async (
     signal?: AbortSignal,
@@ -2080,17 +2095,22 @@ export function createRelaySession(
       consistency,
       true,
     );
-    if (current.sectionOrder) return current;
     const legacy = await loadingLegacy;
+    const solo = legacy?.soloWorkspaces?.length
+      ? { soloWorkspaces: legacy.soloWorkspaces }
+      : {};
+    if (current.sectionOrder) return { ...current, ...solo };
     if (!legacy?.groups)
       return {
         ...current,
         ...legacy?.partial,
+        ...solo,
         workspaceMigrationPending: true as const,
       };
     return {
       ...current,
       ...projectWorkspaceGroups(workspaceBaseRecord(legacy.groups)),
+      ...solo,
     };
   };
   function workspaceWrite<T>(

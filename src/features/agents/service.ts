@@ -124,6 +124,8 @@ import {
   forgetConversationInstructions,
   setConversationInstructions as storeInstructions,
 } from "./conversation-instructions";
+import type { SectionChoices } from "../agent-harness/sections/choices";
+import { ownerChoices } from "./prompt-sections";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -689,6 +691,10 @@ export type AgentHandle = Readonly<{
     channelId: string,
     root?: string,
   ): TurnInstructions | undefined;
+  /** The choices for the sections of the agent's base prompt, read when a
+   * prompt is built. A harness passes them to the builder and reads no
+   * storage itself. */
+  promptSections?(): SectionChoices;
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -3021,6 +3027,7 @@ export class AgentsService extends Service implements Agents {
       instructions: (agent) => this.turnInstructions(agent),
       conversationInstructions: (agent, channelId, root) =>
         this.turnConversationInstructions(agent, channelId, root),
+      promptSections: () => ({ owner: ownerChoices(this.storage) }),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.

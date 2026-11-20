@@ -5,6 +5,7 @@ import {
   useEffectEvent,
   useId,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -269,6 +270,7 @@ export function ToastNotice({
   );
   const dismissed = useEffectEvent(() => onDismiss?.());
   const dismissible = timeout > 0 || !!onDismiss;
+  const closeNotice = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
     let active = true;
     let closed = false;
@@ -278,6 +280,7 @@ export function ToastNotice({
       source.update(null);
       dismissed();
     };
+    closeNotice.current = onClose;
     toast.custom(() => <NoticeContent source={source} />, {
       id,
       toasterId,
@@ -287,6 +290,7 @@ export function ToastNotice({
     });
     return () => {
       active = false;
+      closeNotice.current = undefined;
       source.update(null);
       toast.dismiss(id);
     };
@@ -311,6 +315,7 @@ export function ToastNotice({
       onClose: dismissible
         ? () => {
             toast.dismiss(id);
+            closeNotice.current?.();
           }
         : undefined,
     });

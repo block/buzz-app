@@ -47,7 +47,7 @@ import {
   hasSoloDraft,
   useSoloDraftProjects,
 } from "../../features/solo/draft-projects";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { SpringLoadedNavigationItem } from "../../features/channel-navigation/SpringLoadedNavigationItem";
 import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
@@ -118,7 +118,15 @@ import { useHiddenDms } from "./useHiddenDms";
 import { resurfaceHiddenDms } from "../../features/relay/dm-resurfacing";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { useSidebarView } from "./useSidebarView";
-import { useSidebarFilters } from "./useSidebarFilters";
+import { useSidebarFilters, useUnreadChannelIds } from "./useSidebarFilters";
+import {
+  capSections,
+  SECTION_ROW_STEP,
+  sectionOverflowCandidates,
+  useHoldOverflow,
+  useSectionLimits,
+} from "./sidebar-section-caps";
+import { SectionShowMore } from "./SectionShowMore";
 import {
   sidebarSections,
   contributedSidebarSectionKey,
@@ -679,8 +687,9 @@ export function ChannelInventory({
         draft?.linked === currentDraft.linked &&
         draft?.project === currentDraft.project;
       return [
-        <NavigationItem
+        <SpringLoadedNavigationItem
           key={draft?.linked ?? draft?.project ?? "new-chat"}
+          onSpring={() => void navigator.open(destination)}
           label="New chat"
           aria-description="Unsent draft"
           selected={selected}
@@ -918,7 +927,7 @@ export function ChannelInventory({
         : sections,
     [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
   );
-  const filteredSections = useSidebarFilters(
+  const unfoldedSections = useSidebarFilters(
     sortedSections
       .filter(({ key }) => !workspaceFrames.has(key))
       .map((section) =>
@@ -943,6 +952,33 @@ export function ChannelInventory({
       ),
     ),
     list.activityStatus === "ready",
+  );
+  // A capped section never hides the open chat, one being renamed, or one
+  // that needs the viewer; filters choose the rows, the cap only shortens them.
+  const sectionLimits = useSectionLimits(
+    scope,
+    preferences.data?.soloWorkspaces,
+  );
+  const unreadOverflow = useUnreadChannelIds(
+    queries.unread,
+    JSON.stringify(
+      sectionOverflowCandidates(unfoldedSections, sectionLimits.limits),
+    ),
+    true,
+  );
+  const filteredSections = capSections(
+    unfoldedSections,
+    sectionLimits.limits,
+    (id) =>
+      id === current?.id ||
+      id === renamingChat ||
+      workingChannels.has(id) ||
+      unreadOverflow.has(id),
+    sectionLimits.held,
+  );
+  useHoldOverflow(
+    filteredSections.flatMap(({ overflow }) => overflow),
+    sectionLimits.hold,
   );
   const firstChannelSection = filteredSections.find(({ key }) =>
     isChannelSectionKey(key),
@@ -984,12 +1020,34 @@ export function ChannelInventory({
       sidebar.toggle(channelSectionKey(channelId), true);
     setRowFocus(channelId);
   };
+  // Show more and Show fewer each unmount once spent; focus stays on their
+  // row, or moves to the section's last row when nothing is left to show.
+  const [stepFocus, setStepFocus] = useState<string>();
+  useLayoutEffect(() => {
+    if (stepFocus === undefined) return;
+    setStepFocus(undefined);
+    const root = sidebar.list.current;
+    const row = root?.querySelector<HTMLElement>(
+      `[data-section-show-more="${CSS.escape(stepFocus)}"]`,
+    );
+    if (row?.contains(document.activeElement)) return;
+    const target =
+      row?.querySelector<HTMLElement>("button") ??
+      activeChannelRows(
+        root?.querySelector(
+          `[data-sidebar-section="${CSS.escape(stepFocus)}"]`,
+        ),
+      ).at(-1);
+    target?.focus({ preventScroll: true });
+  }, [stepFocus, sidebar.list]);
   const moveChannel = (
     channelId: string,
     operation: () => Promise<unknown>,
     surface?: ChannelMenuSurface,
   ) => {
     const saving = operation(); // Publishes optimistic placement synchronously.
+    // A moved row stays listed past its new section's cap until it folds.
+    sectionLimits.hold([channelId]);
     if (surface) {
       surface.close();
       surface.focus();
@@ -1363,9 +1421,11 @@ export function ChannelInventory({
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       readAction.reset();
       removedRowFocus.current = undefined;
+      // A row whose menu is open stays listed past its section's cap.
+      sectionLimits.hold([channel.id]);
       openMenu(channel, sectionKey, anchor);
     },
-    [openMenu, readAction.reset],
+    [openMenu, readAction.reset, sectionLimits.hold],
   );
   const closeRowMenu = useCallback(() => {
     readAction.reset();
@@ -1772,6 +1832,10 @@ export function ChannelInventory({
     team: (children) => (
       <ChannelSidebarDnd
         writable={placementWritable}
+        // A dragged row stays listed past its section's cap until it folds.
+        onDragStart={(id, group) => {
+          if (!group) sectionLimits.hold([id]);
+        }}
         onCreateSection={(channelId) => {
           const channel = sidebarChannels.find(({ id }) => id === channelId);
           // Finish releasing the pointer before giving the modal its focus.
@@ -2172,6 +2236,28 @@ export function ChannelInventory({
                             }),
                           ]}
                         </ChannelSidebarRows>
+                        <SectionShowMore
+                          sectionKey={section.key}
+                          title={section.title}
+                          cap={section.cap}
+                          more={() => {
+                            sectionLimits.change(
+                              section.key,
+                              (section.cap.limit === "all"
+                                ? 0
+                                : section.cap.limit) + SECTION_ROW_STEP,
+                            );
+                            setStepFocus(section.key);
+                          }}
+                          fewer={() => {
+                            sectionLimits.change(
+                              section.key,
+                              0,
+                              section.allRows.map(({ id }) => id),
+                            );
+                            setStepFocus(section.key);
+                          }}
+                        />
                       </DroppableSidebarSection>
                     );
                   }}

@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { clearNativeMedia } from "./native";
 import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
@@ -283,6 +284,8 @@ export function provideRelay(
     if (kind !== "sign-in") {
       await store.clearCache();
       if (resume) {
+        // Saved images are optional; failing to forget them keeps the rest.
+        await clearNativeMedia(resume.scope).catch(() => {});
         const disk = createHeadPersistence(resume.viewer, resume.scope);
         try {
           await disk.clear();
@@ -545,6 +548,8 @@ export function provideRelay(
         .then(async () => {
           await retainedStore.clearCache();
           if (resume) {
+            // Saved images are optional; failing to forget them keeps the rest.
+            await clearNativeMedia(resume.scope).catch(() => {});
             const disk = createHeadPersistence(resume.viewer, resume.scope);
             try {
               await disk.clear();

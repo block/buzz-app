@@ -8,6 +8,7 @@ import {
   verifiedProfileDiscovery,
 } from "./verified-profile";
 import { nativeSocket } from "./native-socket";
+import { nativeIdentityEnabled } from "../identity/service";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
@@ -189,6 +190,12 @@ function nativeResponse(result: {
  * which signs each Blossom `get`, including every `Range` request. */
 export function nativeMediaUrl(url: string): string {
   return convertFileSrc(url, "buzz-media");
+}
+
+/** Forgets the images the native `buzz-media` scheme saved for a community. */
+export async function clearNativeMedia(community: string) {
+  if (!nativeIdentityEnabled()) return;
+  await nativeReadInvoke("media_cache_clear", { community });
 }
 
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.

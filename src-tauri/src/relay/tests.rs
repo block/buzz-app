@@ -2432,6 +2432,33 @@ fn assert_strict(event: &serde_json::Value, verb: &str, server: &str) {
 }
 
 #[tokio::test]
+async fn saved_images_are_served_without_a_relay_read_until_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = MediaCache::new(Some(dir.path().into()));
+    let host = IdentityHost::fixture();
+    let (base, paths) = thumbnail_server("404 Not Found");
+    let webp = base
+        .join(&format!("/media/{}.thumb.webp", "a".repeat(64)))
+        .unwrap();
+    let read = || cached_media(&cache, &host, None, webp.clone());
+    assert_eq!(read().await.unwrap().body(), b"jpeg");
+    // The fallback is saved under the requested URL, in the background.
+    for _ in 0..200 {
+        if cache.get(&webp).is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let saved = read().await.unwrap();
+    assert_eq!(saved.body(), b"jpeg");
+    assert_eq!(saved.headers()["content-type"], "image/jpeg");
+    assert_eq!(paths.lock().unwrap().len(), 2);
+    cache.clear(&base).unwrap();
+    assert_eq!(read().await.unwrap().body(), b"jpeg");
+    assert_eq!(paths.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     let (base, task) = fixture_server(
         "HTTP/1.1 206 Partial Content\r\nContent-Type: text/html\r\nContent-Range: bytes 0-3/10\r\nContent-Length: 4\r\nConnection: close\r\n\r\n<b>x".into(),

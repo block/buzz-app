@@ -31,6 +31,8 @@ pub(crate) use channel_writes::{
 };
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
+mod media_cache;
+pub(crate) use media_cache::MediaCache;
 mod media_preparation;
 mod media_spool;
 mod reminders;
@@ -1834,8 +1836,10 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         .state::<FederatedIdentity>()
         .inner()
         .clone();
+    let cache = ctx.app_handle().state::<MediaCache>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
+            Ok((url, None)) => cached_media(&cache, &host, Some(&fi), url).await,
             Ok((url, range)) => serve_media(&host, Some(&fi), url, range)
                 .await
                 .map(|(_, response)| response),
@@ -1854,6 +1858,59 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         }
         responder.respond(response);
     });
+}
+
+/// A whole image from disk, or from the relay and then saved to disk. Ranged
+/// reads (video and audio) and other types are never stored.
+async fn cached_media(
+    cache: &MediaCache,
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let read = cache.clone();
+    let key = url.clone();
+    if let Ok(Some((kind, body))) =
+        tauri::async_runtime::spawn_blocking(move || read.get(&key)).await
+    {
+        return media_headers(kind, false)
+            .status(200)
+            .body(body)
+            .map_err(|_| 502);
+    }
+    let ticket = cache.ticket();
+    let (_, response) = serve_media(host, fi, url.clone(), None).await?;
+    let kind = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .filter(|kind| kind.starts_with("image/"))
+        .map(str::to_owned);
+    if let Some(kind) = kind.filter(|_| {
+        response.status() == 200 && !response.headers().contains_key("content-disposition")
+    }) {
+        let cache = cache.clone();
+        let body = response.body().clone();
+        // A full or unwritable disk only costs the next launch a refetch.
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = cache.put(&url, ticket, &kind, &body);
+        });
+    }
+    Ok(response)
+}
+
+/// Forgets the images this device saved for one community.
+#[tauri::command]
+pub(crate) async fn media_cache_clear(
+    cache: tauri::State<'_, MediaCache>,
+    community: String,
+) -> Result<()> {
+    let origin = Url::parse(&community).map_err(|_| "Invalid community URL")?;
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || cache.clear(&origin))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("Couldn't clear saved media: {error}"))
 }
 
 /// The serialized origin of a window's page (`tauri://localhost`,

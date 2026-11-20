@@ -817,6 +817,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         file_download,
         media_download,
+        relay::media_cache_clear,
         media_copy_image,
         media_lift_subject,
         subject_lift::media_lift_subject_supported,
@@ -1112,6 +1113,12 @@ pub fn run() {
             }
             deep_links::setup(app.handle());
             mesh_compute::setup(app.handle());
+            app.manage(relay::MediaCache::new(
+                app.path()
+                    .app_cache_dir()
+                    .ok()
+                    .map(|path| path.join("media")),
+            ));
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()

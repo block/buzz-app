@@ -408,6 +408,65 @@ it.each(["unchanged", "different", "re-entered"] as const)(
   },
 );
 
+it("recovers a peer draft when saved storage is unreadable at Huddle acknowledgement", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  writeView(h.scope, "draft:room", mentionDraft("Send this"));
+  const peerDraft = mentionDraft("Unsent peer edit");
+  const getItem = Storage.prototype.getItem;
+  let readBlocked = false;
+  const reads = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (
+        readBlocked &&
+        this === localStorage &&
+        key.startsWith("buzz-view.v1:") &&
+        key.endsWith(',"draft:room"]')
+      )
+        throw new DOMException("Storage access denied", "SecurityError");
+      return getItem.call(this, key);
+    });
+  cleanup.push(() => reads.mockRestore());
+  const stop = subscribeView(
+    h.scope,
+    (_key, removed) => {
+      if (!removed?.length) return;
+      stop();
+      writeView(h.scope, "draft:room", peerDraft);
+      readBlocked = true;
+    },
+    "draft:room",
+  );
+  cleanup.push(stop);
+  const sent = vi.fn();
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+      label: "Huddle draft",
+      onSend: sent,
+    }),
+  );
+  const editor = screen.getByRole("textbox", { name: "Huddle draft" });
+  await waitFor(() => expect(editor).toHaveTextContent("Send this"));
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
+  const retry = await screen.findByRole("button", {
+    name: "Retry draft cleanup",
+  });
+  readBlocked = false;
+  fireEvent.click(retry);
+  expect(editor).toHaveTextContent(peerDraft.text);
+  expect(
+    screen.queryByRole("button", { name: "Retry draft cleanup" }),
+  ).toBeNull();
+  expect(readView(h.scope, "draft:room", null)).toEqual(peerDraft);
+  expect(h.send).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a peer draft saved while a detached send prepares its files", async () => {
   const h = harness();
   const { remote } = await h.connect();

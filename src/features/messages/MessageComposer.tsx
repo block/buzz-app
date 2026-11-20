@@ -1358,9 +1358,13 @@ function Composer({
     if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
       return "changed";
     const serialized = JSON.stringify(next);
-    writing.current = true;
     const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
+    if (acceptedDraft?.retiredByOwner && current === undefined) {
+      setStorageFailed(true);
+      return "failed";
+    }
+    writing.current = true;
     // Another writer can already have saved the same draft.
     let result = acceptedDraft?.retiredByOwner
       ? current === serialized
@@ -1943,12 +1947,14 @@ function Composer({
       (pending.revision !== null || viewRevision(scope, draftKey) !== null)
     )
       return;
+    const peerRevision =
+      result === "changed" ? viewRevision(scope, draftKey) : undefined;
+    if (result === "changed" && peerRevision === undefined) return;
     recoveryFor(session).delete(recoveryKey);
     setAccepted(undefined);
-    if (result === "changed") {
-      // Another editor owns this revision. Acceptance cannot erase its work.
-      const current = viewRevision(scope, draftKey);
-      if (current !== undefined) loadSaved(current);
+    // Another editor owns this revision. Acceptance cannot erase its work.
+    if (peerRevision !== undefined) {
+      loadSaved(peerRevision);
       return;
     }
     dirty.current = false;

@@ -895,7 +895,13 @@ export function createTabs({
       return (
         transcript && {
           ...transcript,
-          turns: runtime.prompts(agent.key).shown(transcript.turns),
+          turns: runtime
+            .prompts(agent.key)
+            .shown(
+              row.channelId
+                ? runtime.readableTurns(agent.key, row, transcript.turns)
+                : transcript.turns,
+            ),
         }
       );
     };
@@ -957,13 +963,14 @@ export function createTabs({
       () => runtime.prompts(agent.key).sessions(),
       [agent.key, live],
     );
-    const { conversations, standalone } = activityRows(
+    const { conversations: all, standalone } = activityRows(
       saved,
       live,
       starts,
       (id) => runtime.channelLabel(agent.key, id),
       (key) => runtime.source(agent.key, key),
     );
+    const conversations = runtime.readableRows(agent.key, all);
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
     // With neither, its transcript finds the place's sessions by their goose

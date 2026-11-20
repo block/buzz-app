@@ -48,7 +48,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   const runtime = new CodexRuntime(
     start,
-    (key) => ownerReads(ctx.agents.relay(key), pubkeyOf(key)),
+    (key) =>
+      ctx.agents.conversationReads?.(key) ??
+      ownerReads(ctx.agents.relay(key), pubkeyOf(key)),
     (key, signal) => ctx.agents.core(key, signal),
     ctx.agents.storage,
     (raw, remote) => providerController.resolve(raw, remote),
@@ -83,7 +85,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey) => ctx.agents.handle(pubkey),
     ctx.host.resolveDirectory?.bind(ctx.host),
     (agent, signal, channelId) =>
-      readyOwnerReads(ctx.agents.relay(agent.key), agent, signal, channelId),
+      readyOwnerReads(
+        ctx.agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        ctx.agents.conversationReads?.(agent.key),
+      ),
   );
   // Failed turns' notices link to where Codex signs in.
   runtime.explain = (notice) =>

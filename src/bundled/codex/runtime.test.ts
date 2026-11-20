@@ -5298,7 +5298,7 @@ it.each([false, true])(
   },
 );
 
-it("lists saved conversations newest first from storage, and moves a started one to the front", async () => {
+it("lists readable saved conversations newest first from storage, and moves a started one to the front", async () => {
   const f = fixture();
   const thread = JSON.stringify(["channel", root]);
   const channel = JSON.stringify(["channel", "channel"]);
@@ -5313,13 +5313,6 @@ it("lists saved conversations newest first from storage, and moves a started one
     }),
   );
   expect(f.runtime.conversations(pubkey)).toEqual([
-    {
-      key: elsewhere,
-      channelId: "unlisted",
-      root,
-      threadId: "newer",
-      at: 2,
-    },
     {
       key: thread,
       channelId: "channel",

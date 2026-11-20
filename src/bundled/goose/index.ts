@@ -45,6 +45,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     repositoriesContext,
     agents.storage,
     recommended,
+    agents.conversationReads,
   );
   const desktop =
     host.spawn && host.resolveDirectory

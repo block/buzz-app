@@ -28,7 +28,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
   const runtime = new PiRuntime(
     host,
-    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key) =>
+      agents.conversationReads?.(key) ??
+      ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     () => agents.tools(),
     repositoriesContext,
@@ -55,7 +57,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // providers, as the runner sends every turn without the gateway.
     upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
     (agent, signal, channelId) =>
-      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
+      readyOwnerReads(
+        agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        agents.conversationReads?.(agent.key),
+      ),
   );
   ctx.agentProtection.registerModels({
     label: "Pi",

@@ -47,8 +47,15 @@ import {
 import { compactAt } from "../../features/agents/compact-at";
 import { workflowOf } from "../../features/agents/owner-attestation";
 import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import {
   ownerReads,
   readyOwnerReads,
+  type AgentReads,
   workflowMarked,
 } from "../../features/agents/reads";
 import {
@@ -83,7 +90,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { ownerCanvas, readProject } from "../../features/agent-harness/project";
+import { readProject } from "../../features/agent-harness/project";
 import {
   type GooseProcess,
   REQUEST_TIMEOUT_MS,
@@ -225,9 +232,18 @@ export class GooseRuntime {
     private readonly agentStore: AgentStore = localStore(),
     /** What agents on Recommended run on; found at the first such run. */
     private readonly recommended?: RecommendedRun,
+    private readonly conversationReads?: (
+      key: AgentKey,
+    ) => AgentReads | undefined,
   ) {
     // Once found, agents on Recommended take it up.
     this.unfollow = recommended?.subscribe(() => this.sync(this.synced));
+  }
+  private reads(key: AgentKey) {
+    return (
+      this.conversationReads?.(key) ??
+      ownerReads(this.relay(key), pubkeyOf(key))
+    );
   }
   private readonly unfollow: (() => void) | undefined;
   private synced: readonly Agent[] = [];
@@ -374,9 +390,22 @@ export class GooseRuntime {
   }
   /** The community's current name and kind for a channel, if it lists it. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return ownerReads(this.relay(agent), pubkeyOf(agent))?.channelLabel(
-      channelId,
-    );
+    return ownerLabel(this.reads(agent), channelId);
+  }
+  /** The conversations among `rows` its owner can read. */
+  readableRows<T extends Readonly<{ channelId: string; community?: true }>>(
+    agent: AgentKey,
+    rows: readonly T[],
+  ) {
+    return ownerRows(rows, this.reads(agent));
+  }
+  /** The turns of `place` its owner can read. */
+  readableTurns<T extends TranscriptTurn>(
+    agent: AgentKey,
+    place: Readonly<{ channelId: string; community?: true }>,
+    turns: readonly T[],
+  ) {
+    return ownerTurns(turns, this.reads(agent), place);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -492,8 +521,9 @@ export class GooseRuntime {
             agent,
             signal,
             channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+            this.reads(agent.key),
           )
-        : ownerReads(this.relay(agent.key), agent.pubkey);
+        : this.reads(agent.key);
       if (ready) {
         signal.throwIfAborted();
         if (current && !current()) return ignored?.();
@@ -995,12 +1025,9 @@ export class GooseRuntime {
     admitted?: string,
     current = () => true,
   ) {
-    const snapshot = this.relay(agent.key)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary =
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId);
-    const dm = summary?.channelType === "dm";
+    const reads = this.reads(agent.key);
+    const summary = await reads?.channel(channelId);
+    const dm = summary?.dm === true;
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     // A Solo chat is one conversation, as a DM is.
@@ -1022,31 +1049,24 @@ export class GooseRuntime {
         : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
+    const canvas = reads?.canvas;
     const reading = solo
       ? readProject(
-          session && owner
-            ? () =>
-                ownerCanvas(
-                  session.canvas,
-                  owner,
-                  channelId,
-                  session.channelWrites.startingCanvas(channelId),
-                )
-            : undefined,
+          canvas && owner ? () => canvas(channelId, owner) : undefined,
         )
       : Promise.resolve(undefined);
     const threadRead = (thread || (resumed && !dm)) && !topLevel;
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm || topLevel || resumed))
+    if (reads && (thread || dm || topLevel || resumed))
       try {
-        const events = await session.read(
+        const events = await reads.read(
           threadRead
             ? [
                 { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          { signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS) },
+          AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
         );
         earlier = events
           .filter(
@@ -1067,7 +1087,6 @@ export class GooseRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
     const signingAuthority = reads?.workflowAuthority();
     const [names, loadedProject] = await Promise.all([
       readAuthorNames(
@@ -1286,7 +1305,7 @@ export class GooseRuntime {
    * needed. */
   private memories(agent: AgentKey, slug?: string) {
     const pubkey = pubkeyOf(agent);
-    const reads = ownerReads(this.relay(agent), pubkey);
+    const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
@@ -1297,7 +1316,7 @@ export class GooseRuntime {
   }
   private forget(agent: AgentKey) {
     const pubkey = pubkeyOf(agent);
-    const reads = ownerReads(this.relay(agent), pubkey);
+    const reads = this.reads(agent);
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }

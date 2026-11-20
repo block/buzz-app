@@ -509,8 +509,10 @@ settles on the head commit, once per commit and result and again when a failure
 is run again, or when new feedback has been quiet for 90 seconds, and once more
 when the pull request merges or closes, so the agent can finish and retire its
 Interest. It also wakes for what nothing else would on the way to merging:
-merge conflicts; checks pending on one commit for 3 hours; an approved, green
-pull request that must catch up with its base; auto-merge turned off, or the
+merge conflicts; checks pending on one commit for 3 hours; losing its approval
+(GitHub wants a review again; it waits for running checks until they count as
+stuck, and changes requested come as that review's feedback instead); an
+approved, green pull request that must catch up with its base; auto-merge turned off, or the
 pull request leaving the merge queue, while it is open; and looking ready to
 merge (approved, checks that block merging passed, no conflicts or unresolved
 review threads, not a draft, auto-merge off). Recovering wakes nothing, a merge

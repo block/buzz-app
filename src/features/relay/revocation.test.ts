@@ -61,6 +61,15 @@ function setup(
   };
 }
 const filters = [{ kinds: [9], limit: 20 }];
+/** Grants channel "a" through a complete roster read, which starts the restore. */
+async function readRoster(h: ReturnType<typeof setup>) {
+  h.session.channels.ensureList();
+  h.next().respond([
+    roster(relay, "a", [viewer.pubkey], 10),
+    metadata(relay, "a", "a"),
+  ]);
+  await flush();
+}
 
 it("purges existing and newly opened broad/ID views through store denial, not just pending #h reads", async () => {
   const h = setup();
@@ -547,7 +556,7 @@ it.each(["disk read", "history verification", "profile verification"])(
       close: vi.fn(),
     };
     const h = setup({ prepared: true, persistence: disk }, verifyStored);
-    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    await readRoster(h);
     h.session.channels.ensure("a");
     const stale = h.next();
     const oldLoad = release;
@@ -938,7 +947,7 @@ it("a profile subscriber cannot restore a persisted head after revoking and regr
     h.emit([roster(relay, "a", [], 12)]);
     h.emit([roster(relay, "a", [viewer.pubkey], 13)]);
   });
-  h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+  await readRoster(h);
   await vi.waitFor(() => expect(revoked).toBe(true));
   await flush();
   expect(h.diagnostics().heads.entries).toBe(0);

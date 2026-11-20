@@ -335,6 +335,39 @@ it("restores the newest saved heads that fit and evicts the oldest first", async
     store.dispose();
   }
 });
+it("waits for the roster before restoring when a single-channel lookup answers first", async () => {
+  const saved = (id: string): SavedHead => ({
+    channelId: id,
+    savedAt: Date.now(),
+    events: head(id, `cached ${id}`),
+    profiles: [],
+  });
+  const disk = memoryDisk(["a", "b", "c"].map(saved));
+  const { queries, next, store, pending } = setup({ persistence: disk });
+  try {
+    queries.ensureList();
+    const roster = next();
+    // A lookup for one channel (as agent configuration makes) proves nothing
+    // about the others, so it must not start the restore.
+    void queries.resolve?.(["a"]);
+    const lookup = next();
+    lookup.respond(discovery(["a"]));
+    await flush();
+    roster.respond(discovery(["a", "b", "c"]));
+    await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(3));
+    expect(disk.retain).not.toHaveBeenCalledWith([]);
+    for (const id of ["a", "b", "c"]) {
+      queries.ensure(id);
+      expect(queries.window(id)).toMatchObject({
+        freshness: "cached",
+        rows: [{ content: `cached ${id}` }],
+      });
+    }
+    expect(pending.length).toBeGreaterThan(0);
+  } finally {
+    store.dispose();
+  }
+});
 it("storage failure does not block foreground reads", async () => {
   const disk = memoryDisk();
   disk.read = async () => {

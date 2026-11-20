@@ -1923,7 +1923,10 @@ export function createChannelStore(
     else commit();
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
-    if (prepared && !hydration) {
+    // Only a whole roster, saved or complete, can authorize the saved heads: a
+    // lookup for one channel would skip the rest, and the roster completing
+    // after the restore began would then discard every saved head.
+    if (prepared && !hydration && (cached || complete)) {
       const reveal = revealHydration;
       hydration = hydrate().finally(() => reveal?.());
     }

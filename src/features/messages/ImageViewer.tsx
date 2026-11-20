@@ -5,7 +5,8 @@ import { safeMessageUrl } from "../relay/message-content";
 import type { Attachment } from "../relay/contracts";
 
 export type ImageViewerProps = Readonly<{
-  /** An https image URL. Anything else shows nothing and calls `onClose`. */
+  /** An https image URL, relay-hosted media included. Anything else, or media
+   * the session cannot read, shows nothing and calls `onClose`. */
   src: string;
   /** Title in the viewer's header. */
   name?: string | undefined;
@@ -13,15 +14,22 @@ export type ImageViewerProps = Readonly<{
   onClose(): void;
 }>;
 
-/** The fullscreen image viewer for an image that is not a message attachment. */
-export function ImageViewer({ src, name, onClose }: ImageViewerProps) {
+/** The fullscreen image viewer for an image that is not a message attachment.
+ * `media` is the session's resolver, so relay-hosted media gets its signed read. */
+export function ImageViewer({
+  src,
+  name,
+  onClose,
+  media,
+}: ImageViewerProps & { media(url: string): string | undefined }) {
   const frame = useRef<HTMLElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const url = safeMessageUrl(src);
+  const source = url && media(url);
   useEffect(() => {
-    if (!url) onClose();
-  }, [url, onClose]);
-  if (!url) return null;
+    if (!source) onClose();
+  }, [source, onClose]);
+  if (!url || !source) return null;
   const title = name?.trim() || "Image";
   const attachment: Attachment = { url, name: title, kind: "image" };
   return (
@@ -38,7 +46,7 @@ export function ImageViewer({ src, name, onClose }: ImageViewerProps) {
         attachments={[attachment]}
         selectedUrl={url}
         select={() => {}}
-        media={() => url}
+        media={() => source}
         onOpenLink={() => false}
       />
     </MediaReviewFrame>

@@ -98,6 +98,15 @@ it("renders controlled native reply grouping through a retained reader's UI", as
 
 it("gives plugins the host image viewer for an image outside any message", async () => {
   const host = new Context();
+  const relayed = "https://relay.fixture.test/media/abc.png";
+  host.provide("relay", {
+    snapshot: () => ({
+      session: {
+        media: (url: string) =>
+          `/api/relay/media?url=${encodeURIComponent(url)}`,
+      },
+    }),
+  } as never);
   const runtime = new PluginRuntime(host, async () => ({ apply() {} }));
   const conversation = new ConversationService(host);
   dispose.push(async () => {
@@ -109,7 +118,7 @@ it("gives plugins the host image viewer for an image outside any message", async
     const [open, setOpen] = useState(true);
     return open
       ? createElement(conversation.ui.ImageViewer, {
-          src: "https://fixture.test/screenshot.png",
+          src: relayed,
           name: "Screenshot",
           onClose: () => setOpen(false),
         })

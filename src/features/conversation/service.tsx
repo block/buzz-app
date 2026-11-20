@@ -44,7 +44,7 @@ import {
   publishOutgoing,
   type OutgoingMessage,
 } from "../messages/outgoing-message";
-import { ImageViewer } from "../messages/ImageViewer";
+import { ImageViewer, type ImageViewerProps } from "../messages/ImageViewer";
 import type { RelaySession } from "../relay/session";
 import {
   ChannelMembersDialog,
@@ -128,7 +128,7 @@ export type Conversation = {
     /** Bounded document Markdown with host-owned link and image trust rules. */
     Markdown: (props: MarkdownProps) => ReactNode;
     /** Controlled fullscreen viewer for an https image that is not a message attachment. */
-    ImageViewer: typeof ImageViewer;
+    ImageViewer: (props: ImageViewerProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
      * own `Message` rows and `Composer`, without visiting the channel. */
@@ -337,7 +337,15 @@ export class ConversationService extends Service implements Conversation {
       MembersDialog: ChannelMembersDialog,
       GeneralAccess: ChannelGeneralAccess,
       DocumentEditor,
-      ImageViewer,
+      ImageViewer: (props: ImageViewerProps) => (
+        <ImageViewer
+          {...props}
+          media={(url) => {
+            const relay = this.ctx.reflect.get("relay");
+            return relay ? relay.snapshot().session.media(url) : url;
+          }}
+        />
+      ),
       Markdown: (props: MarkdownProps) => (
         <PluginMarkdown
           {...props}

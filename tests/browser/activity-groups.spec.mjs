@@ -1,7 +1,7 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
-import { virtuaIdle } from "./timeline.mjs";
+import { clickRow, virtuaIdle } from "./timeline.mjs";
 
 test("a long relayed message fits the chat before and after opening", async ({
   page,
@@ -319,12 +319,11 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       .toBeCloseTo(top, 0);
     await page.getByRole("button", { name: "Prepend history" }).click();
     await expect(messages).toHaveCount(18);
-    await expect(
-      history.getByRole("button", { name: /^Collapse activity history:/ }),
-    ).toBeVisible();
-    await history
-      .getByRole("button", { name: /^Collapse activity history:/ })
-      .click();
+    const collapseHistory = history.getByRole("button", {
+      name: /^Collapse activity history:/,
+    });
+    await collapseHistory.scrollIntoViewIfNeeded();
+    await clickRow(page, collapseHistory, history);
     await expect(messages).toHaveCount(0);
     await expect(
       history.getByRole("button", { name: /^Show activity history:/ }),

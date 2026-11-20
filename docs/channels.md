@@ -36,7 +36,10 @@ Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;
 another channel's thread uses the side pane. When that channel isn't readable
-there, it opens as a click would. Other internal `buzz://` links and links outside
+there, it opens as a click would. When the linked channel is withheld from the
+reader, the link, its preview card and **Open link** don't open anything, while
+**Copy link** and selection copy keep the URL; the link opens again once a recheck
+admits the reader. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -148,10 +151,20 @@ coordinates must satisfy the recipe contract.
 
 Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
 list. When the pinned rows run out of vertical space, scroll their area to see
-the rest. The conversation sections default to **Starred**, personal
-workspaces, **Solo**, **Team**, **Forums**, and **Direct messages**. Reorder them
-by dragging their headings or using **Move up** and **Move down**. The saved
-order syncs with workspace placement.
+the rest. The conversation sections default to **Solo**, **Starred**,
+workspaces, **Team** (channels and forums), and **Direct messages**. After an
+upgrade from the separate Solo and Team sidebars, the previous Solo workspaces come first,
+then **Solo**, **Starred**, the previous Team workspaces and **Team**.
+Reorder them by dragging their headings or using **Move up** and **Move down**.
+The saved order syncs with workspace placement.
+
+**Solo** and the workspaces listed in the legacy Solo record start capped at
+their newest 7 rows. **Show more** reveals the next hidden rows, up to 10;
+**Show fewer** returns to 7. Other sections, including workspaces created after
+the upgrade, start fully listed and offer **Show fewer** past 7 rows. The open
+chat, unread chats and chats an agent is working in stay listed past the cap.
+Limits are device-local view state; a Solo workspace's starting limit is saved
+there once the legacy Solo record has been read, with any step v1.0.5 saved.
 
 Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
 its home section. The row’s **Move to…** menu offers the same destinations.
@@ -186,9 +199,10 @@ Filtered sections with no visible channels show only their header, retaining the
 The currently open channel remains visible in its section regardless of its filter,
 however it was opened. Navigating away removes that exception. When a filter hides
 channels, the **Filter** submenu appends those eligible channels below its three
-options and a separator, in the existing section order; choosing one opens
-the section and channel without changing the filter. Choices reuse the sidebar's
-channel-type icons, unread emphasis, attention/thread dots and working-agent
+options and a separator, in the existing section order. Choosing a Solo chat
+opens the chat and preserves the section's disclosure. Choosing another channel
+opens both the section and channel. The filter stays in place. Choices reuse
+the sidebar's channel-type icons, unread emphasis, attention/thread dots and working-agent
 indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
 their header and menu so the filter can be changed or a hidden row opened.
 Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups
@@ -238,7 +252,8 @@ A–Z writes a null register and removes that group's legacy override.
 Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
 coordinate: Unreads is `unreads`, Active is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
-stores each group’s duration in whole-day seconds; absence means 30 days. Presets
+stores each group’s duration in whole-day seconds; absence means 30 days. The
+Active dialog offers 1, 3, 7, 30 and 90 days. Presets
 and custom values share this representation. Apply publishes mode and duration
 in one encrypted update, and both hosts confirm both values on readback. Other
 modes preserve the last duration; section removal clears it. Older fixed-window
@@ -252,8 +267,12 @@ Like sorting, this is whole-record last-write-wins; another client sees changes
 when it loads or refreshes preferences, without a new automatic reconciliation loop.
 
 Workspaces use a compact encrypted `channel-workspaces` record with sections,
-assignments, section order, and removal markers. The first edit saves the
-combined legacy projection. Older desktop and mobile clients read their
+assignments, section order, and removal markers. Until that record exists,
+the sidebar shows the combined legacy projection, in the upgrade order above.
+The first edit of any kind saves that projection, including its section
+order, so the order no longer depends on the legacy records. Loading never
+saves. A saved record without a section order, such as one saved by an earlier
+build, uses the default order. Older desktop and mobile clients read their
 original coordinates. Their writes cannot replace the unified record. An
 upgraded client can import previously unseen workspaces and filings. A saved
 unified placement or removal of a known legacy entry takes precedence, even
@@ -889,7 +908,10 @@ preserved while private; explicitly choosing Public or View only selects the
 corresponding admission default without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Guests and readers of Guest-default channels
+without calling the editing capability. Owners and admins see the editable policy
+from the live channel summary the same way, with no read when the dialog opens;
+choosing a change reads fresh signed details before the confirmation, and saving
+verifies their version. Guests and readers of Guest-default channels
 see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
 Member-default channel instead sees “New people can participate. People already in
 the channel keep their access.” Other previews identify defaults that could not be
@@ -1309,8 +1331,10 @@ The port retains the prepared-store implementation and its behavior tests:
   an open mention menu re-ranks a large roster once instead of per page. The
   channel avatar preview reads at most the first 1,024 members; only the mention
   menu reads a whole large roster. Narrow row profile selectors,
-  and request-warmed avatars (fetched and decoded, nothing retained; disabled
-  under the Save-Data preference). Signature verification yields in batches.
+  and request-warmed avatars (up to eight fetched and decoded at once, nothing
+  retained; a warmed avatar then mounts eagerly, so WebKit reuses its memory
+  cache; disabled under the Save-Data preference). Signature verification
+  yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Signed cached events are reverified before display. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate

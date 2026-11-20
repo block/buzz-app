@@ -385,7 +385,32 @@ external source project with `pnpm exec tsc` in that directory.
 The host owns navigation, Settings, loading errors, and render error boundaries.
 Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
 is running. A selected page remounts when its revision changes; its local React
-state resets. Plugin-specific persistent data has no host API yet; bundled plugins such as Reminders and Focus keep small device-local state in namespaced `localStorage` keys.
+state resets. Use [Seen](#remembering-one-time-experiences) to remember one-time
+experiences. Bundled plugins such as Reminders and Focus keep other device-local
+state in namespaced `localStorage` keys.
+
+### Remembering one-time experiences
+
+Get Seen with `const seen = ctx.reflect.get("seen")`. Leave it out of the
+required `inject` list so your plugin still activates on older Buzz hosts.
+Skip the hint when the service is unavailable.
+
+Choose a key in the form `<plugin-id>/<name>`, up to 96 Unicode code points.
+Use your plugin's ID as the prefix to avoid collisions. For an invalid key or
+before sign-in, `has()` returns `undefined` and `mark()` has no effect. Keys
+belong to the signed-in identity and are shared across communities on this
+device.
+
+Show the hint only when `seen?.has(key) === false`. A result of `true` means
+the experience already happened. A result of `undefined` means Buzz does not
+know yet. Once you have the service, a React component can use
+`useSyncExternalStore(seen.subscribe, () => seen.has(key))` to rerender when
+the answer changes.
+
+Call `seen?.mark(key)` when the experience happens. Repeated marks are safe.
+Use a new key to show an updated experience again. If device storage cannot
+save a mark, it stays active in the current window while that identity is
+signed in.
 
 Plugins are trusted code executing in the app's JavaScript context. They are not
 sandboxed: infinite loops, global changes, and external side effects cannot be
@@ -1027,6 +1052,12 @@ it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
 showing what the session has not seen and taking plugins' notes. Its
 `cursor` is opaque: save it with the session and give it to the next
 `turnPrompt`, which keeps a mark for each thread of a channel conversation.
+Give `systemPrompt` the `conversation` so that a type with
+`conversationSections` gets the base prompt sections a plugin replaced there,
+and so that the prompt says whether the session is one thread or a whole
+conversation.
+A type whose turns take those notes declares `notes: true`, so that a plugin
+can tell before it leaves one.
 `reply` posts as the agent there. `tools(agent, conversation, { read })`
 answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
 declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
@@ -1124,8 +1155,8 @@ gives one of the owner's local agents standing instructions in one
 conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
 Each of that agent's turns there shows them in an `<owner-instructions
 source="…">` section after the plugin instructions, escaped the same way, and
-the base prompt ranks them below the owner's messages and above a Solo chat's
-Canvas. They are kept on this device for now. `conversationInstructions(agent,
+the base prompt ranks them below its own sections and above a Solo chat's
+Canvas that an agent wrote. They are kept on this device for now. `conversationInstructions(agent,
 place)` resolves with the text. See [Agents](agents.md).
 
 A bundled plugin can give this launch's recommended agent setup in place of
@@ -1509,7 +1540,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Usage, Reminders,
-Workflows, Changesets, Shared compute, Charts and File viewer are off by default for fresh installs. Bestie,
+Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -2067,6 +2098,39 @@ also searches standard Homebrew binary directories when a macOS GUI launch has a
 limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
+
+A plugin that gives agents its own rules in the chats it manages declares the
+sections of the base instructions it can replace:
+
+```json
+{ "host": { "agentPromptSections": ["working-location", "progress"] } }
+```
+
+The base instructions are what Buzz tells every agent before the agent's own
+instructions, as named sections. A plugin can declare `callbacks`, `routing`,
+`publishing`, `progress`, `working-location` and `autonomy`; the manifest is
+refused when it names any other section, such as one that is always on. The
+access review lists each declared section by its title, and an update that adds
+one needs **Review permissions**. **Settings → Agent setup → Base
+instructions** names the plugins that are on and declare a section, and warns
+that the owner's own choice for a section also applies in those plugins' chats.
+`ctx.pluginOwner.agentPromptSections` holds the plugin's declared IDs, empty
+when it declares none. Hosts that do not support this field reject manifests
+that declare it. The plugin registry also records the field, even for a plugin
+that is off, so an older host rejects that profile's whole plugin catalog and
+may offer settings recovery. Before you open the profile in an older build,
+remove the declaring plugin, or roll it back to a version without the field,
+in the newer build.
+
+`ctx.agents.setConversationSections(agent, { channelId, root? }, sections)`
+gives one of the owner's local agents the plugin's text for declared sections
+in one conversation, which the plugin then manages; an empty set clears them.
+Each turn's base instructions there show the text in a `<plugin-section
+id="…" plugin="…">` wrapper in place of the section's default text. One plugin
+manages a conversation at a time, the owner's own choice for a section wins
+over the plugin's text, and a protected agent uses none.
+`conversationSections(agent, place)` resolves with the plugin's set and
+whether a prompt uses each text. See [Agents](agents.md).
 
 A plugin that needs a long-lived program, such as an agent CLI that speaks a
 JSON protocol on stdin and stdout, declares it under `host.processes`:
@@ -3065,7 +3129,12 @@ credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
-the full destination remains on the anchor. A raw message or thread link in a listed
+the full destination remains on the anchor. A channel link whose label is only `#` and a channel name, as `#` completion
+writes it, shows the channel's current name once known, so it follows a rename, and selection copy takes that
+name; until then, and for a withheld channel, DM or Solo chat, the written label shows. A channel name may hold
+spaces, so `[#weekly sync](buzz://channel/<id>)` is such a label whoever typed it. Any other label, such as text
+without the `#`, longer than a channel name's 120 characters or with formatting, and `#name` prose stay as written. A
+message shows an image written in a link's text as an attachment, so the text beside it is judged alone. A raw message or thread link in a listed
 channel reads as “<author> in #<channel>” once its author has a name, and a workflow’s
 as “Workflow in #<channel>”; DMs, Solo chats, authored labels and drafts keep the channel
 name. So does a message the lookup cannot find or read, whether deleted or not yet
@@ -3138,22 +3207,6 @@ tooltips and anything else that fetches or injects. Marks use the four
 `chart-series` roles, with extra version 1 series summed into Other. Its action
 opens the chart in an expanded dialog, and invalid JSON shows the error with the
 source. The host's Copy action copies the fenced JSON.
-The bundled **File viewer** plugin (`buzz.file-viewer`, off by default) claims
-file cards for PDFs, Markdown, code, text, CSV and TSV at `order: 100`, the
-bundled catch-all band, so a plugin registered at a lower order for the same
-files takes them over. The
-card's preview opens a `buzz-file:?url=…&name=…&mime=…&time=…` panel target,
-which other plugins may also open. The panel reads only `/media/` URLs on the
-current community's origin, through the session's media proxy, and caps text at
-20 MB and PDFs at 100 MB; tables stop at 50,000 cells. Markdown, code and text
-are indexed once and shown in parts of at most 12,500 characters, mounted near
-the view and dropped away from it. Markdown renders through the shared `MarkdownDocument` with the document profile,
-which the viewer extends with heading ids, code highlighting, in-document `#`
-links and images, which load only from the same community media. PDFs use
-[PDF.js](https://mozilla.github.io/pdf.js/) in a worker, loaded on the first
-PDF, and draw only the pages near the viewport. Its CMaps, standard fonts and
-image decoders are bundled assets served through a `BinaryDataFactory`, so
-PDFs need no network access beyond the file.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /

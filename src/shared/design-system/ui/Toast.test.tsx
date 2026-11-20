@@ -230,7 +230,7 @@ it("keeps all unresolved recovery controls accessible, including after Escape an
   expect(screen.getAllByRole("button", { name: /Retry/ })).toHaveLength(5);
 });
 
-it("explicit dismissal calls the source once", async () => {
+it("explicit dismissal calls the source once, synchronously on button activation", async () => {
   const dismiss = vi.fn();
   render(
     <ToastProvider>
@@ -240,6 +240,7 @@ it("explicit dismissal calls the source once", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Dismiss notification" }),
   );
+  expect(dismiss).toHaveBeenCalledOnce();
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );

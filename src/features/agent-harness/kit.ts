@@ -34,7 +34,8 @@ import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
-import { ownerCanvas, readProject } from "./project";
+import { ownerCanvas, readProject, worksElsewhere } from "./project";
+import { placeOf } from "./sections/compose";
 
 /** Whether each thread is its own conversation, or the whole channel is one. */
 export type HarnessScope = "thread" | "channel";
@@ -75,8 +76,12 @@ export type HarnessKit = Readonly<{
   ): Promise<HarnessConversation | undefined>;
   /** Buzz's system prompt for the agent: the base prompt, its session model,
    * `instructions`, its teams, its `core` memory and repositories folder.
+   * The owner can change the base prompt's sections in Settings, so build it
+   * again before each turn and give the session the new text when it differs.
    * `tools: false` is for a session without the Buzz tools, whose final
-   * message the harness posts as its reply. */
+   * message the harness posts as its reply. `conversation` is the one the
+   * session is for: its prompt then has the sections a plugin replaced
+   * there, for an agent type with `conversationSections`. */
   systemPrompt(
     delivery: Delivery,
     options: Readonly<{
@@ -84,6 +89,7 @@ export type HarnessKit = Readonly<{
       cwd: string;
       instructions: string;
       tools?: boolean;
+      conversation?: HarnessConversation;
     }>,
   ): Promise<string>;
   /** The turn's prompt, for a session at `cursor`, the one its last prompt
@@ -264,7 +270,7 @@ export function harnessKit(sources: Sources): HarnessKit {
 
     async systemPrompt(
       { agent, team }: Delivery,
-      { scope, cwd, instructions, tools = true },
+      { scope, cwd, instructions, tools = true, conversation },
     ) {
       const memory = await sources.core(agent.key);
       const text = systemPrompt({
@@ -277,6 +283,12 @@ export function harnessKit(sources: Sources): HarnessKit {
         instructions,
         team: team ?? "",
         ...(memory === undefined ? {} : { memory }),
+        sections: agent.promptSections?.(
+          conversation?.channel,
+          conversation?.root,
+        ),
+        // Without the conversation, the Session Model states the scope alone.
+        ...(conversation ? { place: placeOf(conversation.key) } : {}),
       });
       return tools ? text : `${text}\n\n${NO_TOOLS}`;
     },
@@ -316,6 +328,8 @@ export function harnessKit(sources: Sources): HarnessKit {
                     ready.channelWrites.startingCanvas(channelId),
                   )
               : undefined,
+            // The plugin that manages the chat may say where its work happens.
+            worksElsewhere(undefined, agent.promptSections?.(channelId)),
           )
         : Promise.resolve(undefined);
       const threadRead = (thread || (resumed && !dm)) && !topLevel;
@@ -424,7 +438,7 @@ export function harnessKit(sources: Sources): HarnessKit {
           const ready = session(agent.key);
           return appClient(agent, {
             relayAuthor: ready?.relayAuthor,
-            signingAuthority: ready?.workflowAuthority,
+            signingAuthority: ready && (ready.workflowAuthority ?? null),
             read: (path) =>
               options.read
                 ? options.read(path)

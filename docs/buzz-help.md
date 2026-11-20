@@ -148,6 +148,10 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   This lets the key direct your Buzz coding agents to run commands as you.
   Authorize only keys you recognize: the proof has no time or event-kind limits. Your private key stays
   in Buzz. This does not join the agent to a community or sign it in to an organization.
+- **Settings → Buzz → Software updates** shows the app version and, on desktop,
+  separate native-image and loaded-frontend source revisions under **Build details**.
+  Their clean, dirty, or unknown labels describe build-time source state; they do
+  not attest to files or APIs currently running on a host.
 - The back of your Identity badge shows known backup and recovery details below
   the private-key strip and scrolls when its details run long. Buzz starts checking
   when the Identity page opens. The back always explains that the key is stored
@@ -261,6 +265,10 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   means nothing is unread, or its unread isn't known yet, for example because that
   community isn't connected or was closed to make room for one you opened. Only
   the first 24 communities get badges at startup; others show one once opened.
+- To reorder communities, drag one in the switcher, or use **Move up** and
+  **Move down** in its right-click menu. The order is saved on this device and
+  sets the numbered shortcuts: ⌘1 is Personal space and ⌘2–9 follow the
+  communities in order. A newly joined community goes last.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.
@@ -365,6 +373,14 @@ until you pair it again. Signing out revokes all of them, and a pairing unused
 for 30 days expires. If your sign-in expires, paired tools keep their pairing
 and are asked to sign in again in Buzz.
 
+## Inspect Buzz Beta on macOS
+
+In Buzz Beta on macOS 13.3 or later, open **Settings → Security** and turn on
+**Allow Safari Web Inspector**. In Safari, use the **Develop** menu to select
+the Buzz Beta window. Safari can inspect data in that window and capture
+JavaScript profiles and heap snapshots. Turn the switch off to end access.
+Quitting Buzz also turns it off.
+
 ## Conversations and communities
 
 - Notification sounds and their Settings previews do not become media players;
@@ -468,6 +484,17 @@ and are asked to sign in again in Buzz.
   out where message timestamps are hidden. A selection inside a message's text
   copies that text alone.
 
+- A plugin can relay one of your agents' messages into another conversation
+  as you. When the message names the agent and its verified owner is the
+  sender, it shows as that agent's collapsed line instead of the sender's own
+  message: the agent's avatar and name, the chat it came from if you are in that
+  chat, a one-line preview and the time. Select the line to read the whole
+  message and who it was sent as and to; select the chat name to open that
+  chat. Two or more in a row fold into one line showing the latest one and how
+  many more there are; it names their chat when they all came from the same
+  one, or says they came from other chats. Select it to list each one. A claim
+  that cannot be verified shows as the sender's ordinary message.
+
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
   Consecutive addition and removal notices collapse into one row between
@@ -514,6 +541,10 @@ and are asked to sign in again in Buzz.
   one to remove it (the last agent stays selected). Rows stay in place while you
   toggle; reopen to refresh their order. Search ranks matching choices by
   relevance, including exact names.
+  Collapsed Solo sections and workspaces stay closed when you open or move a
+  chat, click **In Solo**, or refresh. Use the heading or its chevron to open
+  the group. **In Solo** scrolls to and focuses the chat row or the section heading
+  that represents it.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your personal workspace IDs with
@@ -574,11 +605,14 @@ and are asked to sign in again in Buzz.
   from someone with permission.
 - **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear
-  in **Solo**, **Team**, **Forums**, or **Direct messages**. Reorder any section,
-  including **Starred**, by dragging its heading or using **Move up** and
+  in **Solo**, **Team** (channels and forums), or **Direct messages**. Reorder
+  any section, including **Starred**, by dragging its heading or using **Move up** and
   **Move down** in its **…** menu. Escape cancels a drag.
   The arrow beside a workspace’s creation icon offers **New chat**, **New channel**
   and **New DM**. The last choice becomes that workspace’s icon and primary action.
+  If the workspace heading shows recent activity, find these commands in its
+  **Actions** menu. Hover over the activity or Tab to the heading controls to
+  reveal the menu button. On touch, the menu button is visible directly.
   Open **Workspace settings** from the heading’s **…** menu to change the name,
   emoji, folders, worktree, Canvas, or default agents. Use **New channel** from a
   workspace to start with its destination and agent defaults selected. You can
@@ -591,16 +625,22 @@ and are asked to sign in again in Buzz.
   from **Filter**, or choose **All** to show them in the sidebar again.
   Plugins can add tasks, Lead conversations and workspace actions.
   When starting a chat, type **#** to choose a workspace and load its settings.
-  Folders are optional unless **Work in a new worktree** is on.
+  Folders are optional unless **Work in a new worktree** is on. An agent that
+  changes a repository makes a new worktree of it and leaves the main worktree
+  as it is. **Work in a new worktree** sets where that worktree goes and the
+  branch it starts from. A conversation that a plugin gave its own folder works
+  in that folder instead.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
-  remove it and pick again with **#**.
+  remove it and pick again with **#**. A sent chip shows the channel's current
+  name, so it follows a rename; a link with your own text keeps that text.
 - **Folder chips.** In the desktop app, type **!** and part of a folder name in
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the
   message shows the folder's name. When you send it to your own Claude or Codex
-  agent on this device, the agent is told the folder's path, and Claude may also
-  work in that folder for the rest of the conversation. A chip someone else
+  agent on this device, the agent is told the folder's path as context, and
+  Claude can also reach that folder for the rest of the conversation. A chip
+  does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
@@ -736,7 +776,10 @@ and are asked to sign in again in Buzz.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
   lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
-  Muting does not mark messages or threads as read.
+  Muted channels show only direct mentions in Activity, including its sidebar
+  preview and unread count. Marking an ordinary Activity row unread does not
+  override the mute. Muted DMs still appear. Unmuting shows retained activity
+  again with its read state intact.
   In a channel's or DM's main message box, typing `/mute` by itself toggles
   Mute for it, and a toast confirms it once saved. The command is not posted as
   a message. If the change cannot be saved, a notice offers **Retry** instead. Thread
@@ -772,7 +815,9 @@ and are asked to sign in again in Buzz.
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their
   community, so one from another community looks like a private or missing
-  channel. The card still opens the link.
+  channel. The card still opens the link, unless the channel is private
+  to you: then the link and its card don't open anything, and the link can
+  still be copied. Once you have access, the link opens again.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.
@@ -795,7 +840,10 @@ and are asked to sign in again in Buzz.
     none, says so instead of searching. Searching one conversation, by `in:`
     or ⌘F, shows the same Messages results; where the relay supports it,
     **Sort messages** in the field orders text matches by most relevant or
-    most recent.
+    most recent for that search. **Sort messages by** in Settings →
+    Appearance → Conversations sets the order each new search starts with on
+    this device; unset, it is most relevant. Text searches across
+    conversations, and on relays without sorting, stay most relevant.
   - `after:`, `before:`, `on:` a date (`YYYY-MM-DD`, `today`, `yesterday`), and
     `during:` a day, month (`2026-10`, `october`), or year, in local time, or a
     rolling period ending today (`7d`, `4w`, `3m`, `1y`). `after:` includes its
@@ -822,8 +870,10 @@ and are asked to sign in again in Buzz.
   conversation**) to search a conversation's full history.
 - **Search results** list the best match's group first: channels, people,
   pages and messages are ordered by how well they match, each heading showing
-  a count and why it ranks there. Messages lead when the text reads like a
-  phrase. Each message shows the words around the match. A panel beside the
+  a count and why it ranks there. **Top results** shows the first few rows of
+  each group; a group cut short says how many it shows, such as "Top 5 of
+  60+", and keeps its heading and **Show all** button in view while you
+  scroll. Messages lead when the text reads like a phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
   and after it, or a channel's or person's latest messages. Up and Down move
   the highlight, as do Control+J or Control+N and Control+K or Control+P on
@@ -831,11 +881,20 @@ and are asked to sign in again in Buzz.
   result** and **Next search result** in Settings → Shortcuts, and the key
   hints show them. Up and Down keep working. Tab, Control+L or Control+F
   shows the next group whole and Shift+Tab, Control+H or Control+B the
-  previous one, as do the group filter buttons above the results and choosing
-  a group's heading when it has more; Escape goes back. Groups reorder as
+  previous one, as do the group filter buttons above the results and a
+  group's **Show all**; Escape goes back. Groups reorder as
   slower results arrive until you move the highlight; after that they stay
   put and later groups join at the end. The panel and key hints hide in
   narrow windows.
+- **Reranked messages**: when this device has a Decisions API provider set up
+  (Settings → Decisions API), searching messages by relevance reads the first
+  60 matches, then has the provider reorder them by how well each answers what
+  you typed. The keyword order shows first; the reordered list replaces it a
+  moment later, and a small sparkle appears at the end of the Messages heading
+  (hover it to see **Reranked**). If you've already moved the
+  highlight or chosen a result, the order stays as it is. The provider sees the query and those
+  messages' text, conversation names and authors. Newest-first and filter-only
+  searches aren't reranked.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat
@@ -927,6 +986,13 @@ and are asked to sign in again in Buzz.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
+- **Dragging files in**: while files are dragged over a conversation, a dashed
+  frame marks where they will attach and the messages stay visible. Rest the
+  drag for about 0.7 seconds on a channel, DM or chat in the sidebar, or on a
+  message's thread summary, and it opens, so the same drag can continue into
+  that conversation or thread. The row highlights and blinks twice first; with
+  reduced motion it only highlights. Releasing the files on a sidebar row
+  attaches nothing. An image dragged from a message works the same way.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
@@ -1082,7 +1148,8 @@ and are asked to sign in again in Buzz.
   The floating **New options** button at the end of the sidebar list opens
   **New chat**, **New channel**, **New DM** and **New workspace**. **Cmd/Ctrl+N**
   opens this menu in Messages, including during Focus. The **Solo** heading's
-  **+** starts a chat, and each workspace heading has its own **New** button.
+  **+** starts a chat. A workspace heading offers creation commands from its
+  **New** button or **Actions** menu.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
@@ -1107,6 +1174,13 @@ and are asked to sign in again in Buzz.
   the conversation sidebar available, so you can switch straight back to a chat.
   Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
+  Buzz saves conversation drafts when you pause typing or leave the composer. If
+  another window saves a different version while you edit, choose **Load saved
+  draft** or **Keep my draft** before sending. Reloading the same window
+  restores your conflicting text so you can still choose. If another window
+  sends or clears a draft, Buzz uses recent records of those actions to skip
+  restoring the same version. If storage is full or those records have expired,
+  Buzz may still offer the saved conflict for recovery.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
@@ -1147,7 +1221,16 @@ and are asked to sign in again in Buzz.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections** collapse independently through their headings. Buzz
+- **Sidebar sections** default to **Solo**, **Starred**, your workspaces,
+  **Team**, then **Direct messages**. After an upgrade from the
+  separate Solo and Team sidebars, Buzz keeps their order: workspaces from the
+  previous Solo sidebar, **Solo**, **Starred**, workspaces from the previous
+  Team sidebar, then **Team**. A saved section order takes precedence.
+  **Solo** and workspaces from the previous Solo sidebar list their newest 7
+  chats; **Show more** reveals up to 10 more and **Show fewer** returns to 7.
+  Other sections start fully listed and offer **Show fewer** past 7 rows. These
+  choices are saved on this device only.
+  Sections collapse independently through their headings. Buzz
   remembers collapsed sections for each community and identity. Unread messages
   or thread replies highlight the headings of collapsed sections. Muted
   conversations are excluded from these highlights.
@@ -1157,8 +1240,8 @@ and are asked to sign in again in Buzz.
   sidebar preferences.
 - **Moving conversations** works by dragging or choosing **Move to…** from the
   row’s menu. Workspaces and **Starred** accept any type. Unfiled conversations
-  return to the home for their type, **Solo**, **Team**, **Forums** or
-  **Direct messages**.
+  return to the home for their type: **Solo** for chats, **Team** for channels
+  and forums, or **Direct messages**.
 - Saved workspaces, stars, mutes, sorting and filters update while connected in
   hosts that support saved sidebar preferences. Moving a starred conversation
   to a workspace or home section from the sidebar clears its star.
@@ -1584,6 +1667,33 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   why and stops. In a community that advertises no archive authority, Delete
   skips the archive. **Forget** drops an agent that can't reach its community
   from this device only; it may stay in that community's channels.
+- **Settings → Agent setup → Base instructions** shows what Buzz tells every
+  agent on this device before the agent's own instructions, one section per
+  topic. For Publishing, Progress, Etiquette, Agent Memory, Engineering
+  Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
+  **Custom** with your own text of up to 4 KiB, then **Save**. Default shows
+  the section's text to read and copy; choose Custom to edit it. The other
+  sections are always on, or Buzz sets them for the conversation; **All
+  sections** shows the default text of each. A plugin that is on can declare
+  sections that it replaces in the chats it manages: its install review lists
+  them. For example, such a plugin can set where an agent's work happens in a
+  chat it manages, except for an agent that runs on another computer. Each section that such a plugin declared names the plugin.
+  When such a plugin first manages a Codex conversation that an earlier Buzz
+  version started, that conversation starts over once, without its earlier
+  context; on another computer, it asks for a new session. The install review
+  says so.
+  When you choose Off or Custom for one of them, your own choice also applies
+  in those chats. A choice applies to all your
+  agents on this device, not on your other devices, and each agent gets it
+  from its next turn. After the first choice that is not Default, older Codex
+  conversations on this device start over once; older Codex conversations on
+  another computer keep their instructions until you start a new session.
+  Agents that run outside the app, in the standalone agent host, get a change
+  when that host next starts. Mesh agents do not get the base instructions.
+  When a later
+  Buzz version changes the default of a section you turned off or replaced,
+  your choice stays, and the section says **Default changed** until you choose
+  **Keep mine** or **Reset to default**.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
@@ -1636,8 +1746,9 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
   out. API key and keyring sign-ins can't run them.
-- **Agent gateway access**: in builds that route local agents through a gateway,
-  a refused sign-in or access check stops the turn and asks you to sign in again.
+- **Agent gateway access**: for local agents whose harness uses Buzz to forward
+  requests through a gateway, a refused sign-in or access check stops the turn
+  and asks you to sign in again.
   Later turns stay blocked while access is rechecked, even if that check stalls
   or loses its connection. A successful access check lets the agent run again.
   If access is still being checked after a few seconds, the turn stops and asks
@@ -1703,6 +1814,19 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   settings files, including a gateway app's. Claude agents running on a
   remote execution target are not attributed either; Buzz leaves their
   Claude settings alone.
+- Where a build enables it, local Codex agents add Buzz context when the
+  active provider is configured on the agent gateway's HTTPS origin. Codex
+  uses its configured provider for model discovery and inference. A new
+  message in the same Buzz thread joins a running turn and is attributed to
+  the message that started it. A message from another thread, or after the
+  agent's gateway access changed, waits and runs as its own turn. A running
+  turn is never stopped for attribution. When Codex uses another provider,
+  runs on another machine, or uses an active voice session's retained setup,
+  its turns run without that context, and Activity shows "Ran without the
+  Buzz context" with the reason.
+  When the gateway access check is pending or denied, turns and **Compact
+  session** run with Codex's own settings and Activity shows "Ran without
+  gateway attribution" with the reason.
 - **Agents → Your teams → Previous versions**, in a team's editor, lists the
   saved versions of a team that syncs to a community, the same way. Reverting
   restores its instructions and keeps its current name; members are not
@@ -1724,6 +1848,15 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.
+  Once goose agents run through the agent gateway, a goose turn woken in a
+  conversation by a plugin, watch or timer that ran without the gateway shows
+  "Ran without the agent gateway" beside its prompt only while the app keeps
+  running; goose compacting the conversation can remove the prompt and its
+  note. A wake run outside a conversation shows no note.
+  If Buzz routes a Goose turn through the gateway, choose Thread or Channel
+  session scope. A gateway-routed Goose turn in Community scope shows an error.
+  While goose uses the gateway, compaction requires gateway access. If access
+  is still being checked, try again once the check finishes.
   A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
@@ -1831,6 +1964,14 @@ leave one router enabled, and retry; your draft is preserved.
 
 ## Optional features and limits
 
+- Buzz saves channels and messages on this device so they show at once after
+  a restart. The desktop app also saves the images it loads, up to 256 MB
+  across all communities, so it reads them from disk the next time instead of
+  from the community; **Settings → Local settings → Cached data** shows how
+  much is in use. **Clear cache** there forgets what this device saved
+  for that community; Buzz loads it again as needed. Clearing cancels uploads
+  in progress. Losing access to a channel deletes the messages and images
+  saved from it. Leaving a community or signing out also clears it.
 - Desktop packages include a `buzz` command line client. On macOS, use
   `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
   old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
@@ -1865,6 +2006,8 @@ leave one router enabled, and retry; your draft is preserved.
   sources at startup and once per hour while the app is visible. Checks do not
   install or reload plugins. A notice offers **Update and reload**, or
   **Review permissions** when access increases; either opens the update review.
+  While a request waits for a check or another review, it shows **Preparing update…**;
+  **Later** cancels that pending request. Other Update actions wait until it finishes.
   Even when access is unchanged, choose **Update** in that review to install and
   reload the candidate.
   Click the notice body to open that plugin’s update checkbox in Manage plugins.
@@ -2114,29 +2257,6 @@ Code blocks draw the same way, through plugins such as Charts and Mermaid, in
 Canvas, shared notes and repository pages. Those, plus the memory panel, agent
 transcript replies and plugin READMEs, offer **Copy code block** on each code
 block.
-
-### Reading shared files beside a conversation
-
-The optional **File viewer** plugin, off until turned on in Settings → Plugins,
-opens PDFs, Markdown, code, text, CSV and TSV files shared in a conversation in a
-tab beside it. Choose the file's card to open it; the card's download button
-still saves the file. PDFs show every page in one scrolling column: turn pages
-with ‹ and › or the arrow keys, and zoom with **−**, **+** or **Fit to width**.
-**Copy text** copies a file's text; for a PDF it reads the pages when pressed,
-and says when a scanned PDF has none.
-
-- Only files shared in the current community open. Text files open up to 20 MB
-  and PDFs up to 100 MB, laid out to the first 1,000 pages.
-- Markdown, code and text files of any length read in parts, loaded as you
-  scroll. In a Markdown file with three or more headings, **Outline** goes to
-  any section, and `#` links do too. Code is highlighted, with line numbers.
-- The header shows when the file was shared, and a Markdown file's reading time
-  and words, or a code or text file's lines.
-- CSV and TSV files show as a table of the first 5,000 rows and 200 columns,
-  up to 50,000 cells.
-- Markdown follows the Notes rules: no raw HTML. Images shared in the current
-  community are drawn; other images show as their alt text.
-- Office files, images, video and audio are not opened by the viewer.
 
 ### Saved External apps approval
 

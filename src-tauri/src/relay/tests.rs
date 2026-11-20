@@ -1985,7 +1985,13 @@ fn thumbnail_server(status: &'static str) -> (Url, std::sync::Arc<std::sync::Mut
             let response = if path.ends_with(".thumb.webp") {
                 format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             } else {
-                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg".into()
+                let kind = match path.rsplit_once('.').map(|(_, ext)| ext) {
+                    Some("svg") => "image/svg+xml",
+                    Some("pdf") => "application/pdf",
+                    Some("mp4") => "video/mp4",
+                    _ => "image/jpeg",
+                };
+                format!("HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg")
             };
             seen.lock().unwrap().push(path);
             socket.write_all(response.as_bytes()).unwrap();
@@ -2089,6 +2095,7 @@ fn native_downloads_only_accept_authenticated_media_urls() {
     for url in [
         format!("buzz-media://localhost/{encoded}"),
         format!("http://buzz-media.localhost/{encoded}"),
+        format!("buzz-media://localhost/{encoded}?channel=c"),
     ] {
         assert!(download_target(&url).is_some(), "{url}");
     }
@@ -2098,6 +2105,7 @@ fn native_downloads_only_accept_authenticated_media_urls() {
         format!("https://buzz-media.localhost/{encoded}"),
         format!("buzz-media://localhost:123/{encoded}"),
         format!("buzz-media://localhost/{encoded}?q=1"),
+        format!("buzz-media://localhost/{encoded}?channel=c&q=1"),
         format!("buzz-media://localhost/{encoded}#fragment"),
         format!("buzz-media://u:p@localhost/{encoded}"),
         format!(
@@ -2429,6 +2437,76 @@ fn assert_strict(event: &serde_json::Value, verb: &str, server: &str) {
     let expiration: u64 = tag(event, "expiration")[0].parse().unwrap();
     assert_eq!(tag(event, "expiration").len(), 1);
     assert_eq!(expiration, event["created_at"].as_u64().unwrap() + 60);
+}
+
+#[tokio::test]
+async fn saved_images_are_served_without_a_relay_read_until_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = MediaCache::new(Some(dir.path().into()));
+    let host = IdentityHost::fixture();
+    let (base, paths) = thumbnail_server("404 Not Found");
+    let webp = base
+        .join(&format!("/media/{}.thumb.webp", "a".repeat(64)))
+        .unwrap();
+    let read = || cached_media(&cache, &host, None, webp.clone(), None);
+    assert_eq!(read().await.unwrap().body(), b"jpeg");
+    // The fallback is saved under the requested URL, in the background.
+    for _ in 0..200 {
+        if cache.get(&webp, None).is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let saved = read().await.unwrap();
+    assert_eq!(saved.body(), b"jpeg");
+    assert_eq!(saved.headers()["content-type"], "image/jpeg");
+    assert_eq!(paths.lock().unwrap().len(), 2);
+    cache.clear(&base).unwrap();
+    assert_eq!(read().await.unwrap().body(), b"jpeg");
+    assert_eq!(paths.lock().unwrap().len(), 4);
+}
+
+#[test]
+fn media_requests_name_the_channel_that_shows_them() {
+    let url = format!("https://relay.test/media/{}.thumb.webp", "a".repeat(64));
+    let encoded = percent_encoding::utf8_percent_encode(&url, percent_encoding::NON_ALPHANUMERIC);
+    let channel = |query: &str| {
+        let request = tauri::http::Request::get(format!("buzz-media://localhost/{encoded}{query}"))
+            .body(Vec::new())
+            .unwrap();
+        media_request(&request).ok().unwrap().channel
+    };
+    assert_eq!(channel("?channel=a%2Fb").as_deref(), Some("a/b"));
+    assert_eq!(channel("?channel="), None);
+    assert_eq!(channel(""), None);
+}
+
+#[tokio::test]
+async fn only_whole_inline_images_that_fit_an_entry_are_saved() {
+    let host = IdentityHost::fixture();
+    let (base, _) = thumbnail_server("404 Not Found");
+    let served = |ext: &str| {
+        let url = base
+            .join(&format!("/media/{}.{ext}", "a".repeat(64)))
+            .unwrap();
+        let host = &host;
+        async move { serve_media(host, None, url, None).await.unwrap().1 }
+    };
+    assert_eq!(
+        saved_kind(&served("jpg").await).as_deref(),
+        Some("image/jpeg")
+    );
+    // SVG is served as an attachment, so it never renders from the cache.
+    assert_eq!(saved_kind(&served("svg").await), None);
+    assert_eq!(saved_kind(&served("pdf").await), None);
+    // Inline, but not an image: a whole-file video read is never saved.
+    assert_eq!(saved_kind(&served("mp4").await), None);
+    let large = tauri::http::Response::builder()
+        .status(200)
+        .header("content-type", "image/jpeg")
+        .body(vec![0; media_cache::ENTRY_MAX + 1])
+        .unwrap();
+    assert_eq!(saved_kind(&large), None);
 }
 
 #[tokio::test]
@@ -3684,10 +3762,15 @@ async fn thread_follows_codec_is_a_separate_exact_shape() {
         .sign_thread_follows("B".repeat(32), now, payload.clone())
         .await
         .is_err());
-    assert!(host
-        .sign_thread_follows("b".repeat(32), now + 61, payload.clone())
-        .await
-        .is_err());
+    // The window's edge, against a held clock: the signer otherwise reads its
+    // own, and a second turning over after `now` would move the edge.
+    const AT: u64 = 1_700_000_000;
+    for (created_at, accepted) in [(AT + 60, true), (AT + 61, false)] {
+        let edge = host
+            .sign_thread_follows_at("b".repeat(32), created_at, payload.clone(), || Ok(AT))
+            .await;
+        assert_eq!(edge.is_ok(), accepted, "{created_at}");
+    }
     assert!(host
         .sign_thread_follows("b".repeat(32), now - 120, payload.clone())
         .await

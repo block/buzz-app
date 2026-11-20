@@ -120,6 +120,7 @@ import { ownerReads, readyOwnerReads } from "./reads";
 import { createToolOperation, type AgentToolProvider } from "./tool-operation";
 import {
   assignConversationFolder as assignFolder,
+  ALREADY_STARTED,
   conversationFolder as storedFolder,
   conversationKey,
 } from "./conversation-folders";
@@ -128,6 +129,18 @@ import {
   forgetConversationInstructions,
   setConversationInstructions as storeInstructions,
 } from "./conversation-instructions";
+import {
+  checkedSections,
+  conversationSections as storedSections,
+  forgetConversationSections,
+  setConversationSections as storeSections,
+  sectionsClaims,
+  usableSections,
+} from "./conversation-sections";
+import { pluginSection } from "../agent-harness/sections";
+import type { SectionChoices } from "../agent-harness/sections/choices";
+import { replacedBy } from "../agent-harness/sections/compose";
+import { ownerChoices } from "./prompt-sections";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -479,6 +492,13 @@ const INSTRUCTIONS_TEXT_LIMIT = 4 * 1024;
 const CONVERSATION_INSTRUCTIONS_LIMIT = 8 * 1024;
 /** Instructions for one turn, with the plugin that gave them. */
 export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
+/** A plugin's text for one section of the base prompt in a conversation it
+ * manages, and whether a prompt built now uses it. */
+export type ConversationSection = Readonly<{
+  text: string;
+  applied: boolean;
+  reason?: "owner" | "protected" | "target" | "community";
+}>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -495,6 +515,15 @@ export type AgentSession = Readonly<{
 /** Read-only: reading never starts, stops or changes a session. */
 export type AgentSessions = Readonly<{
   list(agent: AgentKey): readonly AgentSession[];
+  /** For a harness whose `list` can be behind its sessions, because it reads
+   * them in the background or one is starting: resolves once `list` names
+   * the conversation's session, if it has one or one is starting, and
+   * rejects when they cannot be read. */
+  ready?(agent: AgentKey, conversation: string): Promise<void>;
+  /** For a harness whose `list` forgets old sessions: whether the harness
+   * itself holds history for the conversation, in the agent's workspace.
+   * Rejects when it cannot be read. */
+  history?(agent: Agent, conversation: string): Promise<boolean>;
   subscribe(listener: () => void): () => void;
 }>;
 /** Token counts as the harness reported them. An absent count is unknown, not
@@ -695,6 +724,11 @@ export type AgentHandle = Readonly<{
     channelId: string,
     root?: string,
   ): TurnInstructions | undefined;
+  /** The choices for the sections of the agent's base prompt, read when a
+   * prompt is built: the owner's and, for the conversation the session is
+   * keyed by, those of the plugin that manages it. A harness passes them to
+   * the builder and reads no storage itself. */
+  promptSections?(channelId?: string, root?: string): SectionChoices;
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -1177,6 +1211,15 @@ export type AgentType<Config = unknown> = {
    * missing. `sessions` lists each conversation that has a session, which
    * then gets no folder. Without it, its agents' conversations get none. */
   conversationFolders?: true;
+  /** Builds each conversation session's base prompt with
+   * `AgentHandle.promptSections` for that conversation, so
+   * `Agents.setConversationSections` applies to its agents. Without it, the
+   * call rejects. */
+  conversationSections?: true;
+  /** Advertises that a conversation's next turn gets the notes `Agents.note`
+   * left for it. Without it, support is unadvertised: a harness that builds
+   * its turns with `turnPrompt` still shows them, and another one never does. */
+  notes?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
   /** Fully retires native sessions for this membership key before policy changes. */
@@ -1898,6 +1941,36 @@ export type Agents = {
     agent: AgentKey,
     place: SessionPlace,
   ): Promise<string | undefined>;
+  /** Replaces sections of the base prompt for the owner's local agent in
+   * one conversation, which the calling plugin then manages: `sections` is
+   * section ID → text, and the agent's next turn there starts from them.
+   * It replaces the plugin's whole set; none clears it. Each ID must be one
+   * the plugin's manifest declares in `host.agentPromptSections`. Each text
+   * has from 1 to 4096 bytes (UTF-8, after trimming), and the set at most
+   * 12 KiB: a plugin cannot turn a section off. `place` follows the rules
+   * of `setConversationInstructions`. Rejects while another plugin that is
+   * on manages the conversation, for an agent type that does not support
+   * it, and for an agent with one session for its whole community. The owner's own choice for a section wins over the
+   * plugin's text, and a protected agent uses none: `conversationSections`
+   * tells. Kept on this device, and dropped when the agent is deleted.
+   * Plugins only. */
+  setConversationSections(
+    agent: AgentKey,
+    place: SessionPlace,
+    sections: Readonly<Record<string, string>>,
+  ): Promise<void>;
+  /** What the calling plugin's `setConversationSections` gave the
+   * conversation, with whether a prompt built now uses each text. It does
+   * not while the owner's choice for the section applies (`"owner"`), for a
+   * protected agent (`"protected"`), for Working location on an execution
+   * target (`"target"`), for an agent with one session for its whole
+   * community (`"community"`), while the plugin is not active, once its manifest
+   * no longer declares the section, or once the agent has a type that does
+   * not support it. Undefined when the plugin gave none. */
+  conversationSections(
+    agent: AgentKey,
+    place: SessionPlace,
+  ): Promise<Readonly<Record<string, ConversationSection>> | undefined>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -2647,6 +2720,7 @@ export class AgentsService extends Service implements Agents {
           if (!identity.deleted) this.followRecommendedHarness(identity);
       },
       watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
+      transitionChanged: () => this.notify(),
       ready: (key) => this.ready(key),
       reloading: (key) => this.reloading(key),
       settle: async (agent, signal, gateway) => {
@@ -3029,6 +3103,8 @@ export class AgentsService extends Service implements Agents {
       instructions: (agent) => this.turnInstructions(agent),
       conversationInstructions: (agent, channelId, root) =>
         this.turnConversationInstructions(agent, channelId, root),
+      promptSections: (agent, channelId, root) =>
+        this.turnSections(agent, channelId, root),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -3856,7 +3932,7 @@ export class AgentsService extends Service implements Agents {
           const client = appClient(handle, {
             signal,
             relayAuthor: source.relayAuthor?.(),
-            signingAuthority: source.workflowAuthority(),
+            signingAuthority: source.workflowAuthority() ?? null,
             check: () => {
               handle.attention.enabled();
               if (reads().connection !== source.connection)
@@ -3925,6 +4001,7 @@ export class AgentsService extends Service implements Agents {
       const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
       if (!connectionSource)
         throw new Error("The agent's community is not connected");
+      const current = this.runners.attentionCommandCurrent(key);
       const spawn = host.spawn.bind(host);
       return spawnAgentCommand(
         {
@@ -3952,8 +4029,10 @@ export class AgentsService extends Service implements Agents {
             };
           },
           check: () => {
-            if (!handle.attention.enabled())
-              throw new Error("Attention is off");
+            if (!current())
+              throw new Error(
+                "This agent can no longer run the Attention command",
+              );
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
               connectionSource.connection
@@ -4096,7 +4175,8 @@ export class AgentsService extends Service implements Agents {
       sources.reconcile(
         this.attentionProvider(source),
         source,
-        this.state.running.filter((agent) => this.runners.runs(agent.key)),
+        this.state.running.filter(({ key }) => this.runners.runs(key)),
+        (key) => this.runners.transitioning(key),
       );
     const unsubscribe = this.subscribe(update);
     update();
@@ -4384,7 +4464,7 @@ export class AgentsService extends Service implements Agents {
             signal,
             check,
             relayAuthor: source.relayAuthor?.(),
-            signingAuthority: source.workflowAuthority(),
+            signingAuthority: source.workflowAuthority() ?? null,
             // Where the agent's type reads them outside its turns, if it can.
             read: async (path) => {
               const current = this.agent(key);
@@ -5838,19 +5918,20 @@ export class AgentsService extends Service implements Agents {
     const folder = await host.resolveDirectory(path, { create: false });
     // Its session's history stays where it began, so a folder given later
     // would start it over.
-    if (
-      !storedFolder(this.storage, scope, key, conversation) &&
-      type.sessions
-        ?.list(key)
-        .some(
-          (session) =>
-            !session.community &&
-            conversationKey(session.channelId, session.root) === conversation,
-        )
-    )
-      throw new Error(
-        "This conversation already started in the agent's workspace",
-      );
+    if (!storedFolder(this.storage, scope, key, conversation)) {
+      await type.sessions?.ready?.(key, conversation);
+      if (
+        type.sessions
+          ?.list(key)
+          .some(
+            (session) =>
+              !session.community &&
+              conversationKey(session.channelId, session.root) === conversation,
+          ) ||
+        (await type.sessions?.history?.(agent, conversation))
+      )
+        throw new Error(ALREADY_STARTED);
+    }
     return assignFolder(this.storage, scope, key, conversation, folder);
   }
   conversationFolder(key: AgentKey, place: SessionPlace) {
@@ -5899,22 +5980,173 @@ export class AgentsService extends Service implements Agents {
       return undefined;
     }
   }
-  /** Where the owner's local agent keeps a conversation's instructions, as
-   * its folder. A root for a conversation its harness runs whole rejects:
-   * no turn would show them. So does a huddle room, whose conversations
-   * harnesses key differently. */
-  private async instructionsPlace(key: AgentKey, place: SessionPlace) {
+  async setConversationSections(
+    key: AgentKey,
+    place: SessionPlace,
+    sections: Readonly<Record<string, string>>,
+  ) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) throw new Error("Only a plugin sets conversation sections");
+    const checked = checkedSections(sections, owner.agentPromptSections ?? []);
+    const { scope, agent, conversation } = await this.instructionsPlace(
+      key,
+      place,
+      "sections",
+    );
+    const type = this.types().find((kind) => kind.key === agent.type);
+    if (!type?.conversationSections)
+      throw new Error(
+        `${type?.title ?? "This"} agents do not support conversation sections`,
+      );
+    if (this.communityWide(agent))
+      throw new Error(
+        "A community session has one prompt for every conversation, so it takes no conversation sections",
+      );
+    // A save that is still being written claims the conversation too, and a
+    // removal frees it only once it is saved.
+    const claims = sectionsClaims(this.storage, scope, key, conversation);
+    if (
+      [...claims].some(
+        (plugin) =>
+          plugin !== owner.id &&
+          // Also while it starts, updates or failed to start: it is still on.
+          this.ctx.pluginStatus.on?.(plugin),
+      )
+    )
+      throw new Error("Another plugin manages this conversation");
+    await storeSections(
+      this.storage,
+      scope,
+      key,
+      conversation,
+      owner.id,
+      checked,
+    );
+  }
+  async conversationSections(key: AgentKey, place: SessionPlace) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) return undefined;
+    try {
+      const { scope, agent, conversation } = await this.instructionsPlace(
+        key,
+        place,
+        "sections",
+      );
+      const saved = storedSections(this.storage, scope, key, conversation);
+      if (saved?.plugin !== owner.id) return undefined;
+      const usable = this.pluginSections(agent, saved);
+      const choices = { owner: ownerChoices(this.storage) };
+      return Object.fromEntries(
+        Object.entries(saved.sections).map(
+          ([id, text]): [string, ConversationSection] => {
+            // A record can name a section by an ID it had before a rename.
+            const current = pluginSection(id)?.id ?? id;
+            const reason = agent.protection
+              ? "protected"
+              : this.communityWide(agent)
+                ? "community"
+                : replacedBy(current, choices)
+                  ? "owner"
+                  : current === "working-location" && this.executions.read(key)
+                    ? "target"
+                    : undefined;
+            return [
+              id,
+              reason
+                ? { text, applied: false, reason }
+                : { text, applied: current in usable },
+            ];
+          },
+        ),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+  /** Whether the agent's type, as it is now, builds a conversation's
+   * sections into its prompt: not while one community session serves every
+   * conversation, as a record keyed by one of them would reach the others. */
+  private sectionsType(agent: Agent) {
+    return (
+      !!this.types().find((kind) => kind.key === agent.type)
+        ?.conversationSections && !this.communityWide(agent)
+    );
+  }
+  /** Whether the agent runs one session for its whole community. */
+  private communityWide(agent: Agent) {
+    return (
+      this.types()
+        .find((kind) => kind.key === agent.type)
+        ?.sessionControls?.scope(agent) === "community"
+    );
+  }
+  /** The texts of `saved` that the agent's prompt uses now: only while its
+   * plugin is active, for the sections its manifest declares now and for an
+   * agent type that supports them. An agent on an execution target gets no
+   * Working location text, as no plugin can give its conversations their
+   * own folders. */
+  private pluginSections(
+    agent: Agent,
+    saved: NonNullable<ReturnType<typeof storedSections>>,
+  ) {
+    const declared =
+      this.sectionsType(agent) &&
+      this.ctx.pluginStatus.promptSections?.(saved.plugin);
+    if (!declared) return {};
+    const usable = usableSections(saved, declared);
+    if (!this.executions.read(agent.key)) return usable;
+    const { "working-location": _, ...elsewhere } = usable;
+    return elsewhere;
+  }
+  /** The choices a prompt for the agent is built with now: the owner's and,
+   * in the conversation its harness keys as `channelId` and `root`, the
+   * texts of the plugin that manages it, as `pluginSections` keeps them. A
+   * protected agent gets none of them: its owner is the principal of its
+   * policy, and a plugin is not. Nor does a turn outside any conversation. */
+  private turnSections(
+    agent: Agent,
+    channelId?: string,
+    root?: string,
+  ): SectionChoices {
+    const owner = ownerChoices(this.storage);
+    const current = this.agent(agent.key) ?? agent;
+    // A reconnecting relay keeps its scope, as a turn that starts then keeps
+    // its conversation's folder.
+    const scope = this.relay(agent.key)?.snapshot().scope;
+    const saved =
+      channelId && scope && !current.protection && this.sectionsType(current)
+        ? storedSections(
+            this.storage,
+            scope,
+            agent.key,
+            conversationKey(channelId, root),
+          )
+        : undefined;
+    const sections = saved && this.pluginSections(current, saved);
+    return sections && Object.keys(sections).length
+      ? { owner, plugin: { id: saved.plugin, sections } }
+      : { owner };
+  }
+  /** Where the owner's local agent keeps a conversation's instructions, or
+   * the `what` a plugin gave it, as its folder. A root for a conversation its
+   * harness runs whole rejects: no turn would show them. So does a huddle
+   * room, whose conversations harnesses key differently. */
+  private async instructionsPlace(
+    key: AgentKey,
+    place: SessionPlace,
+    what = "instructions",
+  ) {
     const found = this.folderPlace(key, place, "instructions");
     const reads = ownerReads(this.relay(key), pubkeyOf(key));
     if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
-      throw new Error("Conversation instructions are unavailable in a huddle");
+      throw new Error(`Conversation ${what} are unavailable in a huddle`);
     if (
       place.root &&
       (found.conversation === place.channelId ||
         (await this.rootInWhole(key, found.agent.owner, place)))
     )
       throw new Error(
-        "This agent runs the channel as one conversation: give its instructions without a root",
+        `This agent runs the channel as one conversation: give its ${what} without a root`,
       );
     return found;
   }
@@ -6624,8 +6856,10 @@ export class AgentsService extends Service implements Agents {
       this.unlist(binding.origin, pubkey);
       await native.forget(member);
       // Left, its conversations stay here, and so do their instructions.
-      if (deleting)
+      if (deleting) {
         await forgetConversationInstructions(this.storage, member.key);
+        await forgetConversationSections(this.storage, member.key);
+      }
     } finally {
       await native.releaseRemoval(member);
     }
@@ -6655,6 +6889,7 @@ export class AgentsService extends Service implements Agents {
       this.unlist(originOf(member.relay) ?? "", member.pubkey);
       await native.forget(member);
       await forgetConversationInstructions(this.storage, member.key);
+      await forgetConversationSections(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
@@ -8229,6 +8464,7 @@ export class AgentsService extends Service implements Agents {
       this.unlist(originOf(relay) ?? "", pubkey);
       await this.native?.forget(member);
       await forgetConversationInstructions(this.storage, member.key);
+      await forgetConversationSections(this.storage, member.key);
       await this.refresh();
       // So the community's agent choices no longer offer it.
       await binding.session.agentChoices.refresh(true, { fresh: true });

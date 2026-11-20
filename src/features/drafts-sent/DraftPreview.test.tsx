@@ -626,21 +626,28 @@ it("does not close on delivery if the person has started a new draft in the same
     const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(h.publish).toHaveBeenCalled());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     act(() => {
       editor.value = "New unsent thought";
       fireEvent.input(editor);
     });
+    expect(editor).toHaveTextContent("New unsent thought");
+    expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
+      "",
+    );
+    await act(async () => release());
+    expect(h.published).toHaveLength(1);
+    expect(
+      screen.getByRole("region", { name: "Draft for #Design" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveTextContent("New unsent thought");
     expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
       "New unsent thought",
     );
   } finally {
     await act(async () => release());
+    vi.useRealTimers();
   }
-  await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(
-    screen.getByRole("region", { name: "Draft for #Design" }),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("textbox")).toHaveTextContent("New unsent thought");
 });
 
 it("waits for a background attachment send whose draft cleanup happens before delivery", async () => {

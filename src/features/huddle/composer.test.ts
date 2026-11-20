@@ -40,6 +40,7 @@ afterEach(() => {
   cleanupReact();
   for (const fn of cleanup.splice(0).reverse()) fn();
   localStorage.clear();
+  sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

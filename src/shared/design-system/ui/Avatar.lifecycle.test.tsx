@@ -276,3 +276,32 @@ it("requests a failed source again when asked after its timed retries are spent"
   expect(retried).toHaveAttribute("data-loaded", "true");
   view.unmount();
 });
+
+it("requests a source once more when it fails after a recovery that found it still loading", () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const src = "https://example.test/pending.png";
+  const view = render(<Avatar src={src} alt="Pending" fallback="P" />);
+  const artwork = () => view.container.querySelector("img");
+  for (const delay of [2_000, 10_000, 30_000]) {
+    const image = artwork();
+    if (!image) throw new Error("Expected avatar artwork");
+    fireEvent.error(image);
+    act(() => vi.advanceTimersByTime(delay));
+  }
+  const pending = artwork();
+  if (!pending) throw new Error("Expected the last timed request");
+  act(() => retryFailedImages());
+  fireEvent.error(pending);
+  act(() => vi.advanceTimersByTime(0));
+  const recovered = artwork();
+  if (!recovered) throw new Error("Expected a request after the recovery");
+  fireEvent.load(recovered);
+  expect(recovered).toHaveAttribute("data-loaded", "true");
+  fireEvent.error(recovered);
+  expect(artwork()).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+  view.unmount();
+});

@@ -435,12 +435,15 @@ function main() {
       node: capture("bin/node", ["--version"], worktree, env),
       pnpm: capture("bin/pnpm", ["--version"], worktree, env),
       rustc: capture("bin/rustc", ["--version"], worktree, env),
+      // pnpm may print install chatter first; the version is the last line.
       playwright: capture(
         "bin/pnpm",
         ["exec", "playwright", "--version"],
         worktree,
         env,
-      ),
+      )
+        ?.split("\n")
+        .at(-1),
     },
     lanes,
     final: { headUnchanged, remoteHeadUnchanged, treeClean },

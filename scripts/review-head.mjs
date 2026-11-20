@@ -26,8 +26,20 @@ const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
 
 export const LANES = ["static", "tests", "rust", "browser"];
 const BUNDLE = ["receipt.json", "summary.md", "logs", "browser"];
-export const HOST_DEPS_REASON =
-  "this host lacks browser system libraries; run `sudo bin/pnpm exec playwright install-deps chromium webkit` once";
+// Failures that mean this host lacks system packages CI's runners provide,
+// not that the change is wrong. Each names the one-time fix.
+export const HOST_HINTS = [
+  [
+    "Host system is missing dependencies",
+    "this host lacks browser system libraries; run `sudo bin/pnpm exec playwright install-deps chromium webkit` once",
+  ],
+  [
+    "pkg-config exited with status code",
+    "this host lacks the native build libraries CI installs; see the apt step in .github/workflows/ci.yml",
+  ],
+];
+export const hostHint = (text) =>
+  HOST_HINTS.find(([pattern]) => text.includes(pattern))?.[1];
 const USAGE =
   "usage: review-head <pr-number|commit> [--base=<ref>] [--lanes=auto|all|full|<lane,…>] [--browser=<spec[:line]>]… [--out=<dir>] [--tag=<name>]";
 
@@ -296,10 +308,7 @@ function main() {
       if (exit !== 0) {
         lane.status = "failed";
         const text = readFileSync(log, "utf8");
-        // CI's Playwright container ships these libraries; other hosts
-        // install them once rather than reading this as product failures.
-        if (text.includes("Host system is missing dependencies"))
-          lane.reason = HOST_DEPS_REASON;
+        lane.reason = hostHint(text) ?? "";
         console.log(text.split("\n").slice(-40).join("\n"));
         break;
       }

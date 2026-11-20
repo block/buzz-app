@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chooseLanes,
+  hostHint,
   notProven,
   parseArgs,
   parseSelection,
@@ -197,4 +198,12 @@ it("renders a summary that a review body can quote", () => {
       result: "passed",
     }),
   ).toContain("remote ⚠ unchecked");
+});
+
+it("names the host fix instead of blaming the change", () => {
+  expect(
+    hostHint("x\nHost system is missing dependencies to run browsers."),
+  ).toMatch(/install-deps chromium webkit/);
+  expect(hostHint("pkg-config exited with status code 1")).toMatch(/ci\.yml/);
+  expect(hostHint("AssertionError: 1 !== 0")).toBeUndefined();
 });

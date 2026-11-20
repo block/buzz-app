@@ -4203,9 +4203,14 @@ html[data-keyboard-navigation] .activityExpansion {
   position: absolute;
   inset-block-start: 50%;
   inset-inline-start: var(--relayed-avatar-center);
+  /* A definite row and no line box of its own keep the avatar 16px square and
+     on the line's center; a stack's ringed avatars overflow it evenly. */
   display: grid;
+  grid-template-rows: var(--space-4);
+  place-items: center;
   min-inline-size: var(--space-4);
   block-size: var(--space-4);
+  line-height: 0;
   translate: -50% -50%;
   pointer-events: none;
 }

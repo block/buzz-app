@@ -114,6 +114,11 @@ if that desktop app is up and running.
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
   Types are `bar`, `line` and `scatter`.
+- **GitHub repositories.** In a channel you can post in, the channel menu's
+  **GitHub repositories** follows a repository. On desktop with `gh` signed
+  in, your Buzz then posts its pull requests as you, as cards that show state,
+  checks and reviews, with a thread reply when one is approved, merged or
+  closed. Cards update only while your Buzz is open.
 
 ## Agents
 

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
@@ -100,8 +101,14 @@ export function ChannelLifecycleDialog({
   onSubmit?(): void;
   finalFocus?: DialogProps["finalFocus"];
   /** `unconfirmed`: the relay may have applied it anyway
-   * (`ChannelLifecycleUnconfirmed`). */
-  failed?(title: string, message: string, unconfirmed: boolean): void;
+   * (`ChannelLifecycleUnconfirmed`). `refresh`: refreshing channels is the
+   * recovery (`ChannelLifecycleStale`, which every unconfirmed failure is). */
+  failed?(
+    title: string,
+    message: string,
+    unconfirmed: boolean,
+    refresh: boolean,
+  ): void;
   /** Already chosen without a dialog, as Undo is: run it on mount. */
   confirmed?: boolean;
   /** Offered from an immediate archive's result toast. */
@@ -206,6 +213,7 @@ export function ChannelLifecycleDialog({
             `${copy.title} failed`,
             message,
             error instanceof ChannelLifecycleUnconfirmed,
+            error instanceof ChannelLifecycleStale,
           );
         else setError(message);
       }

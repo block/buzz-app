@@ -129,9 +129,18 @@ export function RelayedRunPreview({
           </span>
         )}
         {(chat || !sameSource) && (
-          <span className={styles.relayedSubtle} aria-hidden="true">
+          <span
+            className={styles.relayedSubtle}
+            data-relayed-from=""
+            aria-hidden="true"
+          >
             {expanded ? "From" : "from"}
-            {!chat && " other chats"}
+          </span>
+        )}
+        {!chat && !sameSource && (
+          <span className={styles.relayedSubtle} aria-hidden="true">
+            {/* Its own line start drops the space the text keeps. */}
+            {" other chats"}
           </span>
         )}
         {chat && (

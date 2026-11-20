@@ -2217,6 +2217,7 @@ function RelayedMessageRow(props: MessageRowProps) {
                   <span
                     className={styles.relayedSubtle}
                     data-relayed-source=""
+                    data-relayed-from=""
                     aria-hidden="true"
                   >
                     from

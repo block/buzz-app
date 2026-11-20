@@ -4259,7 +4259,13 @@ html[data-keyboard-navigation]
 .relayedChat {
   position: relative;
   z-index: 1;
+  /* The link's hover padding overhangs it; this box takes the overhang, so a
+     chat name that fits is not clipped into an ellipsis. */
+  margin-inline: calc(-1 * var(--space-half));
   color: var(--text-standard);
+}
+.relayedHeader > .relayedChat > * {
+  margin-inline: 0;
 }
 .relayedPreview {
   flex: 1 1 0;
@@ -4272,9 +4278,19 @@ html[data-keyboard-navigation]
   @apply text-caption;
   flex: none;
 }
-/* A fold's count belongs to its preview, so the two stay together. */
+/* A fold's count belongs to its preview, so the two stay together: the
+   preview takes only the room left, up to its own width, and gives it all up
+   before the chat name truncates. */
 .relayedRun > .relayedHeader > .relayedPreview {
-  flex: 0 1 auto;
+  max-inline-size: max-content;
+}
+/* A narrow conversation keeps the avatar, the chat and the message: the name
+   and "from" go. An opened fold's lines keep naming each sender. */
+@container messages (max-width: 30rem) {
+  .relayedHeader > [data-relayed-from],
+  .relayedHeader > .relayedName:not(.relayedRunItems .relayedName) {
+    display: none;
+  }
 }
 .relayedRun > .relayedHeader > .relayedTime {
   margin-inline-start: auto;

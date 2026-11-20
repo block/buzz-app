@@ -39,6 +39,7 @@ const nonIconDependencies = new Set([
   "@testing-library/react",
   "@testing-library/user-event",
   "@types/d3-scale",
+  "@types/hast", // Type-only module for highlighted code trees.
   "@types/mdast",
   "@types/node",
   "@types/react",
@@ -54,8 +55,12 @@ const nonIconDependencies = new Set([
   "echarts", // Chart marks; not an icon library.
   "emoji-mart",
   "flexlayout-react",
+  "github-slugger", // Heading IDs; not an icon library.
   "gitdiff-parser", // Validates patch structure before rendering, not an icon library.
+  "hast", // Type-only module supplied by @types/hast.
+  "highlight.js", // Code highlighting grammars; not an icon library.
   "jsdom",
+  "lowlight", // Code highlighting into HTML trees; not an icon library.
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
   "mdast-util-gfm-strikethrough",
@@ -63,8 +68,10 @@ const nonIconDependencies = new Set([
   "mdast-util-to-markdown",
   "micromark-extension-gfm-strikethrough",
   "micromark-extension-gfm-table",
+  "micromark-util-decode-string", // Markdown string decoding; not an icon library.
   "motion",
   "nostr-tools",
+  "pdfjs-dist", // PDF page rendering; not an icon library.
   "pele",
   "postcss",
   "proper-lockfile", // The Pi host's lock on each agent's storage.
@@ -80,11 +87,14 @@ const nonIconDependencies = new Set([
   "react-markdown",
   "remark-breaks",
   "remark-gfm",
+  "remark-parse", // Markdown parsing; not an icon library.
+  "remark-rehype", // Test-only Markdown to HTML trees; not an icon library.
   "rolldown",
   "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
   "tailwindcss",
   "typescript",
   "undici",
+  "unified", // Markdown processing pipeline; not an icon library.
   "virtua",
   "vite",
   "vitest",

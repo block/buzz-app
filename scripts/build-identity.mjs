@@ -1,10 +1,18 @@
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 
 const REVISION = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
 
 export function captureBuildIdentity(root, { mutable = false } = {}) {
   let revision = null;
   try {
+    const repository = execFileSync(
+      "git",
+      ["-C", root, "rev-parse", "--show-toplevel"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    if (realpathSync(repository) !== realpathSync(root))
+      return { revision: null, state: "unknown" };
     const found = execFileSync(
       "git",
       ["-C", root, "rev-parse", "--verify", "HEAD^{commit}"],

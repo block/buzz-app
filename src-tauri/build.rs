@@ -22,19 +22,7 @@ fn main() {
     let root = std::path::PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"),
     );
-    // Keep the embedded identity fresh when native source inputs change.
-    for path in ["src", "../crates", "../src/bundled/mesh-compute/compute"] {
-        println!("cargo:rerun-if-changed={path}");
-    }
-    let identity = build_identity::capture(&root);
-    println!(
-        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_REVISION={}",
-        identity.revision.as_deref().unwrap_or_default()
-    );
-    println!(
-        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_STATE={}",
-        identity.state.as_str()
-    );
+    build_identity::configure_native_build(&root);
     configure_nsec_backup();
     configure_federated_identity();
     configure_enterprise_auth();

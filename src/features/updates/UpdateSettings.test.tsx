@@ -68,6 +68,8 @@ it("checks on request and checks again from the latest version", async () => {
   expect(
     screen.getByRole("heading", { name: "Update status", level: 3 }),
   ).toBeVisible();
+  expect(screen.queryByText(/Native image source:/)).toBeNull();
+  expect(screen.queryByText(/Loaded frontend source:/)).toBeNull();
   expect(
     screen.getByText("Check if a new version is available."),
   ).toBeVisible();
@@ -170,24 +172,37 @@ it("shows native and loaded frontend revisions separately when they differ", asy
   }
 });
 
-it("shows dirty and unknown honestly when build identities are incomplete", async () => {
-  native.isTauri.mockReturnValue(true);
-  native.invoke.mockResolvedValue({ revision: null, state: "clean" });
-  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_REVISION", "c".repeat(40));
-  vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_STATE", "dirty");
-  try {
-    renderSettings({});
-    expect(
-      await screen.findByText("Native image source: unknown"),
-    ).toBeVisible();
-    expect(
-      screen.getByText(`Loaded frontend source: ${"c".repeat(40)} · dirty`),
-    ).toBeVisible();
-    expect(screen.queryByText(/Native image source: .* · clean/)).toBeNull();
-  } finally {
-    native.isTauri.mockReturnValue(false);
-  }
-});
+it.each([
+  { revision: null, state: "clean", description: "unknown" },
+  {
+    revision: "d".repeat(40),
+    state: "invalid",
+    description: `${"d".repeat(40)} · unknown`,
+  },
+])(
+  "shows dirty and unknown honestly for an incomplete identity ($state)",
+  async ({ revision, state, description }) => {
+    native.isTauri.mockReturnValue(true);
+    const response = deferred<{ revision: string | null; state: string }>();
+    native.invoke.mockReturnValue(response.promise);
+    vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_REVISION", "c".repeat(40));
+    vi.stubEnv("VITE_BUZZ_FRONTEND_SOURCE_STATE", "dirty");
+    try {
+      renderSettings({});
+      expect(native.invoke).toHaveBeenCalledWith("get_build_identity");
+      await act(async () => response.resolve({ revision, state }));
+      expect(
+        screen.getByText(`Native image source: ${description}`),
+      ).toBeVisible();
+      expect(
+        screen.getByText(`Loaded frontend source: ${"c".repeat(40)} · dirty`),
+      ).toBeVisible();
+      expect(screen.queryByText(/Native image source: .* · clean/)).toBeNull();
+    } finally {
+      native.isTauri.mockReturnValue(false);
+    }
+  },
+);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

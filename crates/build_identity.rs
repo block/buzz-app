@@ -44,20 +44,57 @@ pub fn compiled(revision: Option<&str>, state: Option<&str>) -> BuildIdentity {
     BuildIdentity { revision, state }
 }
 
+pub fn configure_native_build(manifest_dir: &Path) {
+    let root = manifest_dir.parent().unwrap_or(manifest_dir);
+    for path in [
+        "src-tauri/src",
+        "src-tauri/Cargo.toml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates",
+        "src/bundled/mesh-compute/compute",
+    ] {
+        println!("cargo:rerun-if-changed={}", root.join(path).display());
+    }
+    let identity = capture(root);
+    if identity.revision.is_some() {
+        // Resolve through Git: linked worktrees keep HEAD/index and refs in different directories.
+        for name in ["HEAD", "index", "refs", "packed-refs"] {
+            if let Some(path) = git(root, &["rev-parse", "--git-path", name]) {
+                let path = root.join(path.trim());
+                // Watching absent packed-refs would invalidate every Cargo invocation.
+                if path.exists() {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                }
+            }
+        }
+    }
+    println!(
+        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_REVISION={}",
+        identity.revision.as_deref().unwrap_or_default()
+    );
+    println!(
+        "cargo:rustc-env=BUZZ_NATIVE_SOURCE_STATE={}",
+        identity.state.as_str()
+    );
+}
+
 pub fn capture(root: &Path) -> BuildIdentity {
+    let repository_root = git(root, &["rev-parse", "--show-toplevel"])
+        .and_then(|path| Path::new(path.trim()).canonicalize().ok());
+    if repository_root.is_none() || repository_root != root.canonicalize().ok() {
+        return compiled(None, None);
+    }
     let revision = git(root, &["rev-parse", "--verify", "HEAD^{commit}"]);
-    let repository_root = git(root, &["rev-parse", "--show-toplevel"]);
-    let status = repository_root.as_deref().and_then(|repository_root| {
-        git(
-            Path::new(repository_root.trim()),
-            &[
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-            ],
-        )
-    });
+    let status = git(
+        root,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
+    );
     from_git_outputs(revision.as_deref(), status.as_deref())
 }
 
@@ -101,6 +138,8 @@ mod tests {
     fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
             .args(["-C", root.to_str().unwrap()])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", root.join(".unused-global-git-config"))
             .args(args)
             .output()
             .unwrap();
@@ -162,6 +201,20 @@ mod tests {
                 state: SourceState::Unknown,
             }
         );
+        let root = directory.path();
+        run_git(root, &["init", "--quiet", "--template="]);
+        run_git(root, &["config", "user.name", "Build identity test"]);
+        run_git(
+            root,
+            &["config", "user.email", "build-identity@example.org"],
+        );
+        run_git(root, &["config", "commit.gpgsign", "false"]);
+        fs::write(root.join(".gitignore"), "archive/\n").unwrap();
+        run_git(root, &["add", "."]);
+        run_git(root, &["commit", "--quiet", "-m", "enclosing source"]);
+        let archive = root.join("archive");
+        fs::create_dir(&archive).unwrap();
+        assert_eq!(capture(&archive), compiled(None, None));
     }
 
     #[test]
@@ -175,8 +228,9 @@ mod tests {
         fs::write(native.join("build.rs"), "fn main() {}\n").unwrap();
         fs::write(&crate_source, "pub fn source() {}\n").unwrap();
 
-        run_git(root, &["init", "--quiet"]);
+        run_git(root, &["init", "--quiet", "--template="]);
         run_git(root, &["config", "user.name", "Build identity test"]);
+        run_git(root, &["config", "commit.gpgsign", "false"]);
         run_git(
             root,
             &["config", "user.email", "build-identity@example.org"],
@@ -186,6 +240,124 @@ mod tests {
 
         fs::write(&crate_source, "pub fn source() { /* changed */ }\n").unwrap();
 
-        assert_eq!(capture(&native).state, SourceState::Dirty);
+        assert_eq!(capture(root).state, SourceState::Dirty);
+    }
+
+    #[test]
+    fn incremental_native_build_refreshes_dependency_and_git_only_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let native = root.join("src-tauri");
+        fs::create_dir_all(native.join("src")).unwrap();
+        fs::create_dir_all(root.join("dependency/src")).unwrap();
+        fs::create_dir_all(root.join("crates")).unwrap();
+        fs::create_dir_all(root.join("src/bundled/mesh-compute/compute")).unwrap();
+        fs::write(root.join(".gitignore"), "/target/\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"src-tauri\", \"dependency\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        fs::write(
+            native.join("Cargo.toml"),
+            "[package]\nname = \"identity-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nidentity-dependency = { path = \"../dependency\" }\n\
+             [build-dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n",
+        )
+        .unwrap();
+        let dependency_manifest = root.join("dependency/Cargo.toml");
+        let manifest =
+            "[package]\nname = \"identity-dependency\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+        fs::write(&dependency_manifest, manifest).unwrap();
+        fs::write(
+            root.join("dependency/src/lib.rs"),
+            "pub fn version() -> &'static str { env!(\"CARGO_PKG_VERSION\") }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crates/build_identity.rs"),
+            include_str!("build_identity.rs"),
+        )
+        .unwrap();
+        fs::write(root.join("src/bundled/mesh-compute/compute/.keep"), "").unwrap();
+        fs::write(
+            native.join("build.rs"),
+            "#[path = \"../crates/build_identity.rs\"] mod build_identity;\n\
+             fn main() { build_identity::configure_native_build(std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))); }\n",
+        )
+        .unwrap();
+        fs::write(
+            native.join("src/main.rs"),
+            "fn main() { println!(\"{} {} {}\", env!(\"BUZZ_NATIVE_SOURCE_REVISION\"), \
+             env!(\"BUZZ_NATIVE_SOURCE_STATE\"), identity_dependency::version()); }\n",
+        )
+        .unwrap();
+        let cargo = |root: &Path, command: &str| {
+            let output = Command::new(env!("CARGO"))
+                .args([command, "--offline", "--quiet", "-p", "identity-fixture"])
+                .current_dir(root)
+                .env_remove("CARGO_TARGET_DIR")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", root.join(".unused-global-git-config"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "cargo {command} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        cargo(&root, "build");
+        run_git(&root, &["init", "--quiet", "--template="]);
+        run_git(&root, &["config", "user.name", "Build identity test"]);
+        run_git(
+            &root,
+            &["config", "user.email", "build-identity@example.org"],
+        );
+        run_git(&root, &["config", "commit.gpgsign", "false"]);
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "--quiet", "-m", "initial source"]);
+        let worktree = directory.path().join("worktree");
+        run_git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "fixture",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        let revision = capture(&worktree).revision.unwrap();
+        assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.1.0"));
+
+        // Cargo relinks a normal dependency, without changing the build script or Rust sources.
+        fs::write(
+            worktree.join("dependency/Cargo.toml"),
+            manifest.replace("0.1.0", "0.2.0"),
+        )
+        .unwrap();
+        assert_eq!(cargo(&worktree, "run"), format!("{revision} dirty 0.2.0"));
+
+        run_git(&worktree, &["add", "."]);
+        run_git(&worktree, &["commit", "--quiet", "-m", "update dependency"]);
+        let revision = capture(&worktree).revision.unwrap();
+        assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+        run_git(&worktree, &["pack-refs", "--all"]);
+        assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
+        run_git(
+            &worktree,
+            &[
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "move packed ref",
+            ],
+        );
+        let revision = capture(&worktree).revision.unwrap();
+        assert_eq!(cargo(&worktree, "run"), format!("{revision} clean 0.2.0"));
     }
 }

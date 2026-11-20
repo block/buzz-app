@@ -94,9 +94,12 @@ function federatedBuilderlabUrl(legacy: string | undefined, live: boolean) {
 
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
-  const frontendIdentity = captureBuildIdentity(process.cwd(), {
-    mutable: command === "serve",
-  });
+  const frontendIdentity = captureBuildIdentity(
+    fileURLToPath(new URL(".", import.meta.url)),
+    {
+      mutable: command === "serve",
+    },
+  );
   // Native builds consume only process values and repository-root .env.local.
   // Keep this frontend value on the same source so Vite mode files cannot
   // select a different same-origin deployment path.

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -49,6 +49,17 @@ it("keeps a dev server or a source archive unknown without failing configuration
 
   const archive = mkdtempSync(join(tmpdir(), "buzz-build-archive-"));
   directories.push(archive);
+  expect(captureBuildIdentity(archive)).toEqual({
+    revision: null,
+    state: "unknown",
+  });
+});
+
+it("does not borrow an enclosing repository's clean revision for a source archive", () => {
+  const root = repository();
+  writeFileSync(join(root, ".git/info/exclude"), "archive/\n");
+  const archive = join(root, "archive");
+  mkdirSync(archive);
   expect(captureBuildIdentity(archive)).toEqual({
     revision: null,
     state: "unknown",

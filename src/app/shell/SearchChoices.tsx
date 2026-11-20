@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Virtualizer } from "virtua";
 import {
+  ArrowRightIcon,
   type ChatCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
@@ -413,6 +414,7 @@ export function SearchChoices({
   const tabs = landing ? [...ranked, landing] : ranked;
   const countOf = (group: SearchGroup) =>
     group.count ?? String(resultRows(group).length);
+  /** How many rows Top results shows of each group it cuts short. */
   const truncated = new Map<string, number>();
   const groups: SearchGroup[] = !peek?.ranked
     ? merged
@@ -428,16 +430,17 @@ export function SearchChoices({
             const limit = rows[cap]?.attached ? cap + 1 : cap;
             if (rows.length <= limit && !group.count)
               return { ...group, destinations: rows };
-            truncated.set(group.label, rows.length);
+            const shown = [
+              ...rows.slice(0, limit),
+              ...rows.slice(limit).filter((row) => row.attached),
+            ];
+            truncated.set(group.label, shown.length);
             // Each row is read as one of the whole group: "1 of 37", or of
             // an open set when more may follow ("20+").
             const count = countOf(group);
             return {
               ...group,
-              destinations: [
-                ...rows.slice(0, limit),
-                ...rows.slice(limit).filter((row) => row.attached),
-              ],
+              destinations: shown,
               total: /^\d+$/.test(count) ? Number(count) : -1,
             };
           });
@@ -1101,17 +1104,10 @@ export function SearchChoices({
                 {group?.label === "Direct messages"
                   ? "DMs"
                   : (group?.label ?? "Top results")}
-                {/* A landing group has no count yet. */}
-                {(!group || group !== landing) && (
-                  <span className="search-peek-count">
-                    {group
-                      ? countOf(group)
-                      : `${ranked.reduce(
-                          (sum, item) =>
-                            sum + (item.browse ? 0 : resultRows(item).length),
-                          0,
-                        )}${ranked.some((item) => !item.browse && item.count?.endsWith("+")) ? "+" : ""}`}
-                  </span>
+                {/* A landing group has no count yet. Top results has none:
+                  it shows only the first rows of each group. */}
+                {group && group !== landing && (
+                  <span className="search-peek-count">{countOf(group)}</span>
                 )}
                 {index === 1 && group !== landing && !!query.trim() && (
                   <Badge size="xs" tone="success">
@@ -1192,6 +1188,8 @@ export function SearchChoices({
                                 aria-hidden="true"
                               >
                                 {" "}
+                                {truncated.has(label) &&
+                                  `· Top ${truncated.get(label)} of `}
                                 {countOf(
                                   ranked.find(
                                     (group) => group.label === label,
@@ -1231,29 +1229,34 @@ export function SearchChoices({
                             {!hideLabel && (
                               <div
                                 className="navigation-section-heading"
-                                data-search-action={
+                                // A cut group's heading stays in view while
+                                // its rows scroll, with the way to the rest.
+                                data-search-cut={
                                   truncated.has(label) || undefined
                                 }
                                 aria-hidden={hasControls || undefined}
                               >
                                 <h2 className="m-0 min-w-0 flex-1">
-                                  {truncated.has(label) ? (
-                                    <Button
-                                      variant="plain"
-                                      size="inline"
-                                      aria-label={`Show all ${label}`}
-                                      tabIndex={-1}
-                                      onMouseDown={(event) =>
-                                        event.preventDefault()
-                                      }
-                                      onClick={() => showScope(label)}
-                                    >
-                                      {heading}
-                                    </Button>
-                                  ) : (
-                                    heading
-                                  )}
+                                  {heading}
                                 </h2>
+                                {truncated.has(label) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="xs"
+                                    aria-label={`Show all ${label}`}
+                                    tabIndex={-1}
+                                    onMouseDown={(event) =>
+                                      event.preventDefault()
+                                    }
+                                    onClick={() => showScope(label)}
+                                  >
+                                    Show all
+                                    <ArrowRightIcon
+                                      size={14}
+                                      aria-hidden="true"
+                                    />
+                                  </Button>
+                                )}
                               </div>
                             )}
                             <div className="navigation-section-rows">

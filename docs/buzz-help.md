@@ -842,8 +842,10 @@ Quitting Buzz also turns it off.
   conversation**) to search a conversation's full history.
 - **Search results** list the best match's group first: channels, people,
   pages and messages are ordered by how well they match, each heading showing
-  a count and why it ranks there. Messages lead when the text reads like a
-  phrase. Each message shows the words around the match. A panel beside the
+  a count and why it ranks there. **Top results** shows the first few rows of
+  each group; a group cut short says how many it shows, such as "Top 5 of
+  60+", and keeps its heading and **Show all** button in view while you
+  scroll. Messages lead when the text reads like a phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
   and after it, or a channel's or person's latest messages. Up and Down move
   the highlight, as do Control+J or Control+N and Control+K or Control+P on
@@ -851,8 +853,8 @@ Quitting Buzz also turns it off.
   result** and **Next search result** in Settings → Shortcuts, and the key
   hints show them. Up and Down keep working. Tab, Control+L or Control+F
   shows the next group whole and Shift+Tab, Control+H or Control+B the
-  previous one, as do the group filter buttons above the results and choosing
-  a group's heading when it has more; Escape goes back. Groups reorder as
+  previous one, as do the group filter buttons above the results and a
+  group's **Show all**; Escape goes back. Groups reorder as
   slower results arrive until you move the highlight; after that they stay
   put and later groups join at the end. The panel and key hints hide in
   narrow windows.

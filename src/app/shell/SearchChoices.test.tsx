@@ -529,25 +529,35 @@ it("draws a long group Peek shows whole near the view, keeping the highlighted r
   expect(highlighted).toHaveAttribute("aria-setsize", "120");
 });
 
-it("opens the whole result group from its header while keeping typing focus", () => {
+it("says how much of a group Top results shows and opens the rest from its header", () => {
   render(
     <SearchChoices
       query="channel"
       onQueryChange={() => {}}
       input={createRef<HTMLInputElement>()}
-      groups={[{ label: "Channels", destinations: destinations.slice(0, 6) }]}
+      groups={[
+        { label: "Channels", destinations: destinations.slice(0, 6) },
+        { label: "Pages", destinations: destinations.slice(6, 8) },
+      ]}
       peek={{ ranked: true, preview: () => null }}
     />,
   );
   const field = screen.getByRole("combobox");
   field.focus();
-  expect(screen.getAllByRole("option")).toHaveLength(5);
-  const header = within(
-    screen.getByRole("group", { name: "Channels" }),
-  ).getByRole("heading");
-  fireEvent.click(
-    within(header).getByRole("button", { name: "Show all Channels" }),
+  // Top results counts nothing of its own: it shows only some of each group.
+  expect(
+    screen.getByRole("button", { name: /^Top results/, pressed: true }),
+  ).toHaveTextContent(/^Top results$/);
+  const channels = within(screen.getByRole("group", { name: "Channels" }));
+  expect(channels.getAllByRole("option")).toHaveLength(5);
+  expect(channels.getByRole("heading")).toHaveTextContent(
+    "Channels · Top 5 of 6",
   );
+  // A group shown whole is not cut, so it has no Show all.
+  const pages = within(screen.getByRole("group", { name: "Pages" }));
+  expect(pages.getByRole("heading")).toHaveTextContent(/^Pages 2$/);
+  expect(pages.queryByRole("button", { name: /^Show all/ })).toBeNull();
+  fireEvent.click(channels.getByRole("button", { name: "Show all Channels" }));
   expect(screen.getAllByRole("option")).toHaveLength(6);
   expect(field).toHaveFocus();
 });

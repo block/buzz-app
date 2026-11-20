@@ -343,12 +343,12 @@
     color: var(--text-subtle);
     font-size: var(--text-caption);
   }
-  .search-palette-group .navigation-section-heading[data-search-action] {
-    padding-inline: var(--space-2);
-  }
-  .navigation-section-heading[data-search-action] .buzz-button {
-    width: 100%;
-    justify-content: flex-start;
+  .search-palette-group .navigation-section-heading[data-search-cut] {
+    position: sticky;
+    /* Over the scroller's top padding, so no row shows above it. */
+    top: calc(-1 * var(--space-1));
+    z-index: 1;
+    background: var(--surface-panel);
   }
 
   /* virtua places each drawn row itself, outside the rows' flex gap, so

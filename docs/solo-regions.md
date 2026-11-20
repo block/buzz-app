@@ -61,10 +61,10 @@ use the normal destination rules. The option does not change access or focus.
 
 `data-solo-destination-id` is a supported behavior hook. A primary
 `Conversation.Link` carries its channel ID; secondary links omit the marker.
-Recovery destinations use the same marker. Nexus uses it to identify dragged
-tasks and restore focus after a move. Plugins must scope queries to their own
-region. Changes to the marker or its meaning require coordinated updates to the
-host and consuming plugins.
+Recovery destinations use the same marker. Plugins can use it to identify
+dragged destinations and restore focus after a move. Plugins must scope queries
+to their own region. Changes to the marker or its meaning require coordinated
+updates to the host and consuming plugins.
 
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale
@@ -144,9 +144,14 @@ manual scroll through the scroll owner's `revealAgain`; ordinary retries never
 re-arm viewport ownership. Missing plugins use generic recovery copy, and catalog
 loading does not imply that a plugin is uninstalled.
 
-Reveal requests expand the host frame and let the source open the path. After
-commit, the host uses the existing sidebar reveal retry. Recovery rows use the
-same destination marker. Removing a focused row restores focus to a remaining row,
+Navigation and the header chip keep manually collapsed Solo regions and
+workspaces closed. The header chip scrolls to and focuses the current row within
+its Solo region. A disclosure heading represents a hidden row. If the source
+omits the row, the chip focuses the region heading. The host also sends the
+source an explicit chip request. The source should preserve manual collapse.
+The legacy workspace
+`reveal` prop no longer changes disclosure. Recovery rows use the same
+destination marker. Removing a focused row restores focus to a remaining row,
 then the region heading; removing the region restores focus to the Solo heading.
 
 Focused tests live beside `solo-navigation.ts` and `SoloRegions.tsx`. Browser and

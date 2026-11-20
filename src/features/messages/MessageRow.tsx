@@ -4,6 +4,7 @@ import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
@@ -104,7 +105,6 @@ import styles from "./Messages.module.css";
 import { LinkPreviews } from "./LinkPreviews";
 import { previewLinks } from "./preview-links";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { separateChatCards } from "./chat-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import {
@@ -316,6 +316,10 @@ function MessageRowContent({
     (url: string) => onOpenLink(url, { rootId }),
     [onOpenLink, rootId],
   );
+  const springLoadedThread = useSpringLoaded(
+    () => onOpenThread?.(row.id, rootId),
+    threadOpen,
+  );
   const channels = session?.channels;
   const listed = useListedChannel(
     channels,
@@ -506,19 +510,10 @@ function MessageRowContent({
     shown.diff || bodyContent != null
       ? undefined
       : parseMediaTimeReply(row.forward?.note ?? shown.content);
-  const sourceRow =
+  const displayRow =
     timeReply && !row.forward
       ? { ...shown, content: timeReply.content }
       : shown;
-  const { caption: displayRow, cards: chatCards } = useMemo(
-    () =>
-      bodyContent != null
-        ? { caption: sourceRow, cards: [] }
-        : separateChatCards(sourceRow, directory.channels),
-    [sourceRow, directory.channels, bodyContent],
-  );
-  const cardsOnly =
-    chatCards.length > 0 && !displayRow.content.trim() && !timeReply;
   const attachmentOnly =
     !row.content.trim() &&
     !row.diff &&
@@ -689,7 +684,7 @@ function MessageRowContent({
   // A message renderer may draw some attachments itself. Its claims count only
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
-  const bodyShown = !attachmentOnly && !cardsOnly;
+  const bodyShown = !attachmentOnly;
   const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
   const claims =
@@ -1363,6 +1358,7 @@ function MessageRowContent({
               event.currentTarget.focus();
               onOpenThread(row.id, row.threadRootId ?? row.id);
             }}
+            {...springLoadedThread}
           >
             <ReplySummary
               hideEmptyLabel={!!activity}
@@ -1418,12 +1414,7 @@ function MessageRowContent({
     );
   };
   const reactionsInBubble =
-    !attachmentOnly &&
-    !cardsOnly &&
-    !row.huddle &&
-    !shownRow &&
-    !emojiOnly &&
-    !row.diff;
+    !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
   const reactionContent =
@@ -1503,10 +1494,7 @@ function MessageRowContent({
             ? ""
             : undefined
         }
-        data-own={
-          (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
-          undefined
-        }
+        data-own={(!attachmentOnly && !row.huddle && ownBubble) || undefined}
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -1515,8 +1503,7 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !cardsOnly && !row.huddle && !shownRow) ||
-              undefined
+              (!attachmentOnly && !row.huddle && !shownRow) || undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
@@ -1677,32 +1664,6 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {chatCards.length > 0 && (
-                <div
-                  className={styles.messageAttachments}
-                  data-solo-cards
-                  data-message-action-anchor
-                >
-                  {chatCards.map((card) => (
-                    <MessageMarkdown
-                      key={card.start}
-                      directory={directory}
-                      session={references}
-                      scope={scope}
-                      row={{
-                        ...shown,
-                        content: card.content,
-                        attachmentSeams: [],
-                      }}
-                      extensions={extensions}
-                      media={media}
-                      onOpenLink={openLink}
-                      canOpenLink={canOpenLink}
-                      participantProfiles={participantProfiles}
-                    />
-                  ))}
-                </div>
-              )}
               {bodyShown && (
                 <div
                   className={

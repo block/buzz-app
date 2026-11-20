@@ -13,6 +13,7 @@ import { expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render as renderDom,
   screen,
@@ -22,6 +23,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
+import {
+  SPRING_LOAD_DELAY_MS,
+  SPRING_LOAD_GRACE_MS,
+} from "./spring-loaded-drag";
 import { useShowingDraft } from "./draft-places";
 import { clearView, writeView } from "../../shared/view-state";
 import {
@@ -3361,10 +3366,11 @@ it.each([true, false])(
   },
 );
 
-it.each(["", "Please review this.\n\n"])(
-  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+it.each(["", "Please review "])(
+  "keeps chat links in their authored bubble with normal message interactions (caption=%s)",
   async (caption) => {
-    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
+    const suffix = caption ? " before merge." : "";
+    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)${suffix}`;
     const reply = vi.fn(),
       thread = vi.fn(),
       open = vi.fn(() => true),
@@ -3389,23 +3395,16 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Chat: PR 45 fixes",
+        name: "Session: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
-      expect(card.closest("[data-solo-cards]")).not.toBeNull();
-      expect(card.closest("[class*=messageBubble]")).toBeNull();
-      if (caption) {
-        if (!bubble) throw new Error("Caption bubble missing");
-        expect(bubble).toHaveTextContent("Please review this.");
-        expect(
-          card.compareDocumentPosition(bubble) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy();
-      } else {
-        expect(bubble).toBeNull();
-        expect(container.querySelector("[data-bubble]")).toBeNull();
-        expect(container.querySelector("[data-own]")).toBeNull();
-      }
+      expect(card.closest("[data-solo-cards]")).toBeNull();
+      expect(card.closest("[class*=messageBubble]")).toBe(bubble);
+      expect(bubble).toHaveTextContent(
+        `${caption}Session: PR 45 fixes${suffix}`,
+      );
+      expect(container.querySelector("[data-bubble]")).not.toBeNull();
+      expect(container.querySelector("[data-own]")).not.toBeNull();
       expect(container.querySelectorAll("[data-message-id=root]")).toHaveLength(
         1,
       );
@@ -3429,7 +3428,7 @@ it.each(["", "Please review this.\n\n"])(
   },
 );
 
-it("keeps the timestamp seek action beside a detached session card", () => {
+it("keeps the timestamp seek action beside an inline chat link", () => {
   const seek = vi.fn();
   try {
     renderDom(
@@ -3450,9 +3449,9 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Chat: Fix" })
+        .getByRole("link", { name: "Session: Fix" })
         .closest("[class*=messageBubble]"),
-    ).toBeNull();
+    ).not.toBeNull();
   } finally {
     cleanup();
   }
@@ -4356,8 +4355,8 @@ it.each([
   {
     claim: "shot",
     fails: false,
-    card: false,
-    listed: ["notes.txt", "shot.png"],
+    card: true,
+    listed: ["notes.txt"],
     content: "[Session: PR 45 fixes](buzz://channel/session-id)",
   },
 ])(
@@ -5502,3 +5501,59 @@ it.each([true, false])(
     }
   },
 );
+
+it("opens the thread when a file drag rests on its summary, unless already open", () => {
+  vi.useFakeTimers();
+  try {
+    const onOpenThread = vi.fn();
+    // jsdom drag events carry no pointer position, and each drag here comes
+    // in at its own point.
+    let clientX = 1;
+    const drag = (
+      kind: "dragEnter" | "dragOver" | "dragLeave",
+      target: HTMLElement,
+    ) => {
+      const event = createEvent[kind](target, {
+        dataTransfer: { types: ["Files"] },
+      });
+      Object.defineProperty(event, "clientX", { value: clientX });
+      fireEvent(target, event);
+    };
+    // The delay ends, and the target opens on the drag's next dragover.
+    const rest = (summary: HTMLElement) => {
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+      drag("dragOver", summary);
+    };
+    const props = {
+      row,
+      profile: undefined,
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+      onOpenThread,
+    };
+    const view = renderDom(<MessageRow {...props} />);
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", summary);
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+    expect(summary).toHaveAttribute("data-spring-loaded", "on");
+    rest(summary);
+    expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("root", "root");
+    drag("dragLeave", summary);
+    clientX = 2;
+    view.rerender(<MessageRow {...props} threadOpen />);
+    const opened = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", opened);
+    expect(opened).not.toHaveAttribute("data-spring-loaded");
+    rest(opened);
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});

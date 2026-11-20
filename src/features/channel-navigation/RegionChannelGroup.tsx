@@ -9,10 +9,7 @@ import {
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { canStartLinkedChat } from "../../bundled/channels/StartLinkedChat";
 import { channelIcon } from "../channels/channel-icon";
-import {
-  NavigationCard,
-  NavigationItem,
-} from "../../shared/design-system/ui/NavigationItem";
+import { NavigationCard } from "../../shared/design-system/ui/NavigationItem";
 import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
@@ -22,6 +19,7 @@ import type { RelaySession } from "../relay/session";
 import type { SoloChannelGroupProps } from "./solo-navigation-contract";
 import { RegionDestinationContext } from "./SoloDestination";
 import { SoloDisclosure } from "./SoloDisclosure";
+import { SpringLoadedNavigationItem } from "./SpringLoadedNavigationItem";
 import { conversationTarget } from "./routes";
 import styles from "./RegionChannelGroup.module.css";
 
@@ -86,6 +84,9 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         }
       : undefined;
   const Icon = channelIcon(channel);
+  const select = () => {
+    if (eligible(current())) props.onSelect();
+  };
   const openDetails = () => {
     if (!eligible(current())) return;
     const target = conversationTarget(scope, channel.id);
@@ -137,14 +138,13 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           }
         >
           <div className={styles.heading}>
-            <NavigationItem
+            <SpringLoadedNavigationItem
               label={channel.name}
               title={channel.name}
               icon={<Icon size={14} />}
               selected={!!props.selected}
-              onClick={() => {
-                if (eligible(current())) props.onSelect();
-              }}
+              onClick={select}
+              onSpring={select}
             />
             <SoloDisclosure
               label={props.disclosureLabel}

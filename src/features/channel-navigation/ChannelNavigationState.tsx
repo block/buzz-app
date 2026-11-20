@@ -110,10 +110,6 @@ type State = {
    * else's doing. Each is kept until the relay answers for its channel (see
    * `answered`). One that failed before publishing is not recorded. */
   ownLosses: readonly OwnLoss[];
-  /** Counts Refresh channels chosen from a lifecycle failure. Settings reads
-   * its channel actions again on each one: 39001 roles and owner-agent
-   * profiles can change without the roster's role hint. */
-  lifecycleRefreshes: number;
 };
 type OwnLoss = Readonly<{
   channelId: string;
@@ -514,10 +510,6 @@ export function ChannelNavigationProvider({
                     undefined,
                     { consistency: "strong" },
                   );
-                update((previous) => ({
-                  ...previous,
-                  lifecycleRefreshes: previous.lifecycleRefreshes + 1,
-                }));
                 // Removing the toast drops its focus. Return it to the failed
                 // action unless the person is already elsewhere; Settings
                 // hands it on if the refresh retires that action.
@@ -552,6 +544,5 @@ function restore(session: RelaySession, scope: string): State {
     lifecycleDialog: undefined,
     queuedUndos: [],
     ownLosses: [],
-    lifecycleRefreshes: 0,
   };
 }

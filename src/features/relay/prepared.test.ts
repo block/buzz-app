@@ -353,6 +353,7 @@ it("waits for the roster before restoring when a single-channel lookup answers f
     const lookup = next();
     lookup.respond(discovery(["a"]));
     await flush();
+    expect(disk.read).not.toHaveBeenCalled();
     roster.respond(discovery(["a", "b", "c"]));
     await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(3));
     expect(disk.retain).not.toHaveBeenCalledWith([]);

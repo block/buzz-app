@@ -93,6 +93,18 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
     typeof props.headerAccessory === "boolean"
       ? undefined
       : props.headerAccessory;
+  const disclosure = (
+    <SoloDisclosure
+      leading={leading && { ...leading, onActivate: activateLeading }}
+      label={props.disclosureLabel}
+      summary=""
+      expanded={props.expanded}
+      controls={props.controls}
+      onToggle={() => {
+        if (eligible(current())) props.onToggle();
+      }}
+    />
+  );
   const select = () => {
     if (eligible(current())) props.onSelect();
   };
@@ -166,16 +178,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           }
         >
           <div className={styles.heading}>
-            <SoloDisclosure
-              leading={leading && { ...leading, onActivate: activateLeading }}
-              label={props.disclosureLabel}
-              summary=""
-              expanded={props.expanded}
-              controls={props.controls}
-              onToggle={() => {
-                if (eligible(current())) props.onToggle();
-              }}
-            />
+            {leading && disclosure}
             <SpringLoadedNavigationItem
               label={channel.name}
               title={channel.name}
@@ -184,6 +187,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
               onClick={select}
               onSpring={select}
             />
+            {!leading && disclosure}
           </div>
         </NavigationSectionHeading>
       </NavigationCard>

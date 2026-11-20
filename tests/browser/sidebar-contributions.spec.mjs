@@ -364,6 +364,33 @@ appTest.describe("Solo header accessories", () => {
       const resize = page.getByRole("separator", { name: "Resize sidebar" });
       await resize.dblclick();
       await expect(resize).toHaveAttribute("aria-valuenow", "260");
+      for (const [selector, title] of [
+        ['[data-solo-workspace="other"]', "Other"],
+        ['[data-solo-channel-group="gamma"]', "Gamma"],
+      ]) {
+        const group = sidebar.locator(selector);
+        const heading = group.getByRole("button", { name: title, exact: true });
+        const disclosure = group.getByRole("button", { name: /tasks/i });
+        await heading.hover();
+        expect((await heading.boundingBox())?.x).toBeLessThan(
+          (await disclosure.boundingBox())?.x,
+        );
+        await heading.focus();
+        await page.keyboard.press("Tab");
+        await expect(disclosure).toBeFocused();
+        if (title === "Other") {
+          await expect(heading.locator("svg")).toHaveCount(0);
+          const actions = group.getByRole("button", {
+            name: "Actions for Other",
+          });
+          const pencil = group.getByRole("button", {
+            name: "New task in Other",
+          });
+          expect((await actions.boundingBox())?.x).toBeLessThan(
+            (await pencil.boundingBox())?.x,
+          );
+        }
+      }
       const headers = [
         {
           group: sidebar.locator('[data-solo-workspace="work"]'),
@@ -439,8 +466,8 @@ appTest.describe("Solo header accessories", () => {
               name.evaluate((label) => label.clientWidth >= label.scrollWidth),
             )
             .toBe(true);
-          expect((await disclosure.boundingBox())?.x).toBeLessThan(
-            (await heading.boundingBox())?.x,
+          expect((await heading.boundingBox())?.x).toBeLessThan(
+            (await disclosure.boundingBox())?.x,
           );
           await heading.hover();
           await expect(metadata).toBeVisible();
@@ -498,16 +525,6 @@ appTest.describe("Solo header accessories", () => {
           await expect(nativeMenu).toBeFocused();
         }
       }
-      await expect(
-        sidebar
-          .locator('[data-solo-workspace="other"]')
-          .getByRole("button", { name: "Other", exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar
-          .locator('[data-solo-channel-group="gamma"]')
-          .getByRole("button", { name: "Gamma", exact: true }),
-      ).toBeVisible();
       await expect(sidebar.getByRole("button", { name: /^Mark / })).toHaveCount(
         2,
       );
@@ -848,17 +865,20 @@ appTest.describe("Solo header accessories", () => {
         await expect(heading).not.toHaveAttribute("data-selected");
       }
       for (const [selector, title, icon] of [
-        ['[data-solo-workspace="other"]', "Other", "cube-3d-sphere"],
+        ['[data-solo-workspace="other"]', "Other", undefined],
         ['[data-solo-channel-group="gamma"]', "Gamma", "hash"],
       ]) {
         const heading = sidebar
           .locator(selector)
           .getByRole("button", { name: title, exact: true });
-        const marker = heading.locator(`:scope > svg.tabler-icon-${icon}`);
-        await expect(marker).toHaveCount(1);
-        await expect(marker).toBeVisible();
+        const marker = heading.locator(":scope > svg");
         await heading.hover();
-        await expect(marker).toBeVisible();
+        if (icon) {
+          await expect(marker).toHaveClass(new RegExp(`tabler-icon-${icon}`));
+          await expect(marker).toBeVisible();
+        } else {
+          await expect(marker).toHaveCount(0);
+        }
         await expect(heading).toHaveText(title);
       }
       await expect(resize).toHaveAttribute("aria-valuenow", "260");

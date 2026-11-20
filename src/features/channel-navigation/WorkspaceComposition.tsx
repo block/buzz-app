@@ -14,6 +14,10 @@ import { SoloDisclosure } from "./SoloDisclosure";
 import type { SoloWorkspaceProps } from "./solo-navigation-contract";
 import styles from "./WorkspaceComposition.module.css";
 
+export type WorkspaceHeaderTrailing = NavigationSectionTrailing & {
+  hasInteractiveDecoration: boolean;
+};
+
 /** The existing Solo inventory retains every row, menu, mutation and disclosure. */
 export type WorkspaceComposition = Readonly<{
   ordinary: ReactNode;
@@ -29,7 +33,7 @@ export type WorkspaceComposition = Readonly<{
       primary: ReactNode,
       newTask?: ReactNode,
       actions?: ReactNode,
-      trailing?: NavigationSectionTrailing,
+      trailing?: WorkspaceHeaderTrailing,
     ): ReactNode;
     panel(before?: ReactNode): ReactNode;
   }>[];
@@ -60,6 +64,10 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
   if (!workspace || !props.id) return null;
   const title = props.id ? workspace.name : "Unfiled";
   const leading = props.headerLeading;
+  const accessory =
+    props.headerAccessory != null && typeof props.headerAccessory !== "boolean"
+      ? props.headerAccessory
+      : undefined;
   const disclosure = (
     <SoloDisclosure
       leading={leading}
@@ -72,14 +80,15 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
   );
   const primary = props.id ? (
     <div className={styles.heading}>
-      {disclosure}
+      {leading && disclosure}
       <NavigationItem
         label={title}
-        icon={<Cube3dSphereIcon size={14} aria-hidden="true" />}
+        icon={leading && <Cube3dSphereIcon size={14} aria-hidden="true" />}
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
         onClick={() => props.onSelect?.()}
       />
+      {!leading && disclosure}
     </div>
   ) : (
     disclosure
@@ -112,8 +121,9 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
             )}
           </>,
           {
-            accessory: props.headerAccessory,
+            accessory,
             metadata: props.headerMetadata,
+            hasInteractiveDecoration: !!leading || accessory != null,
           },
         )}
       </NavigationCard>

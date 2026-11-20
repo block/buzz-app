@@ -79,7 +79,10 @@
 }
 @container solo-workspace-header (max-width: 9rem) {
   .workspaceHeader
-    [data-solo-workspace-new-task]:not(:focus, [data-has-metadata] *) {
+    [data-solo-workspace-new-task]:not(
+      [data-has-metadata] *,
+      [data-reserve-space] *:focus
+    ) {
     display: none;
   }
 }

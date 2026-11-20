@@ -2,7 +2,10 @@ import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences"
 import { FadingLabel } from "./FadingLabel";
 import { ChannelSidebarRows } from "../../features/channel-navigation/ChannelSidebarRows";
 import { createPortal } from "react-dom";
-import type { ComposeWorkspaces } from "../../features/channel-navigation/WorkspaceComposition";
+import type {
+  ComposeWorkspaces,
+  WorkspaceHeaderTrailing,
+} from "../../features/channel-navigation/WorkspaceComposition";
 import type { WorkspaceSidebarComposition } from "./sidebar-environment";
 import { sidebarDropRowKinds } from "./sidebar-sections";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
@@ -48,10 +51,7 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
-import {
-  NavigationSectionHeading,
-  type NavigationSectionTrailing,
-} from "../../shared/design-system/ui/NavigationSection";
+import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -113,7 +113,7 @@ function soloMenuFocusTarget(id: string, disclosure = false) {
   return (
     row?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
     row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
-    row?.querySelector<HTMLElement>("button:not([data-solo-disclosure])")
+    row?.querySelector<HTMLElement>("button")
   );
 }
 
@@ -294,8 +294,7 @@ export function SoloWorkspaces({
   const [orderFocus, setOrderFocus] = useState<string>();
   useLayoutEffect(() => {
     if (!orderFocus) return;
-    const workspaceId = orderFocus.replace(/^group:/, "");
-    soloMenuFocusTarget(`project-${workspaceId}`)?.focus({
+    soloMenuFocusTarget(`project-${orderFocus}`)?.focus({
       preventScroll: true,
     });
     setOrderFocus(undefined);
@@ -598,13 +597,14 @@ export function SoloWorkspaces({
       primary: ReactNode,
       newTask?: ReactNode,
       actions?: ReactNode,
-      trailing?: NavigationSectionTrailing,
+      trailing?: WorkspaceHeaderTrailing,
     ) => (
       <ChatActionsMenu
         id={`project-${project.id}`}
         title={project.name}
         className={styles.workspaceHeader}
         enabled={!!project.id}
+        independentControls={trailing?.hasInteractiveDecoration ?? false}
         content={(menuAnchor) => (
           <>
             {actions}
@@ -671,7 +671,7 @@ export function SoloWorkspaces({
             revealActions
             trailing={
               trailing && {
-                ...trailing,
+                metadata: trailing.metadata,
                 accessory: trailing.accessory != null &&
                   typeof trailing.accessory !== "boolean" && (
                     // Keep the accessory above the primary button's full-header hit area.
@@ -686,7 +686,7 @@ export function SoloWorkspaces({
             }
             actions={
               <>
-                {newTask}
+                {trailing?.hasInteractiveDecoration && newTask}
                 {overflow}
                 {(trailing?.metadata == null ||
                   typeof trailing.metadata === "boolean") && (
@@ -707,6 +707,7 @@ export function SoloWorkspaces({
                       )}
                   </>
                 )}
+                {!trailing?.hasInteractiveDecoration && newTask}
               </>
             }
           >
@@ -714,6 +715,7 @@ export function SoloWorkspaces({
               sectionKey={projectKey}
               groupIndex={groupIndex}
               reorderable={reorderable}
+              capturePointerDown={trailing?.hasInteractiveDecoration ?? false}
             >
               {primary}
             </WorkspaceDragHandle>
@@ -1380,6 +1382,7 @@ function WorkspaceDragHandle({
   sectionKey: string;
   groupIndex: number;
   reorderable: boolean;
+  capturePointerDown: boolean;
 }) {
   const drag = useSidebarSectionDrag(options);
   // Preserve the heading recipe's direct trigger and the composed workspace's
@@ -1398,6 +1401,7 @@ function ChatActionsMenu({
   content,
   indicator,
   enabled = true,
+  independentControls = false,
 }: {
   id: string;
   title: string;
@@ -1410,6 +1414,7 @@ function ChatActionsMenu({
     | ((trigger: RefObject<HTMLButtonElement | null>) => ReactNode);
   indicator?: ReactNode;
   enabled?: boolean;
+  independentControls?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -1468,13 +1473,15 @@ function ChatActionsMenu({
       <ContextMenuTrigger
         render={<div className={className} data-solo-menu-id={id} />}
         onContextMenu={(event) => {
-          if (!ownsContextTarget(event)) event.preventBaseUIHandler();
+          if (independentControls && !ownsContextTarget(event))
+            event.preventBaseUIHandler();
         }}
         onTouchStart={(event) => {
-          if (!ownsContextTarget(event)) event.preventBaseUIHandler();
+          if (independentControls && !ownsContextTarget(event))
+            event.preventBaseUIHandler();
         }}
         onKeyDown={(event) => {
-          if (!ownsContextTarget(event)) return;
+          if (independentControls && !ownsContextTarget(event)) return;
           if (
             event.key === "ContextMenu" ||
             (event.shiftKey && event.key === "F10")

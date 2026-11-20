@@ -163,7 +163,7 @@ focus, hidden sections, and relay signing. DOM checks do not establish those fac
 Check `ui.ChannelGroup` before using it. Older hosts omit this optional component.
 It frames a joined stream or forum channel with its current name, icon, native
 channel menu, and details entry. Sources supply selection, disclosure state and
-label, and their task content. The title calls `onSelect`; the caret to its left calls
+label, and their task content. The title calls `onSelect` and the caret calls
 `onToggle`. `controls` identifies the body, which stays mounted while collapsed.
 Missing channels and channels without the viewer's membership render nothing.
 
@@ -228,7 +228,8 @@ header. Without an accessory, the slot fits both actions clear of the title.
 Touch shows the controls directly. New task also remains available in the menu.
 
 Both headers accept optional `headerLeading` with a non-interactive `icon`, an
-action `label`, and an `onActivate` callback. With a fine pointer, the icon and
+action `label`, and an `onActivate` callback. This moves the caret before the
+title and adds a workspace glyph to workspace titles. With a fine pointer, the icon and
 native caret share a slot. Hover reveals the caret, and keyboard focus reveals
 the focused button. Touch shows both buttons. The Actions menu also offers the
 leading action with the same label and callback. The title continues to select

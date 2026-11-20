@@ -22,7 +22,6 @@
 .heading > [data-solo-disclosure] {
   position: relative;
   flex-shrink: 0;
-  z-index: 1;
 }
 
 @container solo-workspace-header (max-width: 9rem) {

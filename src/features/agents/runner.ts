@@ -504,6 +504,12 @@ export type RunnerHost = {
    * channel is public; undefined as for `member`. Only a member may be
    * delivered to. */
   reads(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
+  mentionsReady?(agent: Agent): boolean;
+  readMentions?(
+    agent: Agent,
+    filter: ReadFilter,
+    signal: AbortSignal,
+  ): Promise<readonly RelayEvent[]>;
   /** Resolves listening metadata before an enabled watch is admitted. */
   resolveChannels?(
     agent: Agent,
@@ -1687,6 +1693,7 @@ export class AgentRunners {
           catching([]);
           continue;
         }
+        if (mentions && this.host.mentionsReady?.(agent) === false) continue;
         const attention = mentions ? undefined : agent.attention;
         if (
           pass &&
@@ -1899,17 +1906,20 @@ export class AgentRunners {
       // Only the relay's page: read() also adds events the session observed
       // meanwhile and the owner's messages not yet sent, and an older one of
       // those would page past events the relay has not returned yet.
-      const events = await pass.community.session.readRemote([filter], {
-        signal,
-        priority: "background",
-        fresh: true,
-        // Of every channel: a public one the session does not know yet too.
-        ...(filter["#h"] ? {} : { resolveChannels: true }),
-      });
+      const agent = this.host.agent(runner.key);
+      const events =
+        filter["#p"] && agent && this.host.readMentions
+          ? await this.host.readMentions(agent, filter, signal)
+          : await pass.community.session.readRemote([filter], {
+              signal,
+              priority: "background",
+              fresh: true,
+              // Of every channel: a public one the session does not know yet too.
+              ...(filter["#h"] ? {} : { resolveChannels: true }),
+            });
       signal.throwIfAborted();
       // Only what the relay signed.
       const signed = events.filter(hasEventProof) as RelayEvent[];
-      const agent = this.host.agent(runner.key);
       for (const event of signed)
         this.readAddressable.set(
           event,

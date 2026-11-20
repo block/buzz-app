@@ -5,7 +5,10 @@
 // the session sees no request at start beyond a turn's conversation reads,
 // online or offline, and the runner's catch-up of the agent's mentions.
 import { Context } from "@deepseek-ai/cordis";
-import { finalizeEvent } from "nostr-tools";
+import { finalizeEvent, matchFilter, type Filter } from "nostr-tools";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { eventsDto } from "../relay/events";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Host, HostProcessOptions } from "../host/service";
 import type { ReadFilter, RelayEvent } from "../relay/events";
@@ -17,7 +20,7 @@ import { AgentConfigStore, type Subject } from "./agent-config";
 import { artifactD, readHead } from "./agent-config-artifacts";
 import type { Mode } from "./agent-start";
 import { createLocalAgentActivity } from "./local-activity";
-import { type AgentReads, ownerReads } from "./reads";
+import type { AgentReads } from "./reads";
 import {
   type AgentCommunities,
   AgentsService,
@@ -238,7 +241,7 @@ async function setup<Config>(
   const deliveries: Delivery<Config>[] = [];
   const real = runs(
     (pubkey) => service.relay(pubkey),
-    (pubkey) => ownerReads(service.relay(pubkey), pubkey),
+    (pubkey) => service.conversationReads(pubkey),
     (pubkey, signal) => service.core(pubkey, signal),
   );
   plugin.agents.register<Config>({
@@ -871,5 +874,129 @@ it.each(["thread", "channel"] as const)(
     expect(
       codex.sent.filter((wire) => wire.method === "thread/start"),
     ).toHaveLength(2);
+  },
+);
+
+it.each(["authorized", "unauthorized", "removed"])(
+  "delivers an agent-only DM through native catch-up with sender authority preserved (%s)",
+  async (authority) => {
+    const owned = authority !== "unauthorized";
+    const member = authority !== "removed";
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { goose, host } = gooseHost();
+    const { seeded } = heads("buzz/goose", {
+      model: "synced-model",
+      provider: "synced-provider",
+      scope: "thread",
+    });
+    const f = await setup(
+      "goose",
+      (relay, reads, core) =>
+        gooseRun(
+          new GooseRuntime(
+            host,
+            relay,
+            core,
+            memoryStorage(),
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            reads,
+          ),
+        ),
+      { ...GOOSE_LOCAL },
+      seeded,
+      synced(),
+    );
+    const sibling = keypair();
+    const privateChannel = "4b7939a2-f852-42ae-ab59-2d1588b0d337";
+    const at = Math.floor(Date.now() / 1000) + 1;
+    const conditions = "kind=9";
+    const digest = new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(
+          `nostr:agent-auth:${sibling.pubkey}:${conditions}`,
+        ),
+      ),
+    );
+    const auth = [
+      "auth",
+      owner.pubkey,
+      conditions,
+      bytesToHex(schnorr.sign(digest, owner.secret)),
+    ];
+    const earlier = message(
+      sibling,
+      privateChannel,
+      "Prior private context",
+      at - 1,
+    );
+    const sent = message(sibling, privateChannel, "Private assignment", at, [
+      ["p", agentKey.pubkey],
+      ...(owned ? [auth] : []),
+    ]);
+    const records = eventsDto([
+      metadata(relayKey, privateChannel, "Agent DM", at - 2, [
+        ["t", "dm"],
+        ["private"],
+        ["hidden"],
+      ]),
+      roster(
+        relayKey,
+        privateChannel,
+        member ? [sibling.pubkey, agentKey.pubkey] : [sibling.pubkey],
+        at - 2,
+      ),
+      earlier,
+      sent,
+    ]);
+    f.native.query.mockImplementation(async (_member, filters) =>
+      filters.flatMap((filter) =>
+        records
+          .filter(
+            (event) =>
+              matchFilter(filter as Filter, event) &&
+              (!(filter as ReadFilter).before_id ||
+                event.created_at < ((filter as ReadFilter).until ?? Infinity) ||
+                event.id > ((filter as ReadFilter).before_id ?? "")),
+          )
+          .sort(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, (filter as ReadFilter).limit),
+      ),
+    );
+    expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(f.deliveries).toHaveLength(member ? 1 : 0);
+    if (owned && member) {
+      await vi.waitFor(() => expect(goose.geese[0]?.turns).toHaveLength(1));
+      const text = goose.geese[0]?.turns[0]?.text;
+      expect(text).toContain("Scope: dm");
+      expect(text).toContain("Private assignment");
+      expect(text).toContain("Prior private context");
+      expect(text).toContain("Session scope: dm conversation");
+    } else {
+      expect(goose.geese).toHaveLength(0);
+    }
+    expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
+    expect(f.native.query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pubkey: agentKey.pubkey,
+        relay: "wss://relay.example.test",
+      }),
+      expect.any(Array),
+    );
+    expect(
+      f.requests.some((request) =>
+        request.filters.some((filter) =>
+          filter["#h"]?.includes(privateChannel),
+        ),
+      ),
+    ).toBe(false);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(f.deliveries).toHaveLength(member ? 1 : 0);
   },
 );

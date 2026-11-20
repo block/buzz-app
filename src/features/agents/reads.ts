@@ -1,9 +1,9 @@
 // What an agent type reads of an agent's community beyond the agent's own
 // handle: the channel a turn is in, the conversation before it, the names of
-// the people in it, and the agent's memory. The desktop app reads these
-// through the owner's connection to the community; a standalone host reads
-// them as the agent. Both give a type the same answers, so the type runs the
-// same code in either.
+// the people in it, and the agent's memory. The desktop uses the owner's
+// connection and agent-authenticated reads for conversations the owner cannot
+// read; a standalone host reads as the agent. Both give a type the same
+// answers, so the type runs the same code in either.
 import type { Memories } from "../../buzz-mcp/client";
 import type { Profile } from "../relay/contracts";
 import { validVerifiedName } from "../relay/verified-profile";

@@ -116,7 +116,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? { resolveDirectory: host.resolveDirectory.bind(host) }
         : {}),
     },
-    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key) =>
+      agents.conversationReads?.(key) ??
+      ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     agents.storage,
     (raw, remote) => (remote ? config(raw) : providerDefaults.resolve(raw)),

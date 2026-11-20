@@ -1,4 +1,5 @@
 // Local-only browser fixture. Every event is signed with ephemeral test keys; no network relay.
+import { DraftsSentPage } from "../../src/features/drafts-sent/DraftsSentPage";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createRoot } from "react-dom/client";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
@@ -32,6 +33,9 @@ const attachmentSources = new Map<string, string>();
 const uploadProgress = new Map<string, (sent: number, total: number) => void>();
 const attachmentOrigin = "https://attachments.invalid";
 const params = new URLSearchParams(location.search);
+const general = params.has("scheduledPage")
+  ? "11111111-1111-4111-8111-111111111111"
+  : "general";
 const root = new Context();
 root.provide("pluginStatus", {
   isActive: () => true,
@@ -42,6 +46,22 @@ const owner = createRelaySession(
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     scope: attachmentOrigin,
+    ...(params.has("scheduled")
+      ? {
+          scheduledMessages: {
+            sign: async (template: Parameters<typeof signed>[1]) =>
+              signed(viewer, template),
+            request: async (body: unknown, signal: AbortSignal) =>
+              fetch("/fixture/scheduled", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                signal,
+              }),
+          },
+        }
+      : {}),
+
     media: (url) => attachmentSources.get(url),
     ...(params.has("attachments")
       ? {
@@ -99,8 +119,8 @@ const owner = createRelaySession(
       if (!filter) throw new Error("Missing fixture query filter");
       if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
         return [
-          roster(relay, "general", [viewer.pubkey]),
-          metadata(relay, "general", "General"),
+          roster(relay, general, [viewer.pubkey]),
+          metadata(relay, general, "General"),
           ...(params.has("random")
             ? [
                 roster(relay, "random", [viewer.pubkey]),
@@ -111,7 +131,7 @@ const owner = createRelaySession(
       if (filter.kinds?.includes(0)) return [profile(viewer, { name: "You" })];
       if (filter.ids)
         return confirmed.filter((event) => filter.ids?.includes(event.id));
-      const channel = filter["#h"]?.[0] ?? "general";
+      const channel = filter["#h"]?.[0] ?? general;
       return [
         ...confirmed.filter((event) =>
           event.tags.some((tag) => tag[0] === "h" && tag[1] === channel),
@@ -153,6 +173,17 @@ const owner = createRelaySession(
 // Observable delivery barrier for keyboard workflows; the fixture never uses real keys.
 Object.assign(window, {
   composerFixture: {
+    async seedScheduled() {
+      for (const [offset, content] of [
+        [1, "Review tomorrow’s launch notes"],
+        [2, "Share the weekly update"],
+      ] as const)
+        await owner.session.scheduledMessages?.create({
+          destination: { channelId: general, name: "General" },
+          content,
+          sendAt: Date.now() + offset * 86400000,
+        });
+    },
     reportUploadProgress: (name: string, sent: number, total: number) =>
       uploadProgress.get(name)?.(sent, total),
     pending: () =>
@@ -190,12 +221,20 @@ function Fixture() {
   return (
     <ToastProvider>
       <div style={{ height: "100vh" }}>
-        <ChannelWorkspaceFixture
-          host={navigationHost}
-          relay={data}
-          panels={new PanelsService(root)}
-          pages={new PagesService(root)}
-        />
+        {params.has("scheduledPage") ? (
+          <DraftsSentPage
+            relay={data}
+            navigator={navigationHost.navigation}
+            panels={new PanelsService(root)}
+          />
+        ) : (
+          <ChannelWorkspaceFixture
+            host={navigationHost}
+            relay={data}
+            panels={new PanelsService(root)}
+            pages={new PagesService(root)}
+          />
+        )}
       </div>
     </ToastProvider>
   );

@@ -47,6 +47,7 @@ import { SelectedMentionContext } from "../../features/messages/selected-mention
 import type { RelaySession } from "../../features/relay/session";
 import type { Contribution } from "../../plugins/contributions";
 import * as personMatch from "../../features/search/person-match";
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
@@ -997,10 +998,15 @@ it.each(["loading", "error", "unavailable"] as const)(
         <MentionCompletion {...props} query={query} />
       </AgentsContext.Provider>
     );
+    vi.useFakeTimers();
     const view = render(content());
     const choice = () =>
       completion(publish)?.items.find((item) => item.label === "Review Crew");
     try {
+      // The legacy status is visible only after the independent directory search settles.
+      await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+      expect(h.session.directMessages.people).toHaveBeenCalled();
+      vi.useRealTimers();
       await waitFor(() => expect(choice()?.canSelect?.("Enter")).toBe(true));
       await waitFor(() =>
         expect(completion(publish).status).toBe(

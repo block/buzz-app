@@ -1126,7 +1126,13 @@ Quitting Buzz also turns it off.
   **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
   the conversation sidebar available, so you can switch straight back to a chat.
   Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
-  and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
+  and **Sent** tabs to switch lists; a relay that supports scheduling also adds
+  **Scheduled**. Open it to check queued messages, change a send time, or cancel
+  delivery. Use the arrow beside **Send** to schedule a message. Messages with
+  composer chips can be sent immediately. If the relay refuses a schedule, the
+  draft stays in the composer.
+  Drafts save automatically as you type—leave a message unfinished, open
+  **Drafts & sent → Drafts**, then select it to continue writing.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
@@ -1142,8 +1148,9 @@ Quitting Buzz also turns it off.
   Sent destinations show the conversation without a composer, with an archived
   or read-only notice and Join when available. The popout icon
   opens the original conversation.
-  Search above the list matches the conversation name and what you wrote. It reads only this
-  device's saved drafts; a draft's trash button clears that draft and its
+  Search filters only the selected tab by conversation name and what you wrote.
+  Each tab keeps its own search text while the page is open. The Drafts tab reads
+  only this device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation. A thread draft also shows
   where you left it: **Draft** on a message's reply line, or **Draft reply** when
   no one has replied yet (hidden while that thread is open).

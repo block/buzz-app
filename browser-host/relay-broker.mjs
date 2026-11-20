@@ -344,6 +344,9 @@ async function relayAuthority(fetch, relay) {
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
     // NIP-CL: the relay keeps channel labels and answers label lookups.
+    scheduledMessages:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-scheduled-messages-v1"),
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
@@ -1741,6 +1744,7 @@ export function relayBrokerPlugin({
               memberAdministration: true,
               identityArchives: true,
               workflowReads: true,
+              scheduledMessages: (await getAuthority(relay)).scheduledMessages,
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
@@ -2528,6 +2532,7 @@ export function relayBrokerPlugin({
               "/api/relay/gifs",
               "/api/relay/profile-search",
               "/api/relay/workflow-runs",
+              "/api/relay/scheduled-messages",
               "/api/relay/project-git",
             ].includes(route) ||
             req.method !== "POST"
@@ -2805,6 +2810,7 @@ export function relayBrokerPlugin({
           }
           if (presence && !presenceFilter(filters))
             return json(res, 400, { error: "Invalid presence filter" });
+          const scheduled = route === "/api/relay/scheduled-messages";
           let workflowPath;
           if (route === "/api/relay/workflow-runs") {
             try {
@@ -3230,6 +3236,7 @@ export function relayBrokerPlugin({
             !gifs &&
             !profileSearch &&
             !workflowPath &&
+            !scheduled &&
             !readPublishing &&
             !snapshot &&
             !channelActivity &&
@@ -3308,19 +3315,21 @@ export function relayBrokerPlugin({
             return json(res, 404, { error: "GIF search is unavailable" });
           const upstreamPath =
             workflowPath ??
-            (gifs
-              ? gifSearchPath
-              : profileSearch
-                ? "/profiles/search"
-                : profile || directMessage || member || leave
-                  ? "/events"
-                  : claim
-                    ? "/api/invites/claim"
-                    : policy
-                      ? "/api/invites/accept-policy"
-                      : invite
-                        ? "/api/invites"
-                        : "/query");
+            (scheduled
+              ? "/scheduled-messages"
+              : gifs
+                ? gifSearchPath
+                : profileSearch
+                  ? "/profiles/search"
+                  : profile || directMessage || member || leave
+                    ? "/events"
+                    : claim
+                      ? "/api/invites/claim"
+                      : policy
+                        ? "/api/invites/accept-policy"
+                        : invite
+                          ? "/api/invites"
+                          : "/query");
           const method = workflowPath ? "GET" : "POST";
           const lane = admissions(relay, viewer).api;
           let releasePresence;

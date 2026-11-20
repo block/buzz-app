@@ -25,6 +25,7 @@ import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
+import type { ComposerInputElement } from "./composer-dom";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -929,6 +930,41 @@ it("opens image comments by default when the thread contains replies", async () 
   expect(
     screen.getByRole("button", { name: "Hide comments" }),
   ).toBeInTheDocument();
+});
+
+it("leaves an unsaved reply edit closed when an image review opens from its thread", async () => {
+  const { user } = await setupReview({
+    kind: "image",
+    fromThread: true,
+    replies: (viewer, root) => [
+      message(viewer, "one", "Own reply", 2, [["e", root.id, "", "reply"]]),
+    ],
+  });
+  await screen.findByText("Own reply");
+  const input = screen.getByRole<ComposerInputElement>("textbox", {
+    name: "Reply to thread",
+  });
+  fireEvent.keyDown(input, { key: "ArrowUp", metaKey: true });
+  expect(input).toHaveAccessibleName("Edit message");
+  act(() => {
+    input.value = "Rewritten reply";
+    input.setSelectionRange(15, 15);
+  });
+  fireEvent.input(input);
+  // Opening the review unmounts the thread panel, which keeps the rewrite.
+  await user.click(screen.getByRole("link", { name: "Open image attachment" }));
+  const dialog = within(
+    await screen.findByRole("dialog", { name: "Image viewer" }),
+  );
+  // The loaded reply is the barrier: a quiet resume would open the edit then.
+  await dialog.findByText("Own reply");
+  const comment = dialog.getByRole<ComposerInputElement>("textbox");
+  expect(comment).toHaveAccessibleName("Reply to thread");
+  expect(comment).toHaveValue("");
+  // The rewrite is still kept: choosing Edit here resumes it.
+  fireEvent.keyDown(comment, { key: "ArrowUp" });
+  expect(comment).toHaveAccessibleName("Edit message");
+  expect(comment).toHaveValue("Rewritten reply");
 });
 
 it.each(["image", "video"] as const)(

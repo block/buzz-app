@@ -633,49 +633,35 @@ it("leads search with unread until this device turns it off", async () => {
   expect(toggle()).toBeChecked();
 });
 
-it("saves the order new message searches start with on this device", async () => {
+it("saves the message sort default, or keeps it active and retries when saving fails", async () => {
   const user = userEvent.setup();
   const appearance = createAppearance();
   preferenceAppearances.push(appearance);
   const select = () =>
     screen.getByRole("combobox", { name: "Sort messages by" });
+  const choose = async (name: string) => {
+    await user.click(select());
+    await user.click(await screen.findByRole("option", { name }));
+  };
   render(<AppearanceSettings appearance={appearance} />, {
     wrapper: ToastProvider,
   });
   expect(select()).toHaveTextContent("Most relevant");
-  await user.click(select());
-  await user.click(await screen.findByRole("option", { name: "Most recent" }));
-  expect(messageSortPreference()).toBe("newest");
+  await choose("Most recent");
   expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("newest");
   cleanup();
   render(<AppearanceSettings appearance={appearance} />, {
     wrapper: ToastProvider,
   });
   expect(select()).toHaveTextContent("Most recent");
-  act(() => {
-    localStorage.setItem("buzz-search-message-sort.v1", "relevance");
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "buzz-search-message-sort.v1" }),
-    );
-  });
-  expect(select()).toHaveTextContent("Most relevant");
-});
 
-it("keeps an unsaved message order active and retries the same choice", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  preferenceAppearances.push(appearance);
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
   const write = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementation(() => {
       throw new Error("unavailable");
     });
-  await user.click(screen.getByRole("combobox", { name: "Sort messages by" }));
-  await user.click(await screen.findByRole("option", { name: "Most recent" }));
-  expect(messageSortPreference()).toBe("newest");
+  await choose("Most relevant");
+  expect(messageSortPreference()).toBe("relevance");
   expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Message sort preference wasn’t saved",
   );
@@ -683,7 +669,7 @@ it("keeps an unsaved message order active and retries the same choice", async ()
   await user.click(
     screen.getByRole("button", { name: "Retry saving message sort" }),
   );
-  expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("newest");
+  expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("relevance");
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );

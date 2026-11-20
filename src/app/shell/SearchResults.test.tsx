@@ -10063,9 +10063,42 @@ it.each([
     chats: ["Plan the week"],
     first: /scout build/,
   },
+  {
+    name: "keeps a chat holding the whole text first when it contains the agent found word by word",
+    channel: "build-scout-notes",
+    chat: "scout build log",
+    agentInChat: true,
+    groups: ["Chats", "Agents", "Channels"],
+    chats: ["scout build log", "Plan the week"],
+    first: /^scout build log/,
+  },
+  {
+    name: "lists a channel holding the whole text before a weaker chat holding it",
+    channel: "scout-builders",
+    chat: "xscoutxbuild",
+    groups: ["Channels", "Chats", "Agents"],
+    chats: ["xscoutxbuild", "Plan the week"],
+    first: /^scout-builders/,
+  },
+  {
+    name: "lets a message hit pass an agent found word by word when nothing holds the whole text",
+    channel: "build-scout-notes",
+    hit: true,
+    groups: ["Messages", "Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /scout build is green/,
+  },
 ])(
   "$name",
-  async ({ channel, chat: chatName, hit, groups, chats: chatOrder, first }) => {
+  async ({
+    channel,
+    chat: chatName,
+    agentInChat,
+    hit,
+    groups,
+    chats: chatOrder,
+    first,
+  }) => {
     localStorage.clear();
     const relay = keypair(),
       viewer = keypair(),
@@ -10081,7 +10114,14 @@ it.each([
     ];
     const discovery = [
       ...chat("agent-chat", "Plan the week", 1700000002, [mine.pubkey]),
-      ...(chatName ? chat("named-chat", chatName, 1700000003, []) : []),
+      ...(chatName
+        ? chat(
+            "named-chat",
+            chatName,
+            1700000003,
+            agentInChat ? [mine.pubkey] : [],
+          )
+        : []),
       metadata(relay, channel, channel),
       roster(relay, channel, [viewer.pubkey]),
       profile(mine, { name: "Build Scout", is_agent: true }),

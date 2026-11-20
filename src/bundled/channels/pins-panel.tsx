@@ -198,7 +198,9 @@ export function registerPins(ctx: Context) {
               key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
               session={state.session}
               channelId={channelContext.channelId}
-              open={(row) =>
+              open={(row) => {
+                // As a message link does: the message replaces the list.
+                close();
                 void ctx.navigation.open({
                   version: 1,
                   kind: "conversation",
@@ -211,8 +213,8 @@ export function registerPins(ctx: Context) {
                   ...(row.threadRootId
                     ? { threadRootId: row.threadRootId }
                     : {}),
-                })
-              }
+                });
+              }}
             />
           ) : (
             <p role="status" className={styles.status}>

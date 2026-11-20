@@ -240,6 +240,42 @@ impl MediaCache {
         state.evicting = false;
     }
 
+    /// Bytes saved for one community, bytes saved in all, and the budget.
+    pub(crate) fn usage(&self, origin: &Url) -> (u64, u64, u64) {
+        let files = |dir: &Path| -> u64 {
+            fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|file| file.metadata().ok())
+                .filter(|meta| !meta.is_dir())
+                .map(|meta| meta.len())
+                .sum()
+        };
+        // A community's own entries and its channels' folders.
+        let size = |dir: &Path| -> u64 {
+            let channels: u64 = fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .map(|channel| files(&channel.path()))
+                .sum();
+            files(dir) + channels
+        };
+        let (Some(root), Some(own)) = (self.0.root.as_ref(), self.partition(origin)) else {
+            return (0, 0, self.0.budget);
+        };
+        let total = fs::read_dir(root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|dir| !dir.file_name().to_string_lossy().starts_with(CLEARED))
+            .map(|dir| size(&dir.path()))
+            .sum();
+        (size(&own), total, self.0.budget)
+    }
+
     /// Forgets one community's media. Fetches already in flight are not stored.
     pub(crate) fn clear(&self, origin: &Url) -> io::Result<()> {
         self.discard(origin, |partition| vec![partition.to_owned()])
@@ -457,6 +493,34 @@ mod tests {
         assert!(cache.get(&url("a"), Some("kept")).is_some());
         // Avatars and emoji belong to no channel.
         assert!(cache.get(&url("a"), None).is_some());
+    }
+
+    #[test]
+    fn reports_one_community_and_all_against_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = MediaCache::with_budget(Some(dir.path().into()), 1000);
+        let relay = Url::parse("https://relay.example.org").unwrap();
+        let other = Url::parse(&format!(
+            "https://other.example.org/media/{}",
+            "b".repeat(64)
+        ))
+        .unwrap();
+        assert_eq!(cache.usage(&relay), (0, 0, 1000));
+        cache
+            .put(
+                &url("a"),
+                Some("channel"),
+                cache.ticket(),
+                "image/webp",
+                &[0; 30],
+            )
+            .unwrap();
+        cache
+            .put(&other, None, cache.ticket(), "image/png", &[0; 9])
+            .unwrap();
+        assert_eq!(cache.usage(&relay), (41, 60, 1000));
+        cache.clear(&relay).unwrap();
+        assert_eq!(cache.usage(&relay), (0, 19, 1000));
     }
 
     #[test]

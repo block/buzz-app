@@ -216,6 +216,21 @@ export function nativeChannelMedia(
   };
 }
 
+export type NativeMediaUsage = {
+  community: number;
+  total: number;
+  budget: number;
+};
+
+/** Bytes of images saved for one community and for all, against the shared
+ * limit. Undefined where images aren't saved by the app. */
+export async function nativeMediaUsage(community: string) {
+  if (!nativeIdentityEnabled()) return undefined;
+  return nativeReadInvoke<NativeMediaUsage>("media_cache_usage", {
+    community,
+  });
+}
+
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
  * Aborting settles at once and tells native code to drop the request. */
 async function nativeUpload(

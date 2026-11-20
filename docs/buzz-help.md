@@ -1873,9 +1873,11 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 - Buzz saves channels and messages on this device so they show at once after
   a restart. The desktop app also saves the images it loads, up to 256 MB
   across all communities, so it reads them from disk the next time instead of
-  from the community. Losing access to a channel deletes the messages and
-  images saved from it. Leaving a community or signing out clears what this
-  device saved for it.
+  from the community; **Settings → Local settings → Cached data** shows how
+  much is in use. **Clear cache** there forgets what this device saved
+  for that community; Buzz loads it again as needed. Losing access to a channel
+  deletes the messages and images saved from it. Leaving a community or
+  signing out also clears it.
 - Desktop packages include a `buzz` command line client. On macOS, use
   `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
   old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of

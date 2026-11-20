@@ -102,6 +102,7 @@
     "allow-media-download",
     "allow-media-cache-clear",
     "allow-media-cache-forget",
+    "allow-media-cache-usage",
     "allow-file-download",
     "allow-media-copy-image",
     "allow-media-lift-subject",

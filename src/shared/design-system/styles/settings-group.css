@@ -99,6 +99,11 @@
   .buzz-settings-group[data-layout="form"] > .buzz-button {
     justify-self: start;
   }
+  /* The form's padding and gap already space its children; a row's own
+     padding would double that, so it only applies between `rows` dividers. */
+  .buzz-settings-group[data-layout="form"] > .buzz-preference-row {
+    padding-block: 0;
+  }
   @container (max-width: 24rem) {
     .buzz-settings-page
       .buzz-content-header[data-align="end"]

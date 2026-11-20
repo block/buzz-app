@@ -143,6 +143,7 @@ import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  followupDraft,
   legacyFollowupDraft,
   MAX_DRAFT_GIFS,
   mentionBoundary,
@@ -492,10 +493,6 @@ function PersonalComposer(props: MessageComposerProps) {
   );
 }
 
-function routedKey(agents: readonly MentionRecipient[]) {
-  return agents.map((agent) => agent.pubkey).join(",");
-}
-
 /** No text, mention, chat card or GIF: nothing the user has put in yet. */
 function untouchedDraft(draft: MentionDraft) {
   return (
@@ -624,6 +621,9 @@ function Composer({
     channelId,
     (channel) => channel?.channelType,
   );
+  const members = useListedChannel(session.channels, channelId, (channel) =>
+    channel?.cached ? undefined : channel?.members,
+  );
   const dmMembers = useListedChannel(listed, channelId, (channel) =>
     channel?.channelType === "dm" ? channel.members : undefined,
   );
@@ -691,8 +691,15 @@ function Composer({
       ? latestOwnMessage(session.viewer, window.rows)
       : undefined;
   };
-  const seedKey = (source: Pick<ChannelMessage, "id">) =>
-    `${draftKey}\n${source.id}`;
+  // A roster update can change an untouched prefill even when history is unchanged.
+  function memberSeed(source: Pick<ChannelMessage, "id" | "mentions">) {
+    return {
+      id: source.id,
+      mentions: source.mentions.filter((key) => members?.includes(key)),
+    };
+  }
+  const seedKey = (source: Pick<ChannelMessage, "id" | "mentions">) =>
+    `${source.id}:${source.mentions.join(",")}`;
   const [initial] = useState(() => {
     const stored = mentionDraft(
       accepted?.next ??
@@ -715,18 +722,20 @@ function Composer({
     // A seed from settled evidence is final; one taken while agent evidence
     // is partial stays provisional, replaced as names resolve (see the seed
     // effect below).
-    const applied = seedEvidenceSettled(session, source)
-      ? seedKey(source)
-      : undefined;
-    const seed = seedMentions(session, source);
+    const eligible = memberSeed(source);
+    const applied = !rememberAgentsPreference()
+      ? source.id
+      : seedEvidenceSettled(session, eligible)
+        ? seedKey(eligible)
+        : undefined;
+    const seed = seedMentions(session, eligible);
     return seed.recipients.length
       ? { value: seed, applied, automatic: true }
       : { value: saved, applied, automatic: false };
   });
   const [value, updateDraft] = useState(initial.value);
-  // The seed applied, or settled by the user's edit, for this draft key and
-  // message, and whether content the user put in has closed seeding, each
-  // until the composer is shown again.
+  // An automatic seed tracks the message and eligible members. A user edit
+  // settles the whole message, including subsequent roster changes.
   const seedApplied = useRef<string | undefined>(initial.applied);
   const seedClosed = useRef(false);
   // The draft as this composer last prefilled it; the user's edits clear it.
@@ -777,13 +786,15 @@ function Composer({
   const windowSource = useSyncExternalStore(subscribeRows, () =>
     seeking ? windowSeed() : undefined,
   );
-  const seedSource = threadSeed ?? windowSource;
+  const source = threadSeed ?? windowSource;
+  const seedSource = source && memberSeed(source);
   // Agent evidence (profiles, the inventory) re-runs the seed effect below
   // while a seed is pending, so no composer re-renders per profile batch or
   // library transition once it has seeded or holds the user's content.
   const seedPending =
     !!seedSource &&
     !seedClosed.current &&
+    seedApplied.current !== seedSource.id &&
     seedApplied.current !== seedKey(seedSource);
   useSyncExternalStore(
     seedPending ? session.profiles.subscribe : noSubscription,
@@ -1328,6 +1339,7 @@ function Composer({
     // the viewer's choice.
     if (automaticTag.current === JSON.stringify(valueRef.current)) return;
     setReplacedKey(draftKey);
+    seededRoute.current = undefined;
     setRouted([]);
     writeView(scope, pillKey, null);
   }, [tagsSettled, routing, named.length, draftKey, scope, pillKey]);
@@ -2349,7 +2361,7 @@ function Composer({
     );
     return seedAgents(
       session,
-      channelId,
+      members,
       replaced ? [] : (history?.rows ?? []),
       (key) => admitted(key) && !referenced(key),
       session.agentChoices
@@ -2392,18 +2404,21 @@ function Composer({
     automaticTag.current = JSON.stringify(valueRef.current);
     return true;
   };
-  const seededRoute = useRef<string | undefined>(undefined);
+  // Keys selected automatically from the chat. An explicit pick clears this;
+  // the default agent offered outside a chat has no remembered member key.
+  const seededRoute = useRef<readonly string[] | undefined>(undefined);
   useEffect(() => {
     if (!presented) {
       autoTagged.current = undefined;
       // Hidden untouched, the pill refills for the current default when shown.
       if (
-        seededRoute.current === routedKey(routed) &&
+        seededRoute.current &&
         untouchedDraft(valueRef.current) &&
         !attachments.store.snapshot().length
-      )
+      ) {
         setRouted([]);
-      seededRoute.current = undefined;
+        seededRoute.current = undefined;
+      }
     }
     if (
       !presented ||
@@ -2415,6 +2430,12 @@ function Composer({
     // Alone with agents, the agent joins the toolbar, never the text. An empty
     // pill is always refilled, even after a send, so removed mentions fall back.
     if (routing) {
+      if (seededRoute.current?.some((key) => !members?.includes(key))) {
+        const kept = routed.filter((agent) => members?.includes(agent.pubkey));
+        seededRoute.current = kept.map((agent) => agent.pubkey);
+        setRouted(kept);
+        return;
+      }
       if (routed.length || named.length) return;
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
@@ -2430,7 +2451,9 @@ function Composer({
       }
       if (seededAgents.length) {
         setRouted(seededAgents.map(({ pubkey, name }) => ({ pubkey, name })));
-        seededRoute.current = routedKey(seededAgents);
+        seededRoute.current = seededAgents
+          .map((agent) => agent.pubkey)
+          .filter((key) => members?.includes(key));
       }
       return;
     }
@@ -2521,28 +2544,37 @@ function Composer({
     }
     if (
       seedClosed.current ||
-      !seedSource ||
       submission ||
+      defaultMention ||
       sendPending ||
       accepted ||
       attachments.items.length
     )
       return;
-    const key = seedKey(seedSource);
-    if (seedApplied.current === key) return;
-    if (!rememberAgentsPreference()) {
-      // Opting out changes future prefills, not the current draft.
-      seedApplied.current = key;
-      return;
+    const kept = valueRef.current.recipients.filter((agent) =>
+      members?.includes(agent.pubkey),
+    );
+    let seed =
+      kept.length < valueRef.current.recipients.length &&
+      automaticTag.current === current
+        ? followupDraft(kept)
+        : undefined;
+    if (
+      seedSource &&
+      seedApplied.current !== seedSource.id &&
+      seedApplied.current !== seedKey(seedSource)
+    ) {
+      if (rememberAgentsPreference()) {
+        const candidate = seedMentions(session, seedSource);
+        const settled = seedEvidenceSettled(session, seedSource);
+        if (settled) seedApplied.current = seedKey(seedSource);
+        if (candidate.recipients.length || settled) seed = candidate;
+      } else {
+        // Opting out settles this message even if the roster later changes.
+        seedApplied.current = seedSource.id;
+      }
     }
-    // Partial agent evidence may name a subset of the agents: that seed shows
-    // now and is replaced as names resolve, final once the evidence settles.
-    // An empty seed waits for settled evidence before ending a prefilled
-    // chain; settled, it ends one whether the message tagged people or no one.
-    const seed = seedMentions(session, seedSource);
-    const settled = seedEvidenceSettled(session, seedSource);
-    if (settled) seedApplied.current = key;
-    if (!seed.recipients.length && !settled) return;
+    if (!seed) return;
     if (JSON.stringify(seed) === current) return;
     valueRef.current = seed;
     updateDraft(seed);
@@ -2571,9 +2603,14 @@ function Composer({
     explicit: readonly string[],
     fromPill = false,
   ) {
+    const remembered = fromPill ? seededRoute.current : undefined;
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    if (remembered?.some((key) => !channel.members?.includes(key)))
+      throw new Error(
+        "An agent left this chat. Check who you’re sending to and try again.",
+      );
     // The pill stands in only while the chat is the viewer and agents; a
     // person who joined since needs the agents tagged by name.
     if (
@@ -3031,9 +3068,7 @@ function Composer({
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
       // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
-      const next = routing
-        ? mentionDraft("")
-        : rememberedMentions(session, captured, recipients);
+      let followUp = mentionDraft("");
       // Only agents this message still addresses are asked for a model or effort.
       const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
@@ -3265,15 +3300,15 @@ function Composer({
             if (
               live.current &&
               !cleared(JSON.stringify(valueRef.current)) &&
-              (valueRef.current.text !== next.text ||
+              (valueRef.current.text !== followUp.text ||
                 JSON.stringify(valueRef.current.recipients) !==
-                  JSON.stringify(next.recipients) ||
+                  JSON.stringify(followUp.recipients) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
-                  JSON.stringify(next.chatCards ?? []) ||
+                  JSON.stringify(followUp.chatCards ?? []) ||
                 JSON.stringify(valueRef.current.forward) !==
-                  JSON.stringify(next.forward) ||
+                  JSON.stringify(followUp.forward) ||
                 JSON.stringify(valueRef.current.gifs ?? []) !==
-                  JSON.stringify(next.gifs ?? [])) &&
+                  JSON.stringify(followUp.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -3288,15 +3323,15 @@ function Composer({
               !(
                 live.current &&
                 current === JSON.stringify(valueRef.current) &&
-                valueRef.current.text === next.text &&
+                valueRef.current.text === followUp.text &&
                 JSON.stringify(valueRef.current.recipients) ===
-                  JSON.stringify(next.recipients) &&
+                  JSON.stringify(followUp.recipients) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
-                  JSON.stringify(next.chatCards ?? []) &&
+                  JSON.stringify(followUp.chatCards ?? []) &&
                 JSON.stringify(valueRef.current.forward) ===
-                  JSON.stringify(next.forward) &&
+                  JSON.stringify(followUp.forward) &&
                 JSON.stringify(valueRef.current.gifs ?? []) ===
-                  JSON.stringify(next.gifs ?? [])
+                  JSON.stringify(followUp.gifs ?? [])
               )
             )
               return "conflict";
@@ -3335,7 +3370,16 @@ function Composer({
       // Nothing is saved for the remembered agents: this composer shows them
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
-      const followUp = next;
+      const destination = mentionChannel(session, channelId);
+      const currentMembers = destination?.cached
+        ? undefined
+        : destination?.members;
+      const notifiedMembers = recipients.filter((key) =>
+        currentMembers?.includes(key),
+      );
+      followUp = routing
+        ? mentionDraft("")
+        : rememberedMentions(session, captured, notifiedMembers);
       const pending = { next: mentionDraft(""), revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
@@ -3349,9 +3393,10 @@ function Composer({
       // The toolbar keeps whoever heard this message for the follow-up; a
       // reference named only this message.
       if (routing) {
+        seededRoute.current = notifiedMembers;
         setRouted(
           capturedRecipients.filter((person) =>
-            recipients.includes(person.pubkey),
+            notifiedMembers.includes(person.pubkey),
           ),
         );
         setReplacedKey(undefined);
@@ -3379,7 +3424,7 @@ function Composer({
       // draft was not seeking, so the window is read here, not from render.
       seedClosed.current = false;
       const latest = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
-      if (latest) seedApplied.current = seedKey(latest);
+      if (latest) seedApplied.current = latest.id;
       if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {
@@ -3788,7 +3833,7 @@ function Composer({
                   // evidence does: clearing it lasts until the composer is
                   // shown again, while a newer message of the viewer's, sent
                   // elsewhere, still seeds.
-                  if (seedSource) seedApplied.current = seedKey(seedSource);
+                  if (seedSource) seedApplied.current = seedSource.id;
                   automaticTag.current = undefined;
                 }
                 saveDraft(next);

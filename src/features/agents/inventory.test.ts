@@ -222,9 +222,9 @@ it.each([false, true])(
         replyCount: 0,
         participants: [],
       };
-      expect(seedAgents(owner.session, "solo", [previous], () => true)).toEqual(
-        [agent],
-      );
+      expect(
+        seedAgents(owner.session, [agent], [previous], () => true),
+      ).toEqual([agent]);
       expect(
         query.mock.calls.filter(([filters]) =>
           filters[0]?.kinds?.includes(30177),

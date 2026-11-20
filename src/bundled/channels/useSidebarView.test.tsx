@@ -103,13 +103,14 @@ it("re-arms only explicit current reveals using the latest location and preserve
     ready: boolean;
     preserve?: boolean;
   }) {
-    sidebar = useSidebarView("fixture", ready, location, preserve);
+    const state = useSidebarView("fixture", ready, location, preserve);
+    sidebar = state;
     return (
       <>
-        <button type="button" onClick={() => sidebar.revealAgain()}>
+        <button type="button" onClick={() => state.revealAgain()}>
           Reveal current
         </button>
-        <nav ref={sidebar.list} data-testid="viewport">
+        <nav ref={state.list} data-testid="viewport">
           <button type="button" aria-current="page">
             Current
           </button>

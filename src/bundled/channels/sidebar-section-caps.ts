@@ -71,10 +71,8 @@ export const sectionLimit = (
 type Section = Readonly<{ key: string; rows: readonly ChannelSummary[] }>;
 
 export type SectionCap = Readonly<{
-  /** Rows the cap hides now. */
+  /** Rows past the cap that Show more would add. */
   hidden: number;
-  /** Hidden rows the next Show more reveals. */
-  next: number;
   /** Show fewer would hide rows. */
   foldable: boolean;
   /** Rows listed past the cap, or every row. */
@@ -110,7 +108,6 @@ export function capSections<T extends Section>(
         ...section,
         cap: {
           hidden: 0,
-          next: 0,
           foldable: section.rows.length > SECTION_ROW_CAP,
           limit,
         },
@@ -119,20 +116,15 @@ export function capSections<T extends Section>(
     // A list that shrank back under the cap has nothing to fold.
     const extra = section.rows.length > SECTION_ROW_CAP ? limit : 0;
     const shown = SECTION_ROW_CAP + extra;
-    const listed = (row: ChannelSummary, index: number) =>
-      index < shown || kept(row.id) || held.has(row.id);
-    const rows = section.rows.filter(listed);
+    const rows = section.rows.filter(
+      (row, index) => index < shown || kept(row.id) || held.has(row.id),
+    );
     const past = rows.slice(shown);
-    // Kept rows are listed already, so the next step can reveal fewer.
-    const next = section.rows.filter(
-      (row, index) => index < shown + SECTION_ROW_STEP && !listed(row, index),
-    ).length;
     return {
       ...section,
       rows,
       cap: {
         hidden: section.rows.length - rows.length,
-        next,
         // Held rows that are no longer kept can fold even when unexpanded.
         foldable: extra > 0 || past.some((row) => !kept(row.id)),
         limit: extra,

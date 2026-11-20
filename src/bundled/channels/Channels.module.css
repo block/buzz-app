@@ -1040,28 +1040,39 @@ html[data-keyboard-navigation]
   min-width: 0;
 }
 
-/* Show more and Show fewer are text actions below a capped section. Both start
-   at the row titles: past the row icon and its gap. They share a line when it
-   fits and wrap to the same left edge when it doesn't. */
+/* Show more and Show fewer are text actions sharing one row below a capped
+   section, which spans the row fill. Like ChannelSidebarRow, Show more's caret
+   and label sit on the row icons and titles, and Show fewer ends where trailing
+   content ends, 8px inside the fill. Show more fills the space between them, so
+   the inner edges need little padding: at the 220px minimum the two labels
+   leave only about 9px between them. */
 .sectionShowMore {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  column-gap: var(--space-3);
+  justify-content: flex-end;
   margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
-  padding-inline: calc(
-      var(--space-2) -
-      var(--channel-row-fill-start, 0%) +
-      var(--space-5) +
-      var(--space-row-gap)
-    )
-    var(--space-2);
 }
-.sectionShowMore > [data-show-more-expand],
+.sectionShowMore > [data-show-more-expand] {
+  --space-row-gap: calc(var(--space-1) + var(--space-half));
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding-inline: calc(
+      var(--space-2) +
+      var(--space-half) -
+      var(--channel-row-fill-start, 0%)
+    )
+    0;
+}
 .sectionShowMore > [data-show-more-fold] {
   flex: 0 0 auto;
   width: auto;
-  max-width: 100%;
-  padding-inline: 0;
-  gap: var(--space-1);
+  padding-inline: var(--space-1) var(--space-2);
+}
+.sectionShowMoreIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  flex: 0 0 var(--space-5);
 }

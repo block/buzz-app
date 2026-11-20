@@ -159,7 +159,7 @@ Reorder them by dragging their headings or using **Move up** and **Move down**.
 The saved order syncs with workspace placement.
 
 **Solo** and the workspaces listed in the legacy Solo record start capped at
-their newest 7 rows. **Show N more** reveals the next hidden rows, up to 10;
+their newest 7 rows. **Show more** reveals the next hidden rows, up to 10;
 **Show fewer** returns to 7. Other sections, including workspaces created after
 the upgrade, start fully listed and offer **Show fewer** past 7 rows. The open
 chat, unread chats and chats an agent is working in stay listed past the cap.

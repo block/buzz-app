@@ -164,7 +164,8 @@ export function workflowMarked(event: RelayEvent, owner: string) {
  * ready, has listed its channels and knows the kind of `channelId`, which a
  * turn needs to tell where to answer: now when it has, or after the reconnect
  * under way, through a new session in the same community and owner if that
- * replaces the old one. Rejects when the community ends up another one or another owner's, is
+ * replaces the old one. A channel the owner cannot see but `agentReads` know
+ * the kind of is read through them. Rejects when the community ends up another one or another owner's, is
  * disconnected or fails in a way the service does not recover from by itself,
  * or when `signal` aborts first. It waits for the service's own notifications
  * and never reconnects. */
@@ -173,6 +174,7 @@ export function readyOwnerReads(
   agent: Readonly<{ relay: string; owner: string; pubkey: string }>,
   signal: AbortSignal,
   channelId?: string,
+  agentReads?: AgentReads,
 ): Promise<AgentReads> {
   const unavailable = () =>
     new Error(
@@ -210,7 +212,9 @@ export function readyOwnerReads(
           channels.get?.(channelId)
         )?.channelType
       )
-        return pending;
+        return agentReads?.channelLabel(channelId)?.channelType
+          ? agentReads
+          : pending;
       return ownerReads(relay, agent.pubkey);
     }
     if (

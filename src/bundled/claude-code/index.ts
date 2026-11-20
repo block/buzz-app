@@ -146,7 +146,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     undefined,
     undefined,
     (agent, signal, channelId) =>
-      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
+      readyOwnerReads(
+        agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        agents.conversationReads?.(agent.key),
+      ),
     // A session control's route, as the runner decides a turn's.
     (key) => {
       const route = routeFor(key);

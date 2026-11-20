@@ -887,6 +887,7 @@ const privateChannel = "4b7939a2-f852-42ae-ab59-2d1588b0d337";
 async function agentOnlyDm({
   owned = true,
   member = true,
+  workflow = false,
   at = Math.floor(Date.now() / 1000) + 1,
 } = {}) {
   const sibling = keypair();
@@ -914,6 +915,7 @@ async function agentOnlyDm({
   const sent = message(sibling, privateChannel, "Private assignment", at, [
     ["p", agentKey.pubkey],
     ...(owned ? [auth] : []),
+    ...(workflow ? [["buzz:workflow", "true"]] : []),
   ]);
   const records = eventsDto([
     metadata(relayKey, privateChannel, "Agent DM", at - 2, [
@@ -983,14 +985,18 @@ const privateRead = (f: Fixture) =>
     request.filters.some((filter) => filter["#h"]?.includes(privateChannel)),
   );
 
-it.each(["authorized", "unauthorized", "removed"])(
+it.each(["authorized", "unauthorized", "removed", "workflow"])(
   "delivers an agent-only DM through native catch-up with sender authority preserved (%s)",
   async (authority) => {
     const owned = authority !== "unauthorized";
     const member = authority !== "removed";
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const f = await gooseSetup();
-    const dm = await agentOnlyDm({ owned, member });
+    const dm = await agentOnlyDm({
+      owned,
+      member,
+      workflow: authority === "workflow",
+    });
     f.native.query.mockImplementation(dm.query);
     expect(f.session.channels.get?.(privateChannel)).toBeUndefined();
     await vi.advanceTimersByTimeAsync(50_000);

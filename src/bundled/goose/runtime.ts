@@ -500,6 +500,7 @@ export class GooseRuntime {
             agent,
             signal,
             channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
+            this.reads(agent.key),
           )
         : this.reads(agent.key);
       if (ready) {

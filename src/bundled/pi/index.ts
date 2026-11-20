@@ -57,7 +57,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // providers, as the runner sends every turn without the gateway.
     upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
     (agent, signal, channelId) =>
-      readyOwnerReads(agents.relay(agent.key), agent, signal, channelId),
+      readyOwnerReads(
+        agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        agents.conversationReads?.(agent.key),
+      ),
   );
   ctx.agentProtection.registerModels({
     label: "Pi",

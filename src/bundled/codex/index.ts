@@ -85,7 +85,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey) => ctx.agents.handle(pubkey),
     ctx.host.resolveDirectory?.bind(ctx.host),
     (agent, signal, channelId) =>
-      readyOwnerReads(ctx.agents.relay(agent.key), agent, signal, channelId),
+      readyOwnerReads(
+        ctx.agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        ctx.agents.conversationReads?.(agent.key),
+      ),
   );
   // Failed turns' notices link to where Codex signs in.
   runtime.explain = (notice) =>

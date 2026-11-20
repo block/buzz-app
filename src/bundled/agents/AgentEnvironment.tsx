@@ -91,9 +91,7 @@ export function AgentEnvironment({ agent }: { agent: string }) {
     <div className="mt-section-gap">
       <InlineHeader title="Environment variables" />
       <p className="m-0 mb-2 text-body-sm text-subtle">
-        This agent starts with these. A harness’s own settings win, except that
-        a saved ANTHROPIC_API_KEY wins over the shared Claude key. Models,
-        providers and endpoints are set in its harness settings, not here.
+        Variables this agent starts with.
       </p>
       {/* Nothing that changes the list works while a save runs, so no edit is
           lost when it finishes. */}

@@ -1107,6 +1107,9 @@ and are asked to sign in again in Buzz.
   the conversation sidebar available, so you can switch straight back to a chat.
   Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
+  Buzz saves conversation drafts when you pause typing or leave the composer. If
+  another window saves a different version while you edit, choose **Load saved
+  draft** or **Keep my draft** before sending.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages

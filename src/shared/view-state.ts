@@ -16,25 +16,41 @@ const changed = (scope: string, key?: string) => {
   for (const listener of viewListeners.get(scope) ?? []) listener(key);
 };
 /** Same durable view keys as the composer; no parallel draft store or index. */
-export function subscribeView(scope: string, listener: (key?: string) => void) {
+export function subscribeView(
+  scope: string,
+  listener: (key?: string) => void,
+  keys?: string | readonly string[] | ((key: string) => boolean),
+) {
+  const notify = (key?: string) => {
+    if (
+      key === undefined ||
+      keys === undefined ||
+      (typeof keys === "string"
+        ? key === keys
+        : typeof keys === "function"
+          ? keys(key)
+          : keys.includes(key))
+    )
+      listener(key);
+  };
   let listeners = viewListeners.get(scope);
   if (!listeners) {
     listeners = new Set();
     viewListeners.set(scope, listeners);
   }
-  listeners.add(listener);
+  listeners.add(notify);
   const onStorage = (event: StorageEvent) => {
     try {
       if (event.storageArea !== localStorage) return;
       if (event.key === null) {
-        listener();
+        notify();
         return;
       }
       if (!event.key.startsWith("buzz-view.v1:")) return;
       const pair: unknown = JSON.parse(event.key.slice("buzz-view.v1:".length));
       if (Array.isArray(pair) && pair[0] === scope) {
         if (typeof pair[1] === "string") traceDraft(scope, pair[1], "storage");
-        listener(typeof pair[1] === "string" ? pair[1] : undefined);
+        notify(typeof pair[1] === "string" ? pair[1] : undefined);
       }
     } catch {
       /* Storage may be unavailable while a window is closing. */
@@ -43,7 +59,7 @@ export function subscribeView(scope: string, listener: (key?: string) => void) {
   window.addEventListener("storage", onStorage);
   return () => {
     window.removeEventListener("storage", onStorage);
-    listeners?.delete(listener);
+    listeners?.delete(notify);
     if (!listeners?.size) viewListeners.delete(scope);
   };
 }
@@ -64,16 +80,20 @@ export function viewRevision(scope: string, key: string) {
   }
 }
 export function writeView(scope: string, key: string, value: unknown) {
-  let phase: "serialize-failed" | "write-failed" | "notify-failed" =
-    "serialize-failed";
   try {
-    const revision = JSON.stringify(value);
-    phase = "write-failed";
+    return writeViewRevision(scope, key, JSON.stringify(value));
+  } catch {
+    traceDraft(scope, key, "serialize-failed");
+    return false;
+  }
+}
+
+function writeViewRevision(scope: string, key: string, revision: string) {
+  let phase: "write-failed" | "notify-failed" = "write-failed";
+  try {
     traceDraft(scope, key, "write");
-    localStorage.setItem(
-      `buzz-view.v1:${JSON.stringify([scope, key])}`,
-      revision,
-    );
+    const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
+    localStorage.setItem(storageKey, revision);
     const current = viewRevision(scope, key);
     if (current !== revision) {
       traceDraft(scope, key, "write-mismatch", 0, {
@@ -93,6 +113,7 @@ export function writeView(scope: string, key: string, value: unknown) {
     return false;
   }
 }
+
 /** Foreground comparison, not a cross-window transaction or lock. */
 export function replaceView(
   scope: string,
@@ -104,6 +125,19 @@ export function replaceView(
   if (current === undefined) return "failed";
   if (current !== expected) return "changed";
   return writeView(scope, key, value) ? "saved" : "failed";
+}
+
+/** Compare and save a draft that already holds its exact serialized revision. */
+export function replaceViewRevision(
+  scope: string,
+  key: string,
+  expected: string | null | undefined,
+  revision: string,
+): "saved" | "changed" | "failed" {
+  const current = viewRevision(scope, key);
+  if (current === undefined) return "failed";
+  if (current !== expected) return "changed";
+  return writeViewRevision(scope, key, revision) ? "saved" : "failed";
 }
 
 // Rich snapshots contain structure as well as text (up to 32,001 nodes).
@@ -236,7 +270,7 @@ export function clearViewValue(key: string, value: unknown) {
   } catch {
     /* Storage unavailable; nothing was saved to forget. */
   }
-  for (const scope of scopes) changed(scope);
+  for (const scope of scopes) changed(scope, key);
 }
 
 /** Recovery callers must confirm cleanup before retiring their durable operation. */

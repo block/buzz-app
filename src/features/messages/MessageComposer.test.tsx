@@ -86,7 +86,12 @@ import type {
   ChannelSummary,
   Profile,
 } from "../relay/contracts";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { clearDraft } from "../drafts-sent/drafts";
 import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
@@ -8946,6 +8951,7 @@ it("seeds a channel composer from the viewer's latest top-level message once its
   expect(viewRevision("scope", "draft:channel")).toBeNull();
   // Typing saves an ordinary draft with the seeded recipient.
   h.fill("@Honey please");
+  act(() => h.input().blur());
   expect(readView("scope", "draft:channel", "")).toMatchObject({
     text: "@Honey please",
   });
@@ -9125,6 +9131,7 @@ it("seeds from history over a follow-up an earlier release saved as the draft, u
     h.commands().insertText("hello");
   });
   expect(h.input()).toHaveValue("@Bea hello");
+  act(() => h.input().blur());
   expect(readView("scope", "draft:channel", "")).toMatchObject({
     text: "@Bea hello",
     recipients: [{ pubkey: second.pubkey, name: "Bea", start: 0, end: 4 }],
@@ -9227,6 +9234,7 @@ it("seeds an untouched thread composer from the viewer's latest message without 
     h.commands().insertText("hi");
   });
   expect(h.input()).toHaveValue("@Honey hi");
+  act(() => editor.blur());
   expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
     text: "@Honey hi",
     recipients: [{ pubkey: first.pubkey, name: "Honey", start: 0, end: 6 }],
@@ -9242,11 +9250,11 @@ it("removing the seeded mention saves an untagged draft so reopening the thread 
   removeHoney();
   expect(h.input()).toHaveValue("@Honey ");
   expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+  h.retarget({ threadRootId: "other", threadSeed: undefined });
   expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
     text: "@Honey ",
     recipients: [],
   });
-  h.retarget({ threadRootId: "other", threadSeed: undefined });
   h.retarget({ threadRootId: "root", threadSeed });
   expect(h.input()).toHaveValue("@Honey ");
   expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
@@ -12436,6 +12444,138 @@ it.each([false, true])(
   },
 );
 
+it("saves a burst of 20 keystrokes once after 300 ms of quiet", () => {
+  const h = mount();
+  const write = vi.spyOn(Storage.prototype, "setItem");
+  const sidebar = vi.fn();
+  const otherDraft = vi.fn();
+  const ownDraft = vi.fn();
+  const stops = [
+    subscribeView("scope", sidebar, "channel-sidebar"),
+    subscribeView("scope", otherDraft, "draft:other"),
+    subscribeView("scope", ownDraft, "draft:channel"),
+  ];
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const text = "abcdefghijklmnopqrst";
+    for (let length = 1; length <= text.length; length++) {
+      h.fill(text.slice(0, length));
+      if (length < text.length) act(() => vi.advanceTimersByTime(25));
+    }
+    expect(h.input()).toHaveValue(text);
+    act(() => vi.advanceTimersByTime(299));
+    expect(write).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(ownDraft).toHaveBeenCalledExactlyOnceWith("draft:channel");
+    expect(sidebar).not.toHaveBeenCalled();
+    expect(otherDraft).not.toHaveBeenCalled();
+    expect(readView("scope", "draft:channel", "")).toMatchObject({ text });
+  } finally {
+    for (const stop of stops) stop();
+    vi.useRealTimers();
+    write.mockRestore();
+  }
+});
+
+it.each(["blur", "hide", "visibilitychange", "pagehide", "unmount", "send"])(
+  "flushes a draft before %s",
+  (boundary) => {
+    const h = mount();
+    h.fill("Recover this draft");
+    const saved = () => readView("scope", "draft:channel", null);
+    expect(saved()).toBeNull();
+
+    if (boundary === "blur") act(() => h.input().blur());
+    else if (boundary === "hide") h.present(false);
+    else if (boundary === "visibilitychange") {
+      const visibility = vi
+        .spyOn(document, "visibilityState", "get")
+        .mockReturnValue("hidden");
+      try {
+        fireEvent(document, new Event("visibilitychange"));
+      } finally {
+        visibility.mockRestore();
+      }
+    } else if (boundary === "pagehide")
+      act(() => window.dispatchEvent(new Event("pagehide")));
+    else if (boundary === "unmount") h.unmount();
+    else {
+      h.messages.send.mockImplementationOnce(() => {
+        expect(saved()).toMatchObject({ text: "Recover this draft" });
+        throw new Error("Outbox rejected the send");
+      });
+      h.submit();
+      expect(h.messages.send).toHaveBeenCalledOnce();
+    }
+
+    expect(saved()).toMatchObject({ text: "Recover this draft" });
+  },
+);
+
+it.each([true, false])(
+  "keeps an unflushed edit when another window wins the save (event delivered: %s)",
+  (notify) => {
+    const h = mount();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      h.fill("Local work");
+      const key = 'buzz-view.v1:["scope","draft:channel"]';
+      localStorage.setItem(key, JSON.stringify("Saved in another window"));
+      if (notify) {
+        fireEvent(
+          window,
+          new StorageEvent("storage", { storageArea: localStorage, key }),
+        );
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /changed elsewhere/,
+        );
+      }
+      act(() => vi.advanceTimersByTime(300));
+      expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+      expect(h.input()).toHaveValue("Local work");
+      expect(readView("scope", "draft:channel", "")).toBe(
+        "Saved in another window",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("accepts another window's identical draft without an extra write or a conflict", () => {
+  const key = 'buzz-view.v1:["scope","draft:channel"]';
+  const first = mount();
+  first.fill("Same text");
+  first.unmount();
+  const saved = localStorage.getItem(key);
+  if (saved === null)
+    throw new Error("The first composer did not save its draft");
+  localStorage.removeItem(key);
+
+  const h = mount();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    h.fill("Same text");
+    localStorage.setItem(key, saved);
+    const write = vi.spyOn(Storage.prototype, "setItem");
+    try {
+      fireEvent(
+        window,
+        new StorageEvent("storage", { storageArea: localStorage, key }),
+      );
+      act(() => vi.advanceTimersByTime(300));
+      expect(write).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(h.input()).toHaveValue("Same text");
+    } finally {
+      write.mockRestore();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("empties for a draft cleared elsewhere, and a stale composer never restores it", () => {
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount();
@@ -12444,6 +12584,7 @@ it("empties for a draft cleared elsewhere, and a stale composer never restores i
   expect(h.input()).toHaveValue("");
 
   h.fill("Edited here");
+  act(() => h.input().blur());
   act(() => clearDraft({ scope: "scope" }, "draft:channel"));
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
   h.fill("Edited here, still typing");
@@ -12469,6 +12610,7 @@ it("compares before local edits and Send even if the storage event has not arriv
 it("saves a content-free conflict trace and preserves Keep my draft", async () => {
   const h = mount();
   h.fill("Private local body");
+  act(() => h.input().blur());
   const invoke = vi.fn().mockRejectedValue(new Error("unavailable"));
   vi.stubGlobal("isTauri", true);
   vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
@@ -12952,6 +13094,7 @@ it("retains a new card-only followup when a background upload fails", async () =
   act(() => (h.input() as ComposerInputElement).insertText(link));
   await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
   expect(h.input()).toHaveValue(link);
+  act(() => h.input().blur());
   expect(readView(h.scope, "draft:channel", null)).toMatchObject({
     text: link,
   });
@@ -16423,17 +16566,15 @@ it("removing a pending chip before the bound aborts the provider's signal and le
     expect(h.hold("honey", new Promise<never>(() => {}))).toBe(false);
     const signal = h.resolve.mock.calls[0]?.[0];
     expect(signal?.aborted).toBe(false);
-    // Typing leaves the editor a short timer of its own; past it, the bound
-    // is the one timer the chip added.
-    act(() => vi.advanceTimersByTime(100));
+    // Let the 300 ms draft save finish. Only the mention bound remains.
+    act(() => vi.advanceTimersByTime(300));
     expect(vi.getTimerCount()).toBe(timers + 1);
     act(() => h.input().undo(false));
     expect(h.input()).toHaveValue("@honey");
     expect(h.chip("honey")).toBeNull();
     expect(signal?.aborted).toBe(true);
-    // The undo leaves the editor's short timer again; past it, nothing: the
-    // bound went with the chip's signal rather than running on to 8 s.
-    act(() => vi.advanceTimersByTime(100));
+    // Undo starts another draft save. The mention bound is already gone.
+    act(() => vi.advanceTimersByTime(300));
     expect(vi.getTimerCount()).toBe(timers);
   } finally {
     vi.useRealTimers();
@@ -17122,6 +17263,7 @@ describe("oversized paste feedback", () => {
   it("announces rejection, keeps the saved draft and clears feedback on recovery", () => {
     const h = mount();
     h.fill("Keep this draft.");
+    act(() => h.input().blur());
     pasteText(h.input(), "x".repeat(16001));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "This paste would make your message too long. Shorten the text and try again.",

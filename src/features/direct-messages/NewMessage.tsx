@@ -347,6 +347,7 @@ export function NewMessage({
   // message held for delivery, even a failed one, keeps its recipients, so a
   // retry never reaches someone new. A choice made while a send is under way
   // waits for it, so the send keeps its recipients and the choice is not lost.
+  // With To already filled, the caret starts in the message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Each choice addresses the draft once, after its restore and any send under way.
   useEffect(() => {
     if (!ready || !intent || busy) return;
@@ -364,6 +365,7 @@ export function NewMessage({
         ...(profile?.isAgent ? { isAgent: true } : {}),
       },
     ]);
+    focusComposer();
   }, [ready, busy, intent?.to, intent?.at]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);

@@ -50,6 +50,8 @@ it("records both accepted drafts when cleanup finishes out of order", () => {
   expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("saved");
   expect(draftWasRetired(scope, key, first, afterBoth)).toBe(false);
   writeView(scope, key, JSON.parse(first));
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("changed");
+  expect(viewRevision(scope, key)).toBe(first);
   expect(retireViewDraft(scope, key, first, cleared, afterBoth)).toBe("saved");
   expect(draftWasRetired(scope, key, first, afterBoth)).toBe(true);
 });

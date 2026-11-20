@@ -186,13 +186,11 @@ export function retireViewDraft(
 ): "saved" | "changed" | "failed" {
   const current = viewRevision(scope, key);
   if (current === undefined || expected === undefined) return "failed";
+  if (expected !== null && draftWasRetired(scope, key, expected, cursor))
+    return current === replacement ? "saved" : "changed";
   if (current === replacement || current !== expected) {
     // An empty follow-up could belong to a different accepted send.
-    if (
-      expected !== null &&
-      expected !== replacement &&
-      !draftWasRetired(scope, key, expected, cursor)
-    ) {
+    if (expected !== null && expected !== replacement) {
       recordDraftRetirement(scope, key, expected);
       changed(scope, key, [{ key, revision: expected }]);
     }

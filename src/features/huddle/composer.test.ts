@@ -327,9 +327,9 @@ it.each(["cancel", "close"])(
   },
 );
 
-it.each([false, true])(
-  "preserves the real owner's remembered-agent followup and concurrent drafts (changed=%s)",
-  async (changed) => {
+it.each(["unchanged", "different", "re-entered"] as const)(
+  "preserves the owner's remembered-agent followup and concurrent drafts (%s)",
+  async (peer) => {
     const h = harness();
     const agent = { pubkey: "ef".repeat(32), name: "Helper" };
     const profiles = new Map([
@@ -341,12 +341,39 @@ it.each([false, true])(
     writeView(h.scope, "draft:room", draft);
     const { remote } = await h.connect();
     const sent = vi.fn();
-    const newer = { text: "New work from another editor", recipients: [] };
-    if (changed)
+    const newer =
+      peer === "re-entered"
+        ? draft
+        : { text: "New work from another editor", recipients: [] };
+    if (peer === "different")
       h.send.mockImplementationOnce(() => {
         writeView(h.scope, "draft:room", newer);
         return "accepted-id";
       });
+    if (peer === "re-entered") {
+      const setItem = Storage.prototype.setItem;
+      const quota = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, key, value) {
+          if (this === localStorage && key.startsWith("buzz-ret.v1:"))
+            throw new DOMException(
+              "Storage quota exceeded",
+              "QuotaExceededError",
+            );
+          setItem.call(this, key, value);
+        });
+      cleanup.push(() => quota.mockRestore());
+      const stop = subscribeView(
+        h.scope,
+        (_key, removed) => {
+          if (!removed?.length) return;
+          stop();
+          writeView(h.scope, "draft:room", draft);
+        },
+        "draft:room",
+      );
+      cleanup.push(stop);
+    }
     render(
       createElement(MessageComposer, {
         session: remote,
@@ -363,9 +390,11 @@ it.each([false, true])(
     await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
     await act(async () => {});
     expect(readView(h.scope, "draft:room", null)).toEqual(
-      changed ? newer : mentionDraft(""),
+      peer === "unchanged" ? mentionDraft("") : newer,
     );
-    expect(editor).toHaveTextContent(changed ? newer.text : "Helper");
+    expect(editor).toHaveTextContent(
+      peer === "different" ? newer.text : "Helper",
+    );
     expect(h.send).toHaveBeenCalledTimes(1);
     expect(h.send).toHaveBeenCalledWith(
       "room",

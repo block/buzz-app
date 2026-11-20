@@ -243,6 +243,7 @@ type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
   retirementCursor: number | undefined;
+  retiredByOwner?: boolean;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
@@ -1361,17 +1362,21 @@ function Composer({
     const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
     // Another writer can already have saved the same draft.
-    let result = acceptedDraft
-      ? retireViewDraft(
-          scope,
-          draftKey,
-          expected,
-          serialized,
-          acceptedDraft.retirementCursor,
-        )
-      : current === serialized
+    let result = acceptedDraft?.retiredByOwner
+      ? current === serialized
         ? "saved"
-        : replaceViewRevision(scope, draftKey, expected, serialized);
+        : "changed"
+      : acceptedDraft
+        ? retireViewDraft(
+            scope,
+            draftKey,
+            expected,
+            serialized,
+            acceptedDraft.retirementCursor,
+          )
+        : current === serialized
+          ? "saved"
+          : replaceViewRevision(scope, draftKey, expected, serialized);
     writing.current = false;
     const observed = viewRevision(scope, draftKey);
     if (
@@ -3101,6 +3106,7 @@ function Composer({
     }
     const savedRevision = revision.current;
     const retirementCursor = draftRetirementCursor(scope, draftKey);
+    let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
@@ -3374,6 +3380,23 @@ function Composer({
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
+        if (sender.sendDraft && !threadRootId) {
+          return sender
+            .sendDraft({
+              text: content,
+              ...(captured.forward ? { forward: captured.forward } : {}),
+              draft: savedRevision ?? "null",
+              retirementCursor,
+              mentions: recipients,
+              attachments: uploaded,
+              references,
+              picks: sentPicks,
+            })
+            .then(({ id, retirement }) => {
+              retiredByOwner = retirement !== "failed";
+              return id;
+            });
+        }
         if (captured.forward) {
           const main = fullSession(sender);
           if (!main && sender.forwarding)
@@ -3500,7 +3523,7 @@ function Composer({
         setSending(true);
         const uploaded = await attachments.store.prepareForSend(attempt.signal);
         attempt.signal.throwIfAborted();
-        // The detached client reads the stored revision when it publishes.
+        // The detached owner receives the revision captured for this send.
         const current = viewRevision(scope, draftKey);
         if (current !== savedRevision) {
           diagnose("send-publish-conflict", savedRevision, current);
@@ -3630,6 +3653,7 @@ function Composer({
         next: mentionDraft(""),
         revision: savedRevision,
         retirementCursor,
+        retiredByOwner,
       };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);

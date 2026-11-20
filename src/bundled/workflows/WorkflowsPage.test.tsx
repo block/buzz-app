@@ -1923,6 +1923,7 @@ function linkedVisit(
   }
   // A notice of the test's own, mounted after the page: see `settled`.
   let mark = 0;
+  let marked = false;
   const markListeners = new Set<() => void>();
   function Mark() {
     const count = useSyncExternalStore(
@@ -1930,7 +1931,7 @@ function linkedVisit(
         markListeners.add(listener);
         return () => markListeners.delete(listener);
       },
-      () => mark,
+      () => (marked ? mark : 0),
     );
     return count ? (
       <ToastNotice key={count} title={`Settled ${count}`} />
@@ -1965,9 +1966,24 @@ function linkedVisit(
     async settled() {
       act(() => {
         mark++;
+        marked = true;
         for (const listener of markListeners) listener();
       });
-      await screen.findByText(`Settled ${mark}`);
+      return await screen.findByText(`Settled ${mark}`);
+    },
+    /** The barrier for "the notice is still shown": `settled`, and every
+     * notice withdrawn before this call has also left the document. A
+     * withdrawn notice stays drawn while it animates out, so an immediate
+     * check would still find it. Notices leave in the order they were
+     * withdrawn, so this withdraws its own and waits for that one to go. */
+    async retained() {
+      const own = (await this.settled()).closest("[data-sonner-toast]");
+      if (!own) throw new Error("The barrier's notice is not a toast");
+      act(() => {
+        marked = false;
+        for (const listener of markListeners) listener();
+      });
+      await waitFor(() => expect(own).not.toBeInTheDocument());
     },
     target(reference: Pick<WorkflowDefinition, "owner" | "id">) {
       const link = buzzLinkTarget(workflowLink(reference), community);
@@ -2304,9 +2320,9 @@ it("does not report a linked workflow missing again when a reconnect remounts th
     // was already told: the page keeps the notice it has.
     expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
     await nothingListed();
-    // The same notice, not one withdrawn and raised again: that would be a
-    // second element, drawn before the barrier.
-    await visit.settled();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
+    await visit.retained();
     expect(screen.getAllByText(notFound)).toEqual([notice]);
     expect(notice).toBeVisible();
     expect(detailShown()).toBeNull();
@@ -2459,7 +2475,7 @@ it("reports a linked workflow missing once when a partial channel list completes
     await waitFor(() =>
       expect(screen.queryByText("The channel list is partial.")).toBeNull(),
     );
-    await visit.settled();
+    await visit.retained();
     expect(screen.getAllByText(notFound)).toHaveLength(1);
     // Answered for good: a reconnect lists the channel, and nothing opens.
     visit.reconnect();
@@ -2473,7 +2489,7 @@ it("reports a linked workflow missing once when a partial channel list completes
         screen.getByRole("button", { name: /^Open Message helper:/ }),
       ).toBeVisible(),
     );
-    await visit.settled();
+    await visit.retained();
     expect(detailShown()).toBeNull();
     // The reconnect neither withdrew the visit's notice nor raised another.
     expect(screen.getAllByText(notFound)).toEqual([notice]);
@@ -2508,7 +2524,7 @@ it("says a linked workflow was not found once the channel list settles with no c
         screen.getByRole("button", { name: /^Open Message helper:/ }),
       ).toBeVisible(),
     );
-    await visit.settled();
+    await visit.retained();
     expect(detailShown()).toBeNull();
     expect(screen.getAllByText(notFound)).toHaveLength(1);
   } finally {
@@ -2539,7 +2555,7 @@ it("opens a linked workflow reported missing from a partial channel list with no
       channels: [emptyChannel],
     });
     await nothingListed();
-    await visit.settled();
+    await visit.retained();
     expect(screen.getByText(notFound)).toBeVisible();
     // The page that lists its channel: the visit was not spent on that notice.
     visit.setChannels({
@@ -2584,7 +2600,7 @@ it("answers a linked visit once a partial channel list with no channel for this 
     await waitFor(() =>
       expect(screen.queryByText("The channel list is partial.")).toBeNull(),
     );
-    await visit.settled();
+    await visit.retained();
     expect(screen.getAllByText(notFound)).toHaveLength(1);
     // Answered for good: a channel listed afterwards opens nothing.
     visit.setChannels({ status: "ready", channels: [workflowChannel] });
@@ -2594,7 +2610,7 @@ it("answers a linked visit once a partial channel list with no channel for this 
         screen.getByRole("button", { name: /^Open Message helper:/ }),
       ).toBeVisible(),
     );
-    await visit.settled();
+    await visit.retained();
     expect(detailShown()).toBeNull();
     expect(screen.getAllByText(notFound)).toHaveLength(1);
   } finally {
@@ -2619,9 +2635,9 @@ it("reports a linked workflow missing once when a partial channel list with no c
     });
     await nothingListed();
     expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
-    await visit.settled();
-    // The same notice, not one withdrawn and raised again: that would be a
-    // second element, drawn before the barrier.
+    await visit.retained();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
     expect(screen.getAllByText(notFound)).toEqual([notice]);
     expect(notice).toBeVisible();
     expect(detailShown()).toBeNull();
@@ -2723,9 +2739,9 @@ it("keeps the one missing-workflow notice through a reconnect while the linked v
     expect(notice).toBeVisible();
     visit.reconnect();
     expect(screen.getByText("The channel list is partial.")).toBeVisible();
-    await visit.settled();
-    // The same notice, not one withdrawn and raised again: that would be a
-    // second element, drawn before the barrier.
+    await visit.retained();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
     expect(screen.getAllByText(notFound)).toEqual([notice]);
     expect(notice).toBeVisible();
     // Still only the workflow opening removes it.

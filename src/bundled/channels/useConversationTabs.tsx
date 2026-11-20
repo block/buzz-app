@@ -11,7 +11,11 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type { ChannelSummary, Profile } from "../../features/relay/contracts";
+import type {
+  ChannelSummary,
+  ListStatus,
+  Profile,
+} from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   panelOpening,
@@ -21,7 +25,7 @@ import {
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
-import { ThreadLoading } from "../../features/messages/ThreadPanel";
+import { ThreadLoading } from "../../features/messages/ThreadLoading";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
 import { rosterRecovering } from "../../features/relay/live-recovery";
 import {
@@ -61,15 +65,11 @@ export const historyPanel = (entry: PanelOpening) =>
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
 
-/** Why a tab cannot show its conversation, most specific first. A missing
- * channel proves nothing while its list failed to load. Only a conversation
- * tab reaches the archived and read-only reasons: its body always mounts a
- * composer, while a thread tab shows such a channel with its notice. */
-function unavailableReason(
-  target: ChannelSummary | undefined,
-  list: string | undefined,
-) {
-  if (!target && list === "error") return "This conversation didn’t load.";
+/** Why a tab cannot show a channel the relay has settled, most specific
+ * first. Only a conversation tab reaches the archived and read-only reasons:
+ * its body always mounts a composer, while a thread tab shows such a channel
+ * with its notice. */
+function unavailableReason(target: ChannelSummary | undefined) {
   if (target?.cached)
     return "This conversation will appear once Buzz reconnects.";
   if (target?.archived) return "This conversation is archived.";
@@ -78,28 +78,35 @@ function unavailableReason(
   return "This conversation is no longer available.";
 }
 
-/** A tab whose channel is missing from a channel list that is not complete.
- * The channel may yet be in a list still being read, or in one whose failed
- * read recovery is retrying; the recovery notice is then the one report, as
- * in the sidebar. A failure recovery does not retry is stated. */
-function UnlistedChannel({
+/** A tab whose channel the roster read has not settled: it is missing from a
+ * channel list that is not complete, or listed from saved membership the
+ * relay has yet to confirm. The read may still be due or in flight, or have
+ * failed with recovery retrying it; the recovery notice is then the one
+ * report, as in the sidebar. A failure recovery does not retry is stated, as
+ * is a list this session never reads. */
+function UnsettledChannel({
   session,
   list,
   label,
 }: {
-  session: Pick<RelaySession, "recovery" | "live">;
-  list: string;
+  session: Pick<RelaySession, "recovery" | "live" | "channels">;
+  list: ListStatus;
   label: string | undefined;
 }) {
   const retrying = useRecoveryOwns(session, (live) =>
     rosterRecovering(live.roster),
   );
-  return list === "loading" || retrying ? (
-    <ThreadLoading {...(label && { label })} />
-  ) : (
+  const failed =
+    list === "error"
+      ? !retrying
+      : list === "unavailable" ||
+        (list === "idle" && session.channels.cachedOnly);
+  return failed ? (
     <p role="status" className={styles.empty}>
-      {unavailableReason(undefined, list)}
+      This conversation didn’t load.
     </p>
+  ) : (
+    <ThreadLoading {...(label && { label })} />
   );
 }
 
@@ -788,7 +795,9 @@ export function useConversationTabs({
   // Another listed channel's thread is read the same way: the thread panel
   // replaces the composer of an archived or guest channel with its notice.
   // Only a conversation tab, whose body always mounts a composer, needs a
-  // channel the viewer can post in.
+  // channel the viewer can post in. A thread tab relies on the joined list
+  // holding only channels whose roster names the viewer (DiscoveryState
+  // .readable), so a confirmed listing is one the viewer may read.
   function tabChannel(tab: Pick<Tab, "kind" | "channelId">) {
     if (tab.kind === "thread" && current?.id === tab.channelId)
       return current.cached ? undefined : current;
@@ -805,14 +814,17 @@ export function useConversationTabs({
         : channels.find((item) => item.id === tab.channelId);
     const list = queries.channels.list().status;
     const label = tab.kind === "thread" ? undefined : "Loading conversation…";
-    if (!target && (list === "loading" || list === "error"))
-      return <UnlistedChannel session={queries} list={list} label={label} />;
-    // Saved membership on a connected session awaits its live roster.
-    return target?.cached && !queries.channels.cachedOnly ? (
-      <ThreadLoading {...(label && { label })} />
+    // Saved membership on a connected session awaits its live roster, as a
+    // missing channel awaits a complete list.
+    return (
+      target
+        ? target.cached && !queries.channels.cachedOnly
+        : list !== "ready"
+    ) ? (
+      <UnsettledChannel session={queries} list={list} label={label} />
     ) : (
       <p role="status" className={styles.empty}>
-        {unavailableReason(target, list)}
+        {unavailableReason(target)}
       </p>
     );
   }

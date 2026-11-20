@@ -2345,6 +2345,57 @@ it.each([
     list: "error",
     text: "This conversation didn’t load.",
   },
+  // A failed roster read keeps the saved membership it could not confirm.
+  {
+    name: "the open channel's saved membership while recovery retries a failed list",
+    kind: "thread",
+    current: { cached: true as const, readOnly: true as const },
+    list: "error",
+    roster: rosterRead(true, true),
+    loading: "Loading thread…",
+  },
+  {
+    name: "the open channel's saved membership after a list failure that is not retried",
+    kind: "thread",
+    current: { cached: true as const, readOnly: true as const },
+    list: "error",
+    roster: rosterRead(true),
+    text: "This conversation didn’t load.",
+  },
+  {
+    name: "another channel's saved membership after a list failure that is not retried",
+    kind: "thread",
+    listed: { cached: true as const, readOnly: true as const },
+    list: "error",
+    text: "This conversation didn’t load.",
+  },
+  {
+    name: "saved membership after a list failure that is not retried",
+    kind: "conversation",
+    listed: { cached: true as const, readOnly: true as const },
+    list: "error",
+    text: "This conversation didn’t load.",
+  },
+  // The list read starts after the first render.
+  {
+    name: "a channel missing from a list not yet read",
+    kind: "thread",
+    list: "idle",
+    loading: "Loading thread…",
+  },
+  {
+    name: "a channel missing from a list Buzz cannot read without a connection",
+    kind: "thread",
+    list: "idle",
+    cachedOnly: true,
+    text: "This conversation didn’t load.",
+  },
+  {
+    name: "a channel missing from a list no relay serves",
+    kind: "conversation",
+    list: "unavailable",
+    text: "This conversation didn’t load.",
+  },
   {
     name: "saved membership while Buzz is not connected",
     kind: "thread",
@@ -2454,6 +2505,63 @@ it.each([
     expect(!!status.querySelector("img")).toBe(!!loading);
   },
 );
+
+// The reported cold start: a restored thread tab waits on saved membership,
+// then shows its thread once the relay confirms the open channel.
+it("a thread tab hosts its thread once the relay confirms saved membership", () => {
+  let current: { id: string; name: string; cached?: true; readOnly?: true } = {
+    id: "target",
+    name: "Target",
+    cached: true,
+    readOnly: true,
+  };
+  const session = {
+    viewer: "viewer",
+    ...rosterRead(false),
+    channels: {
+      list: () => ({ status: "ready", channels: [current] }),
+      window: () => ({ rows: [] }),
+    },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "target");
+    const workspace = useConversationTabs({
+      profiles: new Map(),
+      state,
+      relay,
+      session,
+      panels,
+      current: current as never,
+      channels: [current as never],
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  act(() => h.result.current.state.openThreadTab("target", "root", "root"));
+  expect(h.result.current.workspace.hosts).toHaveLength(0);
+  const waiting = render(h.result.current.workspace.items[0]?.content);
+  expect(screen.getByRole("status")).toHaveTextContent("Loading thread…");
+  waiting.unmount();
+
+  current = { id: "target", name: "Target" };
+  h.rerender();
+  expect(h.result.current.workspace.hosts).toHaveLength(1);
+  render(h.result.current.workspace.items[0]?.content);
+  expect(screen.queryByRole("status")).toBeNull();
+});
 
 // The thread panel replaces the composer with the channel's own notice, so a
 // thread is readable in a tab wherever its channel is, whichever is open.

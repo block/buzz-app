@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { clearNativeMedia, nativeChannelMedia } from "./native";
 import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
@@ -281,8 +282,10 @@ export function provideRelay(
       current === generation &&
       signal === controller?.signal;
     if (kind !== "sign-in") {
-      await store.clearCache();
+      await store.clearCache().catch(() => {});
       if (resume) {
+        // Saved images are optional; failing to forget them keeps the rest.
+        await clearNativeMedia(resume.scope).catch(() => {});
         const disk = createHeadPersistence(resume.viewer, resume.scope);
         try {
           await disk.clear();
@@ -420,6 +423,7 @@ export function provideRelay(
               transport.viewer,
               transportOrigin(transport),
             ),
+            channelMedia: nativeChannelMedia(transportOrigin(transport)),
           });
           await successor.restore();
           if (
@@ -543,17 +547,21 @@ export function provideRelay(
       connecting = false;
       clearing = Promise.resolve()
         .then(async () => {
-          await retainedStore.clearCache();
+          // A failed delete still clears the rest, then fails the clear so
+          // its caller doesn't report saved data as gone.
+          const failures: unknown[] = [];
+          const fail = (error: unknown) => void failures.push(error);
+          await retainedStore.clearCache().catch(fail);
           if (resume) {
+            await clearNativeMedia(resume.scope).catch(fail);
             const disk = createHeadPersistence(resume.viewer, resume.scope);
-            try {
-              await disk.clear();
-            } catch {
-              /* Storage can be unavailable. */
-            } finally {
-              disk.close();
-            }
+            await disk
+              .clear()
+              .catch(fail)
+              .finally(() => disk.close());
           }
+          if (failures.length)
+            throw new AggregateError(failures, "Cached data was not cleared");
         })
         .finally(() => {
           clearing = undefined;

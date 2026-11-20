@@ -152,8 +152,8 @@ coordinates must satisfy the recipe contract.
 Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
 list. When the pinned rows run out of vertical space, scroll their area to see
 the rest. The conversation sections default to **Solo**, **Starred**,
-workspaces, **Team**, **Forums**, and **Direct messages**. After an upgrade from
-the separate Solo and Team sidebars, the previous Solo workspaces come first,
+workspaces, **Team** (channels and forums), and **Direct messages**. After an
+upgrade from the separate Solo and Team sidebars, the previous Solo workspaces come first,
 then **Solo**, **Starred**, the previous Team workspaces and **Team**.
 Reorder them by dragging their headings or using **Move up** and **Move down**.
 The saved order syncs with workspace placement.
@@ -252,7 +252,8 @@ A–Z writes a null register and removes that group's legacy override.
 Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
 coordinate: Unreads is `unreads`, Active is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
-stores each group’s duration in whole-day seconds; absence means 30 days. Presets
+stores each group’s duration in whole-day seconds; absence means 30 days. The
+Active dialog offers 1, 3, 7, 30 and 90 days. Presets
 and custom values share this representation. Apply publishes mode and duration
 in one encrypted update, and both hosts confirm both values on readback. Other
 modes preserve the last duration; section removal clears it. Older fixed-window
@@ -1330,8 +1331,10 @@ The port retains the prepared-store implementation and its behavior tests:
   an open mention menu re-ranks a large roster once instead of per page. The
   channel avatar preview reads at most the first 1,024 members; only the mention
   menu reads a whole large roster. Narrow row profile selectors,
-  and request-warmed avatars (fetched and decoded, nothing retained; disabled
-  under the Save-Data preference). Signature verification yields in batches.
+  and request-warmed avatars (up to eight fetched and decoded at once, nothing
+  retained; a warmed avatar then mounts eagerly, so WebKit reuses its memory
+  cache; disabled under the Save-Data preference). Signature verification
+  yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Signed cached events are reverified before display. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate

@@ -10,6 +10,7 @@ import {
 } from "./threads";
 import { byteSize, listByteSize } from "./budget";
 import { ReadError } from "./errors";
+import { USER_STATUS_KIND } from "./user-status-policy";
 import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
@@ -459,17 +460,19 @@ const direct = (
     resume,
     seed,
     sending = [],
+    agentOwner = () => undefined,
   }: {
     resume?: ThreadResume;
     seed?: typeof root;
     sending?: (typeof root)[];
+    agentOwner?: (pubkey: string) => string | undefined;
   } = {},
 ) =>
   createThreadView({
     channelId: "a",
     messageId: root.id,
     relayAuthor: relay.pubkey,
-    agentOwner: () => undefined,
+    agentOwner,
     reader: {
       read: async () => {
         if (events instanceof Error) throw events;
@@ -541,6 +544,35 @@ it("drops a resumed row its repair does not read again", async () => {
     replies: [],
     resumed: undefined,
   });
+});
+
+it("a resumed relayed row is attributed by its agent's owner now, not when it closed", async () => {
+  const agent = keypair();
+  const relayed = message(alice, "a", "Relayed", 10, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["relayed-from", agent.pubkey, "b"],
+  ]);
+  let owner: string | undefined = alice.pubkey;
+  const agentOwner = () => owner;
+  const closing = direct([root, relayed], { agentOwner });
+  await closing.view.refresh();
+  const resume = closing.resume();
+  closing.view.dispose();
+  if (typeof resume !== "object") throw new Error("No resume");
+  const verified = (thread: ReturnType<typeof direct>) =>
+    thread.view.snapshot().replies.find((row) => row.id === relayed.id)
+      ?.relayedFrom?.verified;
+  expect(resume.replies[0]?.relayedFrom?.verified).toBe(true);
+  // The agent's profile withdrew its attestation while the thread was closed.
+  owner = undefined;
+  const view = direct([root, relayed], { resume, agentOwner });
+  expect(view.view.snapshot().resumed).toBe(true);
+  expect(verified(view)).toBe(false);
+  // Attested again, the open view follows the owner it looked up.
+  owner = alice.pubkey;
+  view.ownersChanged();
+  expect(verified(view)).toBe(true);
 });
 
 it("never shows a resumed row over its own evidence or a retained deletion", async () => {
@@ -912,6 +944,12 @@ it("repairs retained thread pages through the real channel-established catch-up 
   const first = h.view.refresh();
   h.next().respond([root, reply("old", 10)]);
   await first;
+  // Alice's profile came over traffic, so her row reads only her status.
+  const status = h.next();
+  expect(status.filters).toMatchObject([
+    { kinds: [USER_STATUS_KIND], authors: [alice.pubkey] },
+  ]);
+  status.respond([]);
   const more = h.view.loadMore();
   h.next().respond([root, reply("later", 20)]);
   await more;
@@ -932,6 +970,10 @@ it("repairs retained thread pages through the real channel-established catch-up 
   ]);
   repair.respond([root, reply("old", 10), reply("missed", 15)]);
   await flush();
+  // The reconnect retired her status, so it is read again with the page.
+  const again = h.next();
+  expect(again.filters[0]?.kinds).toEqual([USER_STATUS_KIND]);
+  again.respond([]);
   const next = h.next();
   expect(next.filters[1]?.thread_cursor).toBe(15);
   next.respond([root, reply("later", 20)]);

@@ -55,6 +55,7 @@ import {
   conversationFolder,
   conversationKey,
   existingFolder,
+  startingFolder,
 } from "../../features/agents/conversation-folders";
 import type {
   Agent,
@@ -76,14 +77,22 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
-import { appClient, readFile } from "../../buzz-mcp/app-client";
+import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
   recentNotesSection,
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
-import { readProject } from "../../features/agent-harness/project";
+import {
+  readProject,
+  worksElsewhere,
+} from "../../features/agent-harness/project";
+import {
+  placeOf,
+  replacedSections,
+  sectionsOf,
+} from "../../features/agent-harness/sections/compose";
 import {
   referencedFolders,
   referencedSkills,
@@ -376,6 +385,16 @@ export class ClaudeRuntime {
     if (!reads) throw new Error("Buzz is not connected");
     return reads.scope
       ? conversationFolder(this.storage, reads.scope, agent, key)
+      : undefined;
+  }
+  /** `folder`, for a launching session, which records that a conversation
+   * without one starts in the workspace. */
+  private startFolder(agent: AgentKey, key: string | undefined) {
+    if (!key || this.target) return undefined;
+    const reads = this.reads(agent);
+    if (!reads) throw new Error("Buzz is not connected");
+    return reads.scope
+      ? startingFolder(this.storage, reads.scope, agent, key)
       : undefined;
   }
   /** Where the conversation's sessions ran: its own folder, or else the
@@ -1956,7 +1975,10 @@ export class ClaudeRuntime {
     const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
-          Boolean(reads && this.folder(agent.key, key)),
+          worksElsewhere(
+            reads ? this.folder(agent.key, key) : undefined,
+            sectionsOf(entry.handle, key),
+          ),
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
@@ -2105,7 +2127,7 @@ export class ClaudeRuntime {
               return entry.sessions.captureProtectionContext(conversation);
             },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
-            signingAuthority: this.reads(agent)?.workflowAuthority(),
+            signingAuthority: relayKeyOf(this.reads(agent)),
             read: (path) =>
               this.target
                 ? this.target.readFile(path, { cwd })
@@ -2216,10 +2238,9 @@ export class ClaudeRuntime {
           entry.memory,
           addedKey(this.added()),
           this.credentials,
-          // The base prompt's sections: a change gives an idle session the
-          // new prompt at its next turn.
-          entry.handle?.promptSections?.(),
         ]),
+      // A change gives the session the new prompt at its next turn.
+      sections: (key) => replacedSections(sectionsOf(entry.handle, key)),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
         const gate = entry.handle?.protection;
@@ -2228,7 +2249,7 @@ export class ClaudeRuntime {
         gate?.assertAvailable();
         // A conversation given its own folder starts there, never in the
         // workspace, which stays within reach as an absolute path.
-        const assigned = this.folder(agent, key);
+        const assigned = await this.startFolder(agent, key);
         const resolve = this.host.resolveDirectory?.bind(this.host);
         const folder = assigned && (await existingFolder(resolve, assigned));
         const home = folder && (await resolve?.(workspace));
@@ -2245,6 +2266,7 @@ export class ClaudeRuntime {
         const directories = home ? [home, ...(shared ?? [])] : shared;
         const cwd = folder || workspace;
         const handle = entry.handle;
+        const sections = sectionsOf(handle, key);
         return {
           ...where(entry.config),
           cwd,
@@ -2282,7 +2304,8 @@ export class ClaudeRuntime {
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
             notes,
-            sections: handle?.promptSections?.(),
+            sections,
+            place: placeOf(key),
           }),
         };
       },

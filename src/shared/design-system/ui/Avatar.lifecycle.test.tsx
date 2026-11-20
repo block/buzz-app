@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { createMediaPreparation } from "../../../features/relay/media";
 import { Avatar } from "./Avatar";
 
 afterEach(() => {
@@ -42,14 +43,32 @@ it("reveals completed cached artwork on mount without waiting for a load event",
   );
 });
 
-it("uses the fallback for an already completed broken image", () => {
+it("lets the browser decide a completed image without a width", () => {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
   vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
     0,
   );
-  render(
+  // A dimensionless SVG can report no width once complete; it is not broken.
+  const svg = render(
+    <Avatar
+      src="https://example.test/sized-by-css.svg"
+      alt="Agent"
+      fallback="A"
+    />,
+  );
+  const image = svg.container.querySelector("img");
+  if (!image) throw new Error("Expected pending artwork");
+  expect(image).not.toHaveAttribute("data-loaded");
+  fireEvent.load(image);
+  expect(image).toHaveAttribute("data-loaded", "true");
+  svg.unmount();
+
+  const broken = render(
     <Avatar src="https://example.test/broken.png" alt="Agent" fallback="A" />,
   );
+  const pending = broken.container.querySelector("img");
+  if (!pending) throw new Error("Expected pending artwork");
+  fireEvent.error(pending);
   expect(document.querySelector("img")).toBeNull();
   expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("A");
 });
@@ -95,6 +114,36 @@ it("defers new sources, uses eager loading after success, and shows a failed sou
   expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("");
 });
 
+it("mounts artwork the request warmer loaded eagerly", async () => {
+  // WebKit serves a warmed custom-scheme image only to an eager mount; a lazy
+  // one refetches it.
+  const warmed: { onload: (() => void) | null; src: string }[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 32;
+      naturalHeight = 32;
+      src = "";
+      referrerPolicy = "";
+      decode = async () => {};
+      constructor() {
+        warmed.push(this);
+      }
+    },
+  );
+  const src = "buzz-media://localhost/warmed-avatar";
+  createMediaPreparation().prepare([src]);
+  await act(async () => warmed[0]?.onload?.());
+  vi.unstubAllGlobals();
+  const view = render(<Avatar src={src} alt="Agent" fallback="A" />);
+  expect(view.container.querySelector("img")).toHaveAttribute(
+    "loading",
+    "eager",
+  );
+});
+
 it("bounds remembered sources and retains recently used artwork", () => {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
     false,
@@ -108,11 +157,11 @@ it("bounds remembered sources and retains recently used artwork", () => {
     return image;
   };
   fireEvent.load(mount(0));
-  for (let index = 1; index < 128; index++) fireEvent.load(mount(index));
+  for (let index = 1; index < 1024; index++) fireEvent.load(mount(index));
   // Refresh the oldest entry before adding another distinct source.
   expect(mount(0)).toHaveAttribute("loading", "eager");
   fireEvent.load(mount(0));
-  fireEvent.load(mount(128));
+  fireEvent.load(mount(1024));
   expect(mount(1)).toHaveAttribute("loading", "lazy");
   expect(mount(0)).toHaveAttribute("loading", "eager");
 });

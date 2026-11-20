@@ -3,6 +3,55 @@ import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
 import { virtuaIdle } from "./timeline.mjs";
 
+test("a long relayed message fits the chat before and after opening", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.setViewportSize({ width: 560, height: 700 });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html?relayed`,
+    );
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const toggle = history.getByRole("button", {
+      name: /Relayed fixture update/,
+    });
+    const fits = () =>
+      toggle.evaluate((button) => {
+        const history = button.closest(
+          '[aria-label="Channel message history"]',
+        );
+        const row = button.closest("[data-relayed]").getBoundingClientRect();
+        const bounds = history.getBoundingClientRect();
+        return (
+          row.left >= bounds.left &&
+          row.right <= bounds.right &&
+          history.scrollWidth === history.clientWidth
+        );
+      });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect.poll(fits).toBe(true);
+    await toggle.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      history.getByText(
+        "The complete handoff remains readable when this preview opens.",
+      ),
+    ).toBeVisible();
+    await expect.poll(fits).toBe(true);
+  } finally {
+    await server.close();
+  }
+});
+
 function observeScrollWrites(element, afterFocus) {
   const offsets = afterFocus ? [] : [element.scrollTop];
   let recording = !afterFocus;

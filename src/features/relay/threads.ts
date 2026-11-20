@@ -277,6 +277,8 @@ export function createThreadView({
   // owners it looked up.
   let localInputs: ReturnType<LocalEvents["snapshot"]> = [];
   let owners = new Map<string, string | undefined>();
+  // Resumed rows re-verified against a changed owner, kept stable per verdict.
+  const reattributed = new WeakMap<ChannelMessage, ChannelMessage>();
   function related<T extends EventData>(
     events: readonly T[],
     selectedId = exact ? messageId : undefined,
@@ -392,6 +394,24 @@ export function createThreadView({
     const deliveries = new Map(operations.map((item) => [item.event.id, item]));
     const looked = new Map<string, string | undefined>();
     owners = looked;
+    // A resumed row was attributed by the owner its agent had when the thread
+    // closed. Verify it again as the fold would, against the owner now.
+    const attributed = (row: ChannelMessage) => {
+      const relayed = row.relayedFrom;
+      if (!relayed) return row;
+      const owner = agentOwner?.(relayed.agent);
+      looked.set(relayed.agent, owner);
+      const verified = !row.signerId && owner === row.authorId;
+      if (verified === relayed.verified) return row;
+      const cached = reattributed.get(row);
+      if (cached?.relayedFrom?.verified === verified) return cached;
+      const next = Object.freeze({
+        ...row,
+        relayedFrom: Object.freeze({ ...relayed, verified }),
+      });
+      reattributed.set(row, next);
+      return next;
+    };
     const rows = shareMessageRows(
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
       foldMessages(
@@ -444,9 +464,11 @@ export function createThreadView({
       // never one a retained deletion names, valid or not: the refresh decides.
       const read = deletionTargets(inputs.values());
       for (const event of inputs.values()) read.add(event.id);
-      nextReplies.push(...shown.replies.filter((row) => !read.has(row.id)));
+      nextReplies.push(
+        ...shown.replies.filter((row) => !read.has(row.id)).map(attributed),
+      );
       nextReplies.sort(compareMessages);
-      if (!read.has(shown.root.id)) nextRoot ??= shown.root;
+      if (!read.has(shown.root.id)) nextRoot ??= attributed(shown.root);
     }
     const replies =
       snapshot.replies.length === nextReplies.length &&

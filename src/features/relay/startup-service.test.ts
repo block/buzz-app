@@ -9,6 +9,11 @@ import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock("./persistence", () => ({ createHeadPersistence: storage.create }));
+const native = vi.hoisted(() => ({ clear: vi.fn(async () => {}) }));
+vi.mock("./native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./native")>()),
+  clearNativeMedia: native.clear,
+}));
 const roots: Context[] = [];
 afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
@@ -382,6 +387,21 @@ it("explicit handshake denial purges saved history instead of retaining offline 
   expect(await disk.readStartup?.()).toBeUndefined();
   expect(await disk.read()).toEqual([]);
 });
+it.each([
+  [
+    "an access refusal forgets",
+    "restricted: authorization denied",
+    [["primary"]],
+  ],
+  ["a sign-in refusal keeps", "auth-required: authentication required", []],
+])("%s this community's saved images", async (_, message, cleared) => {
+  const { data, connections, restored } = setup();
+  await restored();
+  native.clear.mockClear();
+  connections[0]?.reject(new ReadError("denied", message));
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("error"));
+  expect(native.clear.mock.calls).toEqual(cleared);
+});
 it("clearing during successor hydration fences the old result and clears next-launch records", async () => {
   const { data, disk, connections, source, restored } = setup();
   await restored();
@@ -390,7 +410,9 @@ it("clearing during successor hydration fences the old result and clears next-la
   vi.mocked(disk.read).mockReturnValueOnce(hydration.promise);
   connections[0]?.resolve(source);
   await vi.waitFor(() => expect(disk.read).toHaveBeenCalledTimes(3));
+  native.clear.mockClear();
   await data.clearCache();
+  expect(native.clear.mock.calls).toEqual([["primary"]]);
   hydration.resolve(stale);
   await vi.waitFor(() => expect(connections).toHaveLength(2));
   expect(data.snapshot().session.channels.list().channels).toEqual([]);
@@ -459,6 +481,22 @@ it.each(["success", "failure"])(
     connections[1]?.resolve(source);
     await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
     expect(data.snapshot().session.channels.window("alpha").rows).toEqual([]);
+    expect(await disk.read()).toEqual([]);
+  },
+);
+it.each([
+  ["saved images", () => native.clear],
+  ["saved records", (disk: HeadPersistence) => vi.mocked(disk.clear)],
+])(
+  "a clear that can't forget %s clears the rest and then fails",
+  async (_, failing) => {
+    const { data, disk, restored } = setup();
+    await restored();
+    failing(disk).mockRejectedValueOnce(new Error("busy"));
+    await expect(data.clearCache()).rejects.toThrow();
+    expect(native.clear).toHaveBeenCalledWith("primary");
+    expect(data.snapshot().session.channels.list().channels).toEqual([]);
+    await expect(data.clearCache()).resolves.toBeUndefined();
     expect(await disk.read()).toEqual([]);
   },
 );

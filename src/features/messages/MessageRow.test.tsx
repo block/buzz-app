@@ -1035,7 +1035,11 @@ it.each([undefined, { width: 640, height: 400 }])(
         });
       else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
-      expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
+      expect(media).toHaveBeenCalledWith(
+        "https://image.test/unavailable.png",
+        undefined,
+        "channel",
+      );
     } finally {
       view.unmount();
     }
@@ -1063,7 +1067,11 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
       retry={undefined}
     />,
   );
-  expect(media).toHaveBeenCalledWith("https://image.test/original.png");
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/original.png",
+    undefined,
+    "channel",
+  );
   expect(html).toContain("Image unavailable");
   expect(html).not.toContain("<canvas");
   expect(html).not.toContain("<img");
@@ -1088,7 +1096,12 @@ it("requests a small profile image without downsizing message attachments", () =
   );
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
-  expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+  // A message's image is saved with its channel; the avatar with none.
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/attachment.png",
+    undefined,
+    "channel",
+  );
 });
 
 it("renders proxy audio attachments with an inline player", () => {
@@ -1997,8 +2010,8 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
       name: "Open image attachment",
     });
     expect(media.mock.calls).toEqual([
-      ["https://safe.test/a.png"],
-      ["https://safe.test/a.png", "small"],
+      ["https://safe.test/a.png", undefined, "channel"],
+      ["https://safe.test/a.png", "small", "channel"],
     ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
@@ -5555,5 +5568,93 @@ it("opens the thread when a file drag rests on its summary, unless already open"
   } finally {
     cleanup();
     vi.useRealTimers();
+  }
+});
+
+it("draws a verified relayed message as its agent's quiet line, never the signer's", () => {
+  const subscribe = () => () => {};
+  const profiles = new Map([
+    ["zerk", { name: "Zerk", isAgent: true }],
+    ["juno", { name: "Juno", isAgent: true }],
+  ]);
+  const session = {
+    viewer: "owner",
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [{ id: "source", name: "rebase", channelType: "stream" }],
+      }),
+      subscribeList: subscribe,
+    },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+  } as unknown as RelaySession;
+  const relayed = (verified: boolean, channelId?: string) => ({
+    ...row,
+    authorId: "owner",
+    replyCount: 0,
+    reactions: [{ content: "👍", events: [{ id: "r1", authorId: "juno" }] }],
+    mentions: ["juno"],
+    content: "@Juno Relayed for Zerk\n\nRebase on main",
+    relayedFrom: {
+      agent: "zerk",
+      notice: "@Juno Relayed for Zerk",
+      verified,
+      ...(channelId ? { channelId } : {}),
+    },
+  });
+  const props = {
+    profile: { name: "Gil" },
+    session,
+    viewer: "owner",
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(
+      <MessageRow {...props} row={relayed(true, "source")} />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Zerk from #rebase: Rebase on main",
+    });
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The source chat stays a link on the line, above its button.
+    expect(screen.getByRole("link", { name: /rebase/ })).toBeVisible();
+    expect(view.container.querySelector("[data-viewer-message]")).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByText("Sent as you · to Juno")).toBeVisible();
+    expect(screen.getByText("Rebase on main")).toBeVisible();
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The line carries no reactions row.
+    expect(view.container.querySelector("[data-message-reactions]")).toBeNull();
+    // A thread on the line stays in view while it is collapsed.
+    fireEvent.click(trigger);
+    view.rerender(
+      <MessageRow
+        {...props}
+        row={{ ...relayed(true, "source"), replyCount: 2 }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Zerk from #rebase: Rebase on main, 2 replies",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("2 replies")).toBeVisible();
+    // A chat the reader is not in stays unnamed.
+    view.rerender(<MessageRow {...props} row={relayed(true, "elsewhere")} />);
+    expect(
+      screen.getByRole("button", { name: "Zerk: Rebase on main" }),
+    ).toBeVisible();
+    // Unverified, it is the signer's ordinary message with its notice.
+    view.rerender(<MessageRow {...props} row={relayed(false, "source")} />);
+    expect(screen.getByText(/Relayed for Zerk/)).toBeVisible();
+    expect(
+      view.container.querySelector("[data-message-reactions]"),
+    ).not.toBeNull();
+  } finally {
+    cleanup();
   }
 });

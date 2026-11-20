@@ -1,7 +1,7 @@
 import { purgeArtifactStorage } from "../artifact-storage/store";
 import { purgeOutboxStorage } from "./outbox-storage";
 import { relayPartition } from "./partition";
-import { clearNativeMedia } from "./native";
+import { clearNativeMedia, nativeMediaUsage } from "./native";
 import { createHeadPersistence } from "./persistence";
 import { purgeReadStateStorage } from "./read-state-storage";
 import { purgeSoloModelPicks } from "../messages/solo-model-picks-storage";
@@ -28,6 +28,20 @@ export async function purgeRelayCache(
     }
   });
   await attempt("saved images", () => clearNativeMedia(origin));
+}
+
+/** The bytes `purgeRelayCache` would free on disk. */
+export async function relayCacheUsage(origin: string, viewer: string) {
+  const heads = createHeadPersistence(viewer, origin);
+  try {
+    const [saved, images] = await Promise.all([
+      typeof indexedDB === "undefined" ? 0 : (heads.usage?.() ?? 0),
+      nativeMediaUsage(origin),
+    ]);
+    return saved + (images?.community ?? 0);
+  } finally {
+    heads.close();
+  }
 }
 
 /** Clears the relay's durable stores for one partition, each through the

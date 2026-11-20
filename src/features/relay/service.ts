@@ -560,7 +560,11 @@ export function provideRelay(
       // release it and let retry restore records still being deleted from disk.
       const current = generation;
       const reconnect = connecting || snapshot.cached;
+      // A live connection would keep showing what the clear emptied, so it
+      // reloads, opening again the channels that were open.
+      const live = snapshot.status === "ready" && !reconnect;
       const retainedStore = store;
+      const open = retainedStore.retainedChannels();
       if (snapshot.status !== "ready" || snapshot.cached)
         ownerMentionStore?.clear();
       controller?.abort();
@@ -582,7 +586,12 @@ export function provideRelay(
         })
         .finally(() => {
           clearing = undefined;
-          if (!disposed && current === generation && reconnect) service.retry();
+          if (disposed || current !== generation) return;
+          if (reconnect) service.retry();
+          else if (live) {
+            reopening = new Set([...(reopening ?? []), ...open]);
+            service.reload();
+          }
         });
       return clearing;
     },

@@ -344,6 +344,8 @@ export function CommunityPicker({
             <DndContext
               sensors={sensors}
               collisionDetection={pointerWithin}
+              // Drag announcements live outside the switcher, as the sidebar's do.
+              accessibility={{ container: document.body }}
               onDragStart={({ active }) => setDragging(String(active.id))}
               onDragCancel={() => setDragging(undefined)}
               onDragEnd={({ active, over }) => {

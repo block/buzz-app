@@ -1,4 +1,4 @@
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDndMonitor, useDraggable, useDroppable } from "@dnd-kit/core";
 import {
   useCallback,
   useEffect,
@@ -148,6 +148,14 @@ export function CommunityPickerItem({
     [setDragRef, setDropRef],
   );
   const from = drop.active?.data.current?.index;
+  // A pull that Escape cancels can still be released over its own row, and
+  // the browser then clicks it. That release is not a choice.
+  const pulled = useRef(false);
+  useDndMonitor({
+    onDragStart: ({ active }) => {
+      if (active.id === membership.id) pulled.current = true;
+    },
+  });
   const notify = useToastNotification();
   const name = communityName(membership);
   const origin = communityDestination(membership.id).url;
@@ -204,6 +212,7 @@ export function CommunityPickerItem({
         }
         onKeyDown={openFromKeyboard}
         onPointerDown={(event) => {
+          pulled.current = false;
           rememberInterrupted(event);
           drag.listeners?.onPointerDown?.(event);
         }}
@@ -227,7 +236,10 @@ export function CommunityPickerItem({
               src={icon}
             />
           }
-          onClick={() => onSelect(membership.id)}
+          // Keyboard activation carries no pointer detail and always selects.
+          onClick={(event) => {
+            if (!pulled.current || event.detail === 0) onSelect(membership.id);
+          }}
         />
       </ContextMenuTrigger>
       <MenuPopup

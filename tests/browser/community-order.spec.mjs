@@ -25,26 +25,38 @@ test("dragging a community reorders the switcher, its numbered shortcuts and the
   page,
   app,
 }) => {
+  // dnd-kit stops blocking the click 50ms after a cancel; this clock passes it.
+  await page.clock.install();
   await open(page, app);
   const modifier = await mod(page);
   let picker = await openCommunityPicker(page);
   await expect.poll(() => order(picker)).toEqual(["Primary", "Secondary"]);
   const [fromX, fromY] = await centre(rows(picker).nth(1));
   const [toX, toY] = await centre(rows(picker).nth(0));
-  const pull = async () => {
+  const pull = async (x, y) => {
     await page.mouse.move(fromX, fromY);
     await page.mouse.down();
-    await page.mouse.move(toX, toY, { steps: 8 });
+    await page.mouse.move(x, y, { steps: 8 });
     await expect(picker.locator("[data-dragging]")).toHaveCount(1);
   };
-  // Escape cancels the move, not the switcher: the release then drops nothing.
-  await pull();
-  await page.keyboard.press("Escape");
-  await expect(picker.locator("[data-dragging]")).toHaveCount(0);
-  await page.mouse.up();
-  await expect(picker).toBeVisible();
-  await expect.poll(() => order(picker)).toEqual(["Primary", "Secondary"]);
-  await pull();
+  // Escape cancels the move, not the switcher. Released over its own row or
+  // over another, the cancelled pull neither selects nor drops.
+  for (const [x, y] of [
+    [fromX + 20, fromY],
+    [toX, toY],
+  ]) {
+    await pull(x, y);
+    await page.keyboard.press("Escape");
+    await expect(picker.locator("[data-dragging]")).toHaveCount(0);
+    await page.clock.runFor(100);
+    await page.mouse.up();
+    await expect(communitySwitcher(page, "Primary")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect.poll(() => order(picker)).toEqual(["Primary", "Secondary"]);
+  }
+  await pull(toX, toY);
   // The pulled row dims in place; the line marks the side it lands on.
   await expect(picker.locator('[data-drop-edge="before"]')).toHaveCount(1);
   await page.mouse.up();

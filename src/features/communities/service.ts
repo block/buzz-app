@@ -600,10 +600,12 @@ export function createCommunities(
       );
       update(
         {
-          memberships: [
-            ...state.memberships.filter((m) => m.id !== membership.id),
-            membership,
-          ],
+          // A community already held keeps its place; a new one goes last.
+          memberships: state.memberships.some((m) => m.id === membership.id)
+            ? state.memberships.map((m) =>
+                m.id === membership.id ? membership : m,
+              )
+            : [...state.memberships, membership],
           profile: state.profile.name ? state.profile : profile,
           selected: membership.id,
           sync: enqueue(state.sync, relayAddress(membership.id), false),

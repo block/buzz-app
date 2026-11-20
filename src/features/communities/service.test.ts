@@ -1179,6 +1179,16 @@ it("reorder moves a community to another's place, keeps the selection and saves 
   // A join goes last and a leave closes its gap; the rest keep their order.
   client.joined({ id: d, name: d }, { name: "Local", picture: "" });
   expect(ids()).toEqual([a, c, b, d]);
+  // Claiming a community already held, as an invite for it does, refreshes
+  // the entry where it is.
+  client.joined({ id: c, name: "Renamed" }, { name: "Local", picture: "" });
+  expect(ids()).toEqual([a, c, b, d]);
+  expect(saved().memberships).toMatchObject([
+    { id: a },
+    { id: c, name: "Renamed" },
+    { id: b },
+    { id: d },
+  ]);
   await client.leave(c);
   expect(ids()).toEqual([a, b, d]);
   const restored = setup(saved());

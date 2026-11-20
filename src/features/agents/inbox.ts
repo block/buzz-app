@@ -49,7 +49,10 @@ export class AgentInbox {
       channel: async (id) => {
         const known = await owner.channel(id);
         if (known) return known;
-        await this.resolve([id], lifetime);
+        await this.resolve([id], lifetime).catch((error) => {
+          if (!lifetime.aborted)
+            console.warn("Agent inbox could not refresh channel facts", error);
+        });
         const channel = this.channel(id);
         return (
           channel && {
@@ -147,18 +150,21 @@ export class AgentInbox {
         ids.filter((_, index) => !known[index]),
         signal,
       );
-      this.retryDelay = 0;
+      this.schedule(0);
       return events;
     } catch (error) {
-      this.retryDelay = Math.min(
-        this.retryDelay ? this.retryDelay * 2 : 30_000,
-        240_000,
-      );
+      if (!signal.aborted && !this.lifetime.aborted)
+        this.schedule(
+          Math.min(this.retryDelay ? this.retryDelay * 2 : 30_000, 240_000),
+        );
       throw error;
-    } finally {
-      const delay = this.retryDelay || 30_000;
-      this.nextRead =
-        Date.now() + delay + Math.floor((Math.random() * delay) / 4);
     }
+  }
+
+  private schedule(retryDelay: number) {
+    this.retryDelay = retryDelay;
+    const delay = retryDelay || 30_000;
+    this.nextRead =
+      Date.now() + delay + Math.floor((Math.random() * delay) / 4);
   }
 }

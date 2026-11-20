@@ -165,3 +165,41 @@ it("jitters startup and backs failed mention polls off without advancing deliver
     random.mockRestore();
   }
 });
+
+it("keeps the last verified channel facts when a turn-start refresh fails", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await f.inbox.mentions(filter, signal());
+    f.query.mockRejectedValueOnce(new Error("Offline"));
+    expect(await f.inbox.reads.channel(channel)).toMatchObject({
+      dm: true,
+      name: "Private DM",
+    });
+    expect(warn).toHaveBeenCalledOnce();
+  } finally {
+    f.controller.abort();
+    warn.mockRestore();
+  }
+});
+
+it("does not back off mention polls that were cancelled", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const f = fixture();
+  try {
+    vi.setSystemTime(Date.now() + 5_000);
+    const cancelled = new AbortController();
+    f.query.mockImplementationOnce(async () => {
+      cancelled.abort();
+      return eventsDto([mention]);
+    });
+    await expect(f.inbox.mentions(filter, cancelled.signal)).rejects.toThrow();
+    expect(f.inbox.due()).toBe(true);
+    f.query.mockRejectedValueOnce(new Error("Offline"));
+    await expect(f.inbox.mentions(filter, signal())).rejects.toThrow("Offline");
+    vi.setSystemTime(Date.now() + 37_500);
+    expect(f.inbox.due()).toBe(true);
+  } finally {
+    f.controller.abort();
+  }
+});

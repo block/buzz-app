@@ -1514,7 +1514,8 @@ are served with download disposition and `nosniff`. Whole image responses up to
 by community origin, up to 256 MiB with least-recently-used eviction. Relay media is
 content-addressed, so a saved image is served without a relay read and never goes
 stale. Clear cache, an access refusal and leaving a community delete that community's
-saved images; signing out deletes the cache directory. A saved image skips the
+saved images. Saved images are keyed by URL, not identity, so every sign-out, including
+a key replacement without wipe, deletes them all as it finishes. A saved image skips the
 relay's per-reference media check, so after losing access to one channel its images
 stay on this device, unreferenced once that channel's saved rows are purged, until one
 of those. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. On macOS, the main webview's native media menu also saves relay media to Downloads without replacing existing files, but under the blob's `<hash>.<ext>` name rather than the attachment name, and removes the partial file if a download fails or Buzz quits before it finishes. It refuses media of unknown length or larger than the largest video Buzz uploads. The menu omits the items that would copy, open or share the tokened loopback URL, and its Download item when Buzz cannot save it. `relay_upload`

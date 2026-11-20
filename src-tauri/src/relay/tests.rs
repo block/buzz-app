@@ -1985,7 +1985,12 @@ fn thumbnail_server(status: &'static str) -> (Url, std::sync::Arc<std::sync::Mut
             let response = if path.ends_with(".thumb.webp") {
                 format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             } else {
-                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg".into()
+                let kind = match path.rsplit_once('.').map(|(_, ext)| ext) {
+                    Some("svg") => "image/svg+xml",
+                    Some("pdf") => "application/pdf",
+                    _ => "image/jpeg",
+                };
+                format!("HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg")
             };
             seen.lock().unwrap().push(path);
             socket.write_all(response.as_bytes()).unwrap();
@@ -2456,6 +2461,32 @@ async fn saved_images_are_served_without_a_relay_read_until_cleared() {
     cache.clear(&base).unwrap();
     assert_eq!(read().await.unwrap().body(), b"jpeg");
     assert_eq!(paths.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn only_whole_inline_images_that_fit_an_entry_are_saved() {
+    let host = IdentityHost::fixture();
+    let (base, _) = thumbnail_server("404 Not Found");
+    let served = |ext: &str| {
+        let url = base
+            .join(&format!("/media/{}.{ext}", "a".repeat(64)))
+            .unwrap();
+        let host = &host;
+        async move { serve_media(host, None, url, None).await.unwrap().1 }
+    };
+    assert_eq!(
+        saved_kind(&served("jpg").await).as_deref(),
+        Some("image/jpeg")
+    );
+    // SVG is served as an attachment, so it never renders from the cache.
+    assert_eq!(saved_kind(&served("svg").await), None);
+    assert_eq!(saved_kind(&served("pdf").await), None);
+    let large = tauri::http::Response::builder()
+        .status(200)
+        .header("content-type", "image/jpeg")
+        .body(vec![0; media_cache::ENTRY_MAX + 1])
+        .unwrap();
+    assert_eq!(saved_kind(&large), None);
 }
 
 #[tokio::test]

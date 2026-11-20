@@ -33,6 +33,7 @@ pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_cache;
 pub(crate) use media_cache::MediaCache;
+pub(crate) use media_cache::DIR as MEDIA_CACHE_DIR;
 mod media_preparation;
 mod media_spool;
 mod reminders;
@@ -1880,15 +1881,7 @@ async fn cached_media(
     }
     let ticket = cache.ticket();
     let (_, response) = serve_media(host, fi, url.clone(), None).await?;
-    let kind = response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .filter(|kind| kind.starts_with("image/"))
-        .map(str::to_owned);
-    if let Some(kind) = kind.filter(|_| {
-        response.status() == 200 && !response.headers().contains_key("content-disposition")
-    }) {
+    if let Some(kind) = saved_kind(&response) {
         let cache = cache.clone();
         let body = response.body().clone();
         // A full or unwritable disk only costs the next launch a refetch.
@@ -1897,6 +1890,23 @@ async fn cached_media(
         });
     }
     Ok(response)
+}
+
+/// The type to save a relay response under: only a complete image that renders
+/// inline and fits an entry. Attachments, including SVG, are never saved.
+fn saved_kind(response: &tauri::http::Response<Vec<u8>>) -> Option<String> {
+    if response.status() != 200
+        || response.headers().contains_key("content-disposition")
+        || response.body().len() > media_cache::ENTRY_MAX
+    {
+        return None;
+    }
+    response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .filter(|kind| kind.starts_with("image/"))
+        .map(str::to_owned)
 }
 
 /// Forgets the images this device saved for one community.

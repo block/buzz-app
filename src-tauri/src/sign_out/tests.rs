@@ -12,6 +12,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
         app_data: root.join("app"),
         backups: root.join("nsec-backups").join(service),
         others: vec![root.join("webkit")],
+        media: root.join("cache").join("media"),
         moves: Vec::new(),
         seeds: Vec::new(),
     }
@@ -1068,6 +1069,20 @@ fn a_pending_erase_waits_for_every_agent_supervisor_to_let_go() {
     assert_eq!(finished.err(), None);
     assert_eq!(removed.get(), 2);
     assert!(!paths.marker.exists());
+}
+
+#[test]
+fn a_plain_sign_out_forgets_saved_images_and_keeps_the_rest() {
+    let (dir, paths) = fixture();
+    let before = listing(dir.path());
+    fs::create_dir_all(paths.media.join("community")).unwrap();
+    fs::write(paths.media.join("community").join("entry"), "image").unwrap();
+    mark(&paths, false, false);
+    assert_eq!(finish_pending(&paths, |_| Ok(()), || Ok(())), Ok(()));
+    assert!(!paths.media.exists());
+    let mut after = listing(dir.path());
+    after.retain(|path| path != "cache/");
+    assert_eq!(after, before);
 }
 
 #[test]

@@ -1117,7 +1117,7 @@ pub fn run() {
                 app.path()
                     .app_cache_dir()
                     .ok()
-                    .map(|path| path.join("media")),
+                    .map(|path| path.join(relay::MEDIA_CACHE_DIR)),
             ));
             app.manage(relay::Spools::new(
                 app.path()

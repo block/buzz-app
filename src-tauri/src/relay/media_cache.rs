@@ -18,11 +18,13 @@ use std::{
 };
 use url::Url;
 
+/// The cache's folder in the app cache directory.
+pub(crate) const DIR: &str = "media";
 /// Bytes kept on disk before the least recently used entries are deleted.
 const BUDGET: u64 = 256 * 1024 * 1024;
 /// Larger images, such as full-size photos, are fetched each time, so a few of
 /// them cannot evict the avatars and thumbnails this cache is for.
-const ENTRY_MAX: usize = 2 * 1024 * 1024;
+pub(super) const ENTRY_MAX: usize = 2 * 1024 * 1024;
 const CLEARED: &str = ".cleared";
 /// A hit refreshes its age at most this often, so reads rarely write.
 const TOUCH_AFTER: Duration = Duration::from_secs(24 * 60 * 60);

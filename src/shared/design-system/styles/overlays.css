@@ -603,6 +603,10 @@
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
+  .buzz-toast-no-blur {
+    --toast-motion-filter: none;
+  }
+
   .buzz-toast-viewport
     [data-sonner-toast][data-front="true"][data-swiping="false"][data-swipe-out="false"] {
     /* The Sonner patch reads this delay so the 250ms exit finishes before removal. */
@@ -637,7 +641,7 @@
     )
     .buzz-toast {
     transform: scale(0.97);
-    filter: blur(2px);
+    filter: var(--toast-motion-filter, blur(2px));
   }
 }
 /* Keep every recovery reachable when expanded, including short windows. */

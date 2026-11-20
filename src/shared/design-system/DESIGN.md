@@ -1849,7 +1849,7 @@ after release, and prevent a drag from selecting text it passes over.
 
 Keep blur fixed during general surface transitions; animate opacity instead.
 The form dropdown, menu, popover, and tooltip sections document narrow,
-designer-requested blur exceptions. The front desktop toast also sharpens from 2px blur on entry and returns to 2px on ordinary dismissal. This treatment requires a fine pointer, hover, and full motion. Respect each component’s keyboard and
+designer-requested blur exceptions. The front desktop toast also sharpens from 2px blur on entry and returns to 2px on ordinary dismissal. This treatment requires a fine pointer, hover, and full motion. On Linux WebKitGTK the toast uses slide, scale, and opacity only because animating blur can crash the renderer. Respect each component’s keyboard and
 reduced-motion treatment.
 
 ## Colour structure

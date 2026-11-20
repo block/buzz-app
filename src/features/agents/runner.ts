@@ -510,8 +510,9 @@ export type RunnerHost = {
     filter: ReadFilter,
     signal: AbortSignal,
   ): Promise<readonly RelayEvent[]>;
-  /** Reads as the agent itself, resolving the channels of what it returns,
-   * or undefined when the agent has no read of its own here. */
+  /** Reads as the agent itself what the owner's session cannot, resolving
+   * the channels of what it returns, or undefined when the agent has no read
+   * of its own here. */
   readAsAgent?(
     agent: Agent,
     filter: ReadFilter,
@@ -1820,13 +1821,25 @@ export class AgentRunners {
       return this.unmark(runner.key, ids);
     }
     this.host.resumeFollowUps?.(agent, left);
-    const filter = { ids, limit: ids.length };
     const { signal } = community.controller;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
-    void (
-      this.host.readAsAgent?.(agent, filter, signal) ??
-      community.session.readRemote([filter], { signal, fresh: true })
-    ).then(
+    const read = async () => {
+      const owned = await community.session.readRemote(
+        [{ ids, limit: ids.length }],
+        { signal, fresh: true },
+      );
+      const found = new Set(owned.filter(hasEventProof).map(({ id }) => id));
+      const hidden = ids.filter((id) => !found.has(id));
+      const agents = hidden.length
+        ? await this.host.readAsAgent?.(
+            agent,
+            { ids: hidden, limit: hidden.length },
+            signal,
+          )
+        : undefined;
+      return [...owned, ...(agents ?? [])];
+    };
+    void read().then(
       (events) => {
         // A turn's own run forgets it when it settles.
         const kept = new Set<string>();

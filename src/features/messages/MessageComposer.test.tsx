@@ -74,6 +74,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { AgentsContext } from "../agents/react";
 import type { Agents, Models } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { ThreadPanel } from "./ThreadPanel";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -223,6 +224,7 @@ function mount(
   control?: LocalAgents,
   viewer?: string,
   agents?: Agents,
+  task?: ChannelMessage,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -369,6 +371,7 @@ function mount(
     },
     media: (url: string) => url,
     outbox: {
+      observeSend: () => () => {},
       ready: async () => {},
       recovery: async (key: string) =>
         pending.find((item) => item.recovery?.key === key),
@@ -475,7 +478,45 @@ function mount(
     <AgentsContext.Provider value={agents}>
       <ConversationPresentation value={presented}>
         <div hidden={!presented} inert={!presented}>
-          <MessageComposer {...props} />
+          {task ? (
+            <ThreadPanel
+              session={{
+                ...props.session,
+                unread: {
+                  subscribe: () => () => {},
+                  snapshot: () => undefined,
+                  attention: () => ({ unread: false }),
+                  threadReadThrough: () => 0,
+                } as unknown as RelaySession["unread"],
+                thread: () => {
+                  const snapshot = {
+                    status: "ready" as const,
+                    root: { ...task, id: props.threadRootId ?? task.id },
+                    replies: [],
+                    canLoadMore: false,
+                    limited: false,
+                  };
+                  return {
+                    snapshot: () => snapshot,
+                    subscribe: () => () => {},
+                    refresh: async () => {},
+                    loadMore: async () => {},
+                    dispose: () => {},
+                  } as unknown as ReturnType<RelaySession["thread"]>;
+                },
+              }}
+              scope={props.scope}
+              channelId={props.channelId}
+              channelName={props.channelName}
+              messageId={props.threadRootId ?? task.id}
+              subthreadId={props.threadRootId ?? task.id}
+              extensions={props.extensions}
+              onOpenLink={() => false}
+              active
+            />
+          ) : (
+            <MessageComposer {...props} />
+          )}
         </div>
       </ConversationPresentation>
     </AgentsContext.Provider>
@@ -1902,6 +1943,7 @@ function attachByDrop(target: HTMLElement, file = attachmentFile()) {
 async function mountUploadComposer(
   options: {
     threadRootId?: string;
+    sourceRootId?: string;
     sourceMessages?: boolean;
     sourcePrivacy?: "private" | "dm" | "solo" | "public";
     destination?: string;
@@ -2062,6 +2104,7 @@ async function mountUploadComposer(
           {...(options.threadRootId
             ? { threadRootId: options.threadRootId }
             : {})}
+          sourceRootId={options.sourceRootId}
           {...(options.replyParentId
             ? { replyParentId: options.replyParentId }
             : {})}
@@ -4175,6 +4218,55 @@ const sessionAgents = (
     setSessionState(next: typeof state, source?: "harness" | "agents"): void;
   };
 };
+
+it("keeps task drafts and session controls separate while replying in their source thread", async () => {
+  const agents = sessionAgents("channel");
+  const source = "e".repeat(64);
+  const task = editableMessage({
+    id: "c".repeat(64),
+    threadRootId: source,
+    mentions: [],
+  });
+  const h = mount(
+    { threadRootId: task.id },
+    undefined,
+    second.pubkey,
+    agents,
+    task,
+  );
+  await screen.findByRole("textbox");
+  h.fill("Task A draft");
+  h.retarget({ threadRootId: "d".repeat(64) });
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  h.fill("Task B draft");
+  h.retarget({ threadRootId: task.id });
+  await waitFor(() => expect(h.input()).toHaveValue("Task A draft"));
+  act(() => h.commands().insertMention(first));
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+  await h.user.click(
+    await screen.findByRole("button", { name: "Compact session" }),
+  );
+  expect(agents.session).toHaveBeenCalledWith(
+    first.pubkey,
+    { channelId: "channel", root: task.id },
+    "compact",
+  );
+  await h.user.click(
+    screen.getByRole("button", { name: "Start a new session" }),
+  );
+  expect(agents.session).toHaveBeenCalledWith(
+    first.pubkey,
+    { channelId: "channel", root: task.id },
+    "new",
+  );
+  await h.user.keyboard("{Escape}");
+  h.submit();
+  await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+  expect(h.messages.reply.mock.calls[0]?.[1]).toBe(source);
+  expect(h.messages.reply.mock.calls[0]?.[5]).toBe(task.id);
+});
 
 it("restores an attachment draft instead of publishing when compaction starts during upload", async () => {
   const agents = sessionAgents("channel");
@@ -17764,15 +17856,22 @@ it("shows an annotator's marks in the composer and retires them with the destina
   );
 });
 
-it.each([false, true])(
-  "pastes a source locator, preserves the card while typing, and forwards through normal send (thread=%s)",
-  async (thread) => {
+it.each(["channel", "thread", "task"])(
+  "pastes a source locator, preserves the card while typing, and forwards into a %s",
+  async (target) => {
     const root = "b".repeat(64);
-    const h = await mountUploadComposer(
-      thread
-        ? { threadRootId: root, sourceMessages: true }
-        : { sourceMessages: true },
-    );
+    const invocation = "c".repeat(64);
+    const h = await mountUploadComposer({
+      sourceMessages: true,
+      ...(target === "thread" ? { threadRootId: root } : {}),
+      ...(target === "task"
+        ? {
+            threadRootId: invocation,
+            sourceRootId: root,
+            replyParentId: invocation,
+          }
+        : {}),
+    });
     const id = h.owner.session.messages.send("channel", "Original **message**");
     await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
     const { forwardClipboard } = await import("./forward-clipboard");
@@ -17812,7 +17911,13 @@ it.each([false, true])(
       "Original **message**",
     );
     expect(event && readForward(event)?.note).toBe("My note");
-    if (thread) expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+    if (target === "thread")
+      expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+    if (target === "task")
+      expect(event?.tags.filter(([name]) => name === "e")).toEqual([
+        ["e", root, "", "root"],
+        ["e", invocation, "", "reply"],
+      ]);
     await waitFor(() =>
       expect(
         screen.queryByRole("button", { name: "Remove forwarded message" }),

@@ -10,6 +10,7 @@ import {
   type AgentSessionRouter,
   type AgentSessionAssociation,
   type AgentSessionSource,
+  type InvocationSubthread,
 } from "./session-admission";
 import type {} from "../navigation/service";
 import {
@@ -565,6 +566,10 @@ export type SessionUsage = Readonly<{
   channelId?: string;
   root?: string;
   title?: string;
+  /** The key of the standalone turn that started it (`timer/ID`, `watch/ID`,
+   * `catch-up/ID` or `source/ID`), as `runOnce` was given it. Left out when
+   * it did not start from one, or the harness does not say. */
+  wake?: string;
   startedAt: number;
   lastAt: number;
   observations: readonly UsageObservation[];
@@ -647,6 +652,7 @@ export type AgentHandle = Readonly<{
    * so a handoff from that conversation into a thread reaches another;
    * undefined while the channel is not known here yet. */
   threadsApart?(channel: string): boolean | undefined;
+  isTaskThread?(channel: string, root: string): boolean;
   /** Rechecks an operation lifetime after channel startup, before signing. */
   publish(
     event: AgentEventTemplate,
@@ -855,6 +861,14 @@ export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   session?: AgentSessionAssociation;
   sessionContext?: string;
+  /** Resolve an opt-in task subthread after authority and chat-scope checks. */
+  routeConversation?(
+    placement: Readonly<{
+      source: AgentSessionSource;
+      conversation: AgentSessionSource;
+    }>,
+    signal?: AbortSignal,
+  ): Promise<InvocationSubthread | undefined>;
   /** The native adapter calls this after authority and conversation checks. */
   prepareSession?(
     placement: Readonly<{
@@ -954,6 +968,8 @@ export type SessionPlace = Readonly<{
   channelId: string;
   root?: string;
   community?: true;
+  /** Host-resolved invocation task, independent of the agent's default scope. */
+  isolated?: true;
 }>;
 export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
@@ -1583,6 +1599,7 @@ export type ModelSettings = Readonly<{
 export type NoteChange = Readonly<{ note?: PluginNote | null }>;
 const MODEL_FIELDS = ["model", "provider", "effort"] as const;
 export type Agents = {
+  readonly invocationSubthreads?: true;
   registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
@@ -2314,6 +2331,7 @@ const wssOf = (origin: string) =>
 
 export class AgentsService extends Service implements Agents {
   private readonly sessionAdmissions;
+  readonly invocationSubthreads = true as const;
   registerSessionRouter(router: AgentSessionRouter) {
     this.sessionAdmissions.register(this.ctx, router);
   }
@@ -2683,6 +2701,30 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      routeConversation: (
+        agent,
+        type,
+        trigger,
+        placement,
+        signal,
+        nativePlacement,
+        pinNativePlacement,
+      ) =>
+        this.sessionAdmissions.route(
+          {
+            agent: agent.key,
+            owner: agent.owner,
+            harness: type.key,
+            ...placement,
+            invocationId:
+              trigger.type === "mention" ? trigger.event.id : trigger.id,
+            ...(trigger.type === "mention" ? { event: trigger.event } : {}),
+            resumed: trigger.type === "mention" && !!trigger.resumed,
+            signal,
+          },
+          nativePlacement,
+          pinNativePlacement,
+        ),
       prepareSession: async (agent, type, trigger, placement, signal) => {
         if (
           !type.sessionAdmission ||
@@ -2806,11 +2848,7 @@ export class AgentsService extends Service implements Agents {
       },
       interrupted: {
         read: () => readInterrupted(this.storage),
-        write: (key, turns) => {
-          void writeInterrupted(this.storage, key, turns).catch((error) =>
-            console.warn("Agent turns in progress were not saved", error),
-          );
-        },
+        write: (key, turns) => writeInterrupted(this.storage, key, turns),
         changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
@@ -3092,6 +3130,11 @@ export class AgentsService extends Service implements Agents {
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
       threadsApart: (agent, channelId) => this.threadsApart(agent, channelId),
+      isTaskThread: (agent, channelId, root) =>
+        this.sessionAdmissions.routed(agent.key, agent.type, {
+          channelId,
+          root,
+        }),
       instructions: (agent) => this.turnInstructions(agent),
       conversationInstructions: (agent, channelId, root) =>
         this.turnConversationInstructions(agent, channelId, root),
@@ -5799,15 +5842,24 @@ export class AgentsService extends Service implements Agents {
   ): SessionPlace {
     const summary = this.channelOf(agent, { tags: [["h", source.channelId]] });
     const scope = type.sessionControls?.scope(agent);
+    const isolated = this.sessionAdmissions.routed(
+      agent.key,
+      agent.type,
+      source,
+    );
     const whole =
       summary?.channelType === "solo" ||
       summary?.channelType === "dm" ||
-      scope === "channel" ||
-      scope === "community";
+      (!isolated && (scope === "channel" || scope === "community"));
     return {
       channelId: source.channelId,
-      ...(scope === "community" ? { community: true } : {}),
-      ...(!whole && source.root ? { root: source.root } : {}),
+      ...(!isolated && scope === "community" ? { community: true } : {}),
+      ...(!whole && source.root
+        ? {
+            root: source.root,
+            ...(isolated ? { isolated: true as const } : {}),
+          }
+        : {}),
     };
   }
   sessionState(key: AgentKey, place: SessionPlace): SessionState {

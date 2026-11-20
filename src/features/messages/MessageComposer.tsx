@@ -393,6 +393,8 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** Physical source thread when threadRootId is a task anchor. */
+  sourceRootId?: string | undefined;
   /** The viewer's latest message in this thread, once the thread has loaded.
    * An empty thread composer starts with the agents it notified (see
    * seedMentions); other composers read their own channel window. */
@@ -587,6 +589,7 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  sourceRootId,
   threadSeed,
   replyParentId,
   mediaTargetUrl,
@@ -639,11 +642,13 @@ function Composer({
   );
   const inputId = useId();
   const forwardDisclosureId = useId();
+  const threadDraftKey = threadRootId
+    ? sourceRootId
+      ? `draft:${channelId}:thread:${sourceRootId}:subthread:${threadRootId}`
+      : `draft:${channelId}:thread:${threadRootId}`
+    : undefined;
   const draftKey =
-    submission?.draftKey ??
-    (threadRootId
-      ? `draft:${channelId}:thread:${threadRootId}`
-      : `draft:${channelId}`);
+    submission?.draftKey ?? threadDraftKey ?? `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -3466,7 +3471,7 @@ function Composer({
             content,
             undefined,
             {
-              ...(threadRootId ? { rootId: threadRootId } : {}),
+              ...(threadRootId ? { rootId: sourceRootId ?? threadRootId } : {}),
               ...(replyParentId ? { parentId: replyParentId } : {}),
               ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
               mentions: recipients,
@@ -3479,7 +3484,7 @@ function Composer({
         return threadRootId
           ? sender.messages.reply(
               channelId,
-              threadRootId,
+              sourceRootId ?? threadRootId,
               content,
               recipients,
               uploaded,

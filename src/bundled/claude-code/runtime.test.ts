@@ -1,5 +1,6 @@
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { createHash } from "node:crypto";
+import { matchFilters } from "nostr-tools/filter";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +43,10 @@ import {
   type AgentToolAuthority,
 } from "../../features/agents/tool-operation";
 import type { MemoryEntry } from "../../features/agents/memory";
+import {
+  STANDALONE_PREFIX,
+  standaloneSessions,
+} from "../../features/agents/standalone-sessions";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
@@ -2700,6 +2705,91 @@ it("takes a plugin's wake in its thread's session, as the plugin's and not a mes
   expect(prompt).not.toContain(WAKE_ID);
 });
 
+it("restores direct and nested task corrections for a rooted wake", async () => {
+  const root = message("1", "Source requirements");
+  const child = (id: string, parent: string, content: string) =>
+    message(id, content, {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent, "", "reply"],
+      ],
+    });
+  const anchor = child("2", root.id, "Start task");
+  const direct = child("3", anchor.id, "DIRECT_CORRECTION");
+  const nested = child("4", direct.id, "NESTED_CORRECTION");
+  const unrelated = child("5", root.id, "UNRELATED_DISCUSSION");
+  const { deliver, read, claudes } = setup();
+  read.mockImplementation(async (filters) =>
+    [root, anchor, direct, nested, unrelated].filter((event) =>
+      matchFilters(
+        filters as unknown as Parameters<typeof matchFilters>[0],
+        event,
+      ),
+    ),
+  );
+  await deliver(pluginWake(anchor.id), {
+    routeConversation: async () => ({ root: root.id, parent: anchor.id }),
+  });
+  await vi.waitFor(() =>
+    expect(claudes().some((process) => process.prompts.length)).toBe(true),
+  );
+  const prompt = claudes().find((process) => process.prompts.length)
+    ?.prompts[0];
+  expect(prompt).toContain("DIRECT_CORRECTION");
+  expect(prompt).toContain("NESTED_CORRECTION");
+  expect(prompt).not.toContain("UNRELATED_DISCUSSION");
+});
+
+it("stops a routed community wake before Claude receives its prompt", async () => {
+  const f = setup();
+  const root = "1".repeat(64);
+  const parent = "2".repeat(64);
+  let reachAdmission!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    reachAdmission = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const routeConversation = async () => ({ root, parent });
+  const prompts = () => f.claudes().flatMap((process) => process.prompts);
+  await f.deliver(pluginWake(parent), { config, routeConversation });
+  await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+  const firstPrompts = prompts();
+  expect(firstPrompts.length).toBeGreaterThan(0);
+  f.interruptible.mockClear();
+  f.workingUntil.mockClear();
+  const running = f.deliver(pluginWake(parent), {
+    config,
+    routeConversation,
+    prepareSession: async () => {
+      reachAdmission();
+      await gate;
+      return undefined;
+    },
+  });
+  try {
+    await entered;
+    const stop = f.interruptible.mock.calls[0]?.[0];
+    if (!stop) throw new Error("Expected a request stop control");
+    const stopping = expect(stop()).resolves.toBeUndefined();
+    release();
+    await Promise.all([running, stopping]);
+    const outcomes = await Promise.all(
+      f.workingUntil.mock.calls.map(([done]) => done),
+    );
+    expect(prompts()).toEqual(firstPrompts);
+    expect(outcomes).toContainEqual({ ok: false, stopped: true });
+  } finally {
+    release();
+    await Promise.allSettled([running]);
+    f.runtime.dispose();
+  }
+});
+
 it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
   const root = "1".repeat(64);
   const { runtime, deliver, published, claudes } = setup();
@@ -3147,8 +3237,60 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(runtime.sessions(self)).toEqual([]);
 });
 
+it("records a one-off turn's session but not its timer while Usage is off, and counts it once Usage is on", async () => {
+  const { deliver, claudes, runtime, storage } = setup();
+  await standaloneSessions(storage, "claude-code", self, () => 0).add(
+    "old",
+    "timer/daily",
+  );
+  const sessionOf = (index: number) => {
+    const args =
+      claudes().filter((process) => process.prompts.length)[index]?.options
+        .args ?? [];
+    return args[args.indexOf("--session-id") + 1] ?? "";
+  };
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const off = sessionOf(0);
+  expect(off).toBeTruthy();
+  // Its session is the agent's, as on main; what was past keeping is gone.
+  expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+    { place: "~/.buzz", saved: [], standalone: [off] },
+  ]);
+  const kept = storage
+    .keys()
+    .filter((key) => key.startsWith(STANDALONE_PREFIX))
+    .flatMap((key) => JSON.parse(storage.get(key) ?? "").sessions);
+  expect(kept).toEqual([[off, expect.any(Number)]]);
+  // Turned on, Usage counts the earlier turn, under no routine, and keeps
+  // the key of each turn from then on.
+  runtime.usageOn = () => true;
+  await deliver(timer("weekly", "ops"));
+  await flush(10);
+  const on = sessionOf(1);
+  expect(on).toBeTruthy();
+  expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+    { place: "~/.buzz", saved: [], standalone: [off, on] },
+  ]);
+  const usage = (id: string) => ({
+    id,
+    revision: id,
+    gaps: [],
+    startedAt: 1,
+    lastAt: 2,
+    observations: [],
+  });
+  await expect(
+    runtime.withWakes(self, [usage(off), usage(on)]),
+  ).resolves.toEqual([
+    usage(off),
+    { ...usage(on), wake: "timer/weekly", revision: expect.any(String) },
+  ]);
+});
+
 it("records a one-off turn's session as the agent's, for its usage", async () => {
   const { deliver, claudes, runtime, storage } = setup();
+  runtime.usageOn = () => true;
   await deliver(timer("daily", "ops"));
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
@@ -3168,6 +3310,30 @@ it("records a one-off turn's session as the agent's, for its usage", async () =>
   expect(prompts.sessions().map(({ id }) => id)).not.toContain(session);
   expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
     { place: "~/.buzz", saved: [], standalone: [session] },
+  ]);
+});
+
+it("tells which timer a one-off turn's session was started for, and no other session's", async () => {
+  const { deliver, claudes, runtime } = setup();
+  runtime.usageOn = () => true;
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  const args = claude?.options.args ?? [];
+  const session = args[args.indexOf("--session-id") + 1] ?? "";
+  const usage = (id: string) => ({
+    id,
+    revision: id,
+    gaps: [],
+    startedAt: 1,
+    lastAt: 2,
+    observations: [],
+  });
+  await expect(
+    runtime.withWakes(self, [usage(session), usage("a conversation's")]),
+  ).resolves.toEqual([
+    { ...usage(session), wake: "timer/daily", revision: expect.any(String) },
+    usage("a conversation's"),
   ]);
 });
 

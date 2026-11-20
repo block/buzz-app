@@ -1,5 +1,6 @@
 import { promptSections } from "../../features/agents/activity-transcript";
 import { openVoice } from "./voice";
+import { matchFilters } from "nostr-tools/filter";
 import {
   createToolOperation,
   type AgentToolAuthority,
@@ -8118,12 +8119,17 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
   } as unknown as RelayData;
   const reads = ownerReads(replacement, pubkey);
   Object.assign(f.runtime, { readyReads });
-  const first = f.delivery("first");
+  const invocation = "d".repeat(64);
+  const placement = { root, parent: invocation };
+  const first = {
+    ...f.delivery("first"),
+    routeConversation: vi.fn(async () => placement),
+  };
   await f.runtime.run(first);
   await vi.waitFor(() => expect(guests[0]?.starts()).toHaveLength(1));
   await guests[0]?.complete();
   const agent = { ...first.agent, config: first.config } as unknown as Agent;
-  const place = { channelId: "channel", root };
+  const place = { channelId: "channel", root: invocation };
   await vi.waitFor(() =>
     expect(f.runtime.sessionState(agent, place)).toBe("idle"),
   );
@@ -8140,6 +8146,10 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
     return { released, reset };
   };
   const handoffs: Promise<unknown>[] = [];
+  const resolveRoute = vi.fn(async (signal: AbortSignal) => {
+    signal.throwIfAborted();
+    return placement;
+  });
   const workflow = (signal: AbortSignal) =>
     f.runtime.run({
       ...f.delivery("@Codex workflow"),
@@ -8161,6 +8171,7 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
         ),
       },
       signal,
+      routeConversation: () => resolveRoute(signal),
       workingUntil: (work: Promise<unknown>) => void handoffs.push(work),
     });
   return {
@@ -8172,6 +8183,7 @@ async function heldRemoteNew(readyReads: ReturnType<typeof vi.fn>) {
     holdNew,
     handoffs,
     workflow,
+    resolveRoute,
   };
 }
 
@@ -8221,6 +8233,7 @@ it("gives a workflow mention held behind a remote New a fresh hand-over deadline
     await guest()?.complete();
     await held.handoffs[1];
     await vi.waitFor(() => expect(held.f.publish).toHaveBeenCalledTimes(2));
+    expect(held.resolveRoute).toHaveBeenCalledTimes(2);
   } finally {
     budgets.restore();
     await held.f.runtime.retire(pubkey);
@@ -9720,6 +9733,178 @@ describe("a conversation given its own folder", () => {
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   });
+});
+
+it("includes source-root requirements in a new invocation task", async () => {
+  const f = fixture();
+  const d = f.delivery("Implement the above");
+  if (d.trigger.type !== "mention") throw new Error("Expected mention");
+  const source = {
+    ...d.trigger.event,
+    id: root,
+    content: "SOURCE_REQUIREMENT",
+    created_at: d.trigger.event.created_at - 1,
+    tags: [["h", "channel"]],
+  };
+  f.read.mockImplementation(async (...args: unknown[]) =>
+    [source].filter((event) =>
+      matchFilters(args[0] as Parameters<typeof matchFilters>[0], event),
+    ),
+  );
+  await f.runtime.run({
+    ...d,
+    routeConversation: async () => ({
+      root,
+      parent: d.trigger.type === "mention" ? d.trigger.event.id : "",
+    }),
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(JSON.stringify(f.starts()[0]?.params)).toContain("SOURCE_REQUIREMENT");
+  await f.complete();
+});
+
+it.each(["thread", "channel", "community"])(
+  "keeps a routed %s agent's task session and reply placement",
+  async (scope) => {
+    const f = fixture();
+    const anchor = "d".repeat(64);
+    const routeConversation = async () => ({ root, parent: anchor });
+    const configured = (text: string) => {
+      const delivery = f.delivery(text);
+      return {
+        ...delivery,
+        config: { ...(delivery.config as object), scope },
+      };
+    };
+    const routed = (text: string) => ({
+      ...configured(text),
+      routeConversation,
+    });
+    const threadId = (index: number) =>
+      (f.starts()[index]?.params as { threadId?: string } | undefined)
+        ?.threadId;
+    const first = routed("Start the task");
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const initial = f.sent.find(({ method }) => method === "thread/start")
+      ?.params as { developerInstructions: string } | undefined;
+    await f.complete(0, "First task reply");
+    await f.runtime.run(routed("Continue the task"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(threadId(0)).toBeTruthy();
+    expect(threadId(1)).toBe(threadId(0));
+    await f.complete(1, "Second task reply");
+    expect(tagsOf(f)).toEqual([
+      [
+        ["h", "channel"],
+        ["e", root, "", "root"],
+        ["e", anchor, "", "reply"],
+      ],
+      [
+        ["h", "channel"],
+        ["e", root, "", "root"],
+        ["e", anchor, "", "reply"],
+      ],
+    ]);
+    const taskThread = threadId(0);
+    const agent = { ...first.agent, config: first.config } as unknown as Agent;
+    const place = {
+      channelId: "channel",
+      root: anchor,
+      isolated: true,
+    } as const;
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const beforeCompact = f.sent.length;
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() =>
+        expect(f.sent.slice(beforeCompact)).toContainEqual(
+          expect.objectContaining({
+            method: "thread/compact/start",
+            params: { threadId: taskThread },
+          }),
+        ),
+      );
+      const compact = f.sent
+        .slice(beforeCompact)
+        .find(({ method }) => method === "thread/resume");
+      expect(initial?.developerInstructions).toEqual(expect.any(String));
+      expect(compact?.params).toMatchObject({
+        threadId: taskThread,
+        developerInstructions: initial?.developerInstructions,
+      });
+    } finally {
+      f.emit({
+        method: "turn/started",
+        params: { threadId: taskThread, turn: { id: "compact" } },
+      });
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: taskThread,
+          turn: { id: "compact", status: "completed" },
+        },
+      });
+      await expect(compacted).resolves.toBeUndefined();
+    }
+    await f.runtime.run(configured("Continue in the source"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(threadId(2)).toBeTruthy();
+    expect(threadId(2)).not.toBe(threadId(0));
+    await f.complete(2);
+  },
+);
+
+it("does not start a native turn or publish when task routing rejects", async () => {
+  const f = fixture();
+  await expect(
+    f.runtime.run({
+      ...f.delivery("Task"),
+      routeConversation: async () => {
+        throw new Error("Task binding unavailable");
+      },
+    }),
+  ).rejects.toThrow("Task binding unavailable");
+  expect(f.starts()).toEqual([]);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("stops a routed community request before Codex starts the turn", async () => {
+  const f = fixture();
+  const delivery = f.delivery("Run the task");
+  const { config } = scoped(delivery);
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const running = f.runtime.run({
+    ...delivery,
+    config,
+    interruptible,
+    routeConversation: async () => ({ root, parent: "d".repeat(64) }),
+    prepareSession: async () => {
+      entered.resolve();
+      await gate.promise;
+      return undefined;
+    },
+  });
+  try {
+    await entered.promise;
+    const stop = interruptible.mock.calls[0]?.[0];
+    if (!stop) throw new Error("Expected a request stop control");
+    const stopping = expect(stop()).resolves.toBeUndefined();
+    gate.resolve();
+    await Promise.all([running, stopping]);
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+    expect(f.starts()).toEqual([]);
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+    await Promise.allSettled([running]);
+  }
 });
 
 it("shares a community session across channels and Solo chats while retaining each reply destination", async () => {

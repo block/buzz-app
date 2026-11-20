@@ -146,6 +146,13 @@ with square trigger corners so the hover fill follows the flat row dividers.
 The disclosure spans the group's inner width; its trigger and content retain the
 group's horizontal inset, so text has padding inside the hover fill. No divider
 separates the trigger from its expanded content.
+Use `Accordion variant="popout"` to widen the open card and its panel body
+for reading or editing. The trigger stays aligned with the collapsed rows.
+The open card supplies the border between adjoining disclosure
+rows. Use it on its own or directly inside a row-layout SettingsGroup. In a
+SettingsGroup, leave space around the group for the card to extend into.
+Callers supply the panel body and decide whether it scrolls. For a bounded
+reading area, provide a keyboard focus target and place actions below it.
 Standalone triggers use the settings container shape and spacing; the chevron
 is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
 label and compact choice control without adding a group container.

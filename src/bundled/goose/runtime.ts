@@ -69,9 +69,12 @@ import type {
   SessionPlace,
   SessionControlAction,
   SessionState,
+  SessionUsage,
 } from "../../features/agents/service";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
+import { withWakes } from "../../features/agents/session-usage";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -265,6 +268,9 @@ export class GooseRuntime {
   /** A failed turn's error as its report says it, such as where to fix
    * goose's provider key. */
   explain: (error: string) => string = (error) => error;
+  /** Whether the Usage plugin is on, asked as each one-off turn starts: only
+   * then is the turn's key kept with its session, for Usage. */
+  usageOn: () => boolean = () => false;
 
   constructor(
     private readonly host: Host,
@@ -304,6 +310,15 @@ export class GooseRuntime {
     // alongside.
     const finding = this.recommended.find();
     if (this.recommended.current() === undefined) await finding;
+  }
+
+  /** `sessions` with, for each a standalone turn started, the key it ran
+   * under. */
+  withWakes(agent: AgentKey, sessions: readonly SessionUsage[]) {
+    return withWakes(
+      sessions,
+      standaloneSessions(this.agentStore, "goose", agent).list(),
+    );
   }
 
   /** What each of the agent's sessions started with. */
@@ -1366,6 +1381,13 @@ export class GooseRuntime {
               conversation: held ? key : null,
             },
           );
+          // A one-off turn's, as an ordinary one's is: its key is kept only
+          // while Usage is on.
+          if (!held)
+            void standaloneSessions(this.agentStore, "goose", agent).add(
+              id,
+              this.usageOn() ? key : undefined,
+            );
         },
         outlives: (retirement, exited) => {
           // Before the turn ends: by then, one whose process exited is
@@ -1774,12 +1796,20 @@ export class GooseRuntime {
       tools,
       process: { get },
       store: localSessions(this.storage, agent),
-      started: (session, text, title, conversation) =>
+      started: (session, text, title, conversation, wake) => {
         void this.prompts(agent).save(session, [{ label: "", text }], {
           at: Date.now(),
           title: title ?? "",
           conversation: conversation ?? null,
-        }),
+        });
+        // Kept apart from the saved prompts, which drop old sessions; its
+        // key is kept only while Usage is on.
+        if (wake)
+          void standaloneSessions(this.agentStore, "goose", agent).add(
+            session,
+            this.usageOn() ? wake : undefined,
+          );
+      },
       tags: (conversation) => sessionTags(agent, conversation),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.

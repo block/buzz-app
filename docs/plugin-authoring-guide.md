@@ -318,8 +318,10 @@ Add `"host"` to `inject`, then:
   `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
   Set the page's `layout` to `"workspace"`. Pass
   `{ id, session, scope, target, label, intro?, actions?, detail?, latestRequest? }`.
-  `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
-  channel timeline, or supply it for a thread. `messageId` selects a message.
+  Set `target` to `{ channelId, threadId?, subthreadId?, messageId? }`. Omit
+  `threadId` for the channel timeline. Supply a thread ID to show the thread.
+  Add `subthreadId` to show and compose within a branch of that thread.
+  `messageId` selects a message in the chosen view.
   Pass a fresh `AbortSignal` as `latestRequest` to open the transcript at the
   latest message, including when selecting the same conversation again. Scope
   the signal to that opening. Omit it on Back or Forward. An aborted signal is

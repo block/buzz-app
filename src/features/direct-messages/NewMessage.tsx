@@ -73,6 +73,11 @@ function savedRecipients(scope: string, viewer?: string) {
     viewer,
   );
 }
+/** Whether `intent` is a choice newer than the last one this draft took. */
+function untaken(scope: string, intent: MessageIntent | undefined) {
+  const taken = readView<unknown>(scope, "direct-message:addressed-at", 0);
+  return !!intent && !(typeof taken === "number" && intent.at <= taken);
+}
 function validRecipients(saved: unknown, viewer?: string) {
   if (!Array.isArray(saved)) return [];
   return [
@@ -222,6 +227,9 @@ export function NewMessage({
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
+  // A draft opened from a person starts in the message, so To keeps its list
+  // closed rather than open it only to lose focus.
+  const [addressing] = useState(() => untaken(scope, intent));
   const [composerFocus, setComposerFocus] = useState(0);
   const focusComposer = useCallback(() => {
     setComposerFocus((request) => request + 1);
@@ -350,9 +358,7 @@ export function NewMessage({
   // With To already filled, the caret starts in the message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Each choice addresses the draft once, after its restore and any send under way.
   useEffect(() => {
-    if (!ready || !intent || busy) return;
-    const taken = readView<unknown>(scope, "direct-message:addressed-at", 0);
-    if (typeof taken === "number" && intent.at <= taken) return;
+    if (!ready || !intent || busy || !untaken(scope, intent)) return;
     writeView(scope, "direct-message:addressed-at", intent.at);
     const { to } = intent;
     if (pending || to === session.viewer) return;
@@ -560,6 +566,7 @@ export function NewMessage({
         labels={named}
         disabled={locked}
         onChange={change}
+        initiallyOpen={!addressing}
         onComplete={focusComposer}
         onTyped={setTyped}
       />

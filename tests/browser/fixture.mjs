@@ -46,6 +46,14 @@ export const test = base.extend({
   liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
+  // Content of a details message the peer sends last in primary alpha.
+  detailsMessage: ["", { option: true }],
+  // Open threads in. Most journeys read threads in tabs; the app default,
+  // inline, reads them in a sheet over the conversation.
+  threadPlacement: ["side", { option: true }],
+  // Whether the first inline thread shows its one-time intro. Journeys read
+  // threads as a returning reader unless they ask for the intro.
+  threadIntro: [false, { option: true }],
   profilePicture: ["", { option: true }],
   // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
   // browser's zone into it; null leaves the key out so launch shares one.
@@ -62,6 +70,8 @@ export const test = base.extend({
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
   soloChannels: [[], { option: true }],
+  // Ordinary channels whose composer sends, as Solo chats' do.
+  sendChannels: [[], { option: true }],
   sessionMembers: [{}, { option: true }],
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
@@ -149,6 +159,9 @@ export const test = base.extend({
       liveDraw,
       actionProfile,
       agentMessageDeletion,
+      detailsMessage,
+      threadPlacement,
+      threadIntro,
       profilePicture,
       profileTimeZone,
       readState,
@@ -162,6 +175,7 @@ export const test = base.extend({
       openSearch,
       searchAuthor,
       soloChannels,
+      sendChannels,
       sessionMembers,
       channelWriteKinds,
       sidebarUnread,
@@ -249,7 +263,8 @@ export const test = base.extend({
       readState ||
       exactMessages ||
       actionProfile ||
-      markdownMessages
+      markdownMessages ||
+      detailsMessage
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
@@ -590,6 +605,21 @@ export const test = base.extend({
       : undefined;
     if (ownerAgentMessage)
       histories.get("primary/alpha").push(ownerAgentMessage);
+    if (detailsMessage) {
+      const alpha = histories.get("primary/alpha");
+      alpha.push(
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["audience", "details"],
+          ],
+          detailsMessage,
+          peerKey,
+          Math.max(1700000100, ...alpha.map((event) => event.created_at)) + 1,
+        ),
+      );
+    }
     const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of [...dmIds, ...lifecycleRows.map((row) => row.id)])
@@ -2427,16 +2457,17 @@ export const test = base.extend({
           acceptReadPublication(community, body);
           return send(response, { accepted: true, event_id: body.id });
         }
-        if (soloChannels.length && route === "sign") {
+        const sendable = [...soloChannels, ...sendChannels];
+        if (sendable.length && route === "sign") {
           expect(body.kind).toBe(9);
           return send(response, finalizeEvent(body, userKey));
         }
-        if (soloChannels.length && route === "publish") {
+        if (sendable.length && route === "publish") {
           expect(verifyEvent(body)).toBe(true);
           expect(body.pubkey).toBe(viewer);
           expect(body.kind).toBe(9);
           const channel = body.tags.find(([key]) => key === "h")?.[1];
-          expect(soloChannels).toContain(channel);
+          expect(sendable).toContain(channel);
           histories.get(`${community}/${channel}`).push(body);
           return send(response, { accepted: true, event_id: body.id });
         }
@@ -2748,6 +2779,17 @@ export const test = base.extend({
           observer.observe(document, { childList: true, subtree: true });
         });
       await page.addInitScript(
+        ({ placement, intro }) => {
+          // Seed once, so a choice made during the journey survives reloads.
+          const key = "buzz-thread-placement.v1";
+          if (placement !== "inline" && !localStorage.getItem(key))
+            localStorage.setItem(key, placement);
+          if (!intro)
+            localStorage.setItem("buzz-inline-thread-intro.v1", "seen");
+        },
+        { placement: threadPlacement, intro: threadIntro },
+      );
+      await page.addInitScript(
         ({
           viewer,
           profilePicture,
@@ -3033,6 +3075,16 @@ export const test = base.extend({
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
         },
+        // Someone else archives the channel: the relay republishes its
+        // metadata live, and later reads agree.
+        archiveChannel(id) {
+          expect(rosterIds).toContain(id);
+          archivedIds.add(id);
+          lifecycleTime++;
+          const metadata = answer("primary", { kinds: [39000], "#d": [id] })[0];
+          relay.publish("primary", metadata);
+          return metadata;
+        },
         // An admin removes the viewer: the relay republishes the roster live
         // without them, and later reads agree. Channel metadata remains.
         removeViewer(id) {
@@ -3171,10 +3223,11 @@ export const test = base.extend({
           parent,
           attachmentTags = [],
           createdAt,
+          kind = 9,
         ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
-            9,
+            kind,
             [
               ["h", channel],
               ...attachmentTags,

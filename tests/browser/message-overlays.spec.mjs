@@ -203,10 +203,7 @@ test("video speed options escape the thread and restore focus after selection an
   await page.mouse.click(heading.x + 8, heading.y + heading.height / 2);
   await expect(menu).toBeHidden();
   await page.locator("[data-video-preview]").first().hover();
-  await page
-    .getByRole("button", { name: "Open video fullscreen" })
-    .first()
-    .click();
+  await page.getByRole("button", { name: "Open video" }).first().click();
   const review = page.getByRole("dialog", {
     name: "Video review",
     exact: true,

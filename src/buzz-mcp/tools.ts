@@ -10,6 +10,8 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
+import { lengthRefusals } from "../features/developer/length-refusals";
+import { detailsBrief, messageAudience } from "../features/relay/audience";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -78,9 +80,9 @@ const strs = { type: "array", items: str } as const;
 // Shared by send and reply_in_subthread.
 const audience = {
   type: "string",
-  enum: ["everyone", "agents"],
+  enum: ["everyone", "details", "agents"],
   description:
-    "agents: only other agents need this (delegating, asking or answering an agent)",
+    "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
 } as const;
 const request = {
   type: "string",
@@ -786,6 +788,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
     const content = required(args, "text");
+    // The replacement keeps the message's audience, so it meets that
+    // audience's length limit as a send would.
+    checkLength(messageAudience(target) ?? "everyone", content);
     if (!tools.client.effectiveEdit)
       throw new Error("This host cannot obtain effective edit state.");
     const effective = await tools.client.effectiveEdit(id, channel);
@@ -1895,9 +1900,14 @@ function requestOf(args: Args): string[][] {
 
 /** The tags for a message's required audience. */
 function audienceOf(args: Args): string[][] {
-  if (args.audience !== "everyone" && args.audience !== "agents")
-    throw new Error("audience must be everyone or agents.");
-  return args.audience === "agents" ? [["audience", "agents"]] : [];
+  const { audience } = args;
+  if (
+    audience !== "everyone" &&
+    audience !== "details" &&
+    audience !== "agents"
+  )
+    throw new Error("audience must be everyone, details or agents.");
+  return audience === "everyone" ? [] : [["audience", audience]];
 }
 
 /** Publishes `args`' text, files and mentions as a message in `channel`,
@@ -1911,6 +1921,8 @@ async function post(
 ) {
   const paths = list(args.files);
   const body = (await tools.body(args, !paths.length)) ?? "";
+  // Refuse an overlong message before uploading its files.
+  checkLength(args.audience as "everyone" | "details" | "agents", body);
   // Uploads come after every refusal; their links name no one.
   const mentions = await tools.mentions(channel, body, list(args.mentions));
   // The runner suppresses every relay event authored by this agent. A post
@@ -3504,6 +3516,30 @@ function searchTime(args: Args, key: string) {
       `${key} must be a date (YYYY-MM-DD), a UTC time (YYYY-MM-DDTHH:MM:SSZ) or a span back from now (7d, 2w, 3m, 1y).`,
     );
   return ms / 1000;
+}
+
+/** The words people see before opening a message: a details message's brief,
+ * its first paragraph, and an `everyone` message, which the prompt asks to
+ * keep to a few sentences and this holds to a looser limit. */
+export const SHOWN_WORDS = { details: 50, everyone: 128 } as const;
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+function checkLength(
+  audience: "everyone" | "details" | "agents",
+  body: string,
+) {
+  if (audience === "agents") return;
+  // Count what people see: the brief the chat and notifications show.
+  const shown = audience === "details" ? detailsBrief(body) : body;
+  const count = words(shown);
+  const limit = SHOWN_WORDS[audience];
+  if (count <= limit) return;
+  lengthRefusals.record({ audience, words: count, text: shown });
+  throw new Error(
+    audience === "details"
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${limit} and move the rest into later paragraphs.`
+      : `This is ${count} words, too long for everyone: say it in a few sentences, or send it as details with a short brief.`,
+  );
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

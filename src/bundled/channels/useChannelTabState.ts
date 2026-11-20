@@ -1,6 +1,6 @@
 import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
-import { threadPlacementPreference } from "../../features/messages/thread-preferences";
+import { threadTabPane } from "../../features/messages/thread-preferences";
 import {
   useCallback,
   useLayoutEffect,
@@ -37,6 +37,9 @@ export type ConversationTab =
       channelId: string;
       messageId: string;
       replyRequest?: number | undefined;
+      /** The nested reply its reply request targets, as a thread handed over
+       * from its inline sheet carries it. */
+      replyParent?: string | undefined;
       /** Each new value focuses the reply box, keeping its target. */
       focusRequest?: number | undefined;
       /** Each new value reveals `messageId` again; set only by openings at it. */
@@ -194,6 +197,7 @@ function withThread(
   attention = false,
   relocate = false,
   unreadSince?: number,
+  replyParent?: string,
 ): State {
   const existing = threadTab(state.tabs, channelId, rootId);
   const baseId = `thread:${channelId}:${rootId}`;
@@ -217,6 +221,12 @@ function withThread(
         ? (prior?.replyRequest ?? 0) + 1
         : intent === "select" || intent === "reveal" || intent === "focus"
           ? prior?.replyRequest
+          : undefined,
+    replyParent:
+      intent === "reply"
+        ? replyParent
+        : intent === "select" || intent === "reveal" || intent === "focus"
+          ? prior?.replyParent
           : undefined,
     // Ordinary user openings resume typing too. Passive restoration and tabs
     // opened by an agent do not claim focus.
@@ -522,8 +532,7 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
         return false;
       store.update(keyOf("messages", channelId), (state) => {
         // Solo chats have no main tab workspace.
-        const pane =
-          channel.channelType === "solo" ? "side" : threadPlacementPreference();
+        const pane = channel.channelType === "solo" ? "side" : threadTabPane();
         const opened = withThread(
           state,
           channelId,
@@ -640,8 +649,9 @@ export function useChannelTabState(
       messageId: string,
       rootId: string,
       intent?: ThreadIntent,
-      pane: TabPane = threadPlacementPreference(),
+      pane: TabPane = threadTabPane(),
       unreadSince?: number,
+      replyParent?: string,
     ) =>
       update((state) =>
         withThread(
@@ -654,6 +664,7 @@ export function useChannelTabState(
           true,
           false,
           unreadSince,
+          replyParent,
         ),
       ),
     [update],
@@ -758,7 +769,7 @@ export function useChannelTabState(
             thread.messageId,
             thread.rootId,
             "select",
-            thread.pane ?? threadPlacementPreference(),
+            thread.pane ?? threadTabPane(),
             false,
             !!detail && thread.pane === "main",
           );
@@ -1058,6 +1069,12 @@ export function useChannelTabState(
     () => snapshot()[key]?.mainSelected,
     [key, snapshot],
   );
+  // Stable, so a memoized timeline can ask at the moment it opens a thread.
+  const hasThreadTab = useCallback(
+    (channelId: string, rootId: string) =>
+      !!threadTab(snapshot()[key]?.tabs ?? [], channelId, rootId),
+    [key, snapshot],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -1068,6 +1085,7 @@ export function useChannelTabState(
       getMainSelected,
       threadVisits,
       detailVisits,
+      hasThreadTab,
       setEntries,
       setTabs,
       openThreadTab,
@@ -1093,6 +1111,7 @@ export function useChannelTabState(
       getMainSelected,
       threadVisits,
       detailVisits,
+      hasThreadTab,
       setEntries,
       setTabs,
       openThreadTab,

@@ -13,6 +13,11 @@ import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import { UnreadOptions } from "../channels/UnreadBadge";
 import { ChannelBody } from "../channels/ChannelBody";
 import {
+  InlineContainers,
+  type PanelRenderer,
+  useInlineContainerList,
+} from "../../features/messages/inline-containers";
+import {
   historyPanel,
   useConversationTabs,
 } from "../channels/useConversationTabs";
@@ -275,7 +280,17 @@ export function BestieConversation({
     void navigator.open(target);
     return true;
   };
+  // Bestie reads nothing inline: threads and panels open their tabs, and
+  // details a dialog.
+  const panelRenderer = useRef<PanelRenderer>(undefined);
+  const containers = useInlineContainerList(
+    channel.id,
+    (target, controls) => panelRenderer.current?.(target, controls),
+    undefined,
+    false,
+  );
   const secondary = useConversationTabs({
+    containers: containers.opener,
     state,
     relay: host.relay,
     session,
@@ -315,6 +330,7 @@ export function BestieConversation({
     },
     onCloseTabs: (tabs, entries) => dismissContent(tabs, entries, "main"),
   });
+  panelRenderer.current = secondary.renderInlinePanel;
   const appliedVisit = useRef<string>(undefined);
   useLayoutEffect(() => {
     if (
@@ -356,14 +372,31 @@ export function BestieConversation({
     host.panels,
     secondary.open,
   ]);
-  const openThread = (messageId: string, rootId: string, intent?: "reply") => {
+  const presented = secondary.selectedMain === "conversation";
+  useEffect(() => {
+    if (!presented) containers.closeAll();
+  }, [presented, containers.closeAll]);
+  const openThread = (
+    messageId: string,
+    rootId: string,
+    intent?: "reply" | "reveal",
+    replyParent?: string,
+  ) => {
     if (!ownsCurrentVisit()) return;
     trigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
     state.leaveVisit();
-    state.openThreadTab(channel.id, messageId, rootId, intent);
+    state.openThreadTab(
+      channel.id,
+      messageId,
+      rootId,
+      intent,
+      undefined,
+      undefined,
+      replyParent,
+    );
     if (navigation?.target.kind === "page")
       void navigator.open(
         bestieThreadTarget(navigation.target, {
@@ -477,7 +510,7 @@ export function BestieConversation({
       }
     />
   );
-  return (
+  const page = (
     <ForwardMessageProvider
       session={session}
       scope={scope}
@@ -672,6 +705,7 @@ export function BestieConversation({
             )}
             {secondary.drag.feedback}
             {secondary.hosts}
+            {containers.dialogs}
             <span role="status" className="sr-only">
               {secondary.announcement}
             </span>
@@ -680,4 +714,5 @@ export function BestieConversation({
       </LinkThreadTabContext>
     </ForwardMessageProvider>
   );
+  return <InlineContainers value={containers.opener}>{page}</InlineContainers>;
 }

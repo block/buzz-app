@@ -23,6 +23,7 @@ import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import { bounds, message, metadata, roster } from "../features/relay/testing";
 import type { ReadFilter } from "../features/relay/events";
+import { setThreadPlacementPreference } from "../features/messages/thread-preferences";
 import type { StorageResult } from "../plugins/types";
 
 /** Any variant of the App-owned "page couldn't open" card. */
@@ -839,6 +840,8 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
 it("opens and closes a thread without rendering the sidebar", async () => {
+  // A thread tab's visit, which the page rather than the shell completes.
+  setThreadPlacementPreference("side");
   vi.stubGlobal(
     "ResizeObserver",
     class {

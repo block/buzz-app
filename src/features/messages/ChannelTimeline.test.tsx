@@ -29,6 +29,9 @@ vi.mock("./TypingIndicator", () => ({
   TypingIndicator: () => null,
   useLiveConversationAgents: () => [],
 }));
+// Entry fades are browser-rendering behavior, covered by thread-opening journeys.
+// This geometry boundary deliberately has no DOM or animation implementation.
+vi.mock("./use-message-arrival", () => ({ useMessageArrival: vi.fn() }));
 vi.mock("./use-reading", () => ({
   useReading: vi.fn(),
   readingPositioned: vi.fn(),

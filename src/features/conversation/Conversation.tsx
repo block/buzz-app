@@ -24,6 +24,13 @@ import {
   MessageManagementStatus,
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
+import { channelComposer } from "../messages/composer-overlay";
+import {
+  ComposerScopeProvider,
+  type InlineTarget,
+  type ThreadHandoff,
+  useComposerHandle,
+} from "../messages/inline-containers";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
@@ -36,7 +43,7 @@ import {
 
 /** Everything a reader or composer needs from its channel, supplied once,
  * including the Solo policy, so no view can open a chat under other rules. */
-type Conversation = Pick<
+export type Conversation = Pick<
   ThreadPanelProps,
   "session" | "scope" | "channelId" | "channelName" | "extensions"
 > &
@@ -57,6 +64,7 @@ export type MediaReview = Pick<
   | "initialAttachments"
   | "initialTime"
   | "hasComments"
+  | "opening"
   | "restoreFocus"
   | "close"
 >;
@@ -74,6 +82,7 @@ export function useMediaReview() {
       initialTime,
       hasComments = false,
       initialAttachments,
+      opening,
     ) => {
       trigger.current =
         document.activeElement instanceof HTMLElement
@@ -85,6 +94,7 @@ export function useMediaReview() {
         initialTime,
         hasComments,
         initialAttachments,
+        opening,
       });
     },
     [],
@@ -253,12 +263,32 @@ function Provider({
       onOpenMediaReview,
     ],
   );
+  const composer = useComposerHandle(id ? channelComposer(id) : undefined);
   return (
     <Context.Provider value={value}>
-      <ActivityIndicatorPresentation>{children}</ActivityIndicatorPresentation>
+      <ComposerScopeProvider handle={composer} renderThread={inlineThread}>
+        <ActivityIndicatorPresentation>
+          {children}
+        </ActivityIndicatorPresentation>
+      </ComposerScopeProvider>
     </Context.Provider>
   );
 }
+
+/** A thread read over its channel's composer, inside its conversation. */
+const inlineThread = (
+  target: Extract<InlineTarget, { kind: "thread" }>,
+  handoff: { current: (() => ThreadHandoff) | undefined },
+) => (
+  <ConversationThread
+    messageId={target.messageId}
+    handoff={handoff}
+    replyRequest={target.reply ? 1 : undefined}
+    revealSelected={target.messageId !== target.rootId}
+    initialScroll="latest"
+    virtualizeReplies
+  />
+);
 
 function ConversationMediaReview(props: MediaReview) {
   const { session, scope, channelId, channelName, extensions, onOpenLink } =

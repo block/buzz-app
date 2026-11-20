@@ -282,6 +282,7 @@ async function page(
 }
 
 it("passes only the visible side thread's root to the timeline and clears it when hidden or moved", async () => {
+  setThreadPlacementPreference("side");
   const h = await page("stream", undefined, true);
   await screen.findByRole("tab", { name: "Initiating thread" });
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
@@ -750,6 +751,8 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
   );
   try {
     const h = await page("stream", undefined, false, App);
+    // This case exercises side-to-main transfer, not a composer detail opening.
+    screen.getByRole("button", { name: "Open notes" }).focus();
     act(() =>
       expect(
         h.panels.requestOpen({

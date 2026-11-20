@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
+import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   act,
   cleanup,
@@ -700,6 +701,8 @@ it("keeps a failed DM retry focused and announces another failure", async () => 
 });
 
 async function threadHistoryFixture() {
+  // These visits are thread tabs, not threads read inline.
+  setThreadPlacementPreference("side");
   const f = await fixture({ existing: true, withReply: true });
   f.choose(pollen);
   const previous = {
@@ -972,6 +975,7 @@ it("rechecks eligibility before retrying a failed DM open", async () => {
 });
 
 it("keeps the welcome, DM and draft mounted beside a thread and retains the reply draft while collapsing its pane", async () => {
+  setThreadPlacementPreference("side");
   const f = await fixture({ existing: true, withReply: true });
   rememberFirstAgent(f.scope, pollen);
   f.choose(pollen);

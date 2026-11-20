@@ -1059,6 +1059,9 @@ Quitting Buzz also turns it off.
 - **Back and Forward**: after following a channel or message link to another
   channel, Back and Forward restore the thread tab you last selected in the
   channel you left.
+  With **Inline** on, opening a thread, details, a diff or a link panel over
+  the conversation is a step too: Back closes it and Forward opens it again.
+  Closing it with ✕ or Escape removes it from Back and Forward.
   In the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

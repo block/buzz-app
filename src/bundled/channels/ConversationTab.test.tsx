@@ -593,7 +593,7 @@ it("a retained conversation tab gives its rows one thread opener that reaches th
   expect(threadOpeners.length).toBeGreaterThan(1);
   expect(new Set(threadOpeners).size).toBe(1);
   threadOpeners[0]?.("reply", "root", "reply");
-  expect(latest).toHaveBeenCalledWith("reply", "root", "reply");
+  expect(latest).toHaveBeenCalledWith("reply", "root", "reply", undefined);
   expect(first).not.toHaveBeenCalled();
 });
 

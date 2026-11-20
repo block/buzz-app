@@ -47,6 +47,50 @@ other tabs and Close all tabs retire the visits belonging to the closed tabs,
 preserving the kept tab and meaningful underlying channel/message visits.
 Closing an inactive tab must not change the selected content.
 
+### Inline sheets
+
+With the Inline setting, threads, details, diffs and link panels open on a
+sheet over the composer of their conversation, as a dialog where no composer
+is on screen. Opening one is a visit to its address: a thread by its root, a
+panel by its target, a details or diff message as a `reader` over its own
+conversation. Moving to another page inside a panel is a visit too. Back
+closes the newest sheet; Forward reopens it where it was, or in its tab, or a
+dialog, when that composer is gone. Close, Escape and a press on the scrim
+retire the sheet's visits, and those of the sheets open on it, so neither Back
+nor Forward shows it again; so does a send that closes the details over its
+composer. Open as tab keeps the address, adding no visit. Arriving at a visit
+the sheets have not seen, as from a link or another address in the same
+channel, keeps only the sheets that address names and what they are open on;
+a reader it names that is already open stays as it is.
+Media viewers are not addresses: they dismiss only themselves.
+
+A sheet never selects another channel. Over another channel's thread tab, its
+address stays this conversation's: a reader names its message's channel as
+`reader.channelId`, a link panel drops that channel's thread root, and a
+thread of that channel adds no visit. Such a sheet belongs to that tab, not to
+the selected channel: selecting another channel leaves it open while the tab
+is, Back to details there waits for the tab's composer, and closing the tab
+retires their visits with the tab's own, wherever they are in history. A diff
+keeps its visits: it can still open in its own tab. Every saved details sheet
+over a thread tab waits for its own tab, so Back brings back each of them, not
+only the one the address names. The wait ends when no thread tab holds that
+composer, as after the tab closes some other way or its channel leaves, or
+when its reply box does not come back within five seconds, as over an archived
+channel; the details then open as they would without a composer: a dialog in
+their own channel, and closed in another.
+
+A `reader` address holds the message's kind (`details` or `diff`), its id,
+and the root of its thread when it is a reply, which names the composer it
+reads over. Arriving at one without its sheet, as after a reload or from a
+link, resolves the message first, the way a message link does: revealed in the
+timeline, or in its thread. Once the message's row is on screen, the row opens
+the reader over that conversation's composer, or in a dialog when no composer
+is on screen. A diff falls back to its tab instead; details never get a tab.
+A deleted or missing message fails as a missing message link does, and no
+sheet opens: a reader is drawn from its row, so it shows only while the row is
+there. A reader of another channel opens only from that channel's row, as in
+its thread tab; without one the address shows this conversation.
+
 ## Keep lifecycle and access guards
 
 The distinction applies after the feature permits an exit. Preserve unsaved-draft

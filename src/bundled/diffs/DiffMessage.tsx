@@ -1,19 +1,80 @@
-import { useMemo, useRef, useState } from "react";
+import { DetailTabContext } from "../../features/messages/DetailTabContext";
+import { useComposerScope } from "../../features/messages/composer-overlay";
+import {
+  RowKeepAlive,
+  useInlineContainers,
+  useReaderSlot,
+  useRequestedReader,
+} from "../../features/messages/inline-containers";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { safeMessageUrl } from "../../features/relay/message-content";
 import { ArrowsOutIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { DiffViewer } from "./DiffViewer";
 import { parsePatch } from "./parse";
 import styles from "./Diffs.module.css";
 
-export function DiffMessage({ message }: { message: ChannelMessage }) {
-  const [open, setOpen] = useState(false);
+/** The expanded diff, with its own layout choice: each sheet or tab that
+ * shows it starts unified. */
+function DiffReader({
+  viewer,
+  warning,
+}: {
+  viewer: Omit<ComponentProps<typeof DiffViewer>, "viewType">;
+  warning: ReactNode;
+}) {
   const [viewType, setViewType] = useState<"unified" | "split">("unified");
+  return (
+    <>
+      <fieldset className={styles.toolbar} aria-label="Diff layout">
+        <Button
+          size="sm"
+          aria-pressed={viewType === "unified"}
+          variant={viewType === "unified" ? "subtle" : "ghost"}
+          onClick={() => setViewType("unified")}
+        >
+          Unified
+        </Button>
+        <Button
+          size="sm"
+          aria-pressed={viewType === "split"}
+          variant={viewType === "split" ? "subtle" : "ghost"}
+          onClick={() => setViewType("split")}
+        >
+          Split
+        </Button>
+      </fieldset>
+      {warning}
+      <DiffViewer {...viewer} viewType={viewType} />
+    </>
+  );
+}
+
+export function DiffMessage({ message }: { message: ChannelMessage }) {
+  const tabs = useContext(DetailTabContext);
+  const { opener, dialogs } = useInlineContainers();
+  const composer = useComposerScope();
+  const target = { kind: "diff", messageId: message.id } as const;
+  const slot = useReaderSlot(composer, target);
+  const keepMounted = useContext(RowKeepAlive);
+  const open = !!slot;
+  // Its reader is drawn from this row: it stays mounted while it reads.
+  useEffect(() => (open ? keepMounted?.() : undefined), [open, keepMounted]);
   const expand = useRef<HTMLButtonElement>(null);
   const files = useMemo(() => parsePatch(message.content), [message.content]);
+  const show = useRef<() => void>(undefined);
+  useRequestedReader(opener, target, () => show.current?.());
   const meta = message.diff;
   if (!meta) return null;
   const repoUrl = meta.repoUrl ? safeMessageUrl(meta.repoUrl) : undefined;
@@ -37,6 +98,23 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
       )}
     </p>
   );
+  const reader = <DiffReader viewer={viewer} warning={warning} />;
+  show.current = () =>
+    opener.open({
+      target,
+      composer,
+      trigger: expand.current,
+      // A diff already in a tab shows there, as it was left.
+      hasTab: tabs?.has(`diff:${message.id}`),
+      openAsTab:
+        tabs &&
+        (() =>
+          tabs.open({
+            id: `diff:${message.id}`,
+            title,
+            content: reader,
+          })),
+    });
   return (
     <>
       <section className={styles.card} aria-label={`Diff: ${title}`}>
@@ -58,10 +136,7 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
             size="sm"
             aria-label="Expand diff"
             icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
-            onClick={() => {
-              setViewType("unified");
-              setOpen(true);
-            }}
+            onClick={() => show.current?.()}
           />
         </header>
         {meta.description && (
@@ -77,35 +152,9 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
         </section>
         {warning}
       </section>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={title}
-        size="expanded"
-        closeLabel="Close diff"
-        finalFocus={expand}
-      >
-        <fieldset className={styles.toolbar} aria-label="Diff layout">
-          <Button
-            size="sm"
-            aria-pressed={viewType === "unified"}
-            variant={viewType === "unified" ? "subtle" : "ghost"}
-            onClick={() => setViewType("unified")}
-          >
-            Unified
-          </Button>
-          <Button
-            size="sm"
-            aria-pressed={viewType === "split"}
-            variant={viewType === "split" ? "subtle" : "ghost"}
-            onClick={() => setViewType("split")}
-          >
-            Split
-          </Button>
-        </fieldset>
-        {warning}
-        <DiffViewer {...viewer} viewType={viewType} />
-      </Dialog>
+      {slot?.title && createPortal(title, slot.title)}
+      {slot?.body && createPortal(reader, slot.body)}
+      {dialogs}
     </>
   );
 }

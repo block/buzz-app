@@ -1774,7 +1774,11 @@ need their own values in each mode.
 - The original design exploration was light-only. Buzz’s dark values are authored choices and should be revised when rendered evidence shows a problem.
 
 Received message bubbles use `bubble-received`, slightly stronger than quiet
-control fills. Reply connectors and thread spines use `border-message-thread`
+control fills. Inline sheets sit on `neutral-raised`, where the dark
+`bubble-received` nearly matches the sheet, so a sheet sets its received
+bubbles to `surface-message-raised` (`bubble-received-raised`, #383838 in dark
+mode, the same as `bubble-received` in light). It is a bubble step of its own,
+not `neutral-5`, which belongs to pressed and selected controls. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
 Agent activity bubbles use a transparent fill with a 1px inset `border-standard`
 stroke, keeping their dimensions consistent with filled message bubbles.

@@ -1,9 +1,16 @@
+import { channelComposer, useOverlayComposerRef } from "./composer-overlay";
+import {
+  ComposerScopeProvider,
+  InlineContainers,
+  useComposerHandle,
+  useInlineContainerList,
+} from "./inline-containers";
 // @vitest-environment jsdom
 import {
   createLocalAgentActivity,
   REPLY_CORRELATION_MS,
 } from "../agents/local-activity";
-import { StrictMode } from "react";
+import { StrictMode, useRef } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import "@testing-library/jest-dom/vitest";
@@ -1433,6 +1440,7 @@ it.each([
             attachment,
             { ...attachment, url: "https://fixture.test/second.png" },
           ],
+      { host: null, rootId: threadRootId ?? row.id },
     );
     cleanup();
   },
@@ -1757,7 +1765,12 @@ it.each([true, false])(
       fireEvent.click(
         screen.getByRole("button", { name: /^View thread: 23 replies/ }),
       );
-      expect(thread).toHaveBeenCalledWith("root", "root");
+      expect(thread).toHaveBeenCalledWith(
+        "root",
+        "root",
+        undefined,
+        expect.any(HTMLElement),
+      );
       expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
         startsThreads,
       );
@@ -2074,6 +2087,8 @@ it.each([undefined, "canonical-root"])(
       expect(open).toHaveBeenCalledExactlyOnceWith(
         row.id,
         threadRootId ?? row.id,
+        undefined,
+        expect.any(HTMLElement),
       );
     } finally {
       view.unmount();
@@ -2194,7 +2209,12 @@ it("shows unbadged working-agent avatars and shared dots only while a known agen
     expect(first).toHaveTextContent("View thread");
     expect(first).not.toHaveTextContent("is working");
     fireEvent.click(first);
-    expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      row.id,
+      row.id,
+      undefined,
+      expect.any(HTMLElement),
+    );
     act(() => {
       entries = [];
       for (const listener of listeners) listener();
@@ -2330,6 +2350,7 @@ it.each([true, false])(
           0,
           true,
           attachments,
+          { host: null, rootId: row.id },
         );
       } else {
         expect(screen.queryByText("+3")).toBeNull();
@@ -3719,6 +3740,154 @@ it.each([false, true])(
     }
   },
 );
+
+function detailsRow(
+  content = "The **sidebar** is fixed.\n\n- It keeps its place",
+) {
+  const [details] = foldMessages("channel", keypair().pubkey, [
+    signed(keypair(), {
+      kind: 9,
+      content,
+      created_at: 5,
+      tags: [
+        ["h", "channel"],
+        ["audience", "details"],
+      ],
+    }),
+  ]) as ChannelMessage[];
+  return details as ChannelMessage;
+}
+
+it("shows details as their brief, whose Show more opens them whole", async () => {
+  const details = detailsRow();
+  expect(details.audience).toBe("details");
+  try {
+    renderDom(
+      <MessageRow
+        row={details}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("sidebar").tagName).toBe("STRONG");
+    const more = screen.getByRole("button", { name: "Show more" });
+    expect(more).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(more);
+    // The reader is headed by who wrote it, and holds the whole message.
+    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
+    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
+    expect(within(dialog).getByText("It keeps its place")).toBeVisible();
+    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close details" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers Show more for a single brief only when it runs past its lines", () => {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
+  try {
+    const row = (
+      <MessageRow
+        row={detailsRow("The **sidebar** is fixed.")}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />
+    );
+    renderDom(row);
+    expect(screen.getByText("sidebar")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    cleanup();
+    // jsdom has no layout: report the brief taller than its lines.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 200;
+      },
+    });
+    renderDom(row);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeVisible();
+  } finally {
+    if (height)
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    cleanup();
+  }
+});
+
+it("opens details out of the conversation's composer, which stays usable", async () => {
+  try {
+    // The conversation's composer, mounted in its scope.
+    function Composer() {
+      const form = useRef<HTMLFormElement>(null);
+      return (
+        <form
+          data-message-composer=""
+          aria-label="Composer"
+          ref={useOverlayComposerRef(form)}
+        >
+          <textarea aria-label="Reply" />
+        </form>
+      );
+    }
+    // The workspace's opener, with the conversation's composer scope.
+    function Workspace() {
+      const containers = useInlineContainerList("C");
+      const handle = useComposerHandle(channelComposer("C"));
+      return (
+        <InlineContainers value={containers.opener}>
+          <ComposerScopeProvider handle={handle}>
+            <div data-composer-host="">
+              <MessageRow
+                row={detailsRow()}
+                profile={{ name: "Morgarita" }}
+                media={() => undefined}
+                onOpenLink={() => false}
+                day={false}
+                retry={undefined}
+              />
+              <Composer />
+            </div>
+          </ComposerScopeProvider>
+          {containers.dialogs}
+        </InlineContainers>
+      );
+    }
+    renderDom(<Workspace />);
+    const more = screen.getByRole("button", { name: "Show more" });
+    fireEvent.click(more);
+    const sheet = await screen.findByRole("dialog", { name: "Morgarita" });
+    const composer = screen.getByRole("form", { name: "Composer" });
+    // The sheet lives in the composer's pane, so the composer can rise above it.
+    expect(composer.parentElement?.contains(sheet)).toBe(true);
+    const reply = within(composer).getByRole("textbox", { name: "Reply" });
+    fireEvent.pointerDown(reply);
+    fireEvent.mouseDown(reply);
+    reply.focus();
+    fireEvent.click(reply);
+    expect(screen.getByRole("dialog", { name: "Morgarita" })).toBe(sheet);
+    // A real press focuses Close before it activates.
+    const close = within(sheet).getByRole("button", { name: "Close details" });
+    close.focus();
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(more).toHaveFocus();
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
   const rivet = "b".repeat(64);

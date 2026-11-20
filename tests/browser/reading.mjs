@@ -3,22 +3,31 @@ import { expect } from "@playwright/test";
 // Hold real focus outside reading surfaces while a journey establishes unread
 // state. Blur the target itself: the sidebar may still be inert while the search
 // palette closes, so redirecting focus to a sidebar button is not reliable.
+function installReadingFocusHold() {
+  const hold = ({ target }) => {
+    if (
+      target instanceof HTMLElement &&
+      (target.closest("[data-channel-timeline], [data-reading-surface]") ||
+        target.matches(
+          '[role="textbox"][aria-label^="Message #"], [role="tab"][data-tab-value^="thread:"]',
+        ))
+    )
+      target.blur();
+  };
+  document.addEventListener("focusin", hold);
+  // Focus already held when the page is open, not when the script loads.
+  if (document.activeElement) hold({ target: document.activeElement });
+  window.fixtureReleaseReadingFocus = () =>
+    document.removeEventListener("focusin", hold);
+}
+
 export async function holdReadingFocus(page) {
-  await page.addInitScript(() => {
-    const hold = ({ target }) => {
-      if (
-        target instanceof HTMLElement &&
-        (target.closest("[data-channel-timeline], [data-reading-surface]") ||
-          target.matches(
-            '[role="textbox"][aria-label^="Message #"], [role="tab"][data-tab-value^="thread:"]',
-          ))
-      )
-        target.blur();
-    };
-    document.addEventListener("focusin", hold);
-    window.fixtureReleaseReadingFocus = () =>
-      document.removeEventListener("focusin", hold);
-  });
+  await page.addInitScript(installReadingFocusHold);
+}
+
+// The same hold from now on, in a page that is already open.
+export async function holdReadingFocusNow(page) {
+  await page.evaluate(installReadingFocusHold);
 }
 
 export async function releaseReadingFocus(page) {

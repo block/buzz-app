@@ -89,6 +89,16 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         forward?: string;
         /** Read-only content selected beside this conversation; never an action. */
         detail?: Readonly<{ target: string; rootId?: string }>;
+        /** A details or diff message read over the composer of its own
+         * conversation: its thread's reply box when `rootId` names one. Read
+         * only; never an action. `channelId` names the message's channel when
+         * it is not this one, as in another channel's thread tab beside it. */
+        reader?: Readonly<{
+          kind: "details" | "diff";
+          messageId: string;
+          rootId?: string;
+          channelId?: string;
+        }>;
       }>
   );
 
@@ -98,6 +108,7 @@ const token = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
 const provider = /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const hex = /^[a-f0-9]{64}$/i;
+const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
 const paramKey = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const gitCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const MAX_PARAMS = 16;
@@ -455,6 +466,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "panel",
           "forward",
           "detail",
+          "reader",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -481,14 +493,35 @@ export function parseOpenTarget(input: unknown): OpenTarget {
               : {}),
           });
         }
+        let reader:
+          | {
+              kind: "details" | "diff";
+              messageId: string;
+              rootId?: string;
+              channelId?: string;
+            }
+          | undefined;
+        if (value.reader !== undefined) {
+          const input = record(value.reader);
+          fields(input, ["kind", "messageId", "rootId", "channelId"]);
+          if (input.kind !== "details" && input.kind !== "diff")
+            throw invalid();
+          reader = Object.freeze({
+            kind: input.kind,
+            messageId: text(input.messageId, hex).toLowerCase(),
+            ...(input.rootId !== undefined
+              ? { rootId: text(input.rootId, hex).toLowerCase() }
+              : {}),
+            ...(input.channelId !== undefined
+              ? { channelId: text(input.channelId, channelPattern) }
+              : {}),
+          });
+        }
         target = {
           version: 1,
           kind: "conversation",
           scope: boundScope(value.scope),
-          channelId: text(
-            value.channelId,
-            /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,
-          ),
+          channelId: text(value.channelId, channelPattern),
           ...(value.messageId !== undefined
             ? { messageId: text(value.messageId, hex).toLowerCase() }
             : {}),
@@ -501,6 +534,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { forward: text(value.forward, hex).toLowerCase() }
             : {}),
           ...(detail ? { detail } : {}),
+          ...(reader ? { reader } : {}),
         };
         break;
       }

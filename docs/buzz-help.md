@@ -482,7 +482,8 @@ Quitting Buzz also turns it off.
   conversation entries, even across long gaps or midnight. Large or mixed groups
   keep one name per action,
   such as “Pinky and 182 others were added.” Hover or activate “182 others” to see
-  the full, scrollable list of names. Messages and huddle entries split groups.
+  the full, scrollable list of names; choose a name to open that person's
+  profile. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Your agents become chat admins before the opening

@@ -2,6 +2,9 @@ diff --git a/dist/index.js b/dist/index.js
 index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..0fcb2ea0432847dac77ef6b950139cc3abb4ffa0 100644
 --- a/dist/index.js
 +++ b/dist/index.js
+@@ -485,1 +485,1 @@
+-const TIME_BEFORE_UNMOUNT = 200;
++const TIME_BEFORE_UNMOUNT = 275;
 @@ -499,7 +499,7 @@ function getDefaultSwipeDirections(position) {
  }
  const Toast = (props)=>{
@@ -187,6 +190,9 @@ diff --git a/dist/index.mjs b/dist/index.mjs
 index c124f821a68f7070647a5a04441d0caa53689662..27f2fb1bed2607477a790e5d7c182b6c897af1a0 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
+@@ -478,1 +478,1 @@
+-const TIME_BEFORE_UNMOUNT = 200;
++const TIME_BEFORE_UNMOUNT = 275;
 @@ -492,7 +492,7 @@ function getDefaultSwipeDirections(position) {
  }
  const Toast = (props)=>{

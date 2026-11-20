@@ -597,9 +597,27 @@
 }
 .buzz-toast-viewport
   [data-sonner-toast][data-removed="true"][data-swipe-out="false"] {
-  /* Sonner removes the DOM node after 200ms. Finish the exit before then. */
   transition-duration: 180ms;
   transition-timing-function: ease-out;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .buzz-toast-viewport
+    [data-sonner-toast][data-front="true"][data-swiping="false"][data-swipe-out="false"] {
+    transition-property: transform, opacity, filter;
+    transition-duration: var(--toast-motion-duration, 350ms);
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: top center;
+  }
+
+  .buzz-toast-viewport
+    [data-sonner-toast][data-front="true"][data-mounted="false"],
+  .buzz-toast-viewport
+    [data-sonner-toast][data-front="true"][data-removed="true"][data-swipe-out="false"] {
+    transform: translateY(-16px) scale(0.97);
+    filter: blur(2px);
+    opacity: 0;
+    --toast-motion-duration: 250ms;
+  }
 }
 /* Keep every recovery reachable when expanded, including short windows. */
 @media (hover: hover) and (pointer: fine) {

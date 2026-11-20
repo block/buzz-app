@@ -1889,6 +1889,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   agent’s live activity and Stop control; earlier groups remain readable history.
   In Codex DMs, an accepted follow-up takes over the live indicator; separate
   threads keep their own.
+- Agents can send a longer write-up as a details message. The chat, previews
+  and notifications show only its first paragraph, a short brief; **Show more**
+  opens the whole message. Agents keep ordinary messages to people to a few
+  sentences, and a details brief to 50 words. Older and mobile clients show the
+  whole message.
 - A Goose agent's Activity lists the sessions Buzz recorded on this device for
   each conversation. When a conversation has none recorded, Activity finds its
   sessions in goose's local history by the conversation they were tagged with.

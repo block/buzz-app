@@ -99,7 +99,9 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
+import { detailsBrief } from "../relay/audience";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
 import {
   safeMessageUrl,
   projectMarkdownAttachments,
@@ -376,6 +378,16 @@ function MessageRowContent({
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
   );
+  // A verified relayed message is the agent's, in its details dialog too.
+  const relayedAgent = row.relayedFrom?.verified
+    ? row.relayedFrom.agent
+    : undefined;
+  const detailsAuthor = relayedAgent
+    ? resolveName(
+        relayedAgent,
+        directory.profiles.get(relayedAgent)?.name ?? relayedAgent.slice(0, 10),
+      )
+    : name;
   const workflowOwnerName = row.workflowOwnerId
     ? resolveName(
         row.workflowOwnerId,
@@ -1067,6 +1079,37 @@ function MessageRowContent({
           </p>
         )}
       </div>
+    ) : row.audience === "details" ? (
+      <DetailsMessage
+        author={detailsAuthor}
+        createdAt={row.createdAt}
+        preview={
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={displayRow}
+            extensions={extensions}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            edited={editedInBody && displayRow.edited}
+          />
+        }
+      >
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      </DetailsMessage>
     ) : (
       <MessageMarkdown
         directory={directory}
@@ -2157,7 +2200,10 @@ function RelayedMessageRow(props: MessageRowProps) {
   const chatLabel =
     chat && `${chat.channelType === "dm" ? "" : "#"}${chat.name}`;
   const excerpt = Array.from(
-    messagePreviewText(shown.content).replace(/\s+/g, " "),
+    // A details message previews only its brief, as the chat shows it.
+    messagePreviewText(
+      row.audience === "details" ? detailsBrief(shown.content) : shown.content,
+    ).replace(/\s+/g, " "),
   );
   const preview =
     excerpt.length > 280

@@ -5,6 +5,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import { useChannelIdentityNames } from "../identity-names/react";
 import type { Profile } from "../relay/contracts";
 import { withoutRelayNotice } from "../relay/relayed-from";
+import { detailsBrief } from "../relay/audience";
 import type { RelaySession } from "../relay/session";
 import { avatarMedia } from "../../shared/avatar-source";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
@@ -79,9 +80,11 @@ export function RelayedRunPreview({
     : undefined;
   const chatLabel =
     chat && `${chat.channelType === "dm" ? "" : "#"}${chat.name}`;
+  const body = withoutRelayNotice(last.content, last.relayedFrom?.notice);
   const excerpt = Array.from(
+    // A details message previews only its brief, as the chat shows it.
     messagePreviewText(
-      withoutRelayNotice(last.content, last.relayedFrom?.notice),
+      last.audience === "details" ? detailsBrief(body) : body,
     ).replace(/\s+/g, " "),
   );
   const preview =

@@ -5658,3 +5658,89 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     cleanup();
   }
 });
+
+function detailsRow(
+  content = "The **sidebar** is fixed.\n\n- It keeps its place",
+) {
+  const [details] = foldMessages("channel", keypair().pubkey, [
+    signed(keypair(), {
+      kind: 9,
+      content,
+      created_at: 5,
+      tags: [
+        ["h", "channel"],
+        ["audience", "details"],
+      ],
+    }),
+  ]) as ChannelMessage[];
+  return details as ChannelMessage;
+}
+
+it("shows details as their brief, whose Show more opens them whole", async () => {
+  const details = detailsRow();
+  expect(details.audience).toBe("details");
+  try {
+    renderDom(
+      <MessageRow
+        row={details}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("sidebar").tagName).toBe("STRONG");
+    const more = screen.getByRole("button", { name: "Show more" });
+    expect(more).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(more);
+    // The reader is headed by who wrote it, and holds the whole message.
+    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
+    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
+    expect(within(dialog).getByText("It keeps its place")).toBeVisible();
+    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close details" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers Show more for a single brief only when it runs past its lines", () => {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
+  try {
+    const row = (
+      <MessageRow
+        row={detailsRow("The **sidebar** is fixed.")}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />
+    );
+    renderDom(row);
+    expect(screen.getByText("sidebar")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    cleanup();
+    // jsdom has no layout: report the brief taller than its lines.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 200;
+      },
+    });
+    renderDom(row);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeVisible();
+  } finally {
+    if (height)
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    cleanup();
+  }
+});

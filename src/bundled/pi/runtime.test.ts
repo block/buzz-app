@@ -680,6 +680,52 @@ it("gives a turn the notes plugins left for its conversation, taken at the hando
   expect(restoreNotes).not.toHaveBeenCalled();
 });
 
+it.each([
+  [
+    "a top-level wake",
+    () => ({ ...pluginWake(), topLevel: true as const }),
+    "stream",
+  ],
+  [
+    "a DM",
+    () => ({ type: "mention" as const, event: reply("2", "@Pi look") }),
+    "dm",
+  ],
+])(
+  "keys the notes of %s in the community session as its replies: the channel's",
+  async (_, request, channelType) => {
+    let refreshed: unknown;
+    const f = setup({
+      deliver: async (params, process) => {
+        refreshed = (
+          await process.tool({ agent: self, request: params.request }, "prompt")
+        ).result;
+        return { submission: 1, conversation: CONVERSATION };
+      },
+      wait: () => ({ status: "done", answer: 1, text: "Done" }),
+    });
+    const listed = f.session.channels.list();
+    const first = listed.channels[0];
+    if (!first) throw new Error("missing channel");
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...listed,
+      channels: [{ ...first, channelType }],
+    });
+    const notes = vi.fn(() => ["Build 7 is green"]);
+    Object.assign(f.agent, { notes, restoreNotes: vi.fn() });
+    const turn = f.deliver(request(), {
+      config: { ...DEFAULT_CONFIG, scope: "community" },
+      accepted: vi.fn(),
+    });
+    await turn.run;
+    expect(await f.settled(turn)).toEqual({ ok: true });
+    expect(notes.mock.calls).toEqual([[channel, undefined]]);
+    expect(String((refreshed as { text: string }).text)).toContain(
+      "Build 7 is green",
+    );
+  },
+);
+
 it("puts a turn's notes back when Pi did not take it, and leaves them when it never reached Pi", async () => {
   const f = setup({ deliver: () => false });
   const notes = vi.fn(() => ["CI failed: lint"]);

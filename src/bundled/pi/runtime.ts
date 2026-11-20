@@ -804,7 +804,8 @@ export class PiRuntime {
         agent: agent.key,
         key,
       });
-      const noteRoot = key === channel ? undefined : root;
+      // Notes are keyed as replies go: a top-level turn or a community
+      // session's DM takes the channel's.
       const replyRoot =
         topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
           ? undefined
@@ -872,7 +873,7 @@ export class PiRuntime {
       submitting = true;
       // Plugins' notes wait until the turn is handed over, so one that fails
       // or is cancelled before then leaves them for the next.
-      notes = agent.notes?.(channel, noteRoot) ?? [];
+      notes = agent.notes?.(channel, replyRoot) ?? [];
       const text = this.review(entry, turned, notes, channel, replyRoot, key);
       submitted = await this.deliver(
         entry,
@@ -900,7 +901,7 @@ export class PiRuntime {
         () => !interrupted && (!wake || !current || current()),
       );
       // Pi answered that it did not take the turn.
-      if (submitted === false) agent.restoreNotes?.(channel, notes, noteRoot);
+      if (submitted === false) agent.restoreNotes?.(channel, notes, replyRoot);
       if (!submitted) return;
       acceptProject?.();
       if (submitted.session !== undefined)

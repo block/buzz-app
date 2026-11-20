@@ -12,6 +12,8 @@ import {
   signed,
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
+import type { ReadTransport } from "./transport";
+import { eventDto, type RelayEvent } from "./events";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import { ByteLru } from "./budget";
 
@@ -40,8 +42,12 @@ function memoryDisk(records: SavedHead[] = []): HeadPersistence {
     close: vi.fn(),
   };
 }
-function setup(options: Parameters<typeof createRelaySession>[1] = {}) {
+function setup(
+  options: Parameters<typeof createRelaySession>[1] = {},
+  verifyStored?: ReadTransport["verifyStored"],
+) {
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  if (verifyStored) scripted.transport.verifyStored = verifyStored;
   const store = createRelaySession(scripted.transport, {
     prepared: true,
     maxWindows: 1,
@@ -365,6 +371,61 @@ it("waits for the roster before restoring when a single-channel lookup answers f
       });
     }
     expect(pending.length).toBeGreaterThan(0);
+  } finally {
+    store.dispose();
+  }
+});
+it("restores a channel opened while a full restore verifies, then stops", async () => {
+  const ids = ["new", "mid", "old", "x", "older"];
+  const disk = memoryDisk(
+    ids.map((id, index) => ({
+      channelId: id,
+      savedAt: Date.now() - index * 1000,
+      events: head(id, `cached ${id}`),
+      profiles: [],
+    })),
+  );
+  let releaseOld!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let oldStarted = false;
+  const verifiedChannels: string[] = [];
+  const verifyStored = async (values: readonly unknown[]) => {
+    const channel = (values as RelayEvent[])
+      .flatMap((event) => event.tags)
+      .find(([name]) => name === "h")?.[1];
+    if (channel) verifiedChannels.push(channel);
+    if (channel === "old") {
+      oldStarted = true;
+      await holding;
+    }
+    return values.map(eventDto);
+  };
+  const { queries, next, store } = setup(
+    { persistence: disk, maxHeads: 2 },
+    verifyStored,
+  );
+  try {
+    queries.ensureList();
+    next().respond(discovery(ids));
+    await vi.waitFor(() => expect(oldStarted).toBe(true));
+    // Opened while "old", which will not fit, is still verifying.
+    queries.ensure("x");
+    releaseOld();
+    await vi.waitFor(() =>
+      expect(queries.window("x")).toMatchObject({
+        freshness: "cached",
+        rows: [{ content: "cached x" }],
+      }),
+    );
+    await flush();
+    // The open channel replaced the oldest restored head, and nothing older
+    // than the first record that did not fit was verified.
+    expect(store.diagnostics().heads.entries).toBe(2);
+    expect(verifiedChannels).toEqual(["new", "mid", "old", "x"]);
+    queries.ensure("new");
+    expect(queries.window("new")).toMatchObject({ freshness: "cached" });
   } finally {
     store.dispose();
   }

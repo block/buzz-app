@@ -1366,6 +1366,11 @@ The relay service restores a read-only session from the account/relay-scoped cac
 concurrently with the real connection handshake. Saved groups, stars and channel
 names are display data, not a confirmed preference mutation base. No cache means
 the ordinary cold connection flow; unavailable/corrupt storage never grants access.
+The read-only session maps media URLs as the connection will, so restored avatars,
+emoji and thumbnails show their images on the first frame instead of after the
+handshake. On desktop they load through `buzz-media`, usually from its saved
+images; on web, relay media waits for the connection's proxy and only external
+`https` images show before it.
 
 With no saved selection, Messages opens the first channel the relay flags
 `auto_join` (its starter channel for new members), then the first non-Solo

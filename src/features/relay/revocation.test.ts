@@ -5,6 +5,7 @@ import { createRelaySession } from "./session";
 import { ReadError } from "./errors";
 import { eventDto, type RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
+import { USER_STATUS_KIND } from "./user-status-policy";
 import {
   type Key,
   bounds,
@@ -626,8 +627,15 @@ it("finishes a profile read that was in flight when another channel's access end
   ]);
   await vi.waitFor(() => expect(h.pending).toHaveLength(1));
   const read = h.next();
+  // Statuses ride with the bylines' profile read.
   expect(read.filters).toEqual([
     { kinds: [0], authors: [alice.pubkey], limit: 500 },
+    {
+      kinds: [USER_STATUS_KIND],
+      "#d": ["general"],
+      authors: [alice.pubkey],
+      limit: 1,
+    },
   ]);
   h.emit([roster(relay, "a", [], 11)]);
   // A profile read does not depend on channel access, so the revoke spares it.

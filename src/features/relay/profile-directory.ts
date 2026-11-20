@@ -22,7 +22,7 @@ import {
   PROFILE_ENTRY_BYTES,
 } from "./budget";
 import type { Profile } from "./contracts";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import { newer } from "./events";
 import { foldProfiles } from "./profiles";
 import type { Priority, RelayReader } from "./reader";
@@ -32,8 +32,14 @@ import { archiveHides, type IdentityArchives } from "./identity-archives";
 export interface ProfileQueries {
   snapshot(): ReadonlyMap<string, Profile>;
   subscribe(listener: () => void): () => void;
-  /** Fetch missing profiles; optional enrichment can yield to conversation reads. */
-  ensure(ids: readonly string[], priority?: Priority): Promise<void>;
+  /** Fetch missing profiles; optional enrichment can yield to conversation reads.
+   * A view that shows these people's statuses gets them too: in the same
+   * request as their profiles, or alone when the profiles are already known. */
+  ensure(
+    ids: readonly string[],
+    priority?: Priority,
+    options?: { withStatuses?: boolean },
+  ): Promise<void>;
   /** The winning signed kind 0 retained for one identity, for provenance checks. */
   event?(pubkey: string): RelayEvent | undefined;
   /** Identities a completed read found no profile for, until one arrives. */
@@ -104,6 +110,13 @@ export function createProfileDirectory(
     ): (() => void) | undefined;
   },
   archives?: Pick<IdentityArchives, "snapshot" | "subscribe" | "ensure">,
+  statuses?: {
+    prefetch(
+      authors: readonly string[],
+    ):
+      | { filter: ReadFilter; settle(events?: readonly RelayEvent[]): void }
+      | undefined;
+  },
 ) {
   let limit = PROFILE_CACHE_BASE;
   // DM partners: eviction takes them last, so a large roster cannot turn a
@@ -127,6 +140,7 @@ export function createProfileDirectory(
   type Batch = {
     work: Promise<void>;
     authors: string[];
+    filters: ReadFilter[];
     priority: Priority;
     reading: boolean;
     refresh: boolean;
@@ -428,6 +442,7 @@ export function createProfileDirectory(
     ids: readonly string[],
     priority: Priority = "foreground",
     refresh = false,
+    withStatuses = false,
   ) {
     if (closed) throw new DOMException("Session closed", "AbortError");
     const unique = [...new Set(ids)];
@@ -452,10 +467,7 @@ export function createProfileDirectory(
           batch.priority = priority;
           if (batch.reading)
             void reader
-              .read(
-                [{ kinds: [0], authors: batch.authors, limit: PROFILE_PAGE }],
-                { signal, priority },
-              )
+              .read(batch.filters, { signal, priority })
               .catch(() => {});
         }
         waiting.add(batch.work);
@@ -475,9 +487,14 @@ export function createProfileDirectory(
     });
     for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
       const authors = missing.slice(offset, offset + PROFILE_PAGE);
+      const status = withStatuses ? statuses?.prefetch(authors) : undefined;
       let answered = false;
       const batch = {
         authors,
+        filters: [
+          { kinds: [0], authors, limit: PROFILE_PAGE },
+          ...(status ? [status.filter] : []),
+        ],
         priority,
         reading: false,
         refresh,
@@ -491,10 +508,10 @@ export function createProfileDirectory(
           batch.reading = true;
           attempts.set(signal, batch);
           try {
-            const result = await reader.read(
-              [{ kinds: [0], authors, limit: PROFILE_PAGE }],
-              { signal, priority: batch.priority },
-            );
+            const result = await reader.read(batch.filters, {
+              signal,
+              priority: batch.priority,
+            });
             answered = true;
             return result;
           } finally {
@@ -507,12 +524,13 @@ export function createProfileDirectory(
           if (signal.aborted || batch.cancel.signal.aborted) return;
           // A foreground reader that joined this read gets its names at once.
           const fold = batch.priority === "background";
-          const profiles = result.filter((event) =>
-            authors.includes(event.pubkey),
+          const profiles = result.filter(
+            (event) => event.kind === 0 && authors.includes(event.pubkey),
           );
           take(profiles, fold);
+          status?.settle(result);
           // A page at the limit may have left out authors who do have one.
-          if (result.length < PROFILE_PAGE)
+          if (result.filter((event) => event.kind === 0).length < PROFILE_PAGE)
             missed(
               authors,
               new Set(profiles.map((event) => event.pubkey)),
@@ -527,6 +545,8 @@ export function createProfileDirectory(
           if (!signal.aborted || !answered) throw error;
         })
         .finally(() => {
+          // A failed or cancelled read leaves its statuses to their rows.
+          status?.settle();
           for (const id of authors)
             if (pending.get(id) === batch) pending.delete(id);
           // A failed page ends its ensure early; publish the rest once idle.
@@ -535,6 +555,19 @@ export function createProfileDirectory(
       for (const id of authors) pending.set(id, batch);
       waiting.add(batch.work);
     }
+    // Names already known need no profile read, but their statuses still do.
+    const reading = new Set(missing);
+    const status = withStatuses
+      ? statuses?.prefetch(unique.filter((id) => !reading.has(id)))
+      : undefined;
+    // Waited on so the caller can warm status images with avatars.
+    if (status)
+      waiting.add(
+        reader.read([status.filter], { signal, priority: "background" }).then(
+          (events) => status.settle(events),
+          () => status.settle(),
+        ),
+      );
     await Promise.all(waiting);
     // Every caller sees its names published when its ensure resolves, also
     // one that joined another caller's read.
@@ -620,7 +653,11 @@ export function createProfileDirectory(
         listeners.delete(listener);
       };
     },
-    ensure,
+    ensure: (
+      ids: readonly string[],
+      priority?: Priority,
+      options?: { withStatuses?: boolean },
+    ) => ensure(ids, priority, false, options?.withStatuses),
     event: (pubkey: string) => events.peek(pubkey),
     unnamed: () => unnamed,
     generation: () => generation,

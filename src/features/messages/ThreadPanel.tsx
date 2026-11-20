@@ -756,7 +756,7 @@ function ThreadMessages({
     void profileGeneration;
     if (authors)
       void session.profiles
-        .ensure(authors.split(":"), "background")
+        .ensure(authors.split(":"), "background", { withStatuses: true })
         .catch(() => {});
   }, [session.profiles, authors, profileGeneration]);
   const profiles = useRowProfiles(session.profiles, rows);

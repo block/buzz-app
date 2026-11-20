@@ -414,6 +414,7 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.ensure).toHaveBeenCalledExactlyOnceWith(
     [row.authorId],
     "background",
+    { withStatuses: true },
   );
   for (const name of ["Refresh thread", "Try again", "Load more replies"])
     expect(screen.queryByRole("button", { name })).toBeNull();

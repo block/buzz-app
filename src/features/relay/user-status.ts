@@ -1,5 +1,5 @@
 import type { EventTemplate } from "nostr-tools";
-import { eventDto, type RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 import { PROFILE_CACHE_BASE } from "./budget";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
@@ -92,6 +92,12 @@ export function createUserStatuses(
   let closed = false;
   let saving = false;
   let error: string | undefined;
+  // Authors a running read already covers, so rows and profile reads that
+  // carry a status query (`prefetch`) never ask for the same status twice.
+  const reading = new Set<string>();
+  const prefetching = new Map<string, AbortController>();
+  const unread = (id: string) =>
+    !loaded.has(id) && !reading.has(id) && !prefetching.has(id);
   function publish() {
     clearTimeout(timer);
     const now = Date.now() / 1000;
@@ -158,7 +164,8 @@ export function createUserStatuses(
     if (pending) return pending;
     const signal = controller.signal;
     pending = (async () => {
-      const missing = [...watched.keys()].filter((id) => !loaded.has(id));
+      const missing = [...watched.keys()].filter(unread);
+      for (const id of missing) reading.add(id);
       for (let offset = 0; offset < missing.length; offset += 100) {
         const authors = missing.slice(offset, offset + 100);
         const events = await reader.read(
@@ -194,6 +201,7 @@ export function createUserStatuses(
       })
       .finally(() => {
         if (signal.aborted) return;
+        reading.clear();
         pending = undefined;
       });
     return pending;
@@ -223,12 +231,7 @@ export function createUserStatuses(
     queueMicrotask(() => {
       scheduled = false;
       void load().then(() => {
-        if (
-          !closed &&
-          !error &&
-          [...watched.keys()].some((id) => !loaded.has(id))
-        )
-          schedule();
+        if (!closed && !error && [...watched.keys()].some(unread)) schedule();
       });
     });
   }
@@ -357,6 +360,8 @@ export function createUserStatuses(
     controller.abort();
     controller = new AbortController();
     pending = undefined;
+    reading.clear();
+    prefetching.clear();
     loaded.clear();
     records.clear();
     unconfirmed.clear();
@@ -406,11 +411,53 @@ export function createUserStatuses(
     queries,
     accept,
     clear,
+    /** A status query for a profile read of `authors` whose view shows their
+     * statuses, covering those no read has asked for. `settle` takes the read's
+     * answer, so rows mounting for these authors, with or without a status,
+     * need no read of their own; without one, they read as usual. */
+    prefetch(authors: readonly string[]) {
+      const missing = authors.filter(unread).slice(0, 100);
+      if (closed || !missing.length) return undefined;
+      const owner = controller;
+      for (const id of missing) prefetching.set(id, owner);
+      let settled = false;
+      return {
+        filter: {
+          kinds: [USER_STATUS_KIND],
+          "#d": ["general"],
+          authors: missing,
+          limit: missing.length,
+        } satisfies ReadFilter,
+        settle(events?: readonly RelayEvent[]) {
+          if (settled) return;
+          settled = true;
+          // A clear or reconnect since dropped this read's claim.
+          if (closed || owner !== controller) return;
+          const fresh = new Set(
+            missing.filter((id) => prefetching.get(id) === owner),
+          );
+          for (const id of fresh) prefetching.delete(id);
+          if (!events) {
+            schedule();
+            return;
+          }
+          for (const id of fresh) {
+            loaded.add(id);
+            // Unwatched authors are held like any idle author.
+            if (!watched.has(id) && id !== viewer) idle.add(id);
+          }
+          accept(events.filter((event) => fresh.has(event.pubkey)));
+          settleIdle();
+        },
+      };
+    },
     reconnect() {
       resetRetries();
       controller.abort();
       controller = new AbortController();
       pending = undefined;
+      reading.clear();
+      prefetching.clear();
       loaded.clear();
       schedule();
     },

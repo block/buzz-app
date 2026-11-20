@@ -763,3 +763,114 @@ it("prepares a channel's status images with its avatars", async () => {
     vi.unstubAllGlobals();
   }
 });
+
+it("lets a profile read's status query cover rows for its authors, with or without a status", async () => {
+  const carol = keypair();
+  const read = vi.fn<RelayReader["read"]>(async () => []);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  owner.live(true);
+  const prefetch = owner.prefetch([bob.pubkey, carol.pubkey]);
+  expect(prefetch?.filter).toEqual({
+    kinds: [30315],
+    "#d": ["general"],
+    authors: [bob.pubkey, carol.pubkey],
+    limit: 2,
+  });
+  // Rows mount while the profile read is out.
+  owner.queries.watch([bob.pubkey, carol.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).not.toHaveBeenCalled();
+  prefetch?.settle([
+    signed(bob, {
+      kind: 30315,
+      created_at: now,
+      content: "Prefetched",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Prefetched");
+  expect(owner.queries.snapshot().has(carol.pubkey)).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+  expect(owner.prefetch([bob.pubkey, carol.pubkey])).toBeUndefined();
+});
+
+it("leaves a failed profile read's statuses to their rows and skips statuses rows are reading", async () => {
+  const carol = keypair();
+  let answer!: (events: RelayEvent[]) => void;
+  const read = vi.fn<RelayReader["read"]>(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const prefetch = owner.prefetch([bob.pubkey]);
+  owner.queries.watch([bob.pubkey, carol.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  expect(read.mock.calls[0]?.[0][0]?.authors).toEqual([carol.pubkey]);
+  // Carol's row read is out, so a profile read asks for neither.
+  expect(owner.prefetch([bob.pubkey, carol.pubkey])).toBeUndefined();
+  prefetch?.settle();
+  answer([]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls[1]?.[0][0]?.authors).toEqual([bob.pubkey]);
+});
+
+it("reads statuses with the profiles of bylines, so their rows read nothing more", async () => {
+  const relay = keypair();
+  const carol = keypair();
+  const queries: (readonly { kinds?: readonly number[] }[])[] = [];
+  let answer!: () => void;
+  const owner = createRelaySession(
+    {
+      viewer: alice.pubkey,
+      relayAuthor: relay.pubkey,
+      media: (url) => url,
+      async query(filters) {
+        queries.push(filters);
+        if (!filters.some((filter) => filter.kinds?.includes(0))) return [];
+        await new Promise<void>((resolve) => (answer = resolve));
+        return [
+          signed(bob, { kind: 0, content: '{"name":"Bob"}', tags: [] }),
+          signed(bob, {
+            kind: 30315,
+            created_at: now,
+            content: "Bundled",
+            tags: [["d", "general"]],
+          }),
+        ];
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  try {
+    const { profiles, statuses } = owner.session;
+    const read = profiles.ensure([bob.pubkey], "background", {
+      withStatuses: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queries.at(-1)?.map((filter) => filter.kinds)).toEqual([
+      [0],
+      [30315],
+    ]);
+    // The byline's row mounts while its profile read is out.
+    const before = queries.length;
+    statuses.watch([bob.pubkey]);
+    await vi.advanceTimersByTimeAsync(0);
+    answer();
+    await read;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statuses.snapshot().get(bob.pubkey)?.text).toBe("Bundled");
+    expect(queries.slice(before)).toEqual([]);
+    // A view without bylines reads profiles alone.
+    const alone = profiles.ensure([carol.pubkey], "background");
+    await vi.advanceTimersByTimeAsync(0);
+    answer();
+    await alone;
+    expect(queries.at(-1)?.map((filter) => filter.kinds)).toEqual([[0]]);
+  } finally {
+    owner.dispose();
+  }
+});

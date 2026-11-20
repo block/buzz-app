@@ -765,7 +765,7 @@ export function createChannelStore(
     try {
       const ids = rows.flatMap(rowProfileIds);
       relayDebug("profiles warm", ids.length, "ids");
-      await directory.ensure(ids, "background");
+      await directory.queries.ensure(ids, "background", { withStatuses: true });
       if (!disposed && intent) prepareMedia(intent);
       // Profiles are the prerequisite for resolving a channel's avatar URLs.
       if (!disposed && warmChannelId) prepareWarmMedia(warmChannelId);

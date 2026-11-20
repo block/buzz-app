@@ -107,6 +107,7 @@ import {
 import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
+import { USER_STATUS_KIND } from "./user-status-policy";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
@@ -187,15 +188,20 @@ export const ROSTER_BACKSTOP_INTERVAL = 15 * 60_000;
  * no signal: a channel the relay pruned from a batch, or a dropped fan-out. */
 export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
 
-/** A read of named authors' profiles only. Profiles do not depend on channels,
- * so no channel access change, including a denied channel list, can stale it. */
+/** A read of named authors' profiles, or the general statuses read with them.
+ * The relay stores both per user, not per channel, so no channel access change,
+ * including a denied channel list, can stale it. */
 function isProfileFilter(filter: ReadFilter) {
+  const status =
+    filter.kinds?.[0] === USER_STATUS_KIND &&
+    filter["#d"]?.length === 1 &&
+    filter["#d"][0] === "general";
   return (
     filter.kinds?.length === 1 &&
-    filter.kinds[0] === 0 &&
+    (filter.kinds[0] === 0 || status) &&
     !!filter.authors?.length &&
     Object.keys(filter).every((key) =>
-      ["kinds", "authors", "limit"].includes(key),
+      ["kinds", "authors", "limit", ...(status ? ["#d"] : [])].includes(key),
     )
   );
 }
@@ -1050,6 +1056,8 @@ export function createRelaySession(
         }
       : undefined,
     archives.queries,
+    // Created below; only reads after construction use it.
+    { prefetch: (authors) => statuses.prefetch(authors) },
   );
   const presence = withHostedAgents(
     observedPresence,

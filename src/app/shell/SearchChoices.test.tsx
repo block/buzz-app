@@ -562,6 +562,37 @@ it("says how much of a group Top results shows and opens the rest from its heade
   expect(field).toHaveFocus();
 });
 
+it("drops a highlight a pinned heading covers, so Enter never opens a hidden row", () => {
+  // The cut group's heading is pinned over the first row.
+  const box = vi.mocked(HTMLElement.prototype.getBoundingClientRect);
+  const rows = box.getMockImplementation();
+  box.mockImplementation(function (this: HTMLElement) {
+    return this.hasAttribute("data-search-cut")
+      ? DOMRect.fromRect({ x: 0, y: 0, width: 300, height: ROW })
+      : (rows?.call(this) ?? new DOMRect());
+  });
+  render(
+    <SearchChoices
+      query="channel"
+      onQueryChange={() => {}}
+      input={createRef<HTMLInputElement>()}
+      groups={[{ label: "Channels", destinations: destinations.slice(0, 6) }]}
+      peek={{ ranked: true, preview: () => null }}
+    />,
+  );
+  expect(screen.getByRole("option", { name: "channel-0" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const scroller = document.querySelector(".search-palette-scroll");
+  if (!scroller) throw new Error("No results scroller");
+  fireEvent.wheel(scroller);
+  fireEvent.scroll(scroller);
+  expect(screen.queryByRole("option", { selected: true })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+  expect(run).not.toHaveBeenCalled();
+});
+
 it("keeps an attached row with the row above it where Top results cuts a group", () => {
   const attach = (rows: typeof destinations, at: number) =>
     rows.map((row, index) => (index === at ? { ...row, attached: true } : row));

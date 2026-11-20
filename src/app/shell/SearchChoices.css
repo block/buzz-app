@@ -350,6 +350,12 @@
     z-index: 1;
     background: var(--surface-panel);
   }
+  /* A row the keyboard reveals stops below its pinned heading. */
+  .navigation-section-heading[data-search-cut]
+    + .navigation-section-rows
+    [data-search-result] {
+    scroll-margin-top: var(--size-row);
+  }
 
   /* virtua places each drawn row itself, outside the rows' flex gap, so
      each keeps that gap below it, inside the content box virtua measures. */

@@ -526,10 +526,17 @@ export function SearchChoices({
     document.getElementById(highlight.rowId(key))?.getBoundingClientRect();
   const inView = (key: string) => {
     const content = resultsContent.current;
-    const box = key ? rowBox(key) : undefined;
-    if (!content || !box) return false;
+    const row = key ? document.getElementById(highlight.rowId(key)) : null;
+    if (!content || !row) return false;
+    const box = row.getBoundingClientRect();
     const view = content.getBoundingClientRect();
-    return box.bottom > view.top && box.top < view.bottom;
+    // A cut group's pinned heading covers the rows scrolling under it.
+    const heading = row
+      .closest(".search-palette-group")
+      ?.querySelector("[data-search-cut]")
+      ?.getBoundingClientRect();
+    const top = Math.max(view.top, heading?.bottom ?? view.top);
+    return box.bottom > top && box.top < view.bottom;
   };
   const keepPlace = () => {
     const content = resultsContent.current;

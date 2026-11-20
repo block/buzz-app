@@ -104,7 +104,10 @@ it("macOS banner permission reads the native authorization independently of Dock
   expect(sdk.show).not.toHaveBeenCalled();
   expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
   expect(service.indicator.snapshot().permission).toBe("enabled");
-  expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({ unread: false });
+  expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({
+    unread: false,
+    label: null,
+  });
   await submit("first");
   await flush();
   expect(sdk.show).toHaveBeenCalledOnce();
@@ -395,15 +398,32 @@ it("the macOS default binds explicit permission and ordered unread/clear command
   const { service, ctx } = setup();
   service.indicator.setUnread(true);
   await service.indicator.refresh();
-  expect(sdk.indicator.mock.calls).toEqual([[{ unread: false }]]);
+  expect(sdk.indicator.mock.calls).toEqual([[{ unread: false, label: null }]]);
   await service.indicator.request();
   expect(sdk.permission.mock.calls).toEqual([
     [{ request: false }],
     [{ request: true }],
   ]);
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, label: null });
+  service.indicator.setBadgeCount(3);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({
+      unread: true,
+      label: "3",
+    }),
+  );
+  service.indicator.setBadgeCount(0);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({
+      unread: true,
+      label: null,
+    }),
+  );
   service.updatePreferences({ enabled: false });
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, label: null });
   await ctx.fiber.dispose();
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({
+    unread: false,
+    label: null,
+  });
 });

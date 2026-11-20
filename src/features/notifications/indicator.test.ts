@@ -18,7 +18,7 @@ function setup(initial: IndicatorPermission = "enabled") {
   const permission = vi.fn(
     async (_request: boolean): Promise<IndicatorPermission> => initial,
   );
-  const set = vi.fn(async (_unread: boolean) => {});
+  const set = vi.fn(async (_label: string | null) => {});
   const host = new EventTarget();
   const dock = createUnreadIndicator({ permission, set }, host);
   cleanups.push(dock.dispose);
@@ -29,14 +29,14 @@ it("silently checks on startup and projects unread after allow, independently of
   h.dock.setUnread(true);
   await h.dock.refresh();
   expect(h.permission.mock.calls).toEqual([[false]]);
-  expect(h.set.mock.calls).toEqual([[false]]);
+  expect(h.set.mock.calls).toEqual([[null]]);
   h.permission.mockResolvedValueOnce("enabled");
   await h.dock.request();
   expect(h.permission.mock.calls).toEqual([[false], [true]]);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"]]);
   h.dock.setUnread(false);
   await h.dock.dispose();
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(null);
 });
 it.each(["default", "setup", "disabled", "denied", "unavailable"] as const)(
   "withholds the dot for %s and clears on changed system permission",
@@ -44,12 +44,12 @@ it.each(["default", "setup", "disabled", "denied", "unavailable"] as const)(
     const h = setup();
     await h.dock.refresh();
     h.dock.setUnread(true);
-    await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(true));
+    await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith("•"));
     h.permission.mockResolvedValueOnce(permission);
     await h.dock.refresh();
-    expect(h.set).toHaveBeenLastCalledWith(false);
+    expect(h.set).toHaveBeenLastCalledWith(null);
     h.dock.setUnread(true);
-    expect(h.set).toHaveBeenLastCalledWith(false);
+    expect(h.set).toHaveBeenLastCalledWith(null);
   },
 );
 it("refreshes on focus, fails closed, reports errors, and only retries on a later action", async () => {
@@ -64,14 +64,14 @@ it("refreshes on focus, fails closed, reports errors, and only retries on a late
     permission: "unavailable",
     error: "OS unavailable",
   });
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(null);
   expect(h.permission).toHaveBeenCalledTimes(count + 1);
   await h.dock.refresh();
   expect(h.dock.snapshot()).toMatchObject({
     permission: "enabled",
     error: null,
   });
-  expect(h.set).toHaveBeenLastCalledWith(true);
+  expect(h.set).toHaveBeenLastCalledWith("•");
 });
 it("coalesces rapid changes behind one pending native write and makes teardown clear win", async () => {
   const h = setup();
@@ -79,15 +79,15 @@ it("coalesces rapid changes behind one pending native write and makes teardown c
   const pending = deferred<void>();
   h.set.mockImplementationOnce(() => pending.promise);
   h.dock.setUnread(true);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"]]);
   h.dock.setUnread(false);
   h.dock.setUnread(true);
   const closing = h.dock.dispose();
   h.dock.setUnread(true);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"]]);
   pending.resolve();
   await closing;
-  expect(h.set.mock.calls).toEqual([[false], [true], [false]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"], [null]]);
   const count = h.permission.mock.calls.length;
   h.host.dispatchEvent(new Event("focus"));
   await h.dock.refresh();
@@ -103,7 +103,7 @@ it("late permission completion cannot revive a disposed badge", async () => {
   await h.dock.dispose();
   pending.resolve("enabled");
   await check;
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(null);
 });
 it("reports native write failure without a retry loop and accepts a later current-intent action", async () => {
   const h = setup();
@@ -113,9 +113,9 @@ it("reports native write failure without a retry loop and accepts a later curren
   await vi.waitFor(() =>
     expect(h.dock.snapshot().error).toBe("Dock unavailable"),
   );
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"]]);
   await h.dock.refresh();
-  expect(h.set.mock.calls).toEqual([[false], [true], [true]]);
+  expect(h.set.mock.calls).toEqual([[null], ["•"], ["•"]]);
 });
 it("keeps an explicit request when a focus check was already pending", async () => {
   const h = setup("default");
@@ -128,4 +128,29 @@ it("keeps an explicit request when a focus check was already pending", async () 
   await check;
   await request;
   expect(h.permission.mock.calls).toEqual([[false], [false], [true]]);
+});
+it("uses a bounded plugin count while positive and restores the ordinary dot", async () => {
+  const h = setup();
+  await h.dock.refresh();
+  h.dock.setUnread(true);
+  h.dock.setBadgeCount(4);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith("4"));
+  h.dock.setBadgeCount(100);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith("99+"));
+  h.dock.setBadgeCount(0);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith("•"));
+  h.dock.setBadgeCount(Number.NaN);
+  expect(h.set).toHaveBeenLastCalledWith("•");
+});
+it("makes a viewer-switch badge clear win over a pending native count", async () => {
+  const h = setup();
+  await h.dock.refresh();
+  const pending = deferred<void>();
+  h.set.mockImplementationOnce(() => pending.promise);
+  h.dock.setBadgeCount(5);
+  expect(h.set.mock.calls).toEqual([[null], ["5"]]);
+  h.dock.setBadgeCount(0);
+  pending.resolve();
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(null));
+  expect(h.set.mock.calls).toEqual([[null], ["5"], [null]]);
 });

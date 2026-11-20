@@ -156,7 +156,7 @@ it.each([
 );
 
 it("shows a Dock write error and retries through the existing permission check", async () => {
-  const set = vi.fn(async (_unread: boolean) => {});
+  const set = vi.fn(async (_label: string | null) => {});
   const indicator = createUnreadIndicator({
     permission: async () => "enabled",
     set,
@@ -176,6 +176,6 @@ it("shows a Dock write error and retries through the existing permission check",
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Check Dock permission" }));
-  expect(set).toHaveBeenLastCalledWith(true);
+  expect(set).toHaveBeenLastCalledWith("•");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

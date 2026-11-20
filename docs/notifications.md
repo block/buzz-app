@@ -230,6 +230,14 @@ account/session changes, access loss and host disposal clear or recompute the
 indicator. Disabling Channels does not stop host ownership. Desktop alert
 preferences do not alter this unread indicator.
 
+One plugin may replace that dot with a positive, bounded attention count. If
+multiple external plugins contribute, neither owns the badge and the host keeps
+its dot. A host-shipped contribution takes precedence. Within the winning plugin,
+the contribution is deterministic; `1`…`99` is shown directly and larger counts
+show `99+`. Zero, invalid output, plugin failure or disable falls back to the
+ordinary unread dot. This does not make the host unread projection an exact
+count: the plugin owns and documents the meaning of its number.
+
 One ordered host writer calls a main-window-only command using Tauri's standard
 `set_badge_label` API. macOS draws the badge; no custom artwork is supplied.
 Windows, Linux and browsers have no shell unread indicator or badge Settings in

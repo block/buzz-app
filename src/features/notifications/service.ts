@@ -1,6 +1,7 @@
 import { createUnreadIndicator } from "./indicator";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
+import { isBundledContribution } from "../../plugins/provenance";
 import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
@@ -37,6 +38,14 @@ export type NotificationGate = Readonly<{
   /** A throwing gate is skipped. */
   allows(target: OpenTarget): boolean;
 }>;
+/** Replaces the Dock dot with one bounded attention count while positive. */
+export type NotificationDockBadge = Readonly<{
+  id: string;
+  count(allows: (target: OpenTarget) => boolean): number;
+  subscribe(listener: () => void): () => void;
+  /** Lower wins when more than one plugin contributes a count. */
+  order?: number;
+}>;
 export interface Notifications {
   register(
     category: NotificationCategoryDescriptor,
@@ -44,6 +53,8 @@ export interface Notifications {
   /** While registered, only targets every gate allows may alert. Returns a
    * remover; disabling the plugin removes it too. */
   gate(gate: NotificationGate): () => void;
+  /** A positive count replaces the Dock dot with 1…99+; zero restores the dot. */
+  dockBadge(badge: NotificationDockBadge): () => void;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -87,6 +98,7 @@ export class NotificationsService extends Service implements Notifications {
   readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly gates;
+  private readonly dockBadges;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
   // Outstanding audio decisions for submissions awaiting platform acceptance.
@@ -102,6 +114,7 @@ export class NotificationsService extends Service implements Notifications {
   private permissionGeneration = 0;
   private permissionRequest: Promise<void> | undefined;
   private scheduled = false;
+  private refreshDockBadge = () => this.indicator.setBadgeCount(undefined);
   private state: NotificationSnapshot;
   constructor(
     ctx: Context,
@@ -117,6 +130,7 @@ export class NotificationsService extends Service implements Notifications {
     this.contributions =
       createContributions<NotificationCategoryDescriptor>(ctx);
     this.gates = createContributions<NotificationGate>(ctx);
+    this.dockBadges = createContributions<NotificationDockBadge>(ctx);
     this.state = Object.freeze({
       viewer: undefined,
       ...preferences.snapshot(),
@@ -170,6 +184,68 @@ export class NotificationsService extends Service implements Notifications {
         return this.indicator.dispose();
       };
     });
+    ctx.effect(() => {
+      let stopBadge = () => {};
+      const sync = () => {
+        stopBadge();
+        stopBadge = () => {};
+        this.refreshDockBadge = () => this.indicator.setBadgeCount(undefined);
+        const badges = this.dockBadges.snapshot();
+        const bundled = badges.filter(isBundledContribution);
+        const candidates = bundled.length > 0 ? bundled : badges;
+        const owners = new Set(candidates.map(({ pluginId }) => pluginId));
+        const badge = (
+          bundled.length > 0 || owners.size <= 1 ? [...candidates] : []
+        ).sort(
+          (a, b) =>
+            (a.order ?? 0) - (b.order ?? 0) || a.key.localeCompare(b.key),
+        )[0];
+        if (!badge) {
+          this.indicator.setBadgeCount(undefined);
+          return;
+        }
+        let active = true;
+        const update = () => {
+          if (!active) return;
+          try {
+            const count = badge.count((target) => this.gated(target));
+            this.indicator.setBadgeCount(
+              Number.isSafeInteger(count) && count >= 0 ? count : undefined,
+            );
+          } catch {
+            this.indicator.setBadgeCount(undefined);
+          }
+        };
+        let stopContribution: () => void;
+        try {
+          stopContribution = badge.subscribe(update);
+        } catch {
+          active = false;
+          this.indicator.setBadgeCount(undefined);
+          return;
+        }
+        const stopGates = this.subscribeGates(update);
+        this.refreshDockBadge = update;
+        stopBadge = () => {
+          active = false;
+          try {
+            stopContribution();
+          } catch {
+            // Plugin cleanup cannot block host cleanup or the next projection.
+          }
+          stopGates();
+        };
+        update();
+      };
+      const stopContributions = this.dockBadges.subscribe(sync);
+      sync();
+      return () => {
+        stopContributions();
+        stopBadge();
+        this.refreshDockBadge = () => this.indicator.setBadgeCount(undefined);
+        this.indicator.setBadgeCount(undefined);
+      };
+    });
     void this.refreshPermission();
   }
   snapshot = () => this.state;
@@ -198,6 +274,7 @@ export class NotificationsService extends Service implements Notifications {
     this.seen.clear();
     this.publish({ viewer, error: null });
     this.preferences.selectViewer(viewer);
+    this.refreshDockBadge();
   }
   updatePreferences(patch: Partial<NotificationPreferences>) {
     return this.preferences.update(patch);
@@ -283,6 +360,20 @@ export class NotificationsService extends Service implements Notifications {
     )
       throw new Error("A notification gate needs an id and allows()");
     return this.gates.register(this.ctx, gate);
+  }
+  dockBadge(badge: NotificationDockBadge) {
+    if (
+      !badge ||
+      typeof badge.id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(badge.id) ||
+      typeof badge.count !== "function" ||
+      typeof badge.subscribe !== "function" ||
+      (badge.order !== undefined && !Number.isFinite(badge.order))
+    )
+      throw new Error(
+        "A Dock badge needs an id, count(allows), subscribe(), and finite order",
+      );
+    return this.dockBadges.register(this.ctx, badge);
   }
   revalidate() {
     for (const item of this.pending) {

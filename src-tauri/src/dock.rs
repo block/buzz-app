@@ -17,21 +17,41 @@ pub(crate) enum Permission {
     Unavailable,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn badge_label(unread: bool, label: Option<String>) -> Result<Option<String>, String> {
+    if !unread {
+        return Ok(None);
+    }
+    match label {
+        None => Ok(Some("•".into())),
+        Some(label)
+            if label == "99+"
+                || label
+                    .parse::<u8>()
+                    .is_ok_and(|count| (1..=99).contains(&count)) =>
+        {
+            Ok(Some(label))
+        }
+        Some(_) => Err("Dock badge labels must be a count from 1 to 99+".into()),
+    }
+}
+
 #[tauri::command]
 pub(crate) fn unread_indicator_set<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     unread: bool,
+    label: Option<String>,
 ) -> Result<(), String> {
     if window.label() != "main" {
         return Err("Dock badges belong to the main window".into());
     }
     #[cfg(target_os = "macos")]
     return window
-        .set_badge_label(unread.then(|| "•".into()))
+        .set_badge_label(badge_label(unread, label)?)
         .map_err(|e| e.to_string());
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = unread;
+        let _ = (unread, label);
         Err("Dock badges are only available on macOS".into())
     }
 }
@@ -52,6 +72,28 @@ pub(crate) async fn dock_permission<R: tauri::Runtime>(
     {
         let _ = request;
         Ok(Permission::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::badge_label;
+
+    #[test]
+    fn numeric_labels_replace_the_dot_until_the_indicator_clears() {
+        assert_eq!(badge_label(true, None).unwrap(), Some("•".into()));
+        assert_eq!(
+            badge_label(true, Some("3".into())).unwrap(),
+            Some("3".into())
+        );
+        assert_eq!(
+            badge_label(true, Some("99+".into())).unwrap(),
+            Some("99+".into())
+        );
+        assert_eq!(badge_label(false, Some("anything".into())).unwrap(), None);
+        assert!(badge_label(true, Some("0".into())).is_err());
+        assert!(badge_label(true, Some("100".into())).is_err());
+        assert!(badge_label(true, Some("hello".into())).is_err());
     }
 }
 

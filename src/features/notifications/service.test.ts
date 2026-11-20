@@ -24,8 +24,12 @@ afterEach(async () => {
 function setup() {
   const ctx = new Context();
   contexts.push(ctx);
-  let module: PluginModule = { apply() {} };
-  const runtime = new PluginRuntime(ctx, async () => module);
+  const modules = new Map<string, PluginModule>();
+  const runtime = new PluginRuntime(ctx, async (plugin) => {
+    const module = modules.get(plugin.manifest.id);
+    if (!module) throw new Error(`Missing test module: ${plugin.manifest.id}`);
+    return module;
+  });
   ctx.effect(() => () => runtime.dispose());
   const values = new Map<string, string>();
   const host = {
@@ -85,7 +89,7 @@ function setup() {
       );
     },
     install(value: PluginModule) {
-      module = value;
+      modules.set("test.plugin", value);
       runtime.reconcile([
         {
           manifest: { id: "test.plugin", name: "Test plugin", apiVersion: 1 },
@@ -97,6 +101,20 @@ function setup() {
           error: null,
         },
       ]);
+    },
+    installAll(values: Readonly<Record<string, PluginModule>>) {
+      for (const [id, value] of Object.entries(values)) modules.set(id, value);
+      runtime.reconcile(
+        Object.keys(values).map((id) => ({
+          manifest: { id, name: id, apiVersion: 1 as const },
+          enabled: true,
+          source: "external" as const,
+          revision: "v1",
+          previous: null,
+          reloadable: true,
+          error: null,
+        })),
+      );
     },
     disable() {
       runtime.reconcile([]);
@@ -258,6 +276,181 @@ it("plugin gates silence alerts until removed or the plugin is disabled", async 
   await flush();
   expect(t.service.gated(target)).toBe(true);
   expect(await t.submit("released")).toBe(true);
+});
+it("lets one plugin own a bounded Dock count and restores the host dot on disable", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  let count = 3;
+  let changed = () => {};
+  let addGate: Notifications["gate"] | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      addGate = (gate) => ctx.notifications.gate(gate);
+      ctx.notifications.dockBadge({
+        id: "direct-messages",
+        count: (allows) => (allows(target) ? count : 0),
+        subscribe(listener) {
+          changed = listener;
+          return () => {
+            changed = () => {};
+          };
+        },
+      });
+    },
+  });
+  await vi.waitFor(() => expect(setBadgeCount).toHaveBeenLastCalledWith(3));
+  const removeGate = addGate?.({ id: "focus", allows: () => false });
+  expect(setBadgeCount).toHaveBeenLastCalledWith(0);
+  removeGate?.();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(3);
+  count = 8;
+  changed();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(8);
+  count = Number.NaN;
+  changed();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(undefined);
+  t.disable();
+  await flush();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(undefined);
+});
+it("recomputes the Dock count when the viewer changes without a plugin callback", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  let count = 5;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      ctx.notifications.dockBadge({
+        id: "viewer-unread",
+        count: () => count,
+        subscribe: () => () => {},
+      });
+    },
+  });
+  await vi.waitFor(() => expect(setBadgeCount).toHaveBeenLastCalledWith(5));
+  count = 0;
+  t.service.selectViewer("b".repeat(64));
+  expect(setBadgeCount).toHaveBeenLastCalledWith(0);
+});
+it("keeps the host dot when Dock badge subscription setup fails", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  let changed = () => {};
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      ctx.notifications.dockBadge({
+        id: "broken-setup",
+        count: () => 3,
+        subscribe(listener) {
+          changed = listener;
+          throw new Error("subscribe failed");
+        },
+      });
+    },
+  });
+  await vi.waitFor(() =>
+    expect(setBadgeCount).toHaveBeenLastCalledWith(undefined),
+  );
+  const calls = setBadgeCount.mock.calls.length;
+  changed();
+  expect(setBadgeCount).toHaveBeenCalledTimes(calls);
+});
+it("clears the Dock badge when plugin cleanup fails", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  let changed = () => {};
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      ctx.notifications.dockBadge({
+        id: "broken-cleanup",
+        count: () => 3,
+        subscribe(listener) {
+          changed = listener;
+          return () => {
+            throw new Error("cleanup failed");
+          };
+        },
+      });
+    },
+  });
+  await vi.waitFor(() => expect(setBadgeCount).toHaveBeenLastCalledWith(3));
+  expect(t.disable).not.toThrow();
+  await flush();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(undefined);
+  const calls = setBadgeCount.mock.calls.length;
+  changed();
+  expect(setBadgeCount).toHaveBeenCalledTimes(calls);
+});
+it("chooses Dock badge ownership by order and falls back when the winner retires", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  let retirePreferred = () => {};
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      ctx.notifications.dockBadge({
+        id: "fallback",
+        order: 10,
+        count: () => 9,
+        subscribe: () => () => {},
+      });
+      retirePreferred = ctx.notifications.dockBadge({
+        id: "preferred",
+        order: -1,
+        count: () => 2,
+        subscribe: () => () => {},
+      });
+    },
+  });
+  await vi.waitFor(() => expect(setBadgeCount).toHaveBeenLastCalledWith(2));
+  retirePreferred();
+  expect(setBadgeCount).toHaveBeenLastCalledWith(9);
+});
+it("keeps the host dot when external plugins compete for Dock ownership", async () => {
+  const t = setup();
+  const setBadgeCount = vi.spyOn(t.service.indicator, "setBadgeCount");
+  t.installAll({
+    "example.preferred": {
+      inject: ["notifications"],
+      apply(ctx) {
+        ctx.notifications.dockBadge({
+          id: "attention",
+          order: -1_000_000,
+          count: () => 99,
+          subscribe: () => () => {},
+        });
+      },
+    },
+    "example.expected": {
+      inject: ["notifications"],
+      apply(ctx) {
+        ctx.notifications.dockBadge({
+          id: "attention",
+          count: () => 2,
+          subscribe: () => () => {},
+        });
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(setBadgeCount).toHaveBeenLastCalledWith(undefined),
+  );
+  t.installAll({
+    "example.expected": {
+      inject: ["notifications"],
+      apply(ctx) {
+        ctx.notifications.dockBadge({
+          id: "attention",
+          count: () => 2,
+          subscribe: () => () => {},
+        });
+      },
+    },
+  });
+  await vi.waitFor(() => expect(setBadgeCount).toHaveBeenLastCalledWith(2));
 });
 it("a gate added while an alert is pending keeps it from showing", async () => {
   const t = setup();

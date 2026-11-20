@@ -9,15 +9,24 @@ export type IndicatorPermission =
   | "unavailable";
 export interface IndicatorPlatform {
   permission(request: boolean): Promise<IndicatorPermission>;
-  set(unread: boolean): Promise<void>;
+  set(label: string | null): Promise<void>;
 }
 export function indicatorPlatform(): IndicatorPlatform | undefined {
   const os = globalThis.navigator?.platform ?? "";
   if (!isTauri() || !/Mac/i.test(os)) return;
   return {
     permission: (request) => invoke("dock_permission", { request }),
-    set: (unread) => invoke("unread_indicator_set", { unread }),
+    set: (label) =>
+      invoke("unread_indicator_set", {
+        unread: label !== null,
+        label: label === "•" ? null : label,
+      }),
   };
+}
+
+function badgeCountLabel(count: number | undefined) {
+  if (!Number.isSafeInteger(count) || (count ?? 0) <= 0) return;
+  return (count as number) > 99 ? "99+" : String(count);
 }
 
 /** One ordered native projection. Pending work always converges on current intent. */
@@ -28,15 +37,16 @@ export function createUnreadIndicator(
     | undefined = typeof window === "undefined" ? undefined : window,
 ) {
   let closed = false,
-    unread = false;
+    unread = false,
+    badgeCount: number | undefined;
   let state = Object.freeze({
     permission: "unavailable" as IndicatorPermission,
     requesting: false as boolean,
     error: null as string | null,
   });
   const listeners = new Set<() => void>();
-  let desired = false;
-  let applied: boolean | undefined;
+  let desired: string | null = null;
+  let applied: string | null | undefined;
   let writing: Promise<void> | undefined;
   let checking: Promise<void> | undefined;
   const publish = (patch: Partial<typeof state>) => {
@@ -47,7 +57,11 @@ export function createUnreadIndicator(
   const failed = (error: unknown) =>
     publish({ error: error instanceof Error ? error.message : String(error) });
   function project() {
-    desired = !closed && unread && state.permission === "enabled";
+    const count = badgeCountLabel(badgeCount);
+    desired =
+      !closed && state.permission === "enabled"
+        ? (count ?? (unread ? "•" : null))
+        : null;
     if (!platform || writing || desired === applied) return;
     let attempted = desired;
     writing = (async () => {
@@ -114,6 +128,13 @@ export function createUnreadIndicator(
     setUnread(value: boolean) {
       if (!closed) {
         unread = value;
+        project();
+      }
+    },
+    /** A plugin-owned count replaces the dot while positive; zero restores it. */
+    setBadgeCount(value: number | undefined) {
+      if (!closed) {
+        badgeCount = value;
         project();
       }
     },

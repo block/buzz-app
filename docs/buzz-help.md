@@ -791,6 +791,9 @@ Quitting Buzz also turns it off.
   If the people you'd end up with already have a DM, Buzz opens that one
   instead. A DM can include up to nine people; agents don't count. Removing
   people from a DM isn't available.
+- A plugin can replace the macOS Dock unread dot with its own bounded attention
+  count. Buzz still owns badge permission and clears the number when that plugin
+  is disabled; the plugin's description explains what its number counts.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,

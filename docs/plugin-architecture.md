@@ -1408,6 +1408,22 @@ to 200), so a plugin cannot send raw markup or unlimited text to the OS. Without
 them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
 plugin submissions; the plugin decides what is still worth announcing.
 
+`notifications.dockBadge({ id, count, subscribe, order? })` contributes one
+macOS Dock attention count. A positive safe integer replaces Buzz's ordinary
+unread dot with `1`…`99+`; zero or an invalid/throwing projection restores the
+ordinary dot. One external plugin may contribute one or more projections, and
+its lowest finite `order` wins. If multiple external plugins contribute, the
+host keeps its dot instead of allowing either plugin to claim the single slot.
+A host-shipped plugin takes precedence over external contributions; its lowest
+finite `order` wins, with the contribution key breaking ties. The host calls
+`count(allows)` after subscribing, whenever the contribution calls its listener,
+and whenever notification gates change. The plugin applies `allows(target)` to
+each conversation before aggregating. Disabling or replacing the plugin removes
+its count. The plugin owns the meaning and evidence for its number; the host owns
+notification gates, permission, bounding, ordered native writes and teardown
+clearing. Windows, Linux and browsers accept the contribution but have no shell
+badge in this version.
+
 `notifications.gate({ id, allows(target) })` narrows which targets may alert.
 While any gate is registered, a banner, its sound and the Dock unread dot need
 every gate to allow the target; the Dock asks about each conversation as a

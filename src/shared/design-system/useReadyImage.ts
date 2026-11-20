@@ -30,6 +30,13 @@ export function rememberLoadedImage(src: string) {
   remember(src, "loaded");
 }
 
+/** Requests every mounted failed source once more, after its timed retries
+ * may be spent: a connection that can now serve it has come up. */
+export function retryFailedImages() {
+  for (const retries of [...failed.values()])
+    for (const retry of [...retries]) retry();
+}
+
 export type ReadyImage = ReturnType<typeof useReadyImage>;
 
 /** Paint lifecycle for a small, frequently remounted image (avatars, emoji).

@@ -17,6 +17,7 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import { mediaUrl, type ReadTransport } from "./transport";
+import { retryFailedImages } from "../../shared/design-system/useReadyImage";
 import { refusalOfError, type CommunityRefusal } from "./http-admission";
 /** The snapshot's error for a refusal heard after connecting, for logs and
  * diagnostics; what it offers follows `refusal`, never this text. */
@@ -467,6 +468,9 @@ export function provideRelay(
               : {}),
           });
           ready = true;
+          // Restored images keep their URLs across this handoff, so one that
+          // failed while offline would otherwise not be requested again.
+          retryFailedImages();
           store.session.channels.ensureList();
           reopening = reopen;
           if (reopen) reopenListed(store, reopen);

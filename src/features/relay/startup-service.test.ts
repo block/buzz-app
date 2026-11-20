@@ -17,6 +17,13 @@ vi.mock("../identity/service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../identity/service")>()),
   nativeIdentityEnabled: native.enabled,
 }));
+const images = vi.hoisted(() => ({ retry: vi.fn() }));
+vi.mock("../../shared/design-system/useReadyImage", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../shared/design-system/useReadyImage")
+  >()),
+  retryFailedImages: images.retry,
+}));
 vi.mock("./native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./native")>()),
   clearNativeMedia: native.clear,
@@ -204,6 +211,15 @@ it.each([false, true])(
     );
   },
 );
+it("asks failed images to load again once the connection replaces the restored session", async () => {
+  images.retry.mockClear();
+  const { data, connections, source, restored } = setup();
+  await restored();
+  expect(images.retry).not.toHaveBeenCalled();
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  expect(images.retry).toHaveBeenCalledOnce();
+});
 it.each([false, true])(
   "restores valid cached profiles with JS when host verification fails or is absent (host=%s)",
   async (host) => {

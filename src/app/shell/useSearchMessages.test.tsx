@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
+import { ReadError } from "../../features/relay/errors";
 import { createRelaySession } from "../../features/relay/session";
 import {
   keypair,
@@ -257,6 +258,59 @@ it("shows one page when the wider first read exceeds the read budget", async () 
     expect(wire.next().filters).toEqual([
       { ...wide.filters[0], limit: 20, page: 2 },
     ]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("shows the error without a narrower read when the wider first read fails otherwise", async () => {
+  const viewer = keypair();
+  const relay = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.get?.("crew")).toBeDefined(),
+    );
+    const { result } = renderHook(() =>
+      useSearchMessages(
+        owner.session,
+        "deploy",
+        undefined,
+        undefined,
+        undefined,
+        "relevance",
+        3,
+      ),
+    );
+    await waitFor(() => expect(wire.pending).toHaveLength(1));
+    const wide = wire.next();
+    expect(wide.filters[0]?.limit).toBe(60);
+    // Only the read budget narrows the read: a relay that refuses this one
+    // would refuse a smaller one too.
+    await act(async () =>
+      wide.fail(new ReadError("denied", "Relay read failed (403)", 403)),
+    );
+    await waitFor(() => expect(result.current.error).toBeDefined());
+    expect(wire.pending).toHaveLength(0);
+    expect(result.current.messages).toHaveLength(0);
   } finally {
     cleanup();
     owner.dispose();

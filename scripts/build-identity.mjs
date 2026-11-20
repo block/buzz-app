@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 const REVISION = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
 
 export function captureBuildIdentity(root, { mutable = false } = {}) {
+  if (mutable) return { revision: null, state: "unknown" };
   let revision = null;
   try {
     const repository = execFileSync(
@@ -21,7 +22,7 @@ export function captureBuildIdentity(root, { mutable = false } = {}) {
     if (REVISION.test(found)) revision = found;
   } catch {}
 
-  if (!revision || mutable) return { revision, state: "unknown" };
+  if (!revision) return { revision, state: "unknown" };
 
   try {
     const status = execFileSync(

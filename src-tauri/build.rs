@@ -3,6 +3,9 @@ mod build_env;
 #[allow(dead_code)] // This shared module also contains library-only functions.
 #[path = "../crates/build_identity.rs"]
 mod build_identity;
+#[cfg(test)]
+#[path = "../crates/build_identity_tests.rs"]
+mod build_identity_tests;
 #[path = "src/build_resources.rs"]
 mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]

@@ -173,15 +173,17 @@ it("shows native and loaded frontend revisions separately when they differ", asy
 });
 
 it.each([
-  { revision: null, state: "clean", description: "unknown" },
+  { revision: null, state: "clean", description: "unknown", rejected: false },
   {
     revision: "d".repeat(40),
     state: "invalid",
     description: `${"d".repeat(40)} · unknown`,
+    rejected: false,
   },
+  { revision: null, state: "unknown", description: "unknown", rejected: true },
 ])(
   "shows dirty and unknown honestly for an incomplete identity ($state)",
-  async ({ revision, state, description }) => {
+  async ({ revision, state, description, rejected }) => {
     native.isTauri.mockReturnValue(true);
     const response = deferred<{ revision: string | null; state: string }>();
     native.invoke.mockReturnValue(response.promise);
@@ -190,7 +192,10 @@ it.each([
     try {
       renderSettings({});
       expect(native.invoke).toHaveBeenCalledWith("get_build_identity");
-      await act(async () => response.resolve({ revision, state }));
+      await act(async () => {
+        if (rejected) response.reject(new Error("unknown native command"));
+        else response.resolve({ revision, state });
+      });
       expect(
         screen.getByText(`Native image source: ${description}`),
       ).toBeVisible();

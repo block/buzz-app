@@ -74,7 +74,11 @@ test("a remote failure shares its expandable history and preserves its message a
   await expect(toggle).toContainText("Couldn’t finish");
   // The task failed without publishing a reply: retiring live progress must
   // leave a persistent explanation, even beyond the former preview timeout.
-  await page.clock.runFor(120000);
+  // Jump rather than run: with wall time frozen, a timer armed for a wall-clock
+  // deadline (the presence read gate) re-arms with the same delay each time it
+  // fires. That delay is whatever was left at the freeze, so running 120 s of
+  // timers could take tens of thousands of turns and outlast the test.
+  await page.clock.fastForward(120000);
   await expect(toggle).toContainText("Couldn’t finish");
   await expect(
     history.locator('[data-message-activity] [data-state="working"]'),

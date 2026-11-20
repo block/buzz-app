@@ -4243,7 +4243,9 @@ html[data-keyboard-navigation] .activityExpansion {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Sized like the time in a message's byline. */
 .relayedTime {
+  @apply text-caption;
   flex: none;
 }
 /* A fold's count belongs to its preview, so the two stay together. */

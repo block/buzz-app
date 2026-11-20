@@ -594,7 +594,8 @@ and are asked to sign in again in Buzz.
   Folders are optional unless **Work in a new worktree** is on.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
-  remove it and pick again with **#**.
+  remove it and pick again with **#**. A sent chip shows the channel's current
+  name, so it follows a rename; a link with your own text keeps that text.
 - **Folder chips.** In the desktop app, type **!** and part of a folder name in
   any composer to list matching folders in this community's repositories folder
   (**Local settings**). Choosing one adds it to the message as a chip; the
@@ -772,7 +773,9 @@ and are asked to sign in again in Buzz.
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their
   community, so one from another community looks like a private or missing
-  channel. The card still opens the link.
+  channel. The card still opens the link, unless the channel is private
+  to you: then the link and its card don't open anything, and the link can
+  still be copied. Once you have access, the link opens again.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

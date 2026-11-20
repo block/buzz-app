@@ -616,8 +616,13 @@ it("keeps an attached row with the row above it where Top results cuts a group",
           label: "Channels",
           destinations: attach(destinations.slice(6, 12), 3),
         },
-        // Unattached rows past the limit are still cut.
-        { label: "Pages", destinations: destinations.slice(12, 17) },
+        // Unattached rows past the limit are still cut, here of a group
+        // with more to load.
+        {
+          label: "Pages",
+          destinations: destinations.slice(12, 17),
+          count: "20+",
+        },
       ]}
       peek={{ ranked: true, preview: () => null }}
     />,
@@ -638,9 +643,19 @@ it("keeps an attached row with the row above it where Top results cuts a group",
   expect(shown("Channels")).toEqual(
     destinations.slice(6, 10).map(({ label }) => label),
   );
+  // The count includes the attached row shown past the cut.
+  expect(
+    screen.getByRole("group", { name: "Channels" }),
+  ).toHaveAccessibleDescription("Top 4 of 6");
   expect(shown("Pages")).toEqual(
     destinations.slice(12, 15).map(({ label }) => label),
   );
+  expect(
+    within(screen.getByRole("group", { name: "Pages" })).getByRole("heading"),
+  ).toHaveTextContent("Pages · Top 3 of 20+");
+  expect(
+    screen.getByRole("group", { name: "Pages" }),
+  ).toHaveAccessibleDescription("Top 3 of 20+");
 });
 
 it("still shows an attached row when Top results cuts the row above it", () => {

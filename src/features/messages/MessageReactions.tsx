@@ -146,15 +146,22 @@ function ReactionImage({
   source: string;
   reaction: MessageReaction;
 }) {
-  const { status, image } = useReadyImage(source, "eager");
-  if (status === "failed") return <ReactionText reaction={reaction} />;
+  const { status, failing, image } = useReadyImage(source, "eager");
+  // A source that failed keeps the placeholder until a retry loads.
+  const placeholder = failing && status !== "loaded";
   return (
-    <img
-      {...image}
-      className={styles.reactionCustomEmoji}
-      alt=""
-      draggable={false}
-    />
+    <>
+      {placeholder && <ReactionText reaction={reaction} />}
+      {status !== "failed" && (
+        <img
+          {...image}
+          className={styles.reactionCustomEmoji}
+          alt=""
+          draggable={false}
+          hidden={placeholder}
+        />
+      )}
+    </>
   );
 }
 

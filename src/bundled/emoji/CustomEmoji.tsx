@@ -16,19 +16,26 @@ export function CustomEmoji({
 }
 
 function EmojiImage({ src, literal }: { src: string; literal: string }) {
-  const { status, image } = useReadyImage(src);
-  return status !== "failed" ? (
-    <img
-      {...image}
-      className={styles.customEmoji}
-      data-copy-emoji={literal}
-      draggable={false}
-      alt={literal}
-      title={literal}
-      width={22}
-      height={22}
-    />
-  ) : (
-    literal
+  const { status, failing, image } = useReadyImage(src);
+  // A source that failed keeps its text until a retry loads; the hidden retry
+  // loads eagerly and copies nothing, so the text is copied once.
+  const placeholder = failing && status !== "loaded";
+  if (status === "failed") return literal;
+  return (
+    <>
+      {placeholder && literal}
+      <img
+        {...image}
+        className={styles.customEmoji}
+        data-copy-emoji={placeholder ? undefined : literal}
+        draggable={false}
+        alt={placeholder ? "" : literal}
+        title={placeholder ? undefined : literal}
+        width={22}
+        height={22}
+        loading={placeholder ? "eager" : image.loading}
+        hidden={placeholder}
+      />
+    </>
   );
 }

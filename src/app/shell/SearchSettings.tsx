@@ -3,7 +3,13 @@ import { GearIcon, SquaresFourIcon } from "../../shared/design-system/icons";
 import { useEffect, useSyncExternalStore } from "react";
 import type { AppServices } from "../services";
 import type { SearchDestination, SearchGroup } from "./SearchChoices";
-import { MatchRank, matchName, matchRank } from "../../features/search/match";
+import {
+  MatchRank,
+  matchedPositions,
+  matchName,
+  matchRank,
+  rankTerms,
+} from "../../features/search/match";
 import { settingsSections } from "../settings-sections";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -40,6 +46,14 @@ const noSnapshot = () => null;
 function matchSection(label: string, needle: string) {
   const found = matchName(label, needle);
   return found && found.rank <= MatchRank.wordRuns ? found : undefined;
+}
+
+/** The rank of a match no looser than `cap`, else Infinity. Text that is not
+ * the row's own name is capped: a sentence holds most short words, and many
+ * names, as letters merely in order. */
+function rankWithin(label: string, needle: string, cap: MatchRank) {
+  const rank = matchRank(label, needle);
+  return rank !== undefined && rank <= cap ? rank : Infinity;
 }
 
 function controlDestination(
@@ -126,15 +140,17 @@ export function useSearchSettings({
         client?.memberships.find(({ id }) => id === client.selected),
       ).groups.flatMap((group) =>
         group.sections.flatMap((section) => {
-          const match = matchSection(section.label, needle);
           // A group label such as "Buzz" or "Community" names many sections,
           // so it ranks a step behind a section's own label, as a plugin's
-          // category does.
-          const rank = Math.min(
-            match?.rank ?? Infinity,
-            (matchSection(group.label, needle)?.rank ?? Infinity) + 1,
+          // category does. Each typed word may match either.
+          const rank = rankTerms(needle, (text) =>
+            Math.min(
+              matchSection(section.label, text)?.rank ?? Infinity,
+              (matchSection(group.label, text)?.rank ?? Infinity) + 1,
+            ),
           );
-          if (!Number.isFinite(rank)) return [];
+          if (rank === undefined) return [];
+          const matches = matchedPositions(section.label, needle, matchSection);
           return [
             {
               key: "search-section-" + section.id,
@@ -142,7 +158,7 @@ export function useSearchSettings({
               detail: group.label,
               icon: section.icon ?? GearIcon,
               rank,
-              ...(match?.positions.length ? { matches: match.positions } : {}),
+              ...(matches?.length ? { matches } : {}),
               run: () => openSection(section.id),
             },
           ];
@@ -151,12 +167,14 @@ export function useSearchSettings({
     : [];
   const controls = entries.flatMap((entry) => {
     if (!(entry.id === "mode" ? appearance : notifications)) return [];
-    const rank = Math.min(
-      matchRank(entry.label, needle) ?? Infinity,
-      matchRank(entry.section, needle) ?? Infinity,
-      (matchRank(entry.keywords + " settings", needle) ?? Infinity) + 1,
+    const rank = rankTerms(needle, (text) =>
+      Math.min(
+        matchRank(entry.label, text) ?? Infinity,
+        matchRank(entry.section, text) ?? Infinity,
+        rankWithin(entry.keywords + " settings", text, MatchRank.substring) + 1,
+      ),
     );
-    if (!Number.isFinite(rank)) return [];
+    if (rank === undefined) return [];
     const key = "search-setting-" + entry.id;
     return [
       {
@@ -220,13 +238,18 @@ export function useSearchSettings({
               pluginCategoryDefinitions.find(
                 (item) => item.id === plugin.manifest.discovery?.category,
               )?.label ?? "Other";
-            const rank = Math.min(
-              matchRank(plugin.manifest.name, needle) ?? Infinity,
-              (matchRank(category, needle) ?? Infinity) + 1,
-              (matchRank("plugins " + plugin.manifest.description, needle) ??
-                Infinity) + 2,
+            const rank = rankTerms(needle, (text) =>
+              Math.min(
+                matchRank(plugin.manifest.name, text) ?? Infinity,
+                rankWithin(category, text, MatchRank.wordRuns) + 1,
+                rankWithin(
+                  "plugins " + plugin.manifest.description,
+                  text,
+                  MatchRank.substring,
+                ) + 2,
+              ),
             );
-            if (!Number.isFinite(rank)) return [];
+            if (rank === undefined) return [];
             const restricted =
               plugin.source === "bundled" &&
               (plugin.manifest.id === "buzz.moderation" ||

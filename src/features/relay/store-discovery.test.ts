@@ -1376,6 +1376,72 @@ it("finds public channels by the joined-channel name rule, not only by substring
   expect(h.pending).toHaveLength(0);
 });
 
+it("finds public channels by per-term word runs after whole-query matches, when asked", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `11500000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const page = [
+    open(0, "team-launch-planning-notes"),
+    open(1, "notes tlp chat"),
+    open(2, "release-notes"),
+    open(3, "community"),
+  ];
+  const done = h.channels.searchPublic?.("notes tlp", { terms: true });
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  const resolve = await h.next(39000);
+  // Only the names that hold both words are resolved.
+  expect([...(resolve.filters[0]?.["#d"] ?? [])].sort()).toEqual([
+    id(0),
+    id(1),
+  ]);
+  resolve.respond(page.slice(0, 2));
+  // The name that starts with the text, then the one holding its words apart.
+  const order = ["notes tlp chat", "team-launch-planning-notes"];
+  expect((await done)?.channels.map(({ name }) => name)).toEqual(order);
+  const kept = (rule?: { exact?: boolean; terms?: boolean }) =>
+    h.channels.matchPublic?.("notes tlp", rule).map(({ name }) => name);
+  expect(kept({ terms: true })).toEqual(order);
+  // A caller that did not ask keeps only the whole-query match.
+  expect(kept()).toEqual(order.slice(0, 1));
+  // An exact lookup names one channel by its whole name, never by its words.
+  expect(kept({ exact: true })).toEqual([]);
+  expect(kept({ exact: true, terms: true })).toEqual([]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("resolves no public channel found only word by word unless asked", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `11700000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const page = [
+    open(0, "team-launch-planning-notes"),
+    open(1, "notes tlp chat"),
+  ];
+  // As the composer's `#` completion asks: it would discard "team-launch-planning-notes".
+  const done = h.channels.searchPublic?.("notes tlp");
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  const resolve = await h.next(39000);
+  // The name holding the words apart costs no metadata or roster read.
+  expect(resolve.filters[0]?.["#d"]).toEqual([id(1)]);
+  resolve.respond(page.slice(1));
+  expect((await done)?.channels.map(({ name }) => name)).toEqual([
+    "notes tlp chat",
+  ]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("orders public matches by the shared ranks, best first", async () => {
   const h = setup();
   h.channels.ensureList();

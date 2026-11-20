@@ -3430,6 +3430,9 @@ Command-K, so a late search result never moves the first row; when joined
 matches would fill the 20 rows, five stay reserved for open channels. Namesakes
 include their channel IDs. A query containing a space completes only names it
 prefixes, as person names do, so ordinary prose after `#name` closes the popup.
+Command-K also asks for a per-term fallback, such as `notes tlp` finding
+`team-launch-planning-notes` by word runs for `tlp`. Completion does not ask
+for that fallback, so fallback-only candidates are not read or resolved for it.
 Empty ready results hide the popup. Loading (only while the channel list is
 loading), open-channel search and explicit error/retry states stay visible; a
 failed open-channel search keeps joined matches and offers a retry. When the

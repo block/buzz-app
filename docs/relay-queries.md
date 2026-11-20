@@ -425,8 +425,15 @@ If the directory fails, an in-flight provisional lookup can still supply rows
 before the error; a stalled lookup then waits for its existing transport timeout.
 Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
-word runs, then every typed word in any order), so `buzz community` finds
-`buzz-community`.
+word runs, then every typed word in any order), so `buzz community` and
+`community buzz` find `buzz-community`.
+Command-K also asks for the per-term fallback (`terms`): when the whole typed
+text matches no name that way, each space-separated term is tried by the same
+rule (`rankTerms`). For example, `notes tlp` finds
+`team-launch-planning-notes` through word runs for `tlp`. Those names rank
+after every whole-query match. `#` completion does not ask for this fallback,
+and an exact lookup only matches the exact name; neither resolves fallback-only
+candidates.
 The best eight are resolved through the same exact `resolve` path as message
 hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays

@@ -856,6 +856,17 @@ Quitting Buzz also turns it off.
   slower results arrive until you move the highlight; after that they stay
   put and later groups join at the end. The panel and key hints hide in
   narrow windows.
+- **Several words in search**: search also finds a channel, direct message,
+  person, page, setting or plugin that has every word you type, in any order.
+  `community buzz` finds `#buzz-community`, `fixture alice` finds Alice
+  Fixture, and `dark settings` finds **Color mode** through its keywords.
+  Results that match the text as typed stay first. People come from the
+  profiles already loaded on this device and from the community directory,
+  which is asked for the text as typed, so someone you have not met may need
+  their name typed in order. Choosing a channel for a workflow and linking an
+  issue or pull request match words the same way. Typing `#channel` or
+  `@name` in a message does not: after a space, the words must continue the
+  name.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat

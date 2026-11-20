@@ -10,7 +10,13 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GitPullRequestIcon } from "../../shared/design-system/icons/index";
 import type { ComposerToolProps } from "../../features/conversation/contracts";
-import { matchName } from "../../features/search/match";
+import {
+  MatchRank,
+  matchedPositions,
+  matchName,
+  matchRank,
+  rankTerms,
+} from "../../features/search/match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import {
@@ -26,6 +32,13 @@ import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./ResourcePicker.module.css";
 
 const kinds = { issue: "Issue", pr: "Pull request" } as const;
+/** Text found only in the repository name: after every title rank. */
+const REPOSITORY_ONLY = MatchRank.words + 1;
+/** A title's contiguous match, the only kind the picker underlines. */
+const titleMatch = (label: string, text: string) => {
+  const match = matchName(label, text);
+  return match && match.rank <= MatchRank.substring ? match : undefined;
+};
 type Item = {
   type: keyof typeof kinds;
   id: string;
@@ -169,20 +182,31 @@ export function ResourcePicker({
     setOpen(false);
   }, [disabled]);
   const query = search.trim().toLowerCase();
-  // The same items as before match. Order by how well the title matches,
-  // as the other pickers do: exact, then prefix, then word start, then the
-  // rest, newest first within each rank. A repository-only match comes last.
+  // An item matches when its title and repository name hold the typed text
+  // or, failing that, each typed word (`rankTerms`). Order by how well the
+  // title matches, as the other pickers do: exact, then prefix, then word
+  // start, then the rest, newest first within each rank, and a
+  // repository-only match last. Rows that hold the words only apart follow,
+  // in the same order.
   const shown =
     items.status === "ready"
       ? items.items
-          .filter((item) =>
-            `${item.label} ${item.repository.name}`
-              .toLowerCase()
-              .includes(query),
-          )
-          .map((item) => {
-            const match = matchName(item.label, query);
-            return { item, match, rank: match?.rank ?? Number.MAX_VALUE };
+          .flatMap((item) => {
+            const text = `${item.label} ${item.repository.name}`.toLowerCase();
+            const rank = rankTerms(query, (part) =>
+              text.includes(part)
+                ? (matchRank(item.label, part) ?? REPOSITORY_ONLY)
+                : undefined,
+            );
+            return rank === undefined
+              ? []
+              : [
+                  {
+                    item,
+                    matches: matchedPositions(item.label, query, titleMatch),
+                    rank,
+                  },
+                ];
           })
           .sort((a, b) => a.rank - b.rank)
       : [];
@@ -373,7 +397,7 @@ export function ResourcePicker({
                   id={highlight.listId}
                   {...highlight.listProps}
                 >
-                  {shown.map(({ item, match }) => (
+                  {shown.map(({ item, matches }) => (
                     <NavigationItem
                       variant="option"
                       data-resource-choice=""
@@ -392,11 +416,7 @@ export function ResourcePicker({
                           <span>
                             <MatchedLabel
                               label={item.label}
-                              positions={
-                                query && match && match.rank <= 3
-                                  ? match.positions
-                                  : undefined
-                              }
+                              positions={query ? matches : undefined}
                             />
                           </span>
                           <small className="text-caption text-subtle">

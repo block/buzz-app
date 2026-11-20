@@ -11537,6 +11537,118 @@ describe("repository resource picker", () => {
     expect(choice).toHaveTextContent("Checking…");
   });
 
+  it("finds a title by typed words apart, and by words in the repository name", async () => {
+    const issue = (id: string, title: string, created_at: number) => ({
+      ...item,
+      id: id.repeat(64),
+      created_at,
+      content: title,
+      tags: [
+        ["a", repository.address],
+        ["subject", title],
+      ],
+    });
+    const p = picker(undefined, [
+      issue("a", "Relogin bug", 9),
+      issue("b", "Page for login", 5),
+      issue("c", "Login page", 1),
+    ]);
+    await p.open();
+    const titles = async () =>
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((choice) => choice.getAttribute("aria-label")?.split(",")[0]);
+    const search = screen.getByRole("searchbox");
+    // The title that holds the text whole leads the one that holds its words
+    // apart. "Relogin bug" has no "page".
+    await p.h.user.type(search, "login page");
+    expect(await titles()).toEqual(["Login page", "Page for login"]);
+    expect(
+      [
+        ...screen
+          .getByRole("button", { name: /^Page for login,/ })
+          .querySelectorAll("mark"),
+      ].map((mark) => mark.textContent),
+    ).toEqual(["Page", "login"]);
+    // A word may be in the repository name; such a row comes last, as a
+    // repository-only match does, and underlines only the title's word.
+    await p.h.user.clear(search);
+    await p.h.user.type(search, "game relogin");
+    expect(await titles()).toEqual(["Relogin bug"]);
+    expect(
+      [
+        ...screen
+          .getByRole("button", { name: /^Relogin bug,/ })
+          .querySelectorAll("mark"),
+      ].map((mark) => mark.textContent),
+    ).toEqual(["Relogin"]);
+    // One word lists what it did: contiguous text only.
+    await p.h.user.clear(search);
+    await p.h.user.type(search, "lgn");
+    expect(
+      screen.queryAllByRole("button", { name: /, Issue in Game repo$/ }),
+    ).toEqual([]);
+  });
+
+  it("lists a repository that holds the typed text before a title that holds its words apart", async () => {
+    const notes = {
+      ...repository,
+      dtag: "release-notes",
+      address: `30617:${resourceOwner}:release-notes`,
+      name: "Release notes",
+    };
+    const other = {
+      ...repository,
+      dtag: "notes",
+      address: `30617:${resourceOwner}:notes`,
+      name: "Notes",
+    };
+    const issue = (
+      id: string,
+      title: string,
+      created_at: number,
+      address = repository.address,
+    ) => ({
+      ...item,
+      id: id.repeat(64),
+      created_at,
+      content: title,
+      tags: [
+        ["a", address],
+        ["subject", title],
+      ],
+    });
+    const p = picker(
+      () =>
+        Promise.resolve({
+          status: "home",
+          repositories: [repository, notes, other],
+        }),
+      [
+        issue("a", "Release checklist", 9, other.address),
+        issue("b", "Notes for release", 7),
+        issue("c", "Fix typo", 5, notes.address),
+        issue("d", "Draft release notes", 1),
+      ],
+    );
+    await p.open();
+    const titles = async () =>
+      (await screen.findAllByRole("button", { name: /, Issue in / })).map(
+        (choice) => choice.getAttribute("aria-label")?.split(",")[0],
+      );
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "release notes");
+    // Whole text: in the title, then only in the repository name. Words
+    // apart: all in the title, then one only in the repository name. The
+    // creation times run against this order.
+    expect(await titles()).toEqual([
+      "Draft release notes",
+      "Fix typo",
+      "Notes for release",
+      "Release checklist",
+    ]);
+  });
+
   it("highlights and announces the row that Tab focuses", async () => {
     const p = picker(undefined, [
       item,

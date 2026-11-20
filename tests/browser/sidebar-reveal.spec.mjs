@@ -285,29 +285,62 @@ test("a refresh does not follow the only sampled row when it leaves view", async
   await expect(nearby).toBeInViewport({ ratio: 1 });
 });
 
-test("a refresh keeps the nearby row when two sampled rows move to the top", async ({
+for (const count of [2, 3]) {
+  test(`a refresh keeps the nearby row when ${count} rows move to the top`, async ({
+    page,
+  }) => {
+    await open(page);
+    await update(page, { mounted: true, anchored: true });
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    const nearby = sidebar.locator(`[data-row="${4 + count}"]`);
+    await expect(nearby).toBeAttached();
+    const before = await sidebar.evaluate((viewport) => {
+      viewport.scrollTop = 160;
+      return viewport.scrollTop;
+    });
+    await settle(page);
+
+    await page.evaluate((count) => {
+      const rows = window.sidebar.rows(50);
+      const promoted = rows.splice(4, count);
+      window.sidebar.update({ rows: [...promoted, ...rows] });
+    }, count);
+    await expect(sidebar.locator("[data-row]").first()).toHaveText("Row 4");
+    await settle(page);
+    expect(await sidebar.evaluate((viewport) => viewport.scrollTop)).toBe(
+      before,
+    );
+    await expect(nearby).toBeInViewport({ ratio: 1 });
+  });
+}
+
+test("a height change above the viewport keeps the visible row in place", async ({
   page,
 }) => {
   await open(page);
   await update(page, { mounted: true, anchored: true });
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const nearby = sidebar.locator('[data-row="6"]');
-  await expect(nearby).toBeAttached();
-  const before = await sidebar.evaluate((viewport) => {
+  const row = sidebar.locator('[data-row="4"]');
+  await expect(row).toBeAttached();
+  await sidebar.evaluate((viewport) => {
     viewport.scrollTop = 160;
-    return viewport.scrollTop;
   });
   await settle(page);
+  const position = () =>
+    row.evaluate(
+      (row) =>
+        row.getBoundingClientRect().top -
+        row.closest("nav").getBoundingClientRect().top,
+    );
+  const before = await position();
 
-  await page.evaluate(() => {
-    const rows = window.sidebar.rows(50);
-    const promoted = rows.splice(4, 2);
-    window.sidebar.update({ rows: [...promoted, ...rows] });
+  await sidebar.locator('[data-row="0"]').evaluate((row) => {
+    row.style.height = "280px";
   });
-  await expect(sidebar.locator("[data-row]").first()).toHaveText("Row 4");
   await settle(page);
-  expect(await sidebar.evaluate((viewport) => viewport.scrollTop)).toBe(before);
-  await expect(nearby).toBeInViewport({ ratio: 1 });
+  expect(await position()).toBe(before);
 });
 
 test("a refresh anchors to a surviving Team row while removed rows fade", async ({

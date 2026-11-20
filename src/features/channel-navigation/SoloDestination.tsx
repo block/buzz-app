@@ -563,7 +563,11 @@ function useDestinationFocus(
         const inView =
           frame &&
           available.find((candidate) => {
-            if (!viewport?.contains(candidate)) return false;
+            if (
+              !candidate.hasAttribute("data-solo-destination-id") ||
+              !viewport?.contains(candidate)
+            )
+              return false;
             const box = candidate.getBoundingClientRect();
             return (
               box.height > 0 &&
@@ -571,8 +575,7 @@ function useDestinationFocus(
               box.bottom <= frame.bottom
             );
           });
-        // A refresh can move the next logical row offscreen. Prefer focus
-        // that the user can see without losing their place in the sidebar.
+        // Prefer a visible surviving row. Headings keep their fallback order.
         inView?.focus({ preventScroll: true });
         if (document.activeElement !== document.body) return;
         for (const candidate of available) {

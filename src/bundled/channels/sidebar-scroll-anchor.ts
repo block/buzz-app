@@ -18,7 +18,7 @@ export function sidebarScrollAnchor(
   adjust: (top: number) => void,
 ) {
   let scrollTop = 0;
-  let anchors: { row: Element; offset: number }[] = [];
+  let anchors: { row: Element; offset: number; fallback: boolean }[] = [];
   let inputFrame = 0;
   let pointerDown = false;
   const events = new AbortController();
@@ -68,11 +68,17 @@ export function sidebarScrollAnchor(
     if (scrollTop <= 0) return;
 
     const { left, top, width } = viewport.getBoundingClientRect();
-    const bottom = top + Math.min(viewport.clientHeight, 160);
+    const bottom = top + viewport.clientHeight;
+    const primaryBottom = Math.min(top + 160, bottom);
     const x = left + width / 2;
-    // Hit test the visible strip instead of measuring the entire roster on
-    // each scroll. Skip to the next row once we hit one.
-    for (let y = Math.max(0, top + 1); y < bottom && anchors.length < 3; ) {
+    // Sample two bounded strips. The lower row can survive a batch promotion
+    // that moves all three top samples.
+    let fallback = false;
+    for (let y = Math.max(0, top + 1); y < bottom; ) {
+      if (!fallback && (anchors.length === 3 || y >= primaryBottom)) {
+        fallback = true;
+        y = Math.max(y, bottom - 80);
+      }
       const row = document
         .elementsFromPoint(x, y)
         // A Solo link can cover just one part of its rendered row.
@@ -90,8 +96,13 @@ export function sidebarScrollAnchor(
       }
       const rect = row.getBoundingClientRect();
       const offset = layoutTop(row, rect) - top;
-      if (offset >= 0 && offset + rect.height <= bottom - top)
-        anchors.push({ row, offset });
+      if (
+        offset >= 0 &&
+        offset + rect.height <= (fallback ? bottom : primaryBottom) - top
+      ) {
+        anchors.push({ row, offset, fallback });
+        if (fallback) break;
+      }
       y = Math.max(y + 1, rect.bottom + 1);
     }
   }
@@ -104,7 +115,7 @@ export function sidebarScrollAnchor(
     if (anchors.length && (current === scrollTop || !userInput)) {
       const top = viewport.getBoundingClientRect().top;
       const bottom = top + viewport.clientHeight;
-      const positions = anchors.flatMap(({ row, offset }) => {
+      const positions = anchors.flatMap(({ row, offset, fallback }) => {
         // Motion can retain a removed row as an inert element during its exit.
         if (!viewport.contains(row) || row.closest("[inert]")) return [];
         const rect = row.getBoundingClientRect();
@@ -114,6 +125,7 @@ export function sidebarScrollAnchor(
               {
                 shift: rowTop - top - offset,
                 outside: rowTop + rect.height <= top || rowTop >= bottom,
+                fallback,
               },
             ]
           : [];
@@ -133,10 +145,14 @@ export function sidebarScrollAnchor(
         if (slideSettled) capture();
         return;
       }
-      const nearby = positions.filter(({ outside }) => !outside);
-      const shifts = (nearby.length ? nearby : positions).map(
-        ({ shift }) => shift,
+      const primary = positions.filter(({ fallback }) => !fallback);
+      const nearby = primary.filter(({ outside }) => !outside);
+      const farther = positions.find(
+        ({ fallback, outside }) => fallback && !outside,
       );
+      const shifts = (
+        nearby.length ? nearby : farther ? [farther] : primary
+      ).map(({ shift }) => shift);
       // A single task can move past otherwise stationary neighbors. Use the
       // middle shift when three candidates remain so it cannot pull the viewport.
       // With two, prefer the row that moved less in the content.

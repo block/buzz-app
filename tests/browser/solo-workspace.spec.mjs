@@ -838,7 +838,7 @@ test.describe("Share access profiles", () => {
     );
     await page
       .locator(`[data-message-id="${link.id}"]`)
-      .getByRole("link", { name: "Open Chat: Beta", exact: true })
+      .getByRole("link", { name: "Open Beta", exact: true })
       .click();
     const beta = page.getByRole("tab", { name: "Beta", exact: true });
     await expect(beta).toHaveAttribute("aria-selected", "true");

@@ -5,10 +5,10 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
 import english from "@emoji-mart/data/i18n/en.json";
-import { Data, Picker, SearchIndex } from "emoji-mart";
+import { Data, FrequentlyUsed, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
-import { customEmojiId } from "./emoji-usage";
+import { customEmojiId, seedEmojiUsage } from "./emoji-usage";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import {
   SKIN_TONE_SLOT,
@@ -145,15 +145,8 @@ export function mountEmojiMart({
       },
     ];
   });
-  // Restore Mart's default Frequent row if storage contains a poisoned empty map.
-  try {
-    if (localStorage.getItem("emoji-mart.frequently") === "{}") {
-      localStorage.removeItem("emoji-mart.frequently");
-      localStorage.removeItem("emoji-mart.last");
-    }
-  } catch {
-    /* Like Mart, selection works without localStorage. */
-  }
+  // Also restores the default row if storage contains a poisoned empty map.
+  seedEmojiUsage(FrequentlyUsed.DEFAULTS);
   const picker = new Picker({
     data,
     custom: emojis.length

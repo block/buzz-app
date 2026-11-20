@@ -193,10 +193,10 @@ function rankEmoji(
     ...strong,
     ...combined
       .filter((item) => !promoted.has(item.id))
-      .map((item) => ({ item, tier: 2 })),
+      .map((item) => ({ item, tier: semanticIds.has(item.id) ? 2 : 3 })),
   ]
-    // Within exact, prefix and other matches, the more often chosen emoji
-    // comes first; ties and unused emoji keep their query order.
+    // Within exact, prefix, name or keyword, and fuzzy matches, the more often
+    // chosen emoji comes first; ties and unused emoji keep their query order.
     .sort((a, b) => a.tier - b.tier || uses(b.item.id) - uses(a.item.id))
     .map(({ item }) => item);
   const bounded = Number.isFinite(limit)

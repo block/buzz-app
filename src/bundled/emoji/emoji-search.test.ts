@@ -153,6 +153,20 @@ it("Unicode completions use the picker's saved default skin tone", async () => {
   }
 });
 
+it("keeps alias and keyword matches ahead of often chosen fuzzy matches", async () => {
+  const first = async (query: string, uses?: (id: string) => number) =>
+    (await searchEmoji(query, [], uses))[0]?.shortcode;
+  // `hate` and `poop` are a keyword of 😡 and an alias of 💩, and only
+  // subsequences of the chosen shortcodes.
+  for (const [query, fuzzy] of [
+    ["hate", "unicode/heart_eyes"],
+    ["poop", "unicode/person_in_lotus_position"],
+  ] as const) {
+    const plain = await first(query);
+    expect(await first(query, (id) => (id === fuzzy ? 8 : 0))).toBe(plain);
+  }
+});
+
 it("puts often chosen emoji first within exact, prefix and other matches", async () => {
   const shortcodes = async (query: string, uses?: (id: string) => number) =>
     (await searchEmoji(query, [], uses)).map((item) => item.shortcode);

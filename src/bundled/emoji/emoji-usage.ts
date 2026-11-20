@@ -1,5 +1,6 @@
 // Picker and autocomplete share Emoji Mart's usage store: its Frequently used
-// row and the counts that rank colon suggestions.
+// row and the counts that rank colon suggestions. Mart keeps at most the
+// picker's two rows, plus the latest choice, whenever a picker opens.
 const STORE = "emoji-mart.frequently";
 
 /** The picker's ID for a community emoji, scoped like its catalog. */
@@ -14,7 +15,26 @@ function usageId(scope: string, id: string) {
   return undefined;
 }
 
-/** How often each suggestion was chosen; 0 when unknown or unreadable. */
+/** Seed Mart's default row with weights below one choice before Mart reads
+ * an empty store; Mart's own seed would save its defaults as whole choices. */
+export function seedEmojiUsage(defaults: readonly string[]) {
+  try {
+    const stored = localStorage.getItem(STORE);
+    if (stored !== null && stored !== "{}") return;
+    const seed = Object.fromEntries(
+      defaults.map((id, index) => [
+        id,
+        (defaults.length - index) / (defaults.length + 1),
+      ]),
+    );
+    localStorage.setItem(STORE, JSON.stringify(seed));
+    localStorage.removeItem("emoji-mart.last");
+  } catch {
+    /* Like Mart, selection works without localStorage. */
+  }
+}
+
+/** How many times each suggestion was chosen; 0 when unknown or unreadable. */
 export function emojiUsage(scope: string): (id: string) => number {
   let counts: Record<string, unknown> = {};
   try {
@@ -27,7 +47,10 @@ export function emojiUsage(scope: string): (id: string) => number {
   return (id) => {
     const key = usageId(scope, id);
     const count = key && Object.hasOwn(counts, key) ? counts[key] : 0;
-    return typeof count === "number" && count > 0 ? count : 0;
+    // Whole choices only: default seeds stay below one.
+    return typeof count === "number" && Number.isFinite(count) && count >= 1
+      ? Math.floor(count)
+      : 0;
   };
 }
 
@@ -36,7 +59,10 @@ export function recordEmojiUsage(scope: string, id: string) {
   const key = usageId(scope, id);
   if (!key) return;
   void import("emoji-mart")
-    .then(({ FrequentlyUsed }) => FrequentlyUsed.add({ id: key }))
+    .then(({ FrequentlyUsed }) => {
+      seedEmojiUsage(FrequentlyUsed.DEFAULTS);
+      FrequentlyUsed.add({ id: key });
+    })
     .catch(() => {
       /* Insertion already happened; usage is best effort, like Mart's own. */
     });

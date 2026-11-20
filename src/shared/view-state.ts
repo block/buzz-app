@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { traceDraft } from "./draft-diagnostics";
 
 // View intent is durable and explicitly partitioned; connection generations are not storage keys.
@@ -249,6 +251,7 @@ export function listDraftViews(
 }
 
 const conflictDraftPrefix = "buzz-draft-conflict.v1:";
+const draftDeletionPrefix = "buzz-draft-delete.v1:";
 const viewScopePurgeKey = (scope: string) =>
   `buzz-view-purge.v1:${JSON.stringify(scope)}`;
 
@@ -263,6 +266,18 @@ export function viewScopePurgeToken(scope: string) {
 
 export function conflictDraftKey(scope: string, key: string) {
   return `${conflictDraftPrefix}${JSON.stringify([scope, key])}`;
+}
+
+// Exact deletion receipts outlive a composer and carry no draft text.
+const draftDeletionKey = (scope: string, key: string, revision: string) =>
+  `${draftDeletionPrefix}${JSON.stringify([scope, key, bytesToHex(sha256(utf8ToBytes(revision)))])}`;
+
+export function draftDeletionToken(
+  scope: string,
+  key: string,
+  revision: string,
+) {
+  return localStorage.getItem(draftDeletionKey(scope, key, revision));
 }
 
 function clearScopedStorage(storage: Storage, prefix: string) {
@@ -287,6 +302,7 @@ export function clearViewScope(scope: string) {
     retry = true;
   }
   clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
+  clearScopedStorage(localStorage, `${draftDeletionPrefix}${keyPrefix}`);
   try {
     if (retry) localStorage.setItem(purgeKey, token);
   } finally {
@@ -333,6 +349,12 @@ export function clearView(scope: string, ...keys: string[]) {
   for (const key of keys) {
     const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
     const revision = localStorage.getItem(storageKey);
+    // Leave the draft available to retry if the deletion receipt cannot be saved.
+    if (revision !== null && draftCoordinates(key))
+      localStorage.setItem(
+        draftDeletionKey(scope, key, revision),
+        crypto.randomUUID(),
+      );
     localStorage.removeItem(storageKey);
     if (localStorage.getItem(storageKey) !== null)
       throw new Error("Could not clear the saved message. Try again.");

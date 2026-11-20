@@ -134,6 +134,7 @@ import {
 import type { RelaySession } from "../relay/session";
 import {
   conflictDraftKey,
+  draftDeletionToken,
   parseDraftView,
   readView,
   writeView,
@@ -690,10 +691,17 @@ function Composer({
       const raw = sessionStorage.getItem(conflictKey);
       if (!raw) return;
       const split = raw.indexOf("\n");
-      if (split < 0 || raw.slice(0, split) !== (purgeToken ?? ""))
-        return { stale: raw };
+      if (split < 0) return { stale: raw };
       const savedRevision = raw.slice(split + 1);
-      if (savedRevision === initialRevision) return { stale: raw };
+      if (
+        savedRevision === initialRevision ||
+        raw.slice(0, split) !==
+          JSON.stringify([
+            purgeToken,
+            draftDeletionToken(scope, draftKey, savedRevision),
+          ])
+      )
+        return { stale: raw };
       const saved = parseDraftView(savedRevision);
       if (saved && saved !== "oversized")
         return { draft: mentionDraft(saved.value) };
@@ -725,15 +733,20 @@ function Composer({
     if (purgeToken === undefined || viewScopePurgeToken(scope) !== purgeToken)
       return;
     try {
+      const revision = JSON.stringify(pending.draft);
+      const history = [
+        purgeToken,
+        draftDeletionToken(scope, draftKey, revision),
+      ];
       sessionStorage.setItem(
         conflictKey,
-        `${purgeToken ?? ""}\n${JSON.stringify(pending.draft)}`,
+        `${JSON.stringify(history)}\n${revision}`,
       );
       pending.saved = pending.draft;
     } catch {
       // Keep the edit available in the mounted editor if storage fails.
     }
-  }, [conflictKey, purgeToken, scope]);
+  }, [conflictKey, draftKey, purgeToken, scope]);
   function forgetConflict() {
     if (!conflictDraft.current) return;
     conflictDraft.current = undefined;

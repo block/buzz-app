@@ -126,7 +126,7 @@ import {
   sidebarHome,
   sidebarDropRowKinds,
   orderContributedSidebarSections,
-  compareRecent,
+  recentAt,
 } from "./sidebar-sections";
 import { activityTranscript } from "./working-agents";
 import { SidebarContributionSection } from "../../features/channel-navigation/SidebarContributionSection";
@@ -292,7 +292,7 @@ export function ChannelInventory({
     preview: pluginSorted,
     // Recent order is the only reader of activity then; most messages land in
     // a chat that already leads, so they leave the sidebar alone.
-    ...(pluginSorted || activeFiltered ? {} : { order: compareRecent }),
+    ...(pluginSorted || activeFiltered ? {} : { rank: recentAt }),
   });
   // The session reads activity only for saved sorts; Solo's default needs it
   // too, but only while there are Solo chats to order.

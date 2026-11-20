@@ -28,9 +28,10 @@ export function useChannelList(queries: ChannelQueries) {
  * The roster without its live activity: previews and activity replace the list
  * on every message, so a ready list that changed only those fields keeps the
  * previous snapshot. `activity` keeps `lastActivityAt` and `activityKnown`
- * changes for all rows or for rows that match a predicate. With `order`, those
- * changes are kept only when they reorder the rows `activity` selects, so a
- * list sorted by `order` stays correct. `preview` keeps `preview` changes. Rows
+ * changes for all rows or for rows that match a predicate. With `rank`, those
+ * changes are kept only when they change how the rows `activity` selects rank:
+ * their order by rank, or which of them tie, since callers break ties by keys
+ * this hook cannot see. `preview` keeps `preview` changes. Rows
  * can read their own preview with useLiveChannelSummary.
  */
 export function useChannelRoster(
@@ -38,11 +39,11 @@ export function useChannelRoster(
   {
     activity = false,
     preview = false,
-    order,
+    rank,
   }: {
     activity?: boolean | ((channel: ChannelSummary) => boolean);
     preview?: boolean;
-    order?: Order;
+    rank?: Rank;
   } = {},
 ) {
   useEffect(() => queries.ensureList(), [queries]);
@@ -55,7 +56,7 @@ export function useChannelRoster(
     queries: ChannelQueries;
     ignored: ReadonlySet<string>;
     activityFilter: typeof activityFilter;
-    order: typeof order;
+    rank: typeof rank;
     list: ChannelList;
   }>(undefined);
   const snapshot = useCallback(() => {
@@ -65,55 +66,64 @@ export function useChannelRoster(
       previous?.queries === queries &&
       previous.ignored === ignored &&
       previous.activityFilter === activityFilter &&
-      previous.order === order &&
+      previous.rank === rank &&
       previous.list.activityStatus === next.activityStatus &&
       previous.list.error === next.error &&
       (sameRoster(previous.list, next, (channel) =>
         activityFilter?.(channel) ? ignoredWithActivity : ignored,
       ) ||
-        (order !== undefined &&
+        (rank !== undefined &&
           activity !== false &&
           sameRoster(previous.list, next, () => ignoredWithoutActivity) &&
-          orderOf(previous.list, activityFilter, order) ===
-            orderOf(next, activityFilter, order)))
+          rankingOf(previous.list, activityFilter, rank) ===
+            rankingOf(next, activityFilter, rank)))
     )
       return previous.list;
-    last.current = { queries, ignored, activityFilter, order, list: next };
+    last.current = { queries, ignored, activityFilter, rank, list: next };
     return next;
   }, [
     queries,
     ignored,
     activityFilter,
-    order,
+    rank,
     activity,
     ignoredWithActivity,
     ignoredWithoutActivity,
   ]);
   return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
 }
-type Order = (a: ChannelSummary, b: ChannelSummary) => number;
+type Rank = (channel: ChannelSummary) => number | undefined;
 type Select = ((channel: ChannelSummary) => boolean) | undefined;
-const orders = new WeakMap<ChannelList, Map<Order, Map<Select, string>>>();
-function orderOf(list: ChannelList, select: Select, order: Order) {
-  let byOrder = orders.get(list);
-  if (!byOrder) {
-    byOrder = new Map();
-    orders.set(list, byOrder);
+const rankings = new WeakMap<ChannelList, Map<Rank, Map<Select, string>>>();
+/** Selected ids highest rank first, grouped by tie; unranked last. */
+function rankingOf(list: ChannelList, select: Select, rank: Rank) {
+  let byRank = rankings.get(list);
+  if (!byRank) {
+    byRank = new Map();
+    rankings.set(list, byRank);
   }
-  let bySelect = byOrder.get(order);
+  let bySelect = byRank.get(rank);
   if (!bySelect) {
     bySelect = new Map();
-    byOrder.set(order, bySelect);
+    byRank.set(rank, bySelect);
   }
-  let ids = bySelect.get(select);
-  if (ids === undefined) {
-    ids = (select ? list.channels.filter(select) : [...list.channels])
-      .sort(order)
-      .map((channel) => channel.id)
+  let key = bySelect.get(select);
+  if (key === undefined) {
+    const groups = new Map<number, string[]>();
+    for (const channel of list.channels) {
+      if (select && !select(channel)) continue;
+      const value = rank(channel) ?? Number.NEGATIVE_INFINITY;
+      const group = groups.get(value);
+      if (group) group.push(channel.id);
+      else groups.set(value, [channel.id]);
+    }
+    key = [...groups]
+      .sort(([a], [b]) => b - a)
+      .map(([, ids]) => ids.sort().join(","))
       .join("\n");
-    bySelect.set(select, ids);
+    bySelect.set(select, key);
   }
-  return ids;
+  return key;
 }
 const listIndexes = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
 function listEntry(list: ChannelList, id: string) {

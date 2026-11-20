@@ -137,7 +137,7 @@ it("keeps the roster through preview and activity changes only while ready", () 
   expect(result.current).toBe(retried);
 });
 
-it("keeps activity changes with an order only when they reorder the selected channels", () => {
+it("keeps activity changes with a rank only when the selected channels' ranking changes", () => {
   let list: ChannelList = { status: "loading", channels: [] };
   const listeners = new Set<() => void>();
   const queries = {
@@ -153,10 +153,9 @@ it("keeps activity changes with an order only when they reorder the selected cha
     for (const listener of listeners) listener();
   };
   const solo = (channel: ChannelSummary) => channel.id !== "x";
-  const newest = (a: ChannelSummary, b: ChannelSummary) =>
-    (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0);
+  const rank = (channel: ChannelSummary) => channel.lastActivityAt;
   const { result } = renderHook(() =>
-    useChannelRoster(queries, { activity: solo, order: newest }),
+    useChannelRoster(queries, { activity: solo, rank }),
   );
   const at = (a: number, b: number, x: number): ChannelList => ({
     status: "ready",
@@ -172,12 +171,18 @@ it("keeps activity changes with an order only when they reorder the selected cha
   // The leading chat gets newer, and an unselected channel overtakes both.
   act(() => publish(at(5, 1, 9)));
   expect(result.current).toBe(ready);
-  const reordered = at(5, 6, 9);
-  act(() => publish(reordered));
-  expect(result.current).toBe(reordered);
+  // A tie leaves the order to the caller's tie-break, so it is published.
+  const tied = at(5, 5, 9);
+  act(() => publish(tied));
+  expect(result.current).toBe(tied);
+  const broken = at(5, 6, 9);
+  act(() => publish(broken));
+  expect(result.current).toBe(broken);
+  act(() => publish(at(5, 7, 1)));
+  expect(result.current).toBe(broken);
   const renamed: ChannelList = {
-    ...reordered,
-    channels: reordered.channels.map((channel) =>
+    ...broken,
+    channels: broken.channels.map((channel) =>
       channel.id === "a" ? { ...channel, name: "renamed" } : channel,
     ),
   };

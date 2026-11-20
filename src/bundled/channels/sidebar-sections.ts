@@ -75,7 +75,7 @@ function compareName(a: ChannelSummary, b: ChannelSummary) {
  * creation so a chat just started leads before its first message lands and
  * cannot step backward when that message is acknowledged. Channels with
  * neither follow, then by name. */
-function recentAt(channel: ChannelSummary) {
+export function recentAt(channel: ChannelSummary) {
   return channel.lastActivityAt !== undefined && channel.createdAt !== undefined
     ? Math.max(channel.lastActivityAt, channel.createdAt)
     : (channel.lastActivityAt ?? channel.createdAt);

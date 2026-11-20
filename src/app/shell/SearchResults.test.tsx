@@ -1709,6 +1709,8 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Most recent" }));
     const first = await request();
     expect(first.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    // The menu leaves the saved default alone.
+    expect(messageSortPreference()).toBe("relevance");
     const page1 = hits(20, 1700000100);
     const tail = page1.pop();
     assert(tail);
@@ -1803,8 +1805,6 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     );
     const reset = await request();
     expect(reset.filters).toEqual([text]);
-    // The menu leaves the saved default alone.
-    expect(messageSortPreference()).toBe("relevance");
 
     // A saved Most recent seeds each new opening; restart reads it too.
     localStorage.setItem("buzz-search-message-sort.v1", "newest");

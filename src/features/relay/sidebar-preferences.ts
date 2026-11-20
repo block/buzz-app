@@ -3,7 +3,6 @@ export type { SidebarSortMode } from "./sidebar-sort.ts";
 import {
   MAX_WORKSPACES,
   MAX_WORKSPACE_ASSIGNMENTS,
-  WORKSPACE_DEFAULT_ORDER,
   projectSidebarRecord,
   projectSidebarSort,
   workspaceTombstones,
@@ -111,13 +110,7 @@ export function workspaceBaseRecord(groups: SidebarGroups) {
       ? { legacyTemplates: groups.legacyTemplates }
       : {}),
   });
-  return {
-    version: 1,
-    ...normalized,
-    ...(normalized.sectionOrder?.length
-      ? { [WORKSPACE_DEFAULT_ORDER]: normalized.sectionOrder }
-      : {}),
-  };
+  return { version: 1, ...normalized };
 }
 
 export function decodeLegacyWorkspaceEnvelope(value: unknown): SidebarGroups {
@@ -150,11 +143,9 @@ export function workspaceRecordForWrite(
     ...groups,
     version: 1 as const,
     sectionOrder:
-      groups.sectionOrder === Reflect.get(payload, WORKSPACE_DEFAULT_ORDER)
-        ? []
-        : (groups.sectionOrder?.filter(
-            (key) => !key.startsWith("group:") || live.has(key.slice(6)),
-          ) ?? []),
+      groups.sectionOrder?.filter(
+        (key) => !key.startsWith("group:") || live.has(key.slice(6)),
+      ) ?? [],
   };
   if (previous.legacyImportClosed === true)
     return { ...layout, legacyImportClosed: true };

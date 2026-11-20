@@ -50,12 +50,7 @@ test("reload restores the selected conversation/groups before handshake and upda
     created_at: last.created_at,
     tags: [
       ...last.tags,
-      [
-        "imeta",
-        `url ${image}`,
-        "m image/svg+xml",
-        "dim 640x400",
-      ],
+      ["imeta", `url ${image}`, "m image/svg+xml", "dim 640x400"],
     ],
   });
   // Relay media needs the connection's proxy on web, so the cached session

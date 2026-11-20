@@ -4185,6 +4185,19 @@ html[data-keyboard-navigation] .activityExpansion {
   line-height: var(--text-body-sm--line-height);
   white-space: nowrap;
 }
+/* Three senders' stack is wider than the avatar lane: the text starts past
+   its last avatar's artwork, half the 44px stack, with a 4px gap. */
+.relayedHeader[data-senders="3"] {
+  padding-inline-start: max(
+    var(--relayed-text-start),
+    calc(
+      var(--relayed-avatar-center) +
+      var(--space-5) +
+      var(--space-half) +
+      var(--space-1)
+    )
+  );
+}
 .relayedHeader:hover {
   background: var(--affordance-subtle-hover);
 }

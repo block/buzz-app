@@ -2189,6 +2189,61 @@ it("observes a visible reply before its root resolves, then enables thread catch
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });
 
+it("a closed relayed group at the bottom catches up through its latest reply, same-second ties included", async () => {
+  vi.useFakeTimers();
+  const h = messagesHarness();
+  // Sent in the same second, so the id breaks the tie as the rows are shown.
+  const relayed = ["d", "e"].map((id) => ({
+    ...row,
+    id: id.repeat(64),
+    authorId: viewer,
+    content: `Relayed ${id}`,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    replyCount: 0,
+    createdAt: 2,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  h.snapshot.replies = relayed;
+  h.resize(600);
+  const catchUp = vi.fn(async () => {});
+  h.props.session = {
+    ...h.session,
+    unread: {
+      ...h.session.unread,
+      sync: () =>
+        ({ capability: "frontier-sync" }) as ReturnType<
+          RelaySession["unread"]["sync"]
+        >,
+      reading: () => ({
+        view() {},
+        observe: async () => {},
+        catchUp,
+        dispose() {},
+      }),
+      leave() {},
+    },
+  };
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  screen.getByRole("button", { name: "Close thread" }).focus();
+  await act(async () => {});
+  for (let frame = 0; frame < 3; frame++)
+    await act(() => vi.advanceTimersToNextFrame());
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(catchUp).toHaveBeenCalledWith(relayed[1]?.id, row.id);
+});
+
 it("inline Inbox reveal opts into exact reader and composes origin action without changing ordinary tab focus", () => {
   const h = messagesHarness();
   const headerAction = <button type="button">Open in channel</button>;
@@ -2894,6 +2949,49 @@ it("Back to a place inside a folded relayed group reopens that group at it", () 
     h.element.querySelector(`[data-message-id="${place.id}"]`),
   ).not.toBeNull();
   expect(h.element.scrollTop).toBe(100);
+});
+
+it("Back keeps a restored reply shown when it joins a relayed group later", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = (verified: boolean) =>
+    ["d", "e", "f"].map((id, index) => ({
+      ...threadReply(id, row.id),
+      authorId: viewer,
+      threadRootId: row.id,
+      replyCount: 0,
+      createdAt: 2 + index,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const place = relayed(false)[1];
+  if (!place) throw new Error("Missing relayed fixture");
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  // Restored before the relaying owner is verified: an ordinary reply.
+  h.snapshot.replies = relayed(false);
+  h.render();
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  // Verification folds it into a group, which opens around it.
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  // The reader can close it, and it stays closed.
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  );
+  h.snapshot.replies = [...relayed(true)];
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Show 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
 });
 
 it.each([

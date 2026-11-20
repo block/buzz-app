@@ -106,6 +106,7 @@ export function RelayedRunPreview({
         // Closed, this line shows the latest message, so it lets a reader at
         // the bottom catch up; opened, that message's own row does.
         data-preview-message-id={expanded ? undefined : last.id}
+        data-senders={Math.min(named.length, 3)}
       >
         <button
           type="button"

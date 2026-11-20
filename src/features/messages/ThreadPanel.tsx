@@ -40,6 +40,7 @@ import {
 import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
+import { compareMessages } from "../relay/message-order";
 import type { RelaySession } from "../relay/session";
 import {
   threadFailure,
@@ -131,6 +132,17 @@ export type ThreadPanelProps = {
 
 // Read errors are diagnostics, not copy; the notice says what happened.
 const THREAD_FAILED = "This thread didn’t load.";
+
+/** The ids of the folded group, activity or relayed, that holds a reply. */
+function foldedGroupOf(tree: ReturnType<typeof replyTree>, id: string) {
+  return [...tree.children.values()]
+    .flatMap((rows) => [
+      ...activityRuns(rows),
+      ...relayedRuns(rows).map((run) => run.relayed),
+    ])
+    .find((group) => group.some((row) => row.id === id))
+    ?.map((row) => row.id);
+}
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -695,12 +707,7 @@ function ThreadMessages({
   useLayoutEffect(() => {
     if (!messageId || !snapshot.replies.some((row) => row.id === messageId))
       return;
-    const group = [...tree.children.values()]
-      .flatMap((rows) => [
-        ...activityRuns(rows),
-        ...relayedRuns(rows).map((run) => run.relayed),
-      ])
-      .find((group) => group.some((row) => row.id === messageId));
+    const group = foldedGroupOf(tree, messageId);
     // A target that joins a group later, as a relay does once its owner
     // verifies, opens that group. One that stays in a group stays as the
     // reader left it, even when paging or the unread line reshapes the group.
@@ -709,7 +716,7 @@ function ThreadMessages({
       return;
     activityVisit.current = request;
     // Every id, so a group split at the unread line opens where the target is.
-    const ids = group?.map((row) => row.id) ?? [];
+    const ids = group ?? [];
     if (ids.length)
       setExpandedActivity((current) => new Set([...current, ...ids]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
@@ -824,6 +831,21 @@ function ThreadMessages({
     lostPlace !== navigation.signal &&
     navigation.position(THREAD_PLACE) !== undefined;
   const restoredVisit = useRef<AbortSignal | undefined>(undefined);
+  // The row Back/Forward restored. If it joins a folded group later, as a
+  // relay does once its owner verifies, that group opens once to keep it shown;
+  // the reader can close it again.
+  const restoredRow = useRef<
+    { signal: AbortSignal; id: string; grouped: boolean } | undefined
+  >(undefined);
+  useLayoutEffect(() => {
+    const restored = restoredRow.current;
+    if (!restored || restored.signal !== navigation?.signal) return;
+    const group = foldedGroupOf(tree, restored.id);
+    if (!!group === restored.grouped) return;
+    restored.grouped = !!group;
+    if (group)
+      setExpandedActivity((current) => new Set([...current, ...group]));
+  }, [tree, navigation?.signal]);
   const olderAnchor = useRef<
     { id: string; top: number; ancestors: readonly string[] } | undefined
   >(undefined);
@@ -1486,13 +1508,7 @@ function ThreadMessages({
       // measured: every member, so either side of the unread line opens.
       const folded =
         anchor && !element.querySelector(`[data-message-id="${anchor.id}"]`)
-          ? [...tree.children.values()]
-              .flatMap((rows) => [
-                ...activityRuns(rows),
-                ...relayedRuns(rows).map((run) => run.relayed),
-              ])
-              .find((group) => group.some((row) => row.id === anchor.id))
-              ?.map((row) => row.id)
+          ? foldedGroupOf(tree, anchor.id)
           : undefined;
       if (folded?.some((id) => !expandedActivity.has(id))) {
         setExpandedActivity((current) => new Set([...current, ...folded]));
@@ -1511,6 +1527,14 @@ function ThreadMessages({
         return;
       }
       restoredVisit.current = navigation.signal;
+      const restoredId = row?.dataset.messageId;
+      restoredRow.current = restoredId
+        ? {
+            signal: navigation.signal,
+            id: restoredId,
+            grouped: !!foldedGroupOf(tree, restoredId),
+          }
+        : undefined;
       targetAnchor.current = undefined;
       follow.current = !row;
       if (row && anchor)
@@ -2154,11 +2178,13 @@ function ThreadMessages({
         rootId={snapshot.root?.id ?? messageId}
         // A visible exact reply can outlive its unavailable root. Until resolved,
         // observe rows individually; an absent root must not mean channel catch-up.
+        // The same order the rows are shown in, so a same-second tie names
+        // the row a folded group shows as its latest.
         latestMessageId={
           snapshot.root
             ? snapshot.replies.reduce<ChannelMessage | undefined>(
                 (latest, row) =>
-                  !latest || row.createdAt > latest.createdAt ? row : latest,
+                  !latest || compareMessages(row, latest) > 0 ? row : latest,
                 undefined,
               )?.id
             : undefined

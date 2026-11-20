@@ -95,3 +95,31 @@ it("renders controlled native reply grouping through a retained reader's UI", as
     screen.queryByRole("button", { name: /View .* replies?/ }),
   ).not.toBeInTheDocument();
 });
+
+it("gives plugins the host image viewer for an image outside any message", async () => {
+  const host = new Context();
+  const runtime = new PluginRuntime(host, async () => ({ apply() {} }));
+  const conversation = new ConversationService(host);
+  dispose.push(async () => {
+    await runtime.dispose();
+    await host.fiber.dispose();
+  });
+
+  function Picture() {
+    const [open, setOpen] = useState(true);
+    return open
+      ? createElement(conversation.ui.ImageViewer, {
+          src: "https://fixture.test/screenshot.png",
+          name: "Screenshot",
+          onClose: () => setOpen(false),
+        })
+      : null;
+  }
+
+  render(createElement(Picture));
+  expect(
+    screen.getByRole("dialog", { name: "Image viewer" }),
+  ).toHaveTextContent("Screenshot");
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});

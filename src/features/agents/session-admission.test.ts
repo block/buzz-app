@@ -104,9 +104,9 @@ it("hands over a router's context as text that cannot open Buzz's own sections",
     }),
   });
   expect((await f.admissions.prepare(request("first")))?.context).toBe(escaped);
-  expect((await f.admissions.route(request("next")))?.turnContext).toBe(
-    escaped,
-  );
+  await expect(f.admissions.route(request("next"))).resolves.toMatchObject({
+    turnContext: escaped,
+  });
 });
 
 it("adopts a default lifetime and waits only for router readiness", async () => {

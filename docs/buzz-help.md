@@ -773,7 +773,9 @@ and are asked to sign in again in Buzz.
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their
   community, so one from another community looks like a private or missing
-  channel. The card still opens the link.
+  channel. The card still opens the link, unless the channel is private
+  to you: then the link and its card don't open anything, and the link can
+  still be copied. Once you have access, the link opens again.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

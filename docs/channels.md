@@ -36,7 +36,10 @@ Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;
 another channel's thread uses the side pane. When that channel isn't readable
-there, it opens as a click would. Other internal `buzz://` links and links outside
+there, it opens as a click would. When the linked channel is withheld from the
+reader, the link, its preview card and **Open link** don't open anything, while
+**Copy link** and selection copy keep the URL; the link opens again once a recheck
+admits the reader. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 

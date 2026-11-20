@@ -83,7 +83,13 @@ In a Solo region, check `ui.headerMenuActions === true` before passing
 `headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**
 entry has a unique `id`, a `label`, and an `onSelect` callback.
 `onSelect` can return a promise. The host reports callback failures in the
-heading. With `placement: "team-row"`, the channel group uses the native
+heading.
+
+In a Solo channel group, entries follow **View channel details**. An optional
+`icon` supplies decorative artwork and `hint` adds short help on focus or hover.
+The host rechecks the row’s channel membership before calling `onSelect`.
+
+With `placement: "team-row"`, the channel group uses the native
 Team menu and ignores these entries.
 
 Check `ctx.conversation.workspaceSlots?.headerActions === true` when you

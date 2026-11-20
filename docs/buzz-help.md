@@ -126,6 +126,8 @@ if that desktop app is up and running.
 - **Sidebar actions.** Hover over a workspace or channel heading, or press Tab
   to reach its actions. On touch, tap **⋯**. In workspaces and Solo channels
   that support tasks, **⋯ → New task** works even when the pencil is hidden.
+  Plugins can add actions after **View channel details** in a Solo channel’s
+  **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,

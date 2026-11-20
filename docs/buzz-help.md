@@ -143,7 +143,8 @@ if that desktop app is up and running.
   local Claude Code, Codex, Goose or Pi agent starts with, such as API keys.
   They're kept in the OS credential store on this computer, never synced, and
   values aren't shown again after saving. Protected agents don't get them, and
-  a harness's own variables win. Names that choose a model, provider or
+  a harness's own variables win, except that a saved `ANTHROPIC_API_KEY` wins
+  over the shared Claude key. Names that choose a model, provider or
   endpoint, `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent
   processes started afterward; running ones keep the old list until
   **Restart Buzz**, which the notice after saving offers. A Codex or Pi agent

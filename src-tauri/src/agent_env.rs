@@ -160,6 +160,10 @@ const PATHS: &[&str] = &[
     "CODEX_HOME",
     // Goose's config and sessions, which Buzz reads from another goose.
     "GOOSE_PATH_ROOT",
+    // Pi's settings and keys, which Buzz's Pi settings save to `~/.pi/agent`.
+    "PI_CODING_AGENT_DIR",
+    // Windows's home folder, where Pi finds `~/.pi/agent`.
+    "USERPROFILE",
     // Linux and Windows data roots: Claude's, Codex's and Pi's installs, and
     // Pi's conversation database.
     "XDG_DATA_HOME",

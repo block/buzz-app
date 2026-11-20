@@ -171,6 +171,8 @@ async fn every_blocked_name_is_rejected_in_any_case() {
             "CLAUDE_CONFIG_DIR",
             "CODEX_HOME",
             "GOOSE_PATH_ROOT",
+            "PI_CODING_AGENT_DIR",
+            "USERPROFILE",
             "XDG_DATA_HOME",
             "LOCALAPPDATA",
         ])

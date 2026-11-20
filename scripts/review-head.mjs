@@ -96,7 +96,7 @@ export const touchesReviewTooling = (files) =>
 
 // What the reviewed code may see. Everything else, tokens included, is dropped.
 const ENV_ALLOW =
-  /^(?:PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|TMP|TEMP|LANG|LC_\w+|TZ|DISPLAY|WAYLAND_DISPLAY|XDG_\w+|HERMIT_\w+|CARGO_HOME|RUSTUP_HOME|PNPM_HOME|PLAYWRIGHT_BROWSERS_PATH|BUZZ_TEST_WORKERS|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|(?:HTTPS?|ALL|NO)_PROXY|(?:https?|all|no)_proxy)$/;
+  /^(?:PATH|HOME|USER|LOGNAME|SHELL|SHLVL|TERM|TMPDIR|TMP|TEMP|LANG|LC_\w+|TZ|DISPLAY|WAYLAND_DISPLAY|XDG_\w+|HERMIT_\w+|CARGO_HOME|RUSTUP_HOME|PNPM_HOME|PLAYWRIGHT_BROWSERS_PATH|BUZZ_TEST_WORKERS|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|(?:HTTPS?|ALL|NO)_PROXY|(?:https?|all|no)_proxy)$/;
 export const reviewEnv = (env, worktree) => ({
   ...Object.fromEntries(
     Object.entries(env).filter(([name]) => ENV_ALLOW.test(name)),

@@ -97,6 +97,7 @@ it("passes the reviewed code no tokens or CI flag", () => {
     {
       PATH: "/usr/bin",
       HOME: "/h",
+      SHLVL: "1",
       HTTPS_PROXY: "http://proxy",
       GH_TOKEN: "x",
       GITHUB_TOKEN: "x",
@@ -109,6 +110,7 @@ it("passes the reviewed code no tokens or CI flag", () => {
   expect(env).toEqual({
     PATH: "/wt/bin:/usr/bin",
     HOME: "/h",
+    SHLVL: "1",
     HTTPS_PROXY: "http://proxy",
   });
 });

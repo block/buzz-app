@@ -5,9 +5,12 @@ import {
   clearViewScope,
   conflictDraftKey,
   draftCoordinates,
+  draftRetirementCursor,
+  draftWasRetired,
   listDraftViews as enumerateDrafts,
   readView,
   replaceView,
+  retireViewDraft,
   viewRevision,
   subscribeView,
   writeView,
@@ -26,6 +29,29 @@ const listDraftViews = (scope: string) =>
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+it("records both accepted drafts when cleanup finishes out of order", () => {
+  const scope = "example-scope";
+  const key = "draft:room";
+  const first = JSON.stringify("First accepted draft");
+  const second = JSON.stringify("Second accepted draft");
+  const cleared = JSON.stringify({ text: "", recipients: [] });
+  const cursor = draftRetirementCursor(scope, key);
+  writeView(scope, key, JSON.parse(first));
+  writeView(scope, key, JSON.parse(second));
+  expect(retireViewDraft(scope, key, second, cleared, cursor)).toBe("saved");
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("saved");
+  expect(viewRevision(scope, key)).toBe(cleared);
+  expect(draftWasRetired(scope, key, first, cursor)).toBe(true);
+  expect(draftWasRetired(scope, key, second, cursor)).toBe(true);
+
+  const afterBoth = draftRetirementCursor(scope, key);
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("saved");
+  expect(draftWasRetired(scope, key, first, afterBoth)).toBe(false);
+  writeView(scope, key, JSON.parse(first));
+  expect(retireViewDraft(scope, key, first, cleared, afterBoth)).toBe("saved");
+  expect(draftWasRetired(scope, key, first, afterBoth)).toBe(true);
 });
 
 it("bounds stored retirement metadata for repeated clears of one draft", () => {

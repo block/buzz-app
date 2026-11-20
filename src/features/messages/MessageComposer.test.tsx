@@ -12711,6 +12711,52 @@ it("can recover text entered again after an earlier deletion", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
 });
 
+it.each(["storage quota", "history limit"] as const)(
+  "recovers a distinct unsent edit after retirement history loses detail (%s)",
+  (reason) => {
+    const scope = "scope";
+    const key = "draft:channel";
+    const h = mount();
+    h.fill("My unsent work");
+    act(() => writeView(scope, key, "x"));
+    expect(screen.getByRole("button", { name: "Keep my draft" })).toBeVisible();
+
+    if (reason === "storage quota") {
+      const setItem = Storage.prototype.setItem;
+      const write = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, name, value) {
+          if (
+            this === localStorage &&
+            value.length > JSON.stringify("x").length
+          )
+            throw new DOMException(
+              "Storage quota exceeded",
+              "QuotaExceededError",
+            );
+          setItem.call(this, name, value);
+        });
+      try {
+        act(() => clearDraft({ scope }, key));
+        expect(viewRevision(scope, key)).toBeNull();
+      } finally {
+        write.mockRestore();
+      }
+      expect(h.input()).toHaveValue("My unsent work");
+      h.unmount();
+    } else {
+      h.unmount();
+      for (let index = 0; index < 33; index++) {
+        writeView(scope, key, `Other draft ${index}`);
+        clearDraft({ scope }, key);
+      }
+    }
+
+    expect(mount().input()).toHaveValue("My unsent work");
+    expect(screen.getByRole("button", { name: "Keep my draft" })).toBeVisible();
+  },
+);
+
 it("clears a saved draft while storage is full", () => {
   const h = mount();
   h.fill("Local work");

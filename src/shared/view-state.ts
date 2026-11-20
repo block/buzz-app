@@ -182,15 +182,21 @@ export function retireViewDraft(
   key: string,
   expected: string | null | undefined,
   replacement: string,
+  cursor: number | undefined,
 ): "saved" | "changed" | "failed" {
   const current = viewRevision(scope, key);
   if (current === undefined || expected === undefined) return "failed";
-  // The detached owner may already have saved the follow-up on our behalf.
-  if (current === replacement) return "saved";
-  if (current !== expected) {
-    if (expected !== null && recordDraftRetirement(scope, key, expected))
+  if (current === replacement || current !== expected) {
+    // An empty follow-up could belong to a different accepted send.
+    if (
+      expected !== null &&
+      expected !== replacement &&
+      !draftWasRetired(scope, key, expected, cursor)
+    ) {
+      recordDraftRetirement(scope, key, expected);
       changed(scope, key, [{ key, revision: expected }]);
-    return "changed";
+    }
+    return current === replacement ? "saved" : "changed";
   }
   return writeViewRevision(scope, key, replacement, expected ?? undefined)
     ? "saved"
@@ -329,18 +335,14 @@ export function draftWasRetired(
   scope: string,
   key: string,
   revision: string,
-  cursor: number,
-  reopening = false,
+  cursor: number | undefined,
 ) {
+  if (cursor === undefined) return false;
   try {
     const [end, ...revisions] = retirementHistory(scope, key);
-    // A backup older than the retained history cannot prove it survived.
-    return (
-      ((reopening || !revisions.length) && cursor < end - revisions.length) ||
-      revisions
-        .slice(Math.max(0, cursor - end + revisions.length))
-        .includes(revisionDigest(revision))
-    );
+    return revisions
+      .slice(Math.max(0, cursor - end + revisions.length))
+      .includes(revisionDigest(revision));
   } catch {
     return false;
   }
@@ -351,22 +353,20 @@ function recordDraftRetirement(scope: string, key: string, revision: string) {
     const [end, ...previous] = retirementHistory(scope, key);
     const digest = revisionDigest(revision);
     const recent = previous.slice(1 - maxRetiredRevisions);
-    for (const revisions of [[...recent, digest], [digest], []]) {
+    for (const revisions of [[...recent, digest], [digest]]) {
       try {
         localStorage.setItem(
           draftRetirementKey(scope, key),
           JSON.stringify([end + 1, ...revisions]),
         );
-        return true;
+        return;
       } catch {
-        // A short legacy draft may only free room for the cursor. That
-        // invalidates older backups whose retirement we cannot check.
+        // Retry with one exact receipt. Keep prior receipts if it cannot fit.
       }
     }
   } catch {
     // Storage failure must not prevent clearing the draft itself.
   }
-  return false;
 }
 
 function clearScopedStorage(storage: Storage, prefix: string) {

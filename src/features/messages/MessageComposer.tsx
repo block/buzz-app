@@ -242,6 +242,7 @@ export function flushPendingDraft(scope: string, key: string) {
 type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
+  retirementCursor: number | undefined;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
@@ -704,7 +705,7 @@ function Composer({
         savedRevision === initialRevision ||
         savedPurgeToken !== purgeToken ||
         typeof cursor !== "number" ||
-        draftWasRetired(scope, draftKey, savedRevision, cursor, true)
+        draftWasRetired(scope, draftKey, savedRevision, cursor)
       )
         return { stale: raw };
       const saved = parseDraftView(savedRevision);
@@ -1350,7 +1351,7 @@ function Composer({
   function persist(
     next: MentionDraft,
     expected = revision.current,
-    retire = false,
+    acceptedDraft?: AcceptedDraft,
   ) {
     const currentPurgeToken = viewScopePurgeToken(scope);
     if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
@@ -1360,8 +1361,14 @@ function Composer({
     const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
     // Another writer can already have saved the same draft.
-    let result = retire
-      ? retireViewDraft(scope, draftKey, expected, serialized)
+    let result = acceptedDraft
+      ? retireViewDraft(
+          scope,
+          draftKey,
+          expected,
+          serialized,
+          acceptedDraft.retirementCursor,
+        )
       : current === serialized
         ? "saved"
         : replaceViewRevision(scope, draftKey, expected, serialized);
@@ -1780,8 +1787,7 @@ function Composer({
     return (
       raw != null &&
       current !== raw &&
-      (raw === removed ||
-        (cursor !== undefined && draftWasRetired(scope, draftKey, raw, cursor)))
+      (raw === removed || draftWasRetired(scope, draftKey, raw, cursor))
     );
   }
   // Message-local picks return with their recovered draft. Solo preferences
@@ -1924,7 +1930,7 @@ function Composer({
       reconcileDraft();
       return;
     }
-    const result = persist(pending.next, pending.revision, true);
+    const result = persist(pending.next, pending.revision, pending);
     // No stale sent text needs cleanup if nothing was saved and absence is
     // still readable.
     if (
@@ -3094,6 +3100,7 @@ function Composer({
       return;
     }
     const savedRevision = revision.current;
+    const retirementCursor = draftRetirementCursor(scope, draftKey);
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
@@ -3619,7 +3626,11 @@ function Composer({
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
       const followUp = next;
-      const pending = { next: mentionDraft(""), revision: savedRevision };
+      const pending = {
+        next: mentionDraft(""),
+        revision: savedRevision,
+        retirementCursor,
+      };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();

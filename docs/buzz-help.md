@@ -1114,8 +1114,9 @@ and are asked to sign in again in Buzz.
   another window saves a different version while you edit, choose **Load saved
   draft** or **Keep my draft** before sending. Reloading the same window
   restores your conflicting text so you can still choose. If another window
-  sends or clears that exact version, Buzz retires it and keeps any distinct
-  edit available for recovery.
+  sends or clears a draft, Buzz uses recent records of those actions to skip
+  restoring the same version. If storage is full or those records have expired,
+  Buzz may still offer the saved conflict for recovery.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages

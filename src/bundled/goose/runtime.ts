@@ -1508,8 +1508,9 @@ export class GooseRuntime {
                 )
             : undefined,
           worksElsewhere(
-            // A Solo chat is one conversation.
-            session ? this.folder(agent.key, channelId) : undefined,
+            // Keyed as its session launches: a community session has no
+            // folder of its own, whatever folder the chat kept.
+            session ? this.folder(agent.key, key) : undefined,
             entry.handle?.promptSections?.(channelId),
           ),
         )

@@ -1522,6 +1522,27 @@ describe("GooseRuntime", () => {
       expect(turn).toContain("They are for reading.");
       expect(turn).not.toContain("create a new worktree");
     });
+
+    it("keeps the Canvas's worktree rule for a community session when the chat kept a folder", async () => {
+      const { agentStore, deliver, goose } = setup({
+        scope: "community",
+        solo: new Set([channel]),
+        canvas: workspaceCanvas({
+          folders: ["~/Development/app"],
+          worktree: { location: "~/Development/trees", baseBranch: "main" },
+          canvas: "Use the design system.",
+        }),
+      });
+      // Assigned while the agent's sessions were per conversation: a
+      // community session works in the agent's workspace instead.
+      await assign(agentStore, channel);
+      await deliver(root);
+      await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+      expect(goose()?.opened[0]?.cwd).not.toBe("/repos/worktree");
+      const turn = goose()?.turns[0]?.text;
+      expect(turn).toContain("create a new worktree");
+      expect(turn).not.toContain("They are for reading.");
+    });
   });
 
   it("starts a session from the host's core memory, reading none from the relay", async () => {

@@ -480,6 +480,28 @@ const titlePrompt = (text: string) =>
   `Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.\n\nUser prompt:\n${[...text].slice(0, 800).join("")}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** A failed turn's error as Codex reports it on `turn/completed`. */
+type TurnError = { message?: string; codexErrorInfo?: unknown };
+/** A Codex turn that ended failed, keeping Codex's error. */
+class TurnFailed extends Error {
+  constructor(readonly turnError: TurnError) {
+    super(turnError.message ?? "Codex turn failed");
+  }
+}
+/** Whether the provider refused the thread's request itself. Codex resends
+ * the whole thread each turn, so the same history fails the same way and only
+ * a fresh thread recovers. Codex 0.171.0 reports an HTTP 400 with an error
+ * code it doesn't know as `InvalidRequest`, which `protocol/src/error.rs` maps
+ * to `other`, not `badRequest`; until Codex maps it, the provider's
+ * `invalid_request_error` in the message marks it. */
+export function shouldResetCodexThread(turnError: TurnError) {
+  const info = turnError.codexErrorInfo;
+  if (info === "badRequest") return true;
+  return (
+    info === "other" &&
+    (turnError.message ?? "").includes("invalid_request_error")
+  );
+}
 /** Puts back the notes a request took, for a turn that never took it in. */
 function restoreNotes(request: Request) {
   if (request.notes)
@@ -4364,7 +4386,22 @@ export class CodexRuntime {
       active.finished = true;
       const why = explain?.();
       if (!signal.aborted) {
-        const reason = `Codex could not finish: ${message(error)}.`;
+        const reset =
+          error instanceof TurnFailed &&
+          shouldResetCodexThread(error.turnError);
+        if (reset) {
+          // The next mention starts a new Codex thread, not this refused one.
+          const { [key]: _, ...kept } = entry.saved;
+          entry.saved = kept;
+          await this.storage
+            .set(entry.storageKey, JSON.stringify(kept))
+            .catch((failure) =>
+              console.error("Codex could not forget its thread", failure),
+            );
+        }
+        const reason = `Codex could not finish: ${message(error)}.${
+          reset ? " Your next mention starts a fresh Codex session." : ""
+        }`;
         await this.publishOwed(active, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
@@ -4461,7 +4498,7 @@ function follow(
       | {
           threadId?: string;
           message?: string;
-          turn?: { id: string; status: string; error?: { message: string } };
+          turn?: { id: string; status: string; error?: TurnError };
           item?: Item;
         }
       | undefined;
@@ -4480,7 +4517,7 @@ function follow(
     if (terminalTurn) {
       turn.finished = true;
       if (terminalTurn.status === "failed")
-        fail(new Error(terminalTurn.error?.message ?? "Codex turn failed"));
+        fail(new TurnFailed(terminalTurn.error ?? {}));
       else finish(terminalTurn.status);
     }
   });

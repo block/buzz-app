@@ -15,6 +15,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -26,6 +27,11 @@ const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
 
 export const LANES = ["static", "tests", "rust", "browser"];
 const BUNDLE = ["receipt.json", "summary.md", "logs", "browser"];
+// Write whole files only: a run killed mid-write keeps the previous version.
+const writeAtomic = (file, text) => {
+  writeFileSync(`${file}.tmp`, text);
+  renameSync(`${file}.tmp`, file);
+};
 // Failures that mean this host lacks system packages CI's runners provide,
 // not that the change is wrong. Each names the one-time fix.
 export const HOST_HINTS = [
@@ -267,7 +273,9 @@ function main() {
   // directory someone named by mistake.
   if (
     existsSync(out) &&
-    readdirSync(out).some((name) => !BUNDLE.includes(name))
+    readdirSync(out).some(
+      (name) => !BUNDLE.includes(name.replace(/\.tmp$/, "")),
+    )
   )
     throw new Error(
       `${out} holds files that are not review evidence; choose another --out`,
@@ -358,11 +366,11 @@ function main() {
       result: final === null ? "incomplete" : passed ? "passed" : "failed",
       finishedAt: final === null ? null : new Date().toISOString(),
     };
-    writeFileSync(
+    writeAtomic(
       join(out, "receipt.json"),
       `${JSON.stringify(receipt, null, 2)}\n`,
     );
-    writeFileSync(join(out, "summary.md"), renderSummary(receipt));
+    writeAtomic(join(out, "summary.md"), renderSummary(receipt));
     return receipt;
   };
 

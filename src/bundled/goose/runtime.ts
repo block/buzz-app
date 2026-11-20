@@ -1173,7 +1173,8 @@ export class GooseRuntime {
           },
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
           signingAuthority:
-            this.relay(agent)?.snapshot().session.workflowAuthority,
+            this.relay(agent) &&
+            (this.relay(agent)?.snapshot().session.workflowAuthority ?? null),
           read: (path) =>
             handle.protection
               ? readFile(

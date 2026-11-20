@@ -850,7 +850,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             "p",
             messageAuthor(
               { ...target, tags: target.tags.map((tag) => [...tag]) },
-              client.signingAuthority,
+              client.signingAuthority ?? undefined,
             ),
           ],
           ...custom,
@@ -1276,14 +1276,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!ids.length && !q) throw new Error("Give ids or q.");
     if (ids.length && q) throw new Error("Give ids or q, not both.");
     if (ids.length > 100) throw new Error("Give at most 100 ids.");
-    const relay = tools.relayKey();
+    // One deadline bounds the key both the search and the archive check use.
+    const deadline = archiveDeadline();
+    const relay = tools.relayKey(deadline);
     const [people, byId, archived] = await Promise.all([
       ids.length ? undefined : tools.searchPeople(q ?? "", relay),
       ids.length
         ? client.query([{ kinds: [0], authors: ids, limit: ids.length }])
         : undefined,
       // The standalone lookup serves both the search and the archive list.
-      tools.archivedIdentities(client.relayAuthorLookup && relay),
+      tools.archivedIdentities(deadline, client.relayAuthorLookup && relay),
     ]);
     // As the app's archiveHides: you always find yourself.
     const hidden = (key: string) =>
@@ -2448,17 +2450,28 @@ class Tools {
     };
   }
 
-  /** The relay's key: rejects when it can't be learned now. */
-  async relayKey() {
-    return this.client.relayAuthor ?? this.client.relayAuthorLookup?.();
+  /** The relay's key: rejects when it can't be learned now, or by
+   * `deadline`; undefined when the relay has none. */
+  async relayKey(deadline?: number): Promise<string | undefined> {
+    const { relayAuthor, relayAuthorLookup } = this.client;
+    if (relayAuthor !== undefined || !relayAuthorLookup) return relayAuthor;
+    if (deadline === undefined) return relayAuthorLookup();
+    const found = await within(
+      deadline,
+      relayAuthorLookup().then((key) => ({ key })),
+      undefined,
+    );
+    if (!found) throw new Error("The relay's key took too long");
+    return found.key;
   }
 
   /** The relay's signed NIP-IA archive list, its key learned and the list
-   * read fresh within ARCHIVE_READ_MS; undefined when it can't be, so callers
+   * read fresh by `deadline`; undefined when it can't be, so callers
    * fail open. Only the relay's NIP-11 self key signs it: the standalone
    * lookup, or the app's signing authority, never its contact key. A host that
    * gives neither can't tell; a relay with no self key archives no one. */
   async archivedIdentities(
+    deadline: number,
     lookup = this.client.relayAuthorLookup?.(),
   ): Promise<ReadonlySet<string> | undefined> {
     const client = this.client;
@@ -2502,6 +2515,7 @@ class Tools {
     };
     try {
       return await within(
+        deadline,
         read().catch(() => undefined),
         undefined,
       );
@@ -2516,16 +2530,21 @@ class Tools {
    * "", or a warning line when the archive list can't be read. */
   async unarchived(people: readonly string[], outcome: string) {
     if (!people.length) return "";
-    const archived = await this.archivedIdentities();
+    const deadline = archiveDeadline();
+    const archived = await this.archivedIdentities(deadline);
     if (!archived)
       return `\n${ARCHIVE_UNREAD}, so archived identities were not checked.`;
     const gone = people.filter((key) => archived.has(key));
     if (!gone.length) return "";
-    // The list alone decides; a name only helps say who.
-    const names = await within(
-      this.names(gone).catch(() => undefined),
-      undefined,
-    );
+    // The list alone decides; a name only helps say who, in the time left.
+    const names =
+      Date.now() < deadline
+        ? await within(
+            deadline,
+            this.names(gone).catch(() => undefined),
+            undefined,
+          )
+        : undefined;
     throw new Error(
       `${gone.map((key) => `${names?.get(key) ?? key} (${key})`).join(", ")} ${gone.length > 1 ? "are" : "is"} archived. ${outcome}`,
     );
@@ -3127,14 +3146,16 @@ const NAME_WEIGHT = {
 const HEX_KEY = /^[0-9a-f]{64}$/;
 /** How long a users lookup waits for the archive list before going on without it. */
 const ARCHIVE_READ_MS = 5000;
-/** `work`, or `fallback` once ARCHIVE_READ_MS passes. */
-async function within<T>(work: Promise<T>, fallback: T) {
+/** When an archive check that starts now must be done. */
+const archiveDeadline = () => Date.now() + ARCHIVE_READ_MS;
+/** `work`, or `fallback` once `deadline` passes. */
+async function within<T, F>(deadline: number, work: Promise<T>, fallback: F) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       work,
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), ARCHIVE_READ_MS);
+      new Promise<F>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), deadline - Date.now());
       }),
     ]);
   } finally {

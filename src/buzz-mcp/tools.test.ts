@@ -89,7 +89,7 @@ function fake(
   };
   const client: BuzzClient = {
     // A host that knows the relay has no self key.
-    signingAuthority: undefined,
+    signingAuthority: null,
     key: me,
     pubkey: me,
     effectiveEdit: vi.fn(async (id: string) => {
@@ -4176,7 +4176,7 @@ it("reads no archive list signed by a contact key alone", async () => {
   // The app's contact key, never an archive authority.
   const contact = {
     ...client,
-    signingAuthority: undefined,
+    signingAuthority: null,
     relayAuthor: signingAuthority,
   };
   expect(await callTool(contact, {}, "users", { q: "b" })).toBe(
@@ -4389,6 +4389,123 @@ it.each(["fails", "stalls"])(
       await vi.advanceTimersByTimeAsync(5000);
       await refused;
       expect(client.publish).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+const archiveReads = (client: BuzzClient) =>
+  vi
+    .mocked(client.query)
+    .mock.calls.filter(([filters]) =>
+      (filters[0]?.kinds as number[] | undefined)?.includes(13535),
+    ).length;
+
+it("answers a name search within the limit while the relay key is held", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority: _, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(() => new Promise<never>(() => {})),
+    };
+    let done = false;
+    const search = callTool(client, {}, "users", { q: "b" }).finally(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await search).toMatch(
+      /^.*"Alice Smith"\n.*"Bob"\nwarning: the relay's archive list could not be read/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("gives the name lookup only the time the archive read left", async () => {
+  vi.useFakeTimers();
+  try {
+    const client = archivedPeople();
+    const query = client.query;
+    client.query = vi.fn((filters: readonly Filter[]) => {
+      const kinds = filters[0]?.kinds as number[] | undefined;
+      if (kinds?.includes(0)) return new Promise<never>(() => {});
+      if (kinds?.includes(13535))
+        return new Promise<readonly BuzzEvent[]>((resolve) =>
+          setTimeout(() => resolve(query(filters)), 4000),
+        );
+      return query(filters);
+    });
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    const refused = expect(sent).rejects.toThrow(
+      `${bob} (${bob}) is archived. Nothing was posted.`,
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    await refused;
+    expect(client.publish).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("starts no archive read once the relay key arrives too late", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(
+        () =>
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve(signingAuthority), 6000),
+          ),
+      ),
+    };
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await sent).toMatch(/\nwarning: the relay's archive list/);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(archiveReads(client)).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["fails", "stalls"])(
+  "starts no archive read past the limit when the first %s",
+  async (how) => {
+    vi.useFakeTimers();
+    try {
+      const client = archivedPeople();
+      const query = client.query;
+      client.query = vi.fn((filters: readonly Filter[]) =>
+        (filters[0]?.kinds as number[] | undefined)?.includes(13535)
+          ? how === "fails"
+            ? Promise.reject(new Error("offline"))
+            : new Promise<never>(() => {})
+          : query(filters),
+      );
+      const sent = callTool(client, { channel: "chan", root }, "send", {
+        text: "see this",
+        mentions: [bob],
+        audience: "everyone",
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await sent).toMatch(/\nwarning: the relay's archive list/);
+      const reads = archiveReads(client);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(archiveReads(client)).toBe(reads);
     } finally {
       vi.useRealTimers();
     }

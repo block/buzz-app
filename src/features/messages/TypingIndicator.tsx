@@ -383,6 +383,17 @@ export function TypingIndicator({
       !details.has(entry.pubkey) &&
       !replaced.has(entry.pubkey),
   );
+  // A typer need not have a loaded message here, so their profile may not be loaded.
+  const unloaded = [...new Set([...agents, ...humans.map((e) => e.pubkey)])]
+    .filter((pubkey) => !profiles.has(pubkey))
+    .sort()
+    .join(":");
+  useEffect(() => {
+    if (unloaded)
+      void session.profiles
+        .ensure(unloaded.split(":"), "background")
+        .catch(() => {});
+  }, [session, unloaded]);
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
   const scopeLabel = (pubkey: string, workRoot?: string) => {

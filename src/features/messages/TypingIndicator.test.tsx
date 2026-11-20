@@ -1447,3 +1447,26 @@ it("updates the open chooser when only an agent's activity changes", async () =>
   });
   expect(within(dialog).getByText("Reading", { exact: true })).toBeVisible();
 });
+
+it("names a typer whose profile was not loaded once it arrives", async () => {
+  const f = fixture();
+  const stranger = "f".repeat(64);
+  const profiles = f.session.profiles.snapshot() as Map<
+    string,
+    { name: string }
+  >;
+  f.ensure.mockImplementation(async () => {
+    profiles.set(stranger, { name: "Fern" });
+  });
+  f.update([{ pubkey: stranger, channelId: "channel" }]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      audience="humans"
+    />,
+  );
+  expect(f.ensure).toHaveBeenCalledWith([stranger], "background");
+  f.update([{ pubkey: stranger, channelId: "channel" }]);
+  expect(screen.getByRole("status")).toHaveTextContent("Fern is typing");
+});

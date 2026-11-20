@@ -17,11 +17,11 @@ const owner = createRelaySession({
   query: async () => [],
 });
 const agent = keypair().pubkey;
-const update = (index: number): ChannelMessage => ({
+const update = (index: number, activity = true): ChannelMessage => ({
   id: `activity-${index}`,
   channelId: "solo",
   authorId: agent,
-  audience: "agents",
+  ...(activity ? { audience: "agents" } : {}),
   createdAt: 1792152000 + index,
   content: `Activity update ${index}. Checked the conversation layout and kept the history available.\n\nThe expanded details explain what changed and why. They stay readable while the surrounding space opens.\n\nLinks, attachments and message actions continue to use the normal message renderer.`,
   mentions: [],
@@ -30,10 +30,25 @@ const update = (index: number): ChannelMessage => ({
   replyCount: 0,
   participants: [],
 });
+const relayed = new URLSearchParams(location.search).has("relayed");
+const note = "The complete handoff remains readable when this preview opens.";
 function Fixture() {
   useKeyboardFocusVisibility();
   const [rows, setRows] = useState<ChannelMessage[]>(
-    Array.from({ length: 16 }, (_, index) => update(index)),
+    relayed
+      ? [
+          {
+            ...update(0, false),
+            content: "Ordinary chat message",
+          },
+          {
+            ...update(1, false),
+            authorId: owner.session.viewer,
+            content: `Relayed fixture update. ${"A long preview needs to fit the chat. ".repeat(9)}\n\n${note}`,
+            relayedFrom: { agent, verified: true },
+          },
+        ]
+      : Array.from({ length: 16 }, (_, index) => update(index)),
   );
   const [inlineTarget, setTarget] = useState<{
     messageId: string;

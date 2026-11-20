@@ -3433,6 +3433,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .activityExpansion {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(var(--activity-reveal-min, 0px), 1fr);
 }
 .activityExpansionContent {

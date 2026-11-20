@@ -1076,7 +1076,7 @@ it.each([
     }
   },
 );
-it("moves a stopped note below the agent's latest public reply", async () => {
+it("moves live work and its stopped note below the agent's latest public reply", async () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
   const reply = {
@@ -1112,13 +1112,13 @@ it("moves a stopped note below the agent's latest public reply", async () => {
         })
         .interruptible(async () => {});
     });
-    // Live work stays on its request; a reply does not take the bubble.
+    // Live work follows the agent's latest reply, below what it has said.
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
     expect(
-      within(screen.getByTestId("request")).getByRole("button", {
+      within(screen.getByTestId("reply")).getByRole("button", {
         name: /(?:View agent activity|Show activity history|Collapse activity history): Blossom/,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
     await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
     expect(screen.getByTestId("request")).toBeEmptyDOMElement();
     expect(
@@ -1161,12 +1161,12 @@ it.each(["failed", "terminated", "unknown"])(
     );
     try {
       f.send(A, "remote", 1, "turn_started", { triggeringEventIds: [root] });
+      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
       expect(
-        within(screen.getByTestId("request")).getByRole("button", {
+        within(screen.getByTestId("reply")).getByRole("button", {
           name: /(?:View agent activity|Show activity history|Collapse activity history)/,
         }),
       ).toBeInTheDocument();
-      expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
       if (outcome === "unknown") {
         act(() => vi.advanceTimersByTime(31000));
         expect(screen.getByTestId("request")).toBeEmptyDOMElement();

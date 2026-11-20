@@ -1778,8 +1778,9 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   already handed to the agent.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
-  still shows when an agent is working there. While the activity under your
-  message shows an agent working, it is that agent's only working indicator.
+  still shows when an agent is working there. An agent's activity sits under
+  your message until that agent replies, then under its latest reply. While it
+  shows an agent working, it is that agent's only working indicator.
   Once its recorded updates show that work, they carry the dots instead, until
   a newer message arrives below them.
   Otherwise dots remain at the end of the conversation while agents work,

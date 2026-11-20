@@ -82,7 +82,8 @@ const settledOutcome = ({
   state === "stopped" ||
   ((state === "done" || state === "superseded") && !!notice);
 /** Activity belongs to the exact triggering message, not the composer. Once an
- * agent has publicly replied, its outcome follows that reply instead. */
+ * agent has publicly replied, its live work and outcome follow its latest
+ * reply instead, so they stay below everything it has said. */
 export function ActivityAccessory(props: ActivityProps) {
   if (
     props.message?.notice === "execution-failure" &&
@@ -113,7 +114,7 @@ export function ActivityAccessory(props: ActivityProps) {
     </>
   );
 }
-/** With `stoppedAgent`, only that agent's outcome for `message`. */
+/** With `stoppedAgent`, only that agent's work and outcome for `message`. */
 function MessageActivity(
   props: ActivityProps & { stoppedAgent?: string; threadScoped?: boolean },
 ) {
@@ -142,12 +143,11 @@ function MessageActivity(
         : { live: noWork, stopped: noWork },
     [snapshot, channelId, messageId, hasWork],
   );
-  const entries = [...work.live, ...work.stopped].filter((entry) => {
-    const outcome = settledOutcome(entry);
-    return stoppedAgent
-      ? outcome && entry.agent === stoppedAgent
-      : !outcome || !props.repliedAgents?.includes(entry.agent);
-  });
+  const entries = [...work.live, ...work.stopped].filter((entry) =>
+    stoppedAgent
+      ? entry.agent === stoppedAgent
+      : !props.repliedAgents?.includes(entry.agent),
+  );
   const profiles = useSyncExternalStore(
     hasWork ? session.profiles.subscribe : noSubscribe,
     session.profiles.snapshot,

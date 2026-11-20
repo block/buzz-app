@@ -13,6 +13,7 @@ import { expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render as renderDom,
   screen,
@@ -22,6 +23,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
+import {
+  SPRING_LOAD_DELAY_MS,
+  SPRING_LOAD_GRACE_MS,
+} from "./spring-loaded-drag";
 import { useShowingDraft } from "./draft-places";
 import { clearView, writeView } from "../../shared/view-state";
 import {
@@ -5496,3 +5501,59 @@ it.each([true, false])(
     }
   },
 );
+
+it("opens the thread when a file drag rests on its summary, unless already open", () => {
+  vi.useFakeTimers();
+  try {
+    const onOpenThread = vi.fn();
+    // jsdom drag events carry no pointer position, and each drag here comes
+    // in at its own point.
+    let clientX = 1;
+    const drag = (
+      kind: "dragEnter" | "dragOver" | "dragLeave",
+      target: HTMLElement,
+    ) => {
+      const event = createEvent[kind](target, {
+        dataTransfer: { types: ["Files"] },
+      });
+      Object.defineProperty(event, "clientX", { value: clientX });
+      fireEvent(target, event);
+    };
+    // The delay ends, and the target opens on the drag's next dragover.
+    const rest = (summary: HTMLElement) => {
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+      drag("dragOver", summary);
+    };
+    const props = {
+      row,
+      profile: undefined,
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+      onOpenThread,
+    };
+    const view = renderDom(<MessageRow {...props} />);
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", summary);
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+    expect(summary).toHaveAttribute("data-spring-loaded", "on");
+    rest(summary);
+    expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("root", "root");
+    drag("dragLeave", summary);
+    clientX = 2;
+    view.rerender(<MessageRow {...props} threadOpen />);
+    const opened = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", opened);
+    expect(opened).not.toHaveAttribute("data-spring-loaded");
+    rest(opened);
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});

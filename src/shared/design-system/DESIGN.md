@@ -1514,18 +1514,19 @@ Base UI instant states and keyboard navigation skip transitions; reduced motion
 keeps only the fade.
 
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
-in the host, portaled outside the app layout to the bottom right. Features and
+in the host, portaled outside the app layout to the top right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
 Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
 Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
 headless content inherits the host theme and text size without an OS-theme override.
 Group title and description with `space-1` (4px), then separate actions with
-`space-3` (12px). Use `space-3` padding on every card edge. The dismiss slot is
-independent of the text group so its 32px hit target cannot open a gap between
-title and description. It extends 8px toward the trailing edge and 4px vertically
-into the padding; title-only confirmations stay centered beside it. Descriptions
-use secondary text, and actions align with the message's leading edge.
+`space-3` (12px). Use `space-4` padding on every card edge. The close control floats at the upper
+leading corner and appears on hover or keyboard focus, remaining visible on
+touch. Descriptions use subtle text; actions trail the message and wrap below
+it when space is limited.
+Ordinary Tab or Shift+Tab entry expands the stack, and it remains expanded and
+scrollable while it contains focus, including when the pointer leaves.
 The pinned Sonner patch preserves intentional focus destinations when leaving a
 toast; fallback restoration still applies when focus is otherwise lost. Expiry
 pauses while the stack is hovered, focused or being dragged, independently of
@@ -1559,10 +1560,12 @@ expiry. Keep source-owned recovery on ToastNotice.
 Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The expanded, bounded, scrollable stack keeps every recovery action available.
-It sits at the bottom right with safe-area insets, including narrow windows; do
-not add feature-specific top offsets. Surfaces docked at the bottom of the
-window (the composer, the preview's Join notice) call `useToastClearance` with
-their element, and the stack rises above them so a notice never covers Send.
+It sits at the top right with safe-area insets. The app shell registers its
+header with `useToastClearance(ref)` and reserves the workspace header
+height on non-Mac shells. Mac uses a 12px top inset and an 8px right inset. Integrated Windows/Linux
+chrome aligns the card with the room/content divider. On touch,
+notices form a bounded scrolling list. Trailing actions wrap below the message
+when their intrinsic width cannot fit beside it.
 F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
@@ -1633,7 +1636,9 @@ Selected rows can expand without painting the entire branch in the accent color.
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
-focus. Use it where a fill would read as another destination.
+focus. Use it where a fill would read as another destination. A capped list
+puts both on one line: **Show more**, with a leading caret, on the row icons and
+titles, and **Show fewer** at the end, ending where row trailing content ends.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
 an identity's full npub. Focus opens every preview at once, so immediate Tab
@@ -1844,7 +1849,7 @@ after release, and prevent a drag from selecting text it passes over.
 
 Keep blur fixed during general surface transitions; animate opacity instead.
 The form dropdown, menu, popover, and tooltip sections document narrow,
-designer-requested blur exceptions. Respect each component’s keyboard and
+designer-requested blur exceptions. The front desktop toast also sharpens from 2px blur on entry and returns to 2px on ordinary dismissal. This treatment requires a fine pointer, hover, and full motion. On Linux WebKitGTK the toast uses slide, scale, and opacity only because animating blur can crash the renderer. Respect each component’s keyboard and
 reduced-motion treatment.
 
 ## Colour structure

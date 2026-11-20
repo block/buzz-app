@@ -101,7 +101,6 @@ function mount(
           toggle,
           retryReveal,
           revealAgain,
-          beforeReveal: () => () => {},
         }}
       />
     );
@@ -1195,7 +1194,7 @@ it("returns focus to the Destination after cancelling the existing rename editor
 });
 
 it.each([true, false])(
-  "preserves restored collapse but prepares a new destination before revealing (restored=%s)",
+  "keeps the region collapsed through navigation, reconnect and In Work (restored=%s)",
   async (restored) => {
     vi.stubGlobal(
       "ResizeObserver",
@@ -1204,21 +1203,75 @@ it.each([true, false])(
         disconnect() {}
       },
     );
-    // Synthetic layout distinguishes a visible header proxy from the opened offscreen row.
+    // The heading and row have different offsets in the scrollport.
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         const hidden = !!this.closest("[hidden]");
-        const row = this.matches('[aria-current="page"]') && !hidden;
+        const row = this.matches('[aria-current="page"]');
+        const offset = row
+          ? 200
+          : this.getAttribute("role") === "alert"
+            ? 450
+            : 60;
+        const top =
+          this.tagName === "NAV"
+            ? 0
+            : offset - (this.closest("nav")?.scrollTop ?? 0);
         return {
-          top: row ? 200 : 0,
-          bottom: row ? 220 : 20,
+          top,
+          bottom: top + 20,
           height: hidden ? 0 : 20,
         } as DOMRect;
       },
     );
     const h = fixture();
-    await h.register({ component: Body });
+    const viewer = h.session.viewer;
+    assert(viewer);
+    h.roster([
+      ...h.session.channels.list().channels,
+      {
+        id: "source",
+        name: "Source channel",
+        channelType: "stream",
+        members: [viewer],
+      },
+    ]);
+    await h.register({
+      component: function FilterableBody(props) {
+        const [filtered, setFiltered] = useState(false);
+        const [expanded, setExpanded] = useState(true);
+        const Group = props.ui.ChannelGroup;
+        assert(Group);
+        return (
+          <>
+            <button type="button" onClick={() => setFiltered(true)}>
+              Filter chats
+            </button>
+            <Group
+              channelId="source"
+              onSelect={() => {}}
+              expanded={expanded}
+              controls="source-tasks"
+              disclosureLabel="Toggle source tasks"
+              onToggle={() => setExpanded(!expanded)}
+            >
+              {!filtered && <Body {...props} />}
+            </Group>
+          </>
+        );
+      },
+      actions: () => [
+        {
+          id: "fail",
+          label: "Run action",
+          icon: "plus",
+          onSelect: () => {
+            throw new Error("Action unavailable");
+          },
+        },
+      ],
+    });
     const target: OpenTarget = {
       version: 1,
       kind: "conversation",
@@ -1229,51 +1282,94 @@ it.each([true, false])(
       },
     };
     await h.navigate(target);
+    const channel = h.session.channels
+      .list()
+      .channels.find(({ id }) => id === "owned");
+    assert(channel);
     writeView(h.scope, "channel-sidebar", {
       collapsed: ["solo-region:example/work"],
       location: restored ? "conversation:owned" : "conversation:chat",
     });
-    const visibleAtReveal: boolean[] = [];
-    function View() {
+    const View = () => {
       const sidebar = useSidebarView(h.scope, true, "conversation:owned");
+      const [showCopy, setShowCopy] = useState(false);
       return (
         <ToastProvider>
+          <SoloHeading
+            session={h.session}
+            scope={h.scope}
+            channel={channel}
+            onLifecycle={() => {}}
+            onMove={() => {}}
+          />
+          <button type="button" onClick={() => setShowCopy(true)}>
+            Show another link to the current chat
+          </button>
           <nav ref={sidebar.list} data-testid="region-viewport">
+            {showCopy && (
+              <button type="button" aria-current="page">
+                Chat shortcut
+              </button>
+            )}
             <SoloRegions
               session={h.session}
               scope={h.scope}
               target={target}
               navigator={h.navigator}
-              sidebar={{
-                ...sidebar,
-                revealAgain: () => {
-                  visibleAtReveal.push(
-                    !screen
-                      .getByRole("button", { name: "Owned", hidden: true })
-                      .closest("[hidden]"),
-                  );
-                  sidebar.revealAgain();
-                },
-              }}
+              sidebar={sidebar}
             />
           </nav>
         </ToastProvider>
       );
-    }
+    };
     render(<View />);
+    const viewport = screen.getByTestId("region-viewport");
     const heading = screen.getByLabelText("Work");
-    expect(screen.getByTestId("region-viewport").scrollTop).toBe(
-      restored ? 0 : 160,
-    );
-    if (restored) expect(heading.parentElement).not.toHaveAttribute("open");
-    else expect(heading.parentElement).toHaveAttribute("open");
-    if (!restored) fireEvent.click(heading);
+    expect(heading.parentElement).not.toHaveAttribute("open");
+    expect(viewport.scrollTop).toBe(0);
     await act(() => h.reconnect());
     expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
       "open",
     );
-    act(() => h.service.reveal("owned"));
-    expect(visibleAtReveal).toEqual([true]);
+    fireEvent.click(screen.getByRole("button", { name: "Run action" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    const reveal = screen.getByRole("button", { name: "In Work" });
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(screen.getByLabelText("Work")).toHaveFocus();
+    expect(viewport.scrollTop).toBe(0);
+    viewport.scrollTop = 400;
+    fireEvent.scroll(viewport);
+    fireEvent.click(reveal);
+    expect(viewport.scrollTop).toBe(20);
+    expect(screen.getByLabelText("Work").parentElement).not.toHaveAttribute(
+      "open",
+    );
+    fireEvent.click(screen.getByLabelText("Work"));
+    fireEvent.click(reveal);
+    expect(viewport.scrollTop).toBe(160);
+    expect(screen.getByRole("button", { name: "Owned" })).toHaveFocus();
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    const group = screen.getByRole("button", { name: "Toggle source tasks" });
+    fireEvent.click(group);
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(group).toHaveFocus();
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    await userEvent.setup().keyboard("{Enter}");
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "Filter chats" }));
+    expect(screen.queryByRole("button", { name: "Owned" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Show another link to the current chat",
+      }),
+    );
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(screen.getByLabelText("Work")).toHaveFocus();
     expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
   },
 );

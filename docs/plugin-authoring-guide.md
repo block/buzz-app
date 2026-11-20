@@ -46,10 +46,10 @@ export function apply(ctx) {
 - Plugin `id`: starts with a lowercase letter, then lowercase letters, digits, `.` and `-` only, at most 80 bytes, no empty segments (no `..`, `-.`, trailing `.`). No underscores. Ids of bundled plugins are reserved. `name`: 1-80 bytes. Updates match on `id`.
 - Contribution ids (page, panel, shortcut, settings card, sidebar section and its actions): `/^[a-z0-9][a-z0-9._-]*$/`, unique within the plugin. Hosts add the plugin identity, so ids are local.
 - Module evaluation must be pure: no work at top level. Do everything in `apply`. Enabled plugins activate even if their page is never opened.
-- Declare every service you use in `inject` (for example `["react", "pages", "shortcuts"]`). `apply` runs only once all are available. `sidebarSections`, `subjectLift`, `pluginInstaller` and `ui` are optional services: read them with `ctx.reflect.get("name")` (returns `undefined` on older hosts) instead of listing them in `inject`.
+- Declare every service you use in `inject` (for example `["react", "pages", "shortcuts"]`). `apply` runs only once all are available. `sidebarSections`, `subjectLift`, `pluginInstaller`, `seen` and `ui` are optional services: read them with `ctx.reflect.get("name")` (returns `undefined` on older hosts) instead of listing them in `inject`.
 - Own every timer, listener, subscription or process with `ctx.effect(() => { start(); return () => stop(); })`. Cleanup runs on disable, replacement and app teardown. React effects inside components clean up when the page unmounts.
 - Everything you register is owned by the plugin and removed when it is disabled or replaced. A `register` call that throws on invalid fields fails activation; the error appears in Settings and `plugin_status`.
-- React state resets when the revision changes (a reload remounts the selected page). The module is evaluated once per revision per app session, so module-level variables survive a disable and enable of the same revision. There is no key-value storage API; `ctx.artifactStorage` is a structured IndexedDB store for synced artifacts.
+- React state resets when the revision changes (a reload remounts the selected page). The module is evaluated once per revision per app session, so module-level variables survive a disable and enable of the same revision. Use [Seen](plugin-architecture.md#remembering-one-time-experiences) to remember a one-time experience. `ctx.artifactStorage` is a structured IndexedDB store for synced artifacts.
 - Page and panel components render in React error boundaries, but loops and global side effects are not contained.
 
 ## Extension points
@@ -69,6 +69,7 @@ export function apply(ctx) {
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })`. `questions` maps 1 to 32 answer names to `{ type: "yes_no", instructions }`, `{ type: "choice", instructions, options }` (value -> when to pick it) or `{ type: "score", instructions, levels }` (lowest first). `timeoutMs` is in milliseconds (1000-30000). `community` is the relay URL the text came from; Builderlab fails without it (in an agent tool: `ctx.agents.snapshot().running.find((a) => a.key === client.key)?.relay`; in a channel panel: `channelContext.relayUrl`). Resolves `{ outcome: "answered", model, answers }` (for example `answers.urgent.probability`) or `{ outcome: "failed", reason }`; never rejects. By default Builderlab or TypeSafe answers, with Jev. |
+| `seen` (optional) | One-time experiences for the current identity | Use `const seen = ctx.reflect.get("seen")`. Show a hint only when `seen?.has(key) === false`. Call `seen?.mark(key)` when the experience happens and `seen?.subscribe(listener)` to observe changes. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `ui` (optional) | The host's own controls | `const ui = ctx.reflect.get("ui")`, then, if `ui?.Button`, `React.createElement(ui.Button, { variant: "prominent", onClick }, "Save")`. `Button` (`variant`: `prominent`, `subtle`, `ghost`, `destructive`; `size`: `sm`, `md`; `loading`, `disabled`, `type`, `form`, `title`, `aria-label`), `Input` (`value`, `defaultValue`, `onValueChange(value)`, `type`: `text`, `password`; `placeholder`, `name`, `id`, `disabled`, `readOnly`, `maxLength`, `aria-label`), `Field` (`label`, `description?`, `error?`, `optional?`; labels the one `Input` inside it), `Switch` (`checked`, `defaultChecked`, `onCheckedChange(checked)`, `disabled`, `name`, `id`, and `label` or `aria-label`; it applies immediately, so never put it behind Save) and `Dialog` (`open`, `onOpenChange(open)`, `title`, `description?`, `actions?`, `size`: `compact`, `default`; `dismissOnOutsideClick?`, set `false` for a form holding a draft; `preventClose?`; it opens on its first body control, else its first action, and returns focus to the opener on close). For a form, put the fields in a `form` with an `id` and give the Save action `type: "submit"` and `form` set to that `id`, so Save and Enter both submit. Validate in the submit handler and show a `Field` error after a Save attempt, not on open. Other props and values are ignored. Like other services, it is a preview. Fall back to plain host-styled elements when `ui` or a component is missing. |
 | `subjectLift` (optional) | Lift a message image's subject | `const lift = ctx.reflect.get("subjectLift")`. `lift?.supports(source)`, then `await lift.lift(source, signal?)` resolves a transparent PNG `File` ready for `session.emoji.upload`, or rejects with a reason. `source` is `session.media(attachment.url)`. macOS 14+ only; see the plugin architecture's Subject lift contract. |
@@ -187,8 +188,11 @@ GeneralAccess policy supplies a generic subject and visibility-change disclosure
 `allowPublic: false` removes Public participation while keeping Private and View
 only. Existing Public access is displayed as Public; reducing it confirms that
 the picker cannot restore it. Its capability retains signed fresh-read, save and
-uncertain-write recovery behavior. Switching to Private also warns that people
-who already joined keep access until removed, without naming a host screen. Pass
+uncertain-write recovery behavior. With the session's `channelDetails` and a
+`channel` summary, current access shows from that summary without a read; a
+capability without `summaryAccess` reads its own details. Switching to Private
+also warns that people who already joined keep access until removed, without
+naming a host screen. Pass
 `mayHaveGuestMembers: false` only when signed roles verify there are no Guests;
 this suppresses the View only reader warning, never the Public member warning.
 Copy link uses `shareLink` and grants no access. With `memberActions`, it is hidden
@@ -196,6 +200,84 @@ unless the plugin supplies a nonempty `shareLink`; it never falls back to the ba
 channel. Without plugin-managed actions, the channel/chat link remains the default.
 Other omitted overrides preserve chat/channel behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
+
+## Controlled document editing
+
+`ctx.conversation.ui.DocumentEditor` reuses Buzz's editor, persistent formatting
+toolbar, link dialog and Markdown conversion. Inject `react` and `conversation`;
+no editor or React runtime imports are needed. The type-only author package
+exports `DocumentEditorProps`, `DocumentEditorHandle` and
+`DocumentEditorSelection`. Older hosts lack this entry; check its presence before
+offering editing when supporting those hosts.
+
+The plugin controls `value`/`onChange` (Markdown), `editing`, `source`/
+`onSourceChange`, and `linkOpen`/`onLinkOpenChange`. Supply `maxLength` as the
+serialized editing budget and `onSave` for Cmd/Ctrl+Enter. `disabled` locks editor
+and formatting actions while the plugin's save or access policy requires it.
+Rich editing also observes the host's 100,000-character Markdown limit; source
+mode uses the supplied `maxLength`.
+Adopt accepted changes in local state synchronously and persist them separately.
+Keeping `value` unchanged declines a change; both modes restore that accepted
+value, including when returning from source to rich text.
+The component performs no relay writes and stores no drafts; saving, byte limits,
+conflicts, permissions and pending navigation remain the plugin's responsibility.
+Rich mode uses CommonMark paragraph and hard-break semantics like the document
+reader: Enter starts a paragraph and Shift+Enter inserts a hard break (lists and
+code retain their existing structural editing). The serialized length budget uses
+the same document format as `onChange`. Copy/paste retains that structure in both
+plain Markdown and the app's rich HTML payload, including hard breaks and loose
+lists. Normal plain-text paste reads Markdown; paste-as-plain-text keeps the
+existing literal-text behavior.
+Type one to six hashes followed by a space at the start of a paragraph to
+create a heading. Loaded and pasted Markdown headings retain their level.
+Shift+Enter in H3–H6 behaves like Enter, since those headings are single-line in Markdown.
+In H1 and H2, a hard break appears in saved Markdown once more heading content follows it.
+Supported top-level GFM tables appear as grids in rich mode and retain their
+Markdown through surrounding edits. Edit their cells in source mode. Copy and
+Cut on selected grid text both copy the selection. Tables pasted or wrapped
+into a list or quote keep their enclosing Markdown as source. Tables also stay
+visible as source when their combined cell count exceeds the reader's display limit.
+
+```js
+const [value, onChange] = ctx.react.useState("A **document**.");
+const [source, onSourceChange] = ctx.react.useState(false);
+const [linkOpen, onLinkOpenChange] = ctx.react.useState(false);
+const editor = ctx.react.useRef(null);
+return ctx.react.createElement(ctx.conversation.ui.DocumentEditor, {
+  ref: editor,
+  value, onChange, source, onSourceChange, linkOpen, onLinkOpenChange,
+  editing: true,
+  disabled: saving,
+  maxLength: 32768,
+  onSave: saveDocument,
+  label: "Record body",
+  placeholder: "Write your record…",
+  destinations: [{ label: "Reference", href: "buzz://plugin?id=example.records&record=reference" }],
+});
+```
+
+The formatting bar floats along the bottom of the editor. To position it in
+your own pane, pass a `toolbarTarget` at the bottom edge of the content. The
+bar opens above that slot over the content. Put the editor inside the pane's
+scroll container. During formatted editing, the editor reserves scroll padding
+on the nearest ancestor that can scroll vertically so the caret and keyboard
+selection can stay above the bar.
+Use the host's controls and link dialog directly. Optional `destinations`
+are loaded choices for the existing link dialog; their URLs still pass the host
+link validator. Typing `[[` opens that dialog only when `destinations` is nonempty;
+without choices, brackets are ordinary text. Read-mode `children` can render `conversation.ui.Markdown` with `scale: "document"`
+for the shared document heading hierarchy.
+Supported formatting loads into the editor; unsupported syntax remains editable
+literal source, including verbatim line breaks through both clipboard flavors.
+Switching to `source: true` exposes the controlled Markdown value.
+
+The optional ref has `focusEnd()`, `selection()` and `focusSelection(selection)`.
+`selection()` returns `{start, end, source}` only while the field has focus.
+Offsets refer to the current field's text: rich-mode offsets are projected text,
+and source-mode offsets are Markdown. They are not byte offsets. The plugin owns
+restoring the corresponding mode before restoring a selection. Key the editor
+by document identity when switching documents so internal selection, undo history
+and link-dialog intent belong to that document.
 
 ## Host access (`manifest.host`)
 

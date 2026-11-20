@@ -44,7 +44,7 @@
   /* Keep fractional last rows reachable despite integer scroll extents. */
   --history-bottom-inset: var(--space-half);
   padding-bottom: var(--history-bottom-inset);
-  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.53.5.patch)
+  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.54.2.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
      removes the scrollbar, widens the content box, re-wraps rows above the
@@ -3743,26 +3743,39 @@ html[data-keyboard-navigation] .message:focus-visible::after {
 [data-attachment-drop-zone] {
   position: relative;
 }
+/* A tint and a border mark the pane as the drop target without hiding it:
+   the drag can still rest on a thread summary to open it. The border runs
+   along the pane's edge, outside its header's controls, and the label sits in
+   a badge at the top, clear of the composer however narrow the pane, and
+   below the pane's header where the zone includes one. */
 .fileDropOverlay {
   position: absolute;
-  inset: var(--space-2);
+  inset: 0;
   z-index: 5;
   display: grid;
-  place-items: center;
-  align-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4);
+  place-items: start center;
+  padding: var(--space-3);
   border: 2px dashed var(--border-focus);
   border-radius: var(--radius-panel);
-  background: var(--surface-panel);
+  background: var(--affordance-backdrop-hover);
+  pointer-events: none;
+}
+[data-attachment-drop-zone]:has([class~="panel-header"]) > .fileDropOverlay {
+  padding-block-start: calc(var(--size-panel-header) + var(--space-3));
+}
+.fileDropBadge {
+  @apply glass-secondary;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-capsule);
   color: var(--text-standard);
   font-size: var(--text-label);
   font-weight: var(--text-label--font-weight);
   line-height: var(--text-label--line-height);
   letter-spacing: var(--text-label--letter-spacing);
-  text-align: center;
-  opacity: 0.95;
-  pointer-events: none;
 }
 
 .draftMediaSlide {
@@ -4047,6 +4060,21 @@ html[data-keyboard-navigation] .activityExpansion {
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
 }
+/* Compact removes the bubble inset. A collapsed activity disclosure ("Stopped",
+   or a standalone failure reply inside its notice) has no trigger inset, so its
+   outlined box takes the activity bubble's inset. */
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble:has(
+    > .standaloneActivity > .activityGroupHeader:not([data-expanded]),
+    > .standaloneActivity
+      > [data-message-notice]
+      > .standaloneActivity
+      > .activityGroupHeader:not([data-expanded])
+  ) {
+  padding: calc(var(--space-1) + var(--space-half) / 2)
+    calc(var(--space-1h) + var(--space-half) / 2);
+}
 
 .activityBubbleControls {
   display: flex;
@@ -4083,7 +4111,11 @@ html[data-keyboard-navigation] .activityExpansion {
   gap: var(--space-2);
 }
 .messageBubble:has(
-  > .standaloneActivity > .activityGroupHeader[data-expanded]
+  > .standaloneActivity > .activityGroupHeader[data-expanded],
+  > .standaloneActivity
+    > [data-message-notice]
+    > .standaloneActivity
+    > .activityGroupHeader[data-expanded]
 ) {
   padding: var(--space-4);
 }

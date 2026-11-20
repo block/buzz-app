@@ -3684,10 +3684,15 @@ async fn thread_follows_codec_is_a_separate_exact_shape() {
         .sign_thread_follows("B".repeat(32), now, payload.clone())
         .await
         .is_err());
-    assert!(host
-        .sign_thread_follows("b".repeat(32), now + 61, payload.clone())
-        .await
-        .is_err());
+    // The window's edge, against a held clock: the signer otherwise reads its
+    // own, and a second turning over after `now` would move the edge.
+    const AT: u64 = 1_700_000_000;
+    for (created_at, accepted) in [(AT + 60, true), (AT + 61, false)] {
+        let edge = host
+            .sign_thread_follows_at("b".repeat(32), created_at, payload.clone(), || Ok(AT))
+            .await;
+        assert_eq!(edge.is_ok(), accepted, "{created_at}");
+    }
     assert!(host
         .sign_thread_follows("b".repeat(32), now - 120, payload.clone())
         .await

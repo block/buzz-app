@@ -1,3 +1,4 @@
+mod app_navigation;
 mod archive;
 #[cfg(test)]
 mod build_resources;
@@ -86,6 +87,7 @@ mod packaged_plugins;
 mod plugin_url;
 mod repositories_folder;
 mod subject_lift;
+mod web_inspector;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
@@ -775,6 +777,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_send,
         federated_identity::socket::relay_socket_close,
         draft_diagnostics::draft_diagnostics_save,
+        web_inspector::web_inspector,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,
@@ -1031,6 +1034,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(app_navigation::init())
         .manage(federated_identity.clone())
         .manage(federated_identity::access::Registrations::default())
         .manage(federated_identity::socket::Sockets::default())

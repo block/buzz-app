@@ -1229,6 +1229,26 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("builds the session's prompt with the owner's base section choices", async () => {
+    const { agent, deliver, goose } = setup();
+    Object.assign(agent, {
+      promptSections: () => ({
+        owner: {
+          etiquette: { mode: "custom", text: "Be brief." },
+          progress: { mode: "off" },
+        },
+      }),
+    });
+    await deliver(message("1", "@Gander hi"));
+    const prompt = () => [...(goose()?.prompts.values() ?? [])].join();
+    await vi.waitFor(() =>
+      expect(prompt()).toContain(
+        '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
+      ),
+    );
+    expect(prompt()).not.toContain("## Progress");
+  });
+
   it("starts a session from the host's core memory, reading none from the relay", async () => {
     const { core, deliver, goose, memoryOpen } = setup({
       core: "I am Gander.",

@@ -198,6 +198,21 @@ fn show<R: tauri::Runtime>(
     });
 }
 
+/// The AppUserModelID Buzz's toasts post under. Windows registers it only for
+/// an installed Buzz, so development builds borrow PowerShell's.
+#[cfg(target_os = "windows")]
+pub(crate) fn toast_app_id<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<String, String> {
+    let exe = tauri::utils::platform::current_exe().map_err(|e| e.to_string())?;
+    let development = exe
+        .parent()
+        .is_some_and(|dir| dir.ends_with("target/debug") || dir.ends_with("target/release"));
+    Ok(if development {
+        tauri_winrt_notification::Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn show<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -211,42 +226,35 @@ fn show<R: tauri::Runtime>(
         let activated = pending.clone();
         let dismissed = pending.clone();
         let result = (|| {
-            let exe = tauri::utils::platform::current_exe().map_err(|e| e.to_string())?;
-            let development = exe.parent().is_some_and(|dir| {
-                dir.ends_with("target/debug") || dir.ends_with("target/release")
-            });
-            Toast::new(if development {
-                Toast::POWERSHELL_APP_ID
-            } else {
-                &app.config().identifier
-            })
-            .title(&title)
-            .text1(&body)
-            // Sound is app-owned: the renderer plays the selected bundled
-            // sound after delivery. Without this the toast defaults to the
-            // native notification sound (`sound(None)` emits
-            // `<audio silent="true"/>`).
-            .sound(None)
-            .on_activated(move |_| {
-                activated.finish(Outcome::Activated);
-                Ok(())
-            })
-            .on_dismissed(move |reason| {
-                // Banner timeout is NOT notification-center dismissal. Keep
-                // the click registration until actual activation/removal.
-                if matches!(
-                    reason,
-                    Some(
-                        ToastDismissalReason::UserCanceled
-                            | ToastDismissalReason::ApplicationHidden
-                    )
-                ) {
-                    dismissed.finish(Outcome::Closed);
-                }
-                Ok(())
-            })
-            .show()
-            .map_err(|e| e.to_string())
+            let app_id = toast_app_id(&app)?;
+            Toast::new(&app_id)
+                .title(&title)
+                .text1(&body)
+                // Sound is app-owned: the renderer plays the selected bundled
+                // sound after delivery. Without this the toast defaults to the
+                // native notification sound (`sound(None)` emits
+                // `<audio silent="true"/>`).
+                .sound(None)
+                .on_activated(move |_| {
+                    activated.finish(Outcome::Activated);
+                    Ok(())
+                })
+                .on_dismissed(move |reason| {
+                    // Banner timeout is NOT notification-center dismissal. Keep
+                    // the click registration until actual activation/removal.
+                    if matches!(
+                        reason,
+                        Some(
+                            ToastDismissalReason::UserCanceled
+                                | ToastDismissalReason::ApplicationHidden
+                        )
+                    ) {
+                        dismissed.finish(Outcome::Closed);
+                    }
+                    Ok(())
+                })
+                .show()
+                .map_err(|e| e.to_string())
         })();
         if let Err(error) = result {
             pending.finish(Outcome::Failed(error));

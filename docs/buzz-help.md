@@ -970,6 +970,7 @@ and are asked to sign in again in Buzz.
 - **Closing the window** in the Windows app hides it to the notification area;
   Buzz and its agents keep running. Click Buzz's icon there, or open Buzz
   again, to show it. Right-click the icon and choose **Quit Buzz** to quit.
+  The first close shows a notification saying Buzz is still running.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Search for a channel in its access dialog and click **Share**
   beside the result. This makes a Private chat **View only** and posts a link

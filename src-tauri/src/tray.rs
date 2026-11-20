@@ -5,15 +5,19 @@
 //! click opens Buzz, and its menu offers Open and Quit. Once the window is
 //! hidden it is the way to quit, since Alt+F4 and the taskbar's Close only
 //! close the window.
+use std::{fs::OpenOptions, io::ErrorKind, path::Path};
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Runtime,
+    AppHandle, Manager, Runtime,
 };
 
 const TRAY_ID: &str = "buzz-tray";
 const OPEN_ID: &str = "tray-open";
 const QUIT_ID: &str = "tray-quit";
+/// In the app data dir once the first close has said where Buzz went.
+const CLOSE_HINT_MARKER: &str = "windows-close-hint-shown";
 
 #[derive(Debug, PartialEq, Eq)]
 enum TrayCommand {
@@ -79,6 +83,50 @@ pub(crate) fn installed<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.tray_by_id(TRAY_ID).is_some()
 }
 
+/// Whether this is the first close to report. Creating the marker is the
+/// claim, so a marker that cannot be written skips the hint instead of
+/// repeating it on every close.
+fn first_close(data_dir: &Path) -> bool {
+    let claimed = std::fs::create_dir_all(data_dir).and_then(|()| {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(data_dir.join(CLOSE_HINT_MARKER))
+    });
+    match claimed {
+        Ok(_) => true,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => false,
+        Err(error) => {
+            eprintln!("Could not record the close hint: {error}");
+            false
+        }
+    }
+}
+
+/// Closing quits most Windows apps, so the first close says once that Buzz is
+/// still running and where its icon is.
+pub(crate) fn hint_first_close<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    if !first_close(&data_dir) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let shown = crate::notifications::toast_app_id(&app).and_then(|id| {
+            tauri_winrt_notification::Toast::new(&id)
+                .title("Buzz is still running")
+                .text1("Closing the window keeps Buzz in the notification area. Right-click its icon to quit.")
+                .show()
+                .map_err(|e| e.to_string())
+        });
+        if let Err(error) = shown {
+            eprintln!("Could not show the close hint: {error}");
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +157,25 @@ mod tests {
         assert_eq!(command(OPEN_ID), Some(TrayCommand::Open));
         assert_eq!(command(QUIT_ID), Some(TrayCommand::Quit));
         assert_eq!(command(""), None);
+    }
+
+    #[test]
+    fn close_hint_once_per_data_dir() {
+        let root = tempfile::tempdir().unwrap();
+        // A fresh install can close before anything else creates the dir.
+        let data_dir = root.path().join("app");
+        assert!(first_close(&data_dir));
+        assert!(data_dir.join(CLOSE_HINT_MARKER).exists());
+        assert!(!first_close(&data_dir));
+    }
+
+    #[test]
+    fn close_hint_skipped_when_unrecordable() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        assert!(!first_close(&file));
+        assert!(!first_close(&file));
     }
 
     #[test]

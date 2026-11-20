@@ -4180,7 +4180,6 @@ html[data-keyboard-navigation] .activityExpansion {
   padding: var(--space-1) var(--space-2) var(--space-1)
     var(--relayed-text-start);
   border-radius: var(--radius-chip);
-  background: var(--affordance-subtle);
   color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -4189,9 +4188,16 @@ html[data-keyboard-navigation] .activityExpansion {
 .relayedHeader:hover {
   background: var(--affordance-subtle-hover);
 }
-/* A jump to the line shows its highlight through it. */
-.relayedEntry.messageHighlight > .relayedHeader:not(:hover) {
-  background: none;
+/* A relayed line and a fold's line stay filled; lines inside an opened fold
+   fill only while open or while their thread is, and a jump to a line shows
+   its highlight through it. */
+.relayedRun > .relayedHeader:not(:hover),
+.relayedHeader[data-open]:not(:hover),
+.relayedEntry:where([data-thread-open]):not(.messageHighlight)
+  > .relayedHeader:not(:hover),
+.relayedEntry:not(.relayedRunItems .relayedEntry, .messageHighlight)
+  > .relayedHeader:not(:hover) {
+  background: var(--affordance-subtle);
 }
 /* The line's button covers it; the source chat link stays above it. */
 .relayedTrigger {

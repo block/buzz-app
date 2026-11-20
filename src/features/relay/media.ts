@@ -1,5 +1,11 @@
 import { rememberLoadedImage } from "../../shared/design-system/useReadyImage";
 import { relayDebug } from "./debug";
+
+/** Warming image loads in flight at once. Native media reads are
+ * latency-bound, so more in flight warm a channel sooner without slowing
+ * each one; 16 measured no better than 8. */
+const WARM_CONCURRENCY = 8;
+
 export function saveData(): boolean {
   try {
     const connection = (
@@ -148,8 +154,7 @@ export function retainDecodedImage(
  * and decoded-image caches serve the real <img> mounts; WebKit serves warmed
  * custom-scheme images only to eager mounts, so a warmed source is remembered
  * as loaded. Never warms originals/attachments that this renderer doesn't
- * display. Up to eight requests overlap: native media reads are latency-bound,
- * so more in flight warm a channel sooner without slowing each one. */
+ * display. Up to `WARM_CONCURRENCY` requests overlap. */
 export function createMediaPreparation() {
   const pending = new Set<string>();
   let queue: string[] = [];
@@ -168,7 +173,7 @@ export function createMediaPreparation() {
   let prefetched = 0;
   function pump() {
     if (disposed || typeof Image === "undefined") return;
-    while (active.size < 8 && queue.length) {
+    while (active.size < WARM_CONCURRENCY && queue.length) {
       const url = queue.shift();
       if (url === undefined) break;
       const image = new Image();

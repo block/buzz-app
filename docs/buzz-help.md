@@ -515,7 +515,11 @@ Quitting Buzz also turns it off.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
-  Open the composer’s agent chooser to change who you’re sending to. New chat
+  Open the composer’s agent chooser to change who you’re sending to. While a
+  Solo chat holds only you and agents, a message that starts by tagging an
+  agent goes only to the agents it tags; a tag later in the message adds that
+  agent to the composer’s agents, and all of them get it. Remove an agent’s avatar
+  beside the composer to leave it out. New chat
   keeps your selected agents with its draft when you leave and return. Started
   drafts have a pencil icon and stay in the Solo list; New chat returns to the
   open draft. Selected agents appear first with checkmarks when browsing; click

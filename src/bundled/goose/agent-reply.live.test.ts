@@ -49,9 +49,9 @@ const until = async <T>(
 
 /** A model that answers every turn with one `buzz__send` of `pong <nonce>`,
  * where the nonce is the one in the owner's mention, then says it is done.
- * `requests` records what goose asked it. */
+ * `requests` records what goose asked it, and what its tool call returned. */
 async function scriptedModel() {
-  const requests: { tools: string[]; last: string }[] = [];
+  const requests: { tools: number; last: string; toolResult?: string }[] = [];
   const server = createServer(async (request, response) => {
     if (request.method === "GET") {
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -66,13 +66,18 @@ async function scriptedModel() {
     let body = "";
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body) as {
-      messages: { role: string }[];
-      tools?: { function: { name: string } }[];
+      messages: { role: string; content?: unknown }[];
+      tools?: unknown[];
     };
-    const last = input.messages.at(-1)?.role ?? "";
+    const tail = input.messages.at(-1);
+    const last = tail?.role ?? "";
     requests.push({
-      tools: (input.tools ?? []).map((tool) => tool.function.name),
+      tools: (input.tools ?? []).length,
       last,
+      // What the agent's tool call came back with, when it made one.
+      ...(last === "tool"
+        ? { toolResult: JSON.stringify(tail?.content).slice(0, 300) }
+        : {}),
     });
     const nonce = /e2e-[0-9a-f]{8}/.exec(body)?.[0] ?? "no-nonce";
     const delta =

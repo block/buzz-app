@@ -1,4 +1,9 @@
-import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
+import {
+  linkedDraftKey,
+  linkedSourceKey,
+  readLinkedChat,
+  type LinkedChat,
+} from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -641,7 +646,10 @@ export function SoloDraft({
           ),
         );
       }
-      if (source) writeView(scope, draftKey, null);
+      if (source) {
+        writeView(scope, linkedSourceKey(channelId), source);
+        writeView(scope, draftKey, null);
+      }
       writeView(scope, `${draftKey}:settings`, null);
       // A linked draft is reused for its source: clear it to absent so the
       // next start from that source seeds its link again.

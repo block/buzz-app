@@ -27,7 +27,11 @@ import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import * as modelStorage from "../messages/solo-model-picks-storage";
 import { readView, writeView } from "../../shared/view-state";
-import { linkedDraftKey, type LinkedChat } from "./linked-chat";
+import {
+  linkedDraftKey,
+  linkedSourceKey,
+  type LinkedChat,
+} from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import {
   regionDraftKey,
@@ -1074,6 +1078,14 @@ it("a refused linked start gives its source and workspace back to the New chat o
   first.unmount();
   // The start used up the source, so nothing could open this draft again.
   expect(readView("test", linkedDraftKey(linkedId), null)).toBeNull();
+  // The started chat keeps its source to share back to.
+  expect(
+    readView(
+      "test",
+      linkedSourceKey(test.channelWrites.create.mock.calls[0]?.[0] ?? ""),
+      null,
+    ),
+  ).toEqual(source);
   await refuse();
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(

@@ -23,6 +23,9 @@ export function readLinkedChat(
   return value as LinkedChat;
 }
 export const linkedDraftKey = (id: string) => `solo:linked:${id}`;
+/** The source a started chat shares back to. Saved on the device that started it. */
+export const linkedSourceKey = (channelId: string) =>
+  `solo:source:${channelId}`;
 /** One draft per source: starting again from it returns to the unsent prompt
  * instead of stranding it under a fresh key. */
 export async function linkedDraftId(source: LinkedChat) {

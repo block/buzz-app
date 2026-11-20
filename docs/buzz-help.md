@@ -568,6 +568,10 @@ Quitting Buzz also turns it off.
   again from the same source returns to its unsent draft. The link grants no
   access to the source; the agent you tag, and anyone you later share the chat
   with, can open it only if they can already read that conversation.
+  In a chat started from a message on this computer, **Share to original
+  thread** in a message's menu attaches that message to the original thread's
+  draft as a forward and opens the thread. Add a note and send it, or remove
+  it. A thread draft holds one forwarded message at a time.
 - **Team** contains community channels and their threads. Choose **Reply** on a
   message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by

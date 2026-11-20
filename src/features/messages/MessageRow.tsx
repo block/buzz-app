@@ -154,7 +154,7 @@ export type MessageRowProps = {
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
-  media(url: string, size?: "small"): string | undefined;
+  media(url: string, size?: "small", channel?: string): string | undefined;
   /** Receives the thread the link was opened from: the row’s root, or the row. */
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   day: boolean;
@@ -759,6 +759,10 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
+  // A message's images are saved with its channel, so losing the channel
+  // forgets them.
+  const attachmentMedia = (url: string, size?: "small") =>
+    media(url, size, row.channelId);
   const attachmentContent = (copied = false) =>
     attachmentGroups.some(
       (group) => copiedUrls.has(group[0]?.url ?? "") === copied,
@@ -787,7 +791,7 @@ function MessageRowContent({
             const items = previews.map((attachment, index) => {
               const url = safeMessageUrl(attachment.url);
               if (!url) return null;
-              const source = media(url);
+              const source = attachmentMedia(url);
               if (attachment.kind === "file") {
                 const fallback = (
                   <FileAttachment
@@ -850,8 +854,7 @@ function MessageRowContent({
                 );
               }
               if (attachment.kind === "image") {
-                // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
-                const small = media(url, "small");
+                const small = attachmentMedia(url, "small");
                 // Third-party URLs map to themselves: no thumbnail. JPEG
                 // drops alpha, so these formats use the WebP variant.
                 const alpha =
@@ -860,7 +863,7 @@ function MessageRowContent({
                   small === source
                     ? undefined
                     : alpha
-                      ? media(`${alpha[1]}.thumb.webp`)
+                      ? attachmentMedia(`${alpha[1]}.thumb.webp`)
                       : small;
                 const image = (
                   <AttachmentImage
@@ -921,7 +924,7 @@ function MessageRowContent({
                 <MediaAttachment
                   key={url}
                   attachment={{ ...attachment, url }}
-                  media={media}
+                  media={attachmentMedia}
                   compact={images && group.length >= 4 && !!onOpenMediaReview}
                   overlayCount={collapsed && index === 3 ? group.length - 3 : 0}
                   label={

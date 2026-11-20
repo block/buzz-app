@@ -1840,8 +1840,12 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     let cache = ctx.app_handle().state::<MediaCache>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, None)) => cached_media(&cache, &host, Some(&fi), url).await,
-            Ok((url, range)) => serve_media(&host, Some(&fi), url, range)
+            Ok(MediaRequest {
+                url,
+                channel,
+                range: None,
+            }) => cached_media(&cache, &host, Some(&fi), url, channel).await,
+            Ok(MediaRequest { url, range, .. }) => serve_media(&host, Some(&fi), url, range)
                 .await
                 .map(|(_, response)| response),
             Err(status) => Err(status),
@@ -1861,18 +1865,20 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     });
 }
 
-/// A whole image from disk, or from the relay and then saved to disk. Ranged
-/// reads (video and audio) and other types are never stored.
+/// A whole image from disk, or from the relay and then saved to disk, with
+/// the channel whose message showed it, if any. Ranged reads (video and audio)
+/// and other types are never stored.
 async fn cached_media(
     cache: &MediaCache,
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
     url: Url,
+    channel: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     let read = cache.clone();
-    let key = url.clone();
+    let (key, from) = (url.clone(), channel.clone());
     if let Ok(Some((kind, body))) =
-        tauri::async_runtime::spawn_blocking(move || read.get(&key)).await
+        tauri::async_runtime::spawn_blocking(move || read.get(&key, from.as_deref())).await
     {
         return media_headers(kind, false)
             .status(200)
@@ -1886,7 +1892,7 @@ async fn cached_media(
         let body = response.body().clone();
         // A full or unwritable disk only costs the next launch a refetch.
         tauri::async_runtime::spawn_blocking(move || {
-            let _ = cache.put(&url, ticket, &kind, &body);
+            let _ = cache.put(&url, channel.as_deref(), ticket, &kind, &body);
         });
     }
     Ok(response)
@@ -1907,6 +1913,21 @@ fn saved_kind(response: &tauri::http::Response<Vec<u8>>) -> Option<String> {
         .and_then(|value| value.to_str().ok())
         .filter(|kind| kind.starts_with("image/"))
         .map(str::to_owned)
+}
+
+/// Forgets the images this device saved from some of a community's channels.
+#[tauri::command]
+pub(crate) async fn media_cache_forget(
+    cache: tauri::State<'_, MediaCache>,
+    community: String,
+    channels: media_cache::Channels,
+) -> Result<()> {
+    let origin = Url::parse(&community).map_err(|_| "Invalid community URL")?;
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || cache.forget(&origin, channels))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("Couldn't forget saved media: {error}"))
 }
 
 /// Forgets the images this device saved for one community.
@@ -1934,8 +1955,9 @@ fn window_origin(url: &Url) -> Option<tauri::http::HeaderValue> {
     tauri::http::HeaderValue::from_str(&format!("{}://{host}{port}", url.scheme())).ok()
 }
 
-/// Decode only the custom scheme URLs emitted by convertFileSrc. The media URL
-/// is independently checked before any authenticated request is made.
+/// Decode only the custom scheme URLs emitted by convertFileSrc, optionally
+/// with the `channel` that shows the image. The media URL is independently
+/// checked before any authenticated request is made.
 pub(crate) fn download_target(source: &str) -> Option<Url> {
     let url = Url::parse(source).ok()?;
     let host_ok = match url.scheme() {
@@ -1947,7 +1969,7 @@ pub(crate) fn download_target(source: &str) -> Option<Url> {
         || url.port().is_some()
         || !url.username().is_empty()
         || url.password().is_some()
-        || url.query().is_some()
+        || url.query_pairs().any(|(key, _)| key != "channel")
         || url.fragment().is_some()
     {
         return None;
@@ -2418,9 +2440,16 @@ pub(crate) async fn file_download<R: tauri::Runtime>(
 
 /// `buzz-media://localhost/<percent-encoded relay media URL>`, the shape of
 /// `convertFileSrc(url, "buzz-media")` on every desktop platform.
+struct MediaRequest {
+    url: Url,
+    /// The channel whose message shows the image (`?channel=`).
+    channel: Option<String>,
+    range: Option<(u64, u64)>,
+}
+
 fn media_request(
     request: &tauri::http::Request<Vec<u8>>,
-) -> std::result::Result<(Url, Option<(u64, u64)>), u16> {
+) -> std::result::Result<MediaRequest, u16> {
     if request.method() != tauri::http::Method::GET {
         return Err(405);
     }
@@ -2433,7 +2462,15 @@ fn media_request(
         None => None,
         Some(value) => Some(media_range(value.to_str().map_err(|_| 416u16)?).ok_or(416u16)?),
     };
-    Ok((url, range))
+    let channel = url::form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
+        .find(|(key, _)| key == "channel")
+        .map(|(_, value)| value.into_owned())
+        .filter(|channel| !channel.is_empty());
+    Ok(MediaRequest {
+        url,
+        channel,
+        range,
+    })
 }
 
 /// `url`'s blob, or an older upload's `.thumb.jpg` for its missing

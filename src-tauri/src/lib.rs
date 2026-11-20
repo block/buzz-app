@@ -818,6 +818,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         file_download,
         media_download,
         relay::media_cache_clear,
+        relay::media_cache_forget,
         media_copy_image,
         media_lift_subject,
         subject_lift::media_lift_subject_supported,

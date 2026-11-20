@@ -2095,6 +2095,7 @@ fn native_downloads_only_accept_authenticated_media_urls() {
     for url in [
         format!("buzz-media://localhost/{encoded}"),
         format!("http://buzz-media.localhost/{encoded}"),
+        format!("buzz-media://localhost/{encoded}?channel=c"),
     ] {
         assert!(download_target(&url).is_some(), "{url}");
     }
@@ -2104,6 +2105,7 @@ fn native_downloads_only_accept_authenticated_media_urls() {
         format!("https://buzz-media.localhost/{encoded}"),
         format!("buzz-media://localhost:123/{encoded}"),
         format!("buzz-media://localhost/{encoded}?q=1"),
+        format!("buzz-media://localhost/{encoded}?channel=c&q=1"),
         format!("buzz-media://localhost/{encoded}#fragment"),
         format!("buzz-media://u:p@localhost/{encoded}"),
         format!(
@@ -2446,11 +2448,11 @@ async fn saved_images_are_served_without_a_relay_read_until_cleared() {
     let webp = base
         .join(&format!("/media/{}.thumb.webp", "a".repeat(64)))
         .unwrap();
-    let read = || cached_media(&cache, &host, None, webp.clone());
+    let read = || cached_media(&cache, &host, None, webp.clone(), None);
     assert_eq!(read().await.unwrap().body(), b"jpeg");
     // The fallback is saved under the requested URL, in the background.
     for _ in 0..200 {
-        if cache.get(&webp).is_some() {
+        if cache.get(&webp, None).is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -2462,6 +2464,21 @@ async fn saved_images_are_served_without_a_relay_read_until_cleared() {
     cache.clear(&base).unwrap();
     assert_eq!(read().await.unwrap().body(), b"jpeg");
     assert_eq!(paths.lock().unwrap().len(), 4);
+}
+
+#[test]
+fn media_requests_name_the_channel_that_shows_them() {
+    let url = format!("https://relay.test/media/{}.thumb.webp", "a".repeat(64));
+    let encoded = percent_encoding::utf8_percent_encode(&url, percent_encoding::NON_ALPHANUMERIC);
+    let channel = |query: &str| {
+        let request = tauri::http::Request::get(format!("buzz-media://localhost/{encoded}{query}"))
+            .body(Vec::new())
+            .unwrap();
+        media_request(&request).ok().unwrap().channel
+    };
+    assert_eq!(channel("?channel=a%2Fb").as_deref(), Some("a/b"));
+    assert_eq!(channel("?channel="), None);
+    assert_eq!(channel(""), None);
 }
 
 #[tokio::test]

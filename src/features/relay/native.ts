@@ -41,6 +41,7 @@ import {
   type PrivateRecord,
 } from "../channel-templates/model";
 import { parseEvents, type RelayWriter } from "./transport";
+import type { ChannelMedia } from "./store";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -187,15 +188,32 @@ function nativeResponse(result: {
 }
 
 /** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
- * which signs each Blossom `get`, including every `Range` request. */
-export function nativeMediaUrl(url: string): string {
-  return convertFileSrc(url, "buzz-media");
+ * which signs each Blossom `get`, including every `Range` request. An image is
+ * saved with its `channel`, which forgets it when the channel's messages go. */
+export function nativeMediaUrl(url: string, channel?: string): string {
+  const source = convertFileSrc(url, "buzz-media");
+  return channel ? `${source}?channel=${encodeURIComponent(channel)}` : source;
 }
 
 /** Forgets the images the native `buzz-media` scheme saved for a community. */
 export async function clearNativeMedia(community: string) {
   if (!nativeIdentityEnabled()) return;
   await nativeReadInvoke("media_cache_clear", { community });
+}
+
+/** Forgets the images the native `buzz-media` scheme saved from a community's
+ * channels; undefined where images are not saved. */
+export function nativeChannelMedia(
+  community: string,
+): ChannelMedia | undefined {
+  if (!nativeIdentityEnabled()) return undefined;
+  const forget = (
+    channels: { only: readonly string[] } | { allExcept: readonly string[] },
+  ) => nativeReadInvoke<void>("media_cache_forget", { community, channels });
+  return {
+    forget: (only) => forget({ only }),
+    retain: (allExcept) => forget({ allExcept }),
+  };
 }
 
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.

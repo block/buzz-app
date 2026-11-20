@@ -130,6 +130,10 @@ type Head = {
   cached: boolean;
   restored?: true;
 };
+export type ChannelMedia = {
+  forget(channelIds: readonly string[]): Promise<void>;
+  retain(channelIds: readonly string[]): Promise<void>;
+};
 export type ChannelStoreOptions = {
   profiling?: RelayProfiler;
   maxWindows?: number;
@@ -145,6 +149,8 @@ export type ChannelStoreOptions = {
    * a channel before the relay does. */
   revalidate?: boolean;
   persistence?: HeadPersistence;
+  /** Images saved from channels, forgotten with the channels' saved heads. */
+  channelMedia?: ChannelMedia | undefined;
   maxDiscoveryBytes?: number;
   maxHeadBytes?: number;
   maxHeads?: number;
@@ -1056,6 +1062,7 @@ export function createChannelStore(
         true,
       );
       void persistence?.remove(channelId).catch(() => {});
+      void options.channelMedia?.forget([channelId]).catch(() => {});
       saveDiscovery();
     }, [channelId]);
   }
@@ -1880,13 +1887,13 @@ export function createChannelStore(
       ...heads.keys(),
       ...tails.keys(),
     ]);
-    let revoked = false;
-    for (const id of known)
-      if (!authorized(id)) {
-        revoked = true;
-        accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
-        void persistence?.remove(id).catch(() => {});
-      }
+    const lost = [...known].filter((id) => !authorized(id));
+    const revoked = lost.length > 0;
+    for (const id of lost) {
+      accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
+      void persistence?.remove(id).catch(() => {});
+    }
+    if (revoked) void options.channelMedia?.forget(lost).catch(() => {});
     allowed = nextAllowed;
     let appliedEpoch = epoch;
     const commit = () => {
@@ -1894,7 +1901,10 @@ export function createChannelStore(
         if (!authorized(state.channelId)) evict(state);
       for (const id of heads.keys()) if (!authorized(id)) heads.delete(id);
       for (const id of tails.keys()) if (!authorized(id)) tails.delete(id);
-      if (complete) void persistence?.retain([...nextAllowed]).catch(() => {});
+      if (complete) {
+        void persistence?.retain([...nextAllowed]).catch(() => {});
+        void options.channelMedia?.retain([...nextAllowed]).catch(() => {});
+      }
       appliedEpoch = epoch;
       const asOf = now();
       const rosterAsOf = complete ? asOf : list.rosterAsOf;
@@ -2333,6 +2343,7 @@ export function createChannelStore(
           savedDiscovery = undefined;
           profileSave ??= setTimeout(saveProfiles, 1000);
           void persistence?.clear().catch(() => {});
+          void options.channelMedia?.retain([]).catch(() => {});
           setList({
             status: "error",
             channels: Object.freeze([]),

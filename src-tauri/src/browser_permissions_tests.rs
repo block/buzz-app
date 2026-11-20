@@ -149,6 +149,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_upload_cancel",
         "media_download",
         "media_cache_clear",
+        "media_cache_forget",
         "file_download",
         "media_copy_image",
         "media_lift_subject",

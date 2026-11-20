@@ -126,7 +126,14 @@ describe("prepared channel working sets", () => {
         profiles: [],
       },
     ]);
-    const { queries, next, store, pending } = setup({ persistence: disk });
+    const channelMedia = {
+      forget: vi.fn(async () => {}),
+      retain: vi.fn(async () => {}),
+    };
+    const { queries, next, store, pending } = setup({
+      persistence: disk,
+      channelMedia,
+    });
     queries.ensureList();
     next().respond(discovery(["a"]));
     await flush();
@@ -142,6 +149,7 @@ describe("prepared channel working sets", () => {
     );
     expect(queries.window("private").rows).toEqual([]);
     expect(disk.retain).toHaveBeenCalledWith(["a"]); // A complete roster read is permission to drop unknown disk warmth.
+    expect(channelMedia.retain).toHaveBeenCalledWith(["a"]);
     // Only selected-channel demand reads; fresh authoritative empty replaces cached rows.
     expect(pending.length).toBe(1);
     next().respond(empty("a"));

@@ -101,6 +101,7 @@
     "allow-relay-upload-cancel",
     "allow-media-download",
     "allow-media-cache-clear",
+    "allow-media-cache-forget",
     "allow-file-download",
     "allow-media-copy-image",
     "allow-media-lift-subject",

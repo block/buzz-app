@@ -3215,7 +3215,8 @@ export function createRelaySession(
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
-    media: (url: string, size?: "small") => transport?.media(url, size),
+    media: (url: string, size?: "small", channel?: string) =>
+      transport?.media(url, size, channel),
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
     /** People by profile name only; see `createProfileSearch`. */

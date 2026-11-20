@@ -1063,9 +1063,27 @@ it.each([
   },
 );
 
+function savedImages() {
+  return { forget: vi.fn(async () => {}), retain: vi.fn(async () => {}) };
+}
+
+it("forgets a channel's saved images with its saved copy when the viewer leaves its roster", async () => {
+  const disk = emptyDisk();
+  const channelMedia = savedImages();
+  const h = setup({ persistence: disk, channelMedia });
+  h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+  await flush();
+  expect(channelMedia.forget).not.toHaveBeenCalled();
+  h.emit([roster(relay, "a", [], 11)]);
+  await flush();
+  expect(disk.remove).toHaveBeenCalledWith("a");
+  expect(channelMedia.forget).toHaveBeenCalledWith(["a"]);
+});
+
 it("a channel read refused for that channel alone still forgets its saved copy", async () => {
   const disk = emptyDisk();
-  const h = setup({ prepared: true, persistence: disk });
+  const channelMedia = savedImages();
+  const h = setup({ prepared: true, persistence: disk, channelMedia });
   h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
   await flush();
   h.session.channels.ensure("a");
@@ -1076,6 +1094,7 @@ it("a channel read refused for that channel alone still forgets its saved copy",
     );
   await flush();
   await vi.waitFor(() => expect(disk.remove).toHaveBeenCalledWith("a"));
+  expect(channelMedia.forget).toHaveBeenCalledWith(["a"]);
 });
 
 it.each([
@@ -1090,12 +1109,14 @@ it.each([
   "%s saved data when the first channel directory read is refused",
   async (_case, reason, status, clears) => {
     const disk = emptyDisk();
-    const h = setup({ persistence: disk });
+    const channelMedia = savedImages();
+    const h = setup({ persistence: disk, channelMedia });
     h.session.channels.ensureList();
     await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
     for (const request of h.pending.splice(0))
       request.fail(new ReadError("denied", reason, status));
     await flush();
     expect(disk.clear).toHaveBeenCalledTimes(clears);
+    expect(channelMedia.retain.mock.calls).toEqual(clears ? [[[]]] : []);
   },
 );

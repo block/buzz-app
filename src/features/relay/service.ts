@@ -6,7 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
-import { clearNativeMedia } from "./native";
+import { clearNativeMedia, nativeChannelMedia } from "./native";
 import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
@@ -423,6 +423,7 @@ export function provideRelay(
               transport.viewer,
               transportOrigin(transport),
             ),
+            channelMedia: nativeChannelMedia(transportOrigin(transport)),
           });
           await successor.restore();
           if (

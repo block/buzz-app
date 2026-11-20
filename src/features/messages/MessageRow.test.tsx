@@ -1035,7 +1035,11 @@ it.each([undefined, { width: 640, height: 400 }])(
         });
       else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
-      expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
+      expect(media).toHaveBeenCalledWith(
+        "https://image.test/unavailable.png",
+        undefined,
+        "channel",
+      );
     } finally {
       view.unmount();
     }
@@ -1063,7 +1067,11 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
       retry={undefined}
     />,
   );
-  expect(media).toHaveBeenCalledWith("https://image.test/original.png");
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/original.png",
+    undefined,
+    "channel",
+  );
   expect(html).toContain("Image unavailable");
   expect(html).not.toContain("<canvas");
   expect(html).not.toContain("<img");
@@ -1088,7 +1096,12 @@ it("requests a small profile image without downsizing message attachments", () =
   );
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
-  expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+  // A message's image is saved with its channel; the avatar with none.
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/attachment.png",
+    undefined,
+    "channel",
+  );
 });
 
 it("renders proxy audio attachments with an inline player", () => {
@@ -1997,8 +2010,8 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
       name: "Open image attachment",
     });
     expect(media.mock.calls).toEqual([
-      ["https://safe.test/a.png"],
-      ["https://safe.test/a.png", "small"],
+      ["https://safe.test/a.png", undefined, "channel"],
+      ["https://safe.test/a.png", "small", "channel"],
     ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");

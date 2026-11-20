@@ -60,7 +60,11 @@ import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
-import { useMessageReveal } from "./use-message-reveal";
+import {
+  useMessageReveal,
+  watchArrival,
+  type RevealArrival,
+} from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -238,6 +242,8 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     // Settles with its selection, so a retarget's line is decided for it.
     unreadRequest: ThreadPanelProps["unreadRequest"];
     revision: number;
+    /** The person's input since a request confirmed in place arrived. */
+    arrival?: RevealArrival | undefined;
   };
   const current = useRef<Opening | undefined>(undefined);
   const [opening, setOpening] = useState<Opening>();
@@ -282,6 +288,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     const signal = navigation
       ? AbortSignal.any([request.signal, navigation.signal])
       : request.signal;
+    let stopArrival: (() => void) | undefined;
     if (!retrying.current) {
       setError(undefined);
       setFailure(undefined);
@@ -308,6 +315,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       }
       if (prior?.view.snapshot().root) {
         if (navigation) setRouting(navigation);
+        // The editor stays usable while the read runs, so focus the person
+        // moves or text they type meanwhile belongs to this request's reveal.
+        const arrival = { input: false };
+        stopArrival = watchArrival(arrival);
         let result: ThreadRetarget;
         try {
           result = await prior.view.retarget(messageId, signal);
@@ -324,6 +335,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
             navigation,
             revealRequest,
             unreadRequest,
+            arrival,
           };
           current.current = next;
           setOpening(next);
@@ -382,7 +394,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       }
     }
     void select();
-    return () => request.abort();
+    return () => {
+      request.abort();
+      stopArrival?.();
+    };
   }, [
     session,
     channelId,
@@ -413,6 +428,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           routePending={!!routing}
           revealRequest={opening.revealRequest}
           unreadRequest={opening.unreadRequest}
+          arrival={opening.arrival}
           selectionFailure={
             failure && { ...failure, pending, retry: retryNavigation }
           }
@@ -562,9 +578,12 @@ function ThreadMessages({
   selectionFailure,
   onResolvedRoot,
   routePending,
+  arrival,
 }: {
   intro?: ReactNode;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
+  /** The person's input since the request retargeted in place arrived. */
+  arrival?: RevealArrival | undefined;
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route
    * replaces. */
@@ -1176,6 +1195,7 @@ function ThreadMessages({
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
+    arrival,
   });
   // Leaving a visit once it was presented, by navigating on, hiding or
   // unmounting, records where the reader was. A return counts only once

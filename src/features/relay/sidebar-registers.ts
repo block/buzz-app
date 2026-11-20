@@ -3,6 +3,8 @@ import type { SidebarGroups } from "./sidebar-preferences.ts";
 
 export const MAX_WORKSPACES = 200;
 export const MAX_WORKSPACE_ASSIGNMENTS = 2000;
+// Marks an order derived from legacy records. Only explicit reorders are saved.
+export const WORKSPACE_DEFAULT_ORDER = Symbol("workspace default order");
 
 /** Section and section-choice registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
@@ -305,6 +307,33 @@ export function encodeWorkspaceUnifiedOnly(
 
 /** Cross-version catch-up owns only leaves the unified record has never seen. */
 export function importWorkspaceFallback(
+  current: Record<string, unknown>,
+  legacy: SidebarGroups | undefined,
+): Record<string, unknown> {
+  const merged = mergeWorkspaceFallback(current, legacy);
+  const order = legacy?.sectionOrder;
+  if (
+    !order?.length ||
+    !Array.isArray(merged.sectionOrder) ||
+    merged.sectionOrder.length
+  )
+    return merged;
+  // Legacy heads identify the two groups of workspaces. The unified record
+  // still owns their relative order after import.
+  const starred = order.indexOf("starred");
+  const legacySolo = new Set(order.slice(1, starred));
+  const legacyTeam = new Set(order.slice(starred + 1));
+  const keys = [...(merged.sections as SidebarGroups["sections"])]
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+    .map(({ id }) => `group:${id}`);
+  const solo = keys.filter((key) => legacySolo.has(key));
+  if (!solo.length) return merged;
+  const team = keys.filter((key) => legacyTeam.has(key));
+  const sectionOrder = ["solo", ...solo, "starred", ...team];
+  return { ...merged, sectionOrder, [WORKSPACE_DEFAULT_ORDER]: sectionOrder };
+}
+
+function mergeWorkspaceFallback(
   current: Record<string, unknown>,
   legacy: SidebarGroups | undefined,
 ): Record<string, unknown> {

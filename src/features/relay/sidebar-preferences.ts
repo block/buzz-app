@@ -3,6 +3,7 @@ export type { SidebarSortMode } from "./sidebar-sort.ts";
 import {
   MAX_WORKSPACES,
   MAX_WORKSPACE_ASSIGNMENTS,
+  WORKSPACE_DEFAULT_ORDER,
   projectSidebarRecord,
   projectSidebarSort,
   workspaceTombstones,
@@ -105,17 +106,27 @@ export function workspaceBaseRecord(groups: SidebarGroups) {
     version: 1,
     sections: groups.sections,
     assignments: groups.assignments,
-    sectionOrder: [],
+    sectionOrder: groups.sectionOrder ?? [],
     ...(groups.legacyTemplates
       ? { legacyTemplates: groups.legacyTemplates }
       : {}),
   });
-  return { version: 1, ...normalized };
+  return {
+    version: 1,
+    ...normalized,
+    ...(normalized.sectionOrder?.length
+      ? { [WORKSPACE_DEFAULT_ORDER]: normalized.sectionOrder }
+      : {}),
+  };
 }
 
 export function decodeLegacyWorkspaceEnvelope(value: unknown): SidebarGroups {
   const data = object(value);
-  return projectWorkspaceGroups({ ...data, version: 1, sectionOrder: [] });
+  return projectWorkspaceGroups({
+    ...data,
+    version: 1,
+    sectionOrder: data.sectionOrder ?? [],
+  });
 }
 
 type WorkspaceRecord = SidebarGroups & {
@@ -139,9 +150,11 @@ export function workspaceRecordForWrite(
     ...groups,
     version: 1 as const,
     sectionOrder:
-      groups.sectionOrder?.filter(
-        (key) => !key.startsWith("group:") || live.has(key.slice(6)),
-      ) ?? [],
+      groups.sectionOrder === Reflect.get(payload, WORKSPACE_DEFAULT_ORDER)
+        ? []
+        : (groups.sectionOrder?.filter(
+            (key) => !key.startsWith("group:") || live.has(key.slice(6)),
+          ) ?? []),
   };
   if (previous.legacyImportClosed === true)
     return { ...layout, legacyImportClosed: true };
@@ -386,11 +399,13 @@ export function workspaceSectionOrder(
   groups: Pick<SidebarGroups, "sections" | "sectionOrder"> | undefined,
 ): readonly string[] {
   const [starred, ...home] = HOME_SIDEBAR_SECTIONS;
+  const [solo, ...otherHomes] = home;
   const defaults = [
     SIDEBAR_PAGES_SECTION,
+    solo,
     starred,
     ...(groups?.sections ?? []).map(({ id }) => `group:${id}`),
-    ...home,
+    ...otherHomes,
   ];
   if (!groups?.sectionOrder?.length) return defaults;
   const available = new Set(defaults);

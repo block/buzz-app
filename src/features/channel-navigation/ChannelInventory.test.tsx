@@ -2577,10 +2577,10 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     expect(order).toHaveBeenLastCalledWith(
       [
         "pages",
+        "solo",
         "starred",
         "group:later",
         "group:work",
-        "solo",
         "channels",
         "forums",
         "dms",

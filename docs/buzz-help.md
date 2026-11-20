@@ -1154,7 +1154,10 @@ and are asked to sign in again in Buzz.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections** collapse independently through their headings. Buzz
+- **Sidebar sections** default to **Solo**, workspaces from the previous Solo
+  sidebar, **Starred**, workspaces from the previous Team sidebar, **Team**,
+  **Forums**, then **Direct messages**. A saved section order takes precedence.
+  Sections collapse independently through their headings. Buzz
   remembers collapsed sections for each community and identity. Unread messages
   or thread replies highlight the headings of collapsed sections. Muted
   conversations are excluded from these highlights.

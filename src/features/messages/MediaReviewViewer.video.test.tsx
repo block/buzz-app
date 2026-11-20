@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -219,6 +220,42 @@ it("closes the speed menu with Escape without closing review", async () => {
   });
   expect(screen.queryByRole("menu", { name: /^Playback speed:/ })).toBeNull();
   expect(close).not.toHaveBeenCalled();
+});
+
+it("Option-click in the viewer toggles speed, closes a hover-opened speed menu and keeps it closed until the pointer returns", async () => {
+  setupReview();
+  const control = await screen.findByRole("button", {
+    name: "Playback speed: 1x",
+  });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  const speedMenu = () =>
+    screen.queryByRole("menu", { name: /^Playback speed:/ });
+  // Longer than the hover rest, with the pointer still moving over the control.
+  const restPastHoverDelay = async () => {
+    fireEvent.mouseMove(control, { movementX: 4 });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+  };
+  fireEvent.mouseEnter(control);
+  fireEvent.mouseMove(control);
+  await waitFor(() => expect(speedMenu()).toBeInTheDocument());
+  for (const next of [2, 1]) {
+    // The events a real mouse sends, so Base UI records the pointer type.
+    fireEvent.pointerDown(control, { pointerType: "mouse", altKey: true });
+    fireEvent.mouseDown(control, { altKey: true });
+    fireEvent.click(control, { detail: 1, altKey: true });
+    expect(video.playbackRate).toBe(next);
+    await waitFor(() => expect(speedMenu()).toBeNull());
+    await restPastHoverDelay();
+    expect(speedMenu()).toBeNull();
+  }
+  fireEvent.mouseLeave(control);
+  fireEvent.mouseEnter(control);
+  fireEvent.mouseMove(control);
+  await waitFor(() => expect(speedMenu()).toBeInTheDocument());
+  expect(video.playbackRate).toBe(1);
 });
 
 it("keeps the focus loop out of the collapsing comments panel", async () => {

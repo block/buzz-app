@@ -335,24 +335,86 @@ it("opens the speed menu without changing speed on a plain click", async () => {
   expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
 });
 
-it("toggles speed and keeps a hover-opened speed menu open on Option-click", async () => {
+/** A mouse arriving on the control and resting there, which is what opens the menu by hover. */
+function rest(control: Element, init: MouseEventInit = {}) {
+  fireEvent.mouseEnter(control, init);
+  fireEvent.mouseMove(control, init);
+}
+
+/** Longer than the hover rest, with the pointer still moving over the control. */
+async function restPastHoverDelay(control: Element, init: MouseEventInit = {}) {
+  fireEvent.mouseMove(control, { movementX: 4, ...init });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+}
+
+it("closes a hover-opened speed menu on Option-click and keeps it closed while the pointer stays", async () => {
   const { container } = render(
     <MediaAttachment attachment={videoAttachment} media={media} />,
   );
   const control = screen.getByRole("button", { name: "Playback speed: 1x" });
-  fireEvent.mouseEnter(control);
-  fireEvent.mouseMove(control);
+  rest(control);
   await screen.findByRole("menu");
   optionClick(control);
   expect(container.querySelector("video")?.playbackRate).toBe(2);
-  expect(screen.getByRole("menu")).toBeInTheDocument();
-  expect(screen.getByRole("menuitemradio", { name: "2x" })).toBeChecked();
-  expect(screen.getByRole("menuitemradio", { name: "1x" })).not.toBeChecked();
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await restPastHoverDelay(control);
+  expect(screen.queryByRole("menu")).toBeNull();
   optionClick(control);
   expect(container.querySelector("video")?.playbackRate).toBe(1);
-  expect(screen.getByRole("menu")).toBeInTheDocument();
-  expect(screen.getByRole("menuitemradio", { name: "1x" })).toBeChecked();
+  await restPastHoverDelay(control);
+  expect(screen.queryByRole("menu")).toBeNull();
 });
+
+it("does not open the speed menu by hover after an Option-click that came before the hover delay", async () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+  rest(control);
+  optionClick(control);
+  expect(container.querySelector("video")?.playbackRate).toBe(2);
+  await restPastHoverDelay(control);
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it("does not open the speed menu by hover while Option is held", async () => {
+  render(<MediaAttachment attachment={videoAttachment} media={media} />);
+  const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+  rest(control, { altKey: true });
+  await restPastHoverDelay(control, { altKey: true });
+  expect(screen.queryByRole("menu")).toBeNull();
+  fireEvent.mouseMove(control, { movementX: 4 });
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+it.each([
+  ["hover", (control: Element) => rest(control)],
+  [
+    "plain click",
+    (control: Element) => {
+      fireEvent.mouseEnter(control);
+      mouseClick(control);
+    },
+  ],
+])(
+  "opens the speed menu by %s once the pointer has left and returned after an Option-click",
+  async (_, arrive) => {
+    const { container } = render(
+      <MediaAttachment attachment={videoAttachment} media={media} />,
+    );
+    const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+    rest(control);
+    await screen.findByRole("menu");
+    optionClick(control);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.mouseLeave(control);
+    arrive(control);
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(container.querySelector("video")?.playbackRate).toBe(2);
+  },
+);
 
 it.each([
   ["plain mouse click", (control: Element) => mouseClick(control)],

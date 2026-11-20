@@ -156,7 +156,11 @@ if that desktop app is up and running.
 
 - **Video speed.** The speed control opens a menu of playback speeds.
   Option-click (Alt-click) it to toggle the speed instead of picking from the
-  menu: 2x from normal speed, or back to 1x from any other speed.
+  menu: 2x from normal speed, or back to 1x from any other speed. An Option-click
+  closes the menu if it was showing, and resting the pointer on the control
+  does not open it again until the pointer has left and come back, or while
+  Option is held. A plain click or key press still opens it. This works the
+  same in the inline player and the fullscreen viewer.
 
 ## Agents
 

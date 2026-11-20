@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -84,6 +85,11 @@ export function VideoControls({
   const audibleVolume = muted ? 0 : volume;
   const [rate, setRate] = useState(savedSpeed);
   const [hover, setHover] = useState<number>();
+  const speedMenu =
+    useRef<
+      NonNullable<ComponentProps<typeof MenuRoot>["actionsRef"]>["current"]
+    >(null);
+  const speedHoverMuted = useRef(false);
   const [notice, setNotice] = useState<string>();
   useEffect(() => {
     const video = videoRef.current;
@@ -392,7 +398,20 @@ export function VideoControls({
           {videoTime(duration)}
         </span>
         <div className={styles.speed}>
-          <MenuRoot modal={false}>
+          <MenuRoot
+            modal={false}
+            actionsRef={speedMenu}
+            onOpenChange={(open, details) => {
+              // Option held or just Option-clicked: resting on the control opens nothing.
+              if (
+                open &&
+                details.reason === "trigger-hover" &&
+                (speedHoverMuted.current ||
+                  (details.event as MouseEvent).altKey)
+              )
+                details.cancel();
+            }}
+          >
             <MenuTrigger
               openOnHover="control"
               render={
@@ -401,16 +420,24 @@ export function VideoControls({
                 </Button>
               }
               aria-label={`Playback speed: ${rate}x`}
-              // Option-click toggles normal and double speed instead of picking from the menu.
+              // Option-click toggles normal and double speed and leaves no menu showing.
+              // Hover stays muted from the press until the pointer next enters the control;
+              // a plain click or key press opens the menu at any time.
+              onMouseEnter={() => {
+                speedHoverMuted.current = false;
+              }}
               // Only the press is kept from Base UI, which opens on mousedown: its click
               // handler must still run to clear the pointer type recorded on pointerdown.
               onMouseDown={(event) => {
-                if (event.altKey) event.preventBaseUIHandler();
+                if (!event.altKey) return;
+                event.preventBaseUIHandler();
+                speedHoverMuted.current = true;
               }}
               onClick={(event) => {
                 // Keyboard and programmatic clicks have no click count; they open the menu.
-                if (event.altKey && event.detail > 0)
-                  changeSpeed(rate === 1 ? 2 : 1);
+                if (!event.altKey || event.detail === 0) return;
+                changeSpeed(rate === 1 ? 2 : 1);
+                speedMenu.current?.close();
               }}
             >
               {rate}x

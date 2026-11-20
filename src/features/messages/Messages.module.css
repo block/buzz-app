@@ -4158,8 +4158,9 @@ html[data-keyboard-navigation] .activityExpansion {
 .relayedLine {
   margin-inline-start: 0;
 }
-/* A width, not stretch: inside an opened run the entry is a block, not a flex column. */
-.relayedLine:not([data-panel-open]) {
+/* A width, not stretch: inside an opened run the entry is a block, not a flex
+   column, and the run's own line rule would otherwise fit the line to its text. */
+.relayedEntry > .relayedLine:not([data-panel-open]) {
   box-sizing: border-box;
   inline-size: 100%;
   max-inline-size: 100%;

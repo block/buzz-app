@@ -11,11 +11,7 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type {
-  ChannelSummary,
-  ListStatus,
-  Profile,
-} from "../../features/relay/contracts";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   panelOpening,
@@ -65,45 +61,74 @@ export const historyPanel = (entry: PanelOpening) =>
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
 
-/** Why a tab cannot show a channel the relay has settled, most specific
- * first. Only a conversation tab reaches the archived and read-only reasons:
- * its body always mounts a composer, while a thread tab shows such a channel
- * with its notice. */
-function unavailableReason(target: ChannelSummary | undefined) {
-  if (target?.cached)
-    return "This conversation will appear once Buzz reconnects.";
-  if (target?.archived) return "This conversation is archived.";
-  if (target?.readOnly)
-    return "You have read-only access to this conversation.";
-  return "This conversation is no longer available.";
-}
+const DID_NOT_LOAD = "This conversation didn’t load.";
 
-/** A tab whose channel the roster read has not settled: it is missing from a
- * channel list that is not complete, or listed from saved membership the
- * relay has yet to confirm. The read may still be due or in flight, or have
- * failed with recovery retrying it; the recovery notice is then the one
- * report, as in the sidebar. A failure recovery does not retry is stated, as
- * is a list this session never reads. */
-function UnsettledChannel({
+/** The body of a tab that has no usable channel: the thread placeholder while
+ * the roster read is still expected to settle the channel, else the most
+ * specific reason known. It reads the list and the roster read itself, so a
+ * host that follows neither still shows the current state.
+ *
+ * A channel the relay has confirmed states why a conversation tab cannot show
+ * it; a thread tab shows such a channel with its notice and never gets here.
+ * Otherwise the channel is missing, or listed from saved membership:
+ *
+ * - Without a connection nothing is read, so absence proves nothing.
+ * - Only a complete roster read proves a missing channel gone. A `ready` list
+ *   may be restored from saved events or hold one page of a longer read.
+ * - A failed or interrupted read keeps the placeholder while recovery retries
+ *   it, the recovery notice being the one report, as in the sidebar.
+ * - A read that settled without deciding the channel (its cap was hit) is
+ *   stated, so the placeholder ends once the read does. */
+function UnavailableChannel({
   session,
-  list,
+  target,
   label,
 }: {
   session: Pick<RelaySession, "recovery" | "live" | "channels">;
-  list: ListStatus;
+  target: ChannelSummary | undefined;
   label: string | undefined;
 }) {
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const readRoster = () => session.live.snapshot().roster.state;
+  const roster = useSyncExternalStore(
+    session.live.subscribe,
+    readRoster,
+    readRoster,
+  );
   const retrying = useRecoveryOwns(session, (live) =>
     rosterRecovering(live.roster),
   );
-  const failed =
-    list === "error"
-      ? !retrying
-      : list === "unavailable" ||
-        (list === "idle" && session.channels.cachedOnly);
-  return failed ? (
+  const reason = () => {
+    if (target && !target.cached) {
+      if (target.archived) return "This conversation is archived.";
+      if (target.readOnly)
+        return "You have read-only access to this conversation.";
+      return "This conversation is no longer available.";
+    }
+    if (session.channels.cachedOnly)
+      return target
+        ? "This conversation will appear once Buzz reconnects."
+        : "This conversation may appear once Buzz reconnects.";
+    if (list.status === "unavailable") return DID_NOT_LOAD;
+    if (
+      !target &&
+      list.status === "ready" &&
+      !list.coverage &&
+      list.rosterAsOf !== undefined
+    )
+      return "This conversation is no longer available.";
+    if (list.status === "error" || roster === "error" || roster === "deferred")
+      return retrying ? undefined : DID_NOT_LOAD;
+    return roster === "verified" ? DID_NOT_LOAD : undefined;
+  };
+  const text = reason();
+  return text ? (
     <p role="status" className={styles.empty}>
-      This conversation didn’t load.
+      {text}
     </p>
   ) : (
     <ThreadLoading {...(label && { label })} />
@@ -805,27 +830,18 @@ export function useConversationTabs({
     if (!target || target.cached) return undefined;
     return tab.kind === "thread" || usableChannel(target) ? target : undefined;
   }
-  // What a tab without a usable channel shows: a placeholder while the relay
-  // is still expected to settle it, else the most specific reason known.
+  // What a tab without a usable channel shows.
   function unavailable(tab: Pick<Tab, "kind" | "channelId">) {
-    const target =
-      tab.kind === "thread" && current?.id === tab.channelId
-        ? current
-        : channels.find((item) => item.id === tab.channelId);
-    const list = queries.channels.list().status;
-    const label = tab.kind === "thread" ? undefined : "Loading conversation…";
-    // Saved membership on a connected session awaits its live roster, as a
-    // missing channel awaits a complete list.
     return (
-      target
-        ? target.cached && !queries.channels.cachedOnly
-        : list !== "ready"
-    ) ? (
-      <UnsettledChannel session={queries} list={list} label={label} />
-    ) : (
-      <p role="status" className={styles.empty}>
-        {unavailableReason(target)}
-      </p>
+      <UnavailableChannel
+        session={queries}
+        target={
+          tab.kind === "thread" && current?.id === tab.channelId
+            ? current
+            : channels.find((item) => item.id === tab.channelId)
+        }
+        label={tab.kind === "thread" ? undefined : "Loading conversation…"}
+      />
     );
   }
   // Message rows are memoized: links read one stable opener that consults the

@@ -2281,9 +2281,9 @@ it("does not treat an unmarked catch-all as a native profile history reader", ()
 });
 
 // Recovery and the live roster read, as the session reports them.
-const rosterRead = (recovering: boolean, transient?: true) => {
+const rosterRead = (state: string, recovering = false, transient?: true) => {
   const recovery = { recovering, shown: false };
-  const live = { roster: { state: "error", ...(transient && { transient }) } };
+  const live = { roster: { state, ...(transient && { transient }) } };
   return {
     recovery: { subscribe: () => () => {}, snapshot: () => recovery },
     live: { subscribe: () => () => {}, snapshot: () => live },
@@ -2321,14 +2321,14 @@ it.each([
     name: "a channel missing from a failed list that recovery is retrying",
     kind: "thread",
     list: "error",
-    roster: rosterRead(true, true),
+    roster: rosterRead("error", true, true),
     loading: "Loading thread…",
   },
   {
     name: "a conversation missing from a failed list that recovery is retrying",
     kind: "conversation",
     list: "error",
-    roster: rosterRead(true, true),
+    roster: rosterRead("error", true, true),
     loading: "Loading conversation…",
   },
   {
@@ -2336,13 +2336,14 @@ it.each([
     name: "a channel missing from a failed list that is not retried",
     kind: "thread",
     list: "error",
-    roster: rosterRead(true),
+    roster: rosterRead("error", true),
     text: "This conversation didn’t load.",
   },
   {
     name: "a conversation missing from a list that failed to load",
     kind: "conversation",
     list: "error",
+    roster: rosterRead("error"),
     text: "This conversation didn’t load.",
   },
   // A failed roster read keeps the saved membership it could not confirm.
@@ -2351,7 +2352,7 @@ it.each([
     kind: "thread",
     current: { cached: true as const, readOnly: true as const },
     list: "error",
-    roster: rosterRead(true, true),
+    roster: rosterRead("error", true, true),
     loading: "Loading thread…",
   },
   {
@@ -2359,7 +2360,7 @@ it.each([
     kind: "thread",
     current: { cached: true as const, readOnly: true as const },
     list: "error",
-    roster: rosterRead(true),
+    roster: rosterRead("error", true),
     text: "This conversation didn’t load.",
   },
   {
@@ -2367,6 +2368,7 @@ it.each([
     kind: "thread",
     listed: { cached: true as const, readOnly: true as const },
     list: "error",
+    roster: rosterRead("error"),
     text: "This conversation didn’t load.",
   },
   {
@@ -2374,6 +2376,7 @@ it.each([
     kind: "conversation",
     listed: { cached: true as const, readOnly: true as const },
     list: "error",
+    roster: rosterRead("error"),
     text: "This conversation didn’t load.",
   },
   // The list read starts after the first render.
@@ -2381,13 +2384,70 @@ it.each([
     name: "a channel missing from a list not yet read",
     kind: "thread",
     list: "idle",
+    roster: rosterRead("idle"),
     loading: "Loading thread…",
   },
   {
     name: "a channel missing from a list Buzz cannot read without a connection",
     kind: "thread",
     list: "idle",
+    roster: rosterRead("idle"),
     cachedOnly: true,
+    text: "This conversation may appear once Buzz reconnects.",
+  },
+  {
+    // Restored saved membership commits the list as ready with nothing read.
+    name: "a channel missing from the saved list while Buzz is not connected",
+    kind: "conversation",
+    roster: rosterRead("idle"),
+    cachedOnly: true,
+    text: "This conversation may appear once Buzz reconnects.",
+  },
+  // A cold start: the list is ready from restored events, or from one page
+  // of a longer read, before the relay has answered with a complete roster.
+  {
+    name: "a channel missing from a restored list whose roster read is pending",
+    kind: "thread",
+    loading: "Loading thread…",
+  },
+  {
+    name: "a conversation missing from a restored list whose roster read is pending",
+    kind: "conversation",
+    loading: "Loading conversation…",
+  },
+  {
+    name: "a channel missing from one page of a roster still being read",
+    kind: "thread",
+    coverage: "partial",
+    rosterAsOf: 1,
+    loading: "Loading thread…",
+  },
+  {
+    name: "a channel missing from a restored list while recovery retries the roster",
+    kind: "thread",
+    roster: rosterRead("deferred", true),
+    loading: "Loading thread…",
+  },
+  {
+    name: "a channel missing from a restored list whose roster read failed",
+    kind: "thread",
+    roster: rosterRead("error"),
+    text: "This conversation didn’t load.",
+  },
+  // A settled read ends the placeholder even when it decided nothing.
+  {
+    name: "a channel missing from a roster read that hit its cap",
+    kind: "thread",
+    coverage: "partial",
+    roster: rosterRead("verified"),
+    text: "This conversation didn’t load.",
+  },
+  {
+    name: "saved membership a settled roster read left unconfirmed",
+    kind: "thread",
+    current: { cached: true as const, readOnly: true as const },
+    coverage: "partial",
+    roster: rosterRead("verified"),
     text: "This conversation didn’t load.",
   },
   {
@@ -2418,13 +2478,15 @@ it.each([
   {
     name: "a channel missing from a complete list",
     kind: "thread",
-    list: "ready",
+    rosterAsOf: 1,
+    roster: rosterRead("verified"),
     text: "This conversation is no longer available.",
   },
   {
     name: "a conversation missing from a complete list",
     kind: "conversation",
-    list: "ready",
+    rosterAsOf: 1,
+    roster: rosterRead("verified"),
     text: "This conversation is no longer available.",
   },
 ] as {
@@ -2433,6 +2495,8 @@ it.each([
   current?: object;
   listed?: object;
   list?: string;
+  coverage?: "partial";
+  rosterAsOf?: number;
   roster?: ReturnType<typeof rosterRead>;
   cachedOnly?: true;
   loading?: string;
@@ -2444,18 +2508,27 @@ it.each([
     current,
     listed,
     list = "ready",
-    roster = rosterRead(false),
+    coverage,
+    rosterAsOf,
+    roster = rosterRead("pending"),
     cachedOnly,
     loading,
     text,
   }) => {
     const channel = { id: "target", name: "Target" };
     const channels = listed ? [{ ...channel, ...listed }] : [];
+    const snapshot = {
+      status: list,
+      channels,
+      ...(coverage && { coverage }),
+      ...(rosterAsOf && { rosterAsOf }),
+    };
     const session = {
       viewer: "viewer",
       ...roster,
       channels: {
-        list: () => ({ status: list, channels }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
         window: () => ({ rows: [] }),
         ...(cachedOnly && { cachedOnly }),
       },
@@ -2515,11 +2588,13 @@ it("a thread tab hosts its thread once the relay confirms saved membership", () 
     cached: true,
     readOnly: true,
   };
+  const restored = { status: "ready", channels: [current] };
   const session = {
     viewer: "viewer",
-    ...rosterRead(false),
+    ...rosterRead("pending"),
     channels: {
-      list: () => ({ status: "ready", channels: [current] }),
+      list: () => restored,
+      subscribeList: () => () => {},
       window: () => ({ rows: [] }),
     },
   } as unknown as RelaySession;
@@ -2561,6 +2636,69 @@ it("a thread tab hosts its thread once the relay confirms saved membership", () 
   expect(h.result.current.workspace.hosts).toHaveLength(1);
   render(h.result.current.workspace.items[0]?.content);
   expect(screen.queryByRole("status")).toBeNull();
+});
+
+// A host that follows neither the list nor the roster read, as a Bestie
+// conversation, never re-renders the tab: its body settles on its own.
+it("a tab body follows the list and the roster read without its host", () => {
+  let list: object = { status: "ready", channels: [] };
+  let roster = { state: "pending" };
+  const listeners = new Set<() => void>();
+  const follow = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const recovery = { recovering: false, shown: false };
+  const session = {
+    viewer: "viewer",
+    recovery: { subscribe: () => () => {}, snapshot: () => recovery },
+    live: { subscribe: follow, snapshot: () => ({ roster }) },
+    channels: {
+      list: () => list,
+      subscribeList: follow,
+      window: () => ({ rows: [] }),
+    },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "target");
+    const workspace = useConversationTabs({
+      profiles: new Map(),
+      state,
+      relay,
+      session,
+      panels,
+      current: undefined,
+      channels: [],
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  act(() => h.result.current.state.openThreadTab("target", "root", "root"));
+  render(h.result.current.workspace.items[0]?.content);
+  expect(screen.getByRole("status")).toHaveTextContent("Loading thread…");
+
+  // The relay answers with a complete roster that omits the channel.
+  act(() => {
+    list = { status: "ready", channels: [], rosterAsOf: 1 };
+    roster = { state: "verified" };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This conversation is no longer available.",
+  );
 });
 
 // The thread panel replaces the composer with the channel's own notice, so a

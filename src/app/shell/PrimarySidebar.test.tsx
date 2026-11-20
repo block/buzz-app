@@ -388,7 +388,7 @@ it("mounts one action menu for each home section", async () => {
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const more = (title: string) =>
       document.querySelector(`button[aria-label="More actions for ${title}"]`);
-    expect(more("Solo chats")).not.toBeNull();
+    expect(more("Solo")).not.toBeNull();
     expect(more("Team")).not.toBeNull();
     expect(more("Channels")).toBeNull();
   } finally {
@@ -787,7 +787,7 @@ it.each(["empty", "chats", "projects", "both"])(
     });
     f.connection({});
     expect(
-      await screen.findByLabelText("Solo chats", { selector: "summary" }),
+      await screen.findByLabelText("Solo", { selector: "summary" }),
     ).toBeVisible();
     const trigger = screen.getByRole("button", { name: "New options" });
     await user.click(trigger);

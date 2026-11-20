@@ -1154,12 +1154,11 @@ and are asked to sign in again in Buzz.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections** default to **Solo chats**, **Starred**, your
-  workspaces, **Team**, **Forums**, then **Direct messages**. After an upgrade
-  from the separate Solo and Team sidebars, Buzz keeps their order: workspaces
-  from the previous Solo sidebar, **Solo chats**, **Starred**, workspaces from
-  the previous Team sidebar, then **Team**. A saved section order takes
-  precedence.
+- **Sidebar sections** default to **Solo**, **Starred**, your workspaces,
+  **Team**, **Forums**, then **Direct messages**. After an upgrade from the
+  separate Solo and Team sidebars, Buzz keeps their order: workspaces from the
+  previous Solo sidebar, **Solo**, **Starred**, workspaces from the previous
+  Team sidebar, then **Team**. A saved section order takes precedence.
   Sections collapse independently through their headings. Buzz
   remembers collapsed sections for each community and identity. Unread messages
   or thread replies highlight the headings of collapsed sections. Muted

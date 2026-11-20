@@ -258,6 +258,37 @@ it("Option-click in the viewer toggles speed, closes a hover-opened speed menu a
   expect(video.playbackRate).toBe(1);
 });
 
+it("decides an Option-click in the viewer when the press begins", async () => {
+  setupReview();
+  const control = await screen.findByRole("button", {
+    name: "Playback speed: 1x",
+  });
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  const speedMenu = () =>
+    screen.queryByRole("menu", { name: /^Playback speed:/ });
+  // Base UI opens the menu for a press inside an animation frame.
+  const menuOpenSettled = () =>
+    act(async () => {
+      for (let frame = 0; frame < 2; frame += 1)
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+  // Option down at the press and released before the click still toggles.
+  fireEvent.pointerDown(control, { pointerType: "mouse", altKey: true });
+  fireEvent.mouseDown(control, { altKey: true });
+  fireEvent.click(control, { detail: 1 });
+  expect(video.playbackRate).toBe(2);
+  await menuOpenSettled();
+  expect(speedMenu()).toBeNull();
+  // Option pressed after an ordinary press, released before the menu's frame: a plain click.
+  fireEvent.pointerDown(control, { pointerType: "mouse" });
+  fireEvent.mouseDown(control);
+  fireEvent.click(control, { detail: 1, altKey: true });
+  await menuOpenSettled();
+  expect(speedMenu()).toBeInTheDocument();
+  expect(video.playbackRate).toBe(2);
+});
+
 it("keeps the focus loop out of the collapsing comments panel", async () => {
   setupReview();
   await screen.findByRole("slider", { name: "Video timeline" });

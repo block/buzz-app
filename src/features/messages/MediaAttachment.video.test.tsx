@@ -261,10 +261,14 @@ it("shares the saved playback speed with mounted previews and later videos", () 
 });
 
 /** The events a real mouse sends, so Base UI records the pointer type. */
-function mouseClick(target: Element, init: MouseEventInit = {}) {
-  fireEvent.pointerDown(target, { pointerType: "mouse", ...init });
-  fireEvent.mouseDown(target, init);
-  fireEvent.click(target, { detail: 1, ...init });
+function mouseClick(
+  target: Element,
+  press: MouseEventInit = {},
+  release = press,
+) {
+  fireEvent.pointerDown(target, { pointerType: "mouse", ...press });
+  fireEvent.mouseDown(target, press);
+  fireEvent.click(target, { detail: 1, ...release });
 }
 
 function optionClick(target: Element) {
@@ -335,6 +339,36 @@ it("opens the speed menu without changing speed on a plain click", async () => {
   expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
 });
 
+it("treats a press that began with Option as an Option-click when Option is released first", async () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  mouseClick(
+    screen.getByRole("button", { name: "Playback speed: 1x" }),
+    { altKey: true },
+    {},
+  );
+  expect(container.querySelector("video")?.playbackRate).toBe(2);
+  await menuOpenSettled();
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it("treats a press that began without Option as a plain click when Option is pressed before release", async () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  // The release lands before the frame in which Base UI opens the menu for the press.
+  mouseClick(
+    screen.getByRole("button", { name: "Playback speed: 1x" }),
+    {},
+    { altKey: true },
+  );
+  await menuOpenSettled();
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(container.querySelector("video")?.playbackRate).toBe(1);
+  expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
+});
+
 /** A mouse arriving on the control and resting there, which is what opens the menu by hover. */
 function rest(control: Element, init: MouseEventInit = {}) {
   fireEvent.mouseEnter(control, init);
@@ -385,6 +419,26 @@ it("does not open the speed menu by hover while Option is held", async () => {
   rest(control, { altKey: true });
   await restPastHoverDelay(control, { altKey: true });
   expect(screen.queryByRole("menu")).toBeNull();
+  fireEvent.mouseMove(control, { movementX: 4 });
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+it("does not open the speed menu by hover when Option is pressed after the pointer stopped", async () => {
+  render(<MediaAttachment attachment={videoAttachment} media={media} />);
+  const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+  const pastHoverDelay = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+  // The hover delay starts with Option up and the pointer never moves again.
+  rest(control);
+  fireEvent.keyDown(document.body, { key: "Alt", altKey: true });
+  await pastHoverDelay();
+  expect(screen.queryByRole("menu")).toBeNull();
+  // Releasing Option, or the window losing focus while it is down, restores hover.
+  fireEvent.keyUp(document.body, { key: "Alt" });
+  fireEvent.keyDown(document.body, { key: "Alt", altKey: true });
+  fireEvent.blur(window);
   fireEvent.mouseMove(control, { movementX: 4 });
   expect(await screen.findByRole("menu")).toBeInTheDocument();
 });

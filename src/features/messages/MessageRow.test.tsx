@@ -1775,6 +1775,89 @@ it.each([
   },
 );
 
+it.each([
+  {
+    name: "a copy with no replies replies in its source thread",
+    patch: { sentFromThread: { rootId: "source" }, replyCount: 0 },
+    reply: "source",
+  },
+  {
+    name: "a copy with replies keeps its own thread",
+    patch: { sentFromThread: { rootId: "source" } },
+    reply: "root",
+    view: "root",
+  },
+  {
+    name: "a top-level message starts its own thread",
+    patch: { replyCount: 0 },
+    reply: "root",
+  },
+  {
+    name: "a reply replies in its thread",
+    patch: { threadRootId: "parent", replyCount: 0 },
+    reply: "parent",
+  },
+])("$name", ({ patch, reply, view: viewRoot }) => {
+  const thread = vi.fn();
+  const view = renderMessage({
+    row: { ...row, ...patch },
+    viewer: row.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith(reply, reply, "reply");
+    const summary = screen.queryByRole("button", { name: /^View thread/ });
+    expect(!!summary).toBe(!!viewRoot);
+    if (summary) {
+      fireEvent.click(summary);
+      expect(thread).toHaveBeenLastCalledWith(viewRoot, viewRoot);
+    }
+  } finally {
+    view.unmount();
+  }
+});
+
+it("a copy with no replies shows no thread activity of its own", () => {
+  const agent = "a".repeat(64);
+  const typing: readonly TypingEntry[] = [
+    { channelId: row.channelId, threadRootId: "root", pubkey: agent },
+  ];
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [{ pubkey: agent, name: "Brain" }] };
+  const session = {
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const props = {
+    viewer: row.authorId,
+    session,
+    onOpenThread: vi.fn(),
+  };
+  const view = renderMessage({ ...props, row: { ...row, replyCount: 0 } });
+  try {
+    expect(
+      screen.getByRole("button", { name: /^View thread.*working$/ }),
+    ).toBeInTheDocument();
+    view.rerender(
+      <MessageRow
+        row={{ ...row, replyCount: 0, sentFromThread: { rootId: "source" } }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        {...props}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^View thread/ })).toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
+
 it.each([true, false])(
   "offers thread starts only where the conversation starts threads (startsThreads=%s)",
   (startsThreads) => {

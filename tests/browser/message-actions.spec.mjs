@@ -451,6 +451,35 @@ test("message actions reveal, copy, restore focus and reply across responsive la
       '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
     )
     .click();
+
+  // A Send to channel copy is a separate top-level event. Until it has
+  // replies of its own, Reply on it continues the thread it was sent from
+  // instead of starting a second thread under the copy.
+  const copy = app.append(
+    "primary",
+    "alpha",
+    "Sent to channel copy",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["buzz:sent-from-thread", event.id, event.content]],
+  );
+  const copyRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${copy.id}"]`,
+  );
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
+  await hoverMessage(copyRow);
+  await copyRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(root).toBeVisible();
+  await expect(replyBox).toBeFocused();
+  await expect(replyBox).toHaveText("Keep this reply draft");
+  await expect(panel.locator(`[data-message-id="${copy.id}"]`)).toHaveCount(0);
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
+    .click();
   for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });
     await row.scrollIntoViewIfNeeded();

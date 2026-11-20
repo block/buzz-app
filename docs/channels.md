@@ -1330,8 +1330,10 @@ The port retains the prepared-store implementation and its behavior tests:
   an open mention menu re-ranks a large roster once instead of per page. The
   channel avatar preview reads at most the first 1,024 members; only the mention
   menu reads a whole large roster. Narrow row profile selectors,
-  and request-warmed avatars (fetched and decoded, nothing retained; disabled
-  under the Save-Data preference). Signature verification yields in batches.
+  and request-warmed avatars (up to eight fetched and decoded at once, nothing
+  retained; a warmed avatar then mounts eagerly, so WebKit reuses its memory
+  cache; disabled under the Save-Data preference). Signature verification
+  yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Signed cached events are reverified before display. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate

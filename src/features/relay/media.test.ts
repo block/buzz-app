@@ -78,6 +78,14 @@ it("settled avatars are not reloaded until the intent TTL passes", async () => {
   }
 });
 
+it("overlaps up to eight warm requests", () => {
+  const created = stubImages();
+  createMediaPreparation().prepare(
+    Array.from({ length: 10 }, (_, i) => `u${i}`),
+  );
+  expect(created).toHaveLength(8);
+});
+
 it("Save-Data disables warming but nothing else", () => {
   stubImages();
   vi.stubGlobal("navigator", { connection: { saveData: true } });

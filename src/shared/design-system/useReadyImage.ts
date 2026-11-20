@@ -24,6 +24,12 @@ function remember(src: string, outcome: Outcome) {
 const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
 const failed = new Map<string, Set<() => void>>();
 
+/** A source loaded outside any mount, such as by request warming. Its mounts
+ * then load eagerly, which WebKit serves from the warmed memory cache. */
+export function rememberLoadedImage(src: string) {
+  remember(src, "loaded");
+}
+
 export type ReadyImage = ReturnType<typeof useReadyImage>;
 
 /** Paint lifecycle for a small, frequently remounted image (avatars, emoji).

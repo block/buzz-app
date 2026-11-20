@@ -1,3 +1,4 @@
+import { rememberLoadedImage } from "../../shared/design-system/useReadyImage";
 import { relayDebug } from "./debug";
 export function saveData(): boolean {
   try {
@@ -144,8 +145,11 @@ export function retainDecodedImage(
 
 /** Avatar request warming, the react-native-web Image model: fetch and
  * decode() into detached images, then retain nothing. The browser's own HTTP
- * and decoded-image caches serve the real <img> mounts. Never warms
- * originals/attachments that this renderer doesn't display. */
+ * and decoded-image caches serve the real <img> mounts; WebKit serves warmed
+ * custom-scheme images only to eager mounts, so a warmed source is remembered
+ * as loaded. Never warms originals/attachments that this renderer doesn't
+ * display. Up to eight requests overlap: native media reads are latency-bound,
+ * so more in flight warm a channel sooner without slowing each one. */
 export function createMediaPreparation() {
   const pending = new Set<string>();
   let queue: string[] = [];
@@ -164,7 +168,7 @@ export function createMediaPreparation() {
   let prefetched = 0;
   function pump() {
     if (disposed || typeof Image === "undefined") return;
-    while (active.size < 2 && queue.length) {
+    while (active.size < 8 && queue.length) {
       const url = queue.shift();
       if (url === undefined) break;
       const image = new Image();
@@ -178,6 +182,7 @@ export function createMediaPreparation() {
         active.delete(image);
         cancellations.delete(image);
         pending.delete(url);
+        if (outcome.startsWith("ok")) rememberLoadedImage(url);
         if (outcome !== "timeout" && outcome !== "cancelled") {
           settled.delete(url);
           settled.set(url, Date.now());
@@ -224,7 +229,7 @@ export function createMediaPreparation() {
   return {
     prepare(urls: readonly string[]) {
       if (disposed || saveData() || typeof Image === "undefined") return;
-      // New intent replaces queued speculation; active requests remain capped at two.
+      // New intent replaces queued speculation; active requests remain capped.
       for (const url of queue) pending.delete(url);
       queue = [];
       for (const url of [...new Set(urls)].slice(0, 24)) {

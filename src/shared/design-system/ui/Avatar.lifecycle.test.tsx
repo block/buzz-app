@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { createMediaPreparation } from "../../../features/relay/media";
 import { Avatar } from "./Avatar";
 
 afterEach(() => {
@@ -111,6 +112,36 @@ it("defers new sources, uses eager loading after success, and shows a failed sou
   fireEvent.load(retried);
   expect(retried).toHaveAttribute("data-loaded", "true");
   expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("");
+});
+
+it("mounts artwork the request warmer loaded eagerly", async () => {
+  // WebKit serves a warmed custom-scheme image only to an eager mount; a lazy
+  // one refetches it.
+  const warmed: { onload: (() => void) | null; src: string }[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 32;
+      naturalHeight = 32;
+      src = "";
+      referrerPolicy = "";
+      decode = async () => {};
+      constructor() {
+        warmed.push(this);
+      }
+    },
+  );
+  const src = "buzz-media://localhost/warmed-avatar";
+  createMediaPreparation().prepare([src]);
+  await act(async () => warmed[0]?.onload?.());
+  vi.unstubAllGlobals();
+  const view = render(<Avatar src={src} alt="Agent" fallback="A" />);
+  expect(view.container.querySelector("img")).toHaveAttribute(
+    "loading",
+    "eager",
+  );
 });
 
 it("bounds remembered sources and retains recently used artwork", () => {

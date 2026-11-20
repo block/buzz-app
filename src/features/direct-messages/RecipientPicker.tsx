@@ -391,10 +391,15 @@ export function RecipientPicker({
   // Space completes like an @ mention: only for one exact name, and only when
   // no longer name continues it ("Avery" waits while "Avery Chen" exists).
   // A search still running, failed, or with more pages could hold that longer
-  // name or a namesake, so Space waits for the full list. A verified person
-  // found by an editable profile name is that name's namesake too.
+  // name or a namesake, as could agents still loading, so Space waits for both.
+  // A verified person found by an editable profile name is that name's
+  // namesake too.
   const exactRecipient = () =>
-    listed && !directory.loading && !directory.error && !directory.tooShort
+    listed &&
+    !directory.loading &&
+    !directory.error &&
+    !directory.tooShort &&
+    !agents.managedPending
       ? exactName(
           eligible,
           (person) => [...namesOf(person), ...(person.profileNames ?? [])],
@@ -800,7 +805,10 @@ export function RecipientPicker({
                       );
                     }}
                   </Virtualizer>
-                  {(channelsOnly || (!directory.loading && !directory.error)) &&
+                  {(channelsOnly ||
+                    (!directory.loading &&
+                      !directory.error &&
+                      !agents.managedPending)) &&
                     !candidates.length &&
                     !matchingChannels.length && (
                       <p>
@@ -812,8 +820,9 @@ export function RecipientPicker({
                             : "No matching people."}
                       </p>
                     )}
+                  {/* Agents still loading may add controlled ones. */}
                   {!channelsOnly &&
-                    directory.loading &&
+                    (directory.loading || agents.managedPending) &&
                     (!query.trim() || !candidates.length) && (
                       <div role="status" aria-label="Loading people">
                         <div aria-hidden="true">

@@ -11029,7 +11029,7 @@ it("does not catch up after a restart on a message it already heard live", async
   }
 });
 
-it("saves each replay slice once and recovers without redelivering it", async () => {
+it("saves interleaved replay once per tick and recovers without redelivering it", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
   const start = nowSeconds();
   const storage = memoryStorage();
@@ -11039,30 +11039,47 @@ it("saves each replay slice once and recovers without redelivering it", async ()
     await first.service.save(bot, {
       attentionEnabled: true,
       attention: {
-        "watch/chat": { ...chat["watch/chat"], authors: [author.pubkey] },
+        "watch/chat": {
+          ...chat["watch/chat"],
+          authors: [author.pubkey],
+          channels: [channel, lobby],
+        },
         "watch/channel": null,
       },
     });
     const agent = first.service.find(bot);
     assert.exists(agent);
-    const checkpoint = streamKey(agent.key, "watch/chat", channel);
+    const checkpoints = [channel, lobby].map((id) =>
+      streamKey(agent.key, "watch/chat", id),
+    );
     await vi.waitFor(() =>
-      expect(readCheckpoints(storage)[checkpoint]?.through).toBe(start),
+      expect(
+        checkpoints.map((key) => readCheckpoints(storage)[key]?.through),
+      ).toEqual([start, start]),
     );
     vi.setSystemTime((start + 1) * 1000);
     const other = keypair();
-    const sent = Array.from({ length: 120 }, (_, index) =>
-      index < 5
-        ? posted(`matched ${index}`, start + 1)
-        : eventDto(message(other, channel, `other ${index}`, start + 1)),
-    );
+    const sent = Array.from({ length: 120 }, (_, index) => {
+      const channelId = index % 2 ? lobby : channel;
+      const matches = index < 10 && channelId === channel;
+      return {
+        channelId,
+        replay: true as const,
+        events: [
+          eventDto(
+            message(
+              matches ? author : other,
+              channelId,
+              matches ? `matched ${index / 2}` : `other ${index}`,
+              start + 1,
+            ),
+          ),
+        ],
+      };
+    });
     for (let index = 0; index < sent.length; index += 12) {
       save.mockClear();
-      first.emit({
-        replay: true,
-        channelId: channel,
-        events: sent.slice(index, index + 12),
-      });
+      for (const batch of sent.slice(index, index + 12)) first.emit(batch);
       await settle();
       expect(
         save.mock.calls.filter(([key]) => key.startsWith(CATCH_UP_PREFIX)),
@@ -11076,12 +11093,15 @@ it("saves each replay slice once and recovers without redelivering it", async ()
       "matched 4",
     ]);
     expect(
-      readCheckpoints(storage)
-        [checkpoint]?.heard?.map(({ id }) => id)
+      checkpoints
+        .flatMap(
+          (key) =>
+            readCheckpoints(storage)[key]?.heard?.map(({ id }) => id) ?? [],
+        )
         .sort(),
-    ).toEqual(sent.map(({ id }) => id).sort());
+    ).toEqual(sent.flatMap(({ events }) => events.map(({ id }) => id)).sort());
     save.mockClear();
-    first.emit({ replay: true, channelId: channel, events: sent.slice(0, 12) });
+    for (const batch of sent.slice(0, 12)) first.emit(batch);
     await settle();
     expect(heard(first.run)).toHaveLength(5);
     expect(
@@ -11093,7 +11113,10 @@ it("saves each replay slice once and recovers without redelivering it", async ()
     const second = await setup({
       storage,
       identities: [echo],
-      history: [...sent, posted("unheard", start + 1)],
+      history: [
+        ...sent.flatMap(({ events }) => events),
+        posted("unheard", start + 1),
+      ],
     });
     try {
       await vi.waitFor(() => expect(heard(second.run)).toEqual(["unheard"]));
@@ -11105,6 +11128,85 @@ it("saves each replay slice once and recovers without redelivering it", async ()
     vi.useRealTimers();
   }
 });
+
+it.each([false, true])(
+  "recovers a failed checkpoint write before restart (superseded: %s)",
+  async (superseded) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+    const start = nowSeconds();
+    const disk = new Map<string, string>();
+    const entered = runnerGate();
+    const release = runnerGate();
+    let failNext = false;
+    const save = vi.fn(async (key: string, value: string | null) => {
+      if (key.startsWith(CATCH_UP_PREFIX) && failNext) {
+        failNext = false;
+        entered.resolve();
+        await release.promise;
+        throw new Error("Transient write failure");
+      }
+      if (value === null) disk.delete(key);
+      else disk.set(key, value);
+    });
+    const storage = fileStore(new Map(disk), save);
+    const first = await setup({
+      storage,
+      identities: [echo],
+    });
+    try {
+      await first.service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      const agent = first.service.find(bot);
+      assert.exists(agent);
+      const checkpoint = streamKey(agent.key, "watch/chat", channel);
+      const progress = () =>
+        readCheckpoints(fileStore(new Map(disk), save))[checkpoint];
+      await vi.waitFor(() => expect(progress()?.through).toBe(start));
+      vi.setSystemTime((start + 1) * 1000);
+      const events = [posted("first", start + 1), posted("second", start + 1)];
+      save.mockClear();
+      failNext = true;
+      first.emit({ replay: true, channelId: channel, events });
+      await entered.promise;
+      if (superseded) {
+        const newest = posted("newest", start + 1);
+        first.emit({ replay: true, channelId: channel, events: [newest] });
+        events.push(newest);
+        await vi.waitFor(() =>
+          expect(readCheckpoints(storage)[checkpoint]?.heard).toHaveLength(3),
+        );
+      }
+      release.resolve();
+      await vi.waitFor(() => {
+        expect(heard(first.run)).toEqual(events.map(({ content }) => content));
+        expect(progress()?.heard).toHaveLength(events.length);
+      });
+      await settle();
+      expect(
+        save.mock.calls.filter(([key]) => key.startsWith(CATCH_UP_PREFIX)),
+      ).toHaveLength(2);
+
+      first.connect(false);
+      vi.setSystemTime((start + 2) * 1000);
+      const second = await setup({
+        storage: fileStore(new Map(disk), save),
+        identities: [echo],
+        history: [...events, posted("unheard", start + 1)],
+      });
+      try {
+        await vi.waitFor(() => expect(heard(second.run)).toEqual(["unheard"]));
+      } finally {
+        await second.ctx.fiber.dispose();
+      }
+    } finally {
+      release.resolve();
+      await first.ctx.fiber.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it.each([
   { label: "every message matches", rate: 5, matching: 5, only: false },

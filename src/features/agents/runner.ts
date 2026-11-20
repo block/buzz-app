@@ -732,6 +732,7 @@ export class AgentRunners {
   private checkpoints: Readonly<Record<string, Checkpoint>>;
   private batchingCheckpoints = false;
   private heardCheckpointDirty = false;
+  private checkpointFlushQueued = false;
   /** By agent, its catch-up running or last run. */
   private passes = new Map<string, Pass>();
   /** By community, for its connect, when each channel's route was first seen
@@ -1202,6 +1203,7 @@ export class AgentRunners {
   }
   /** Retires every runner, as when the host stops. */
   clear() {
+    if (this.heardCheckpointDirty) this.saveCheckpoints();
     for (const runner of this.runners.values()) this.retire(runner);
     this.runners.clear();
   }
@@ -2279,8 +2281,8 @@ export class AgentRunners {
     const checkpoint = this.checkpoints[streamOf(runner.key, trigger)];
     return !!checkpoint && undelivered(checkpoint, trigger.event);
   }
-  /** Keep progress current while events are admitted, then submit one save
-   * before returning to the event loop. Nested admission shares the save. */
+  /** Keep progress current during admission. A relay slice may arrive as
+   * several synchronous deliveries with different channel provenance. */
   private batchCheckpoints(run: () => void) {
     if (this.batchingCheckpoints) return run();
     this.batchingCheckpoints = true;
@@ -2288,7 +2290,13 @@ export class AgentRunners {
       run();
     } finally {
       this.batchingCheckpoints = false;
-      if (this.heardCheckpointDirty) this.saveCheckpoints();
+      if (this.heardCheckpointDirty && !this.checkpointFlushQueued) {
+        this.checkpointFlushQueued = true;
+        queueMicrotask(() => {
+          this.checkpointFlushQueued = false;
+          if (this.heardCheckpointDirty) this.saveCheckpoints();
+        });
+      }
     }
   }
   /** Saves the checkpoints of watches that still exist. Unsaved, catch-up

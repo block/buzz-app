@@ -5580,11 +5580,12 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     ...row,
     authorId: "owner",
     replyCount: 0,
+    reactions: [{ content: "👍", events: [{ id: "r1", authorId: "juno" }] }],
     mentions: ["juno"],
-    content: "@Juno Nexus message from Zerk (relayed)\n\nRebase on main",
+    content: "@Juno Relayed for Zerk\n\nRebase on main",
     relayedFrom: {
       agent: "zerk",
-      notice: "@Juno Nexus message from Zerk (relayed)",
+      notice: "@Juno Relayed for Zerk",
       verified,
       ...(channelId ? { channelId } : {}),
     },
@@ -5605,12 +5606,14 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     const trigger = screen.getByRole("button", {
       name: "Zerk from #rebase: Rebase on main",
     });
-    expect(trigger).not.toHaveTextContent("Nexus message");
+    expect(trigger).not.toHaveTextContent("Relayed for");
     expect(view.container.querySelector("[data-viewer-message]")).toBeNull();
     fireEvent.click(trigger);
     expect(screen.getByText("Sent as Gil · to Juno")).toBeVisible();
     expect(screen.getByText("Rebase on main")).toBeVisible();
-    expect(screen.queryByText(/Nexus message/)).toBeNull();
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The line carries no reactions row.
+    expect(view.container.querySelector("[data-message-reactions]")).toBeNull();
     // A thread on the line stays in view while it is collapsed.
     fireEvent.click(trigger);
     view.rerender(
@@ -5631,7 +5634,10 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     ).toBeVisible();
     // Unverified, it is the signer's ordinary message with its notice.
     view.rerender(<MessageRow {...props} row={relayed(false, "source")} />);
-    expect(screen.getByText(/Nexus message from Zerk/)).toBeVisible();
+    expect(screen.getByText(/Relayed for Zerk/)).toBeVisible();
+    expect(
+      view.container.querySelector("[data-message-reactions]"),
+    ).not.toBeNull();
   } finally {
     cleanup();
   }

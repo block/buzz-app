@@ -192,6 +192,8 @@ export type MessageRowProps = {
 
 type MessageContentProps = MessageRowProps & {
   shownRow?: ChannelMessage;
+  /** Leave out the reactions row and its controls. */
+  withoutReactions?: boolean;
   renderMessage?: (
     message: ReactNode,
     trigger: RefObject<HTMLButtonElement | null>,
@@ -246,6 +248,7 @@ function MessageRowContent({
   bodyContent,
   fullWidth = false,
   shownRow,
+  withoutReactions = false,
   renderMessage,
   getThreadRoot,
   session,
@@ -1717,7 +1720,7 @@ function MessageRowContent({
                     body
                   )}
                   {editedInBubble && shown.edited && <EditedMarker />}
-                  {reactionsInBubble && reactionContent}
+                  {reactionsInBubble && !withoutReactions && reactionContent}
                 </div>
               )}
               {previewUrls.length > 0 && (
@@ -1734,7 +1737,7 @@ function MessageRowContent({
               )}
             </MessageTimestampHint>
           </div>
-          {!reactionsInBubble && reactionContent}
+          {!reactionsInBubble && !withoutReactions && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
           {session && scope && (
             <AgentDeclineNotes
@@ -2165,6 +2168,7 @@ function RelayedMessageRow(props: MessageRowProps) {
     <FullMessageRow
       {...props}
       shownRow={shown}
+      withoutReactions
       alignViewer={false}
       day={false}
       layout="continuation"

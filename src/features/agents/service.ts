@@ -2609,29 +2609,6 @@ export class AgentsService extends Service implements Agents {
     );
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
-    const pendingProgress = new Map<string, Promise<void>>();
-    const checkpointStorage = {
-      set: (key: string, value: string | null) => {
-        const write = this.storage
-          .set(key, value)
-          .catch(async () => {
-            // A newer write can contain more progress for this agent. Check
-            // both this copy's queue and the shared file before one retry.
-            if (pendingProgress.get(key) !== write) return;
-            const rolledBack = this.storage.get(key);
-            if (
-              (await this.storage.read(key)) === rolledBack &&
-              pendingProgress.get(key) === write
-            )
-              await this.storage.set(key, value);
-          })
-          .finally(() => {
-            if (pendingProgress.get(key) === write) pendingProgress.delete(key);
-          });
-        pendingProgress.set(key, write);
-        return write;
-      },
-    };
     this.runners = new AgentRunners({
       prepareSession: async (agent, type, trigger, placement, signal) => {
         if (
@@ -2742,16 +2719,14 @@ export class AgentsService extends Service implements Agents {
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),
         write: (checkpoints) => {
-          void writeCheckpoints(
-            checkpointStorage,
-            checkpoints,
-            savedProgress,
-          ).catch((error) => {
-            console.warn("Agent catch-up progress was not saved", error);
-            // The copy went back to what is saved: the next save compares
-            // with that.
-            savedProgress = readCheckpoints(this.storage);
-          });
+          void writeCheckpoints(this.storage, checkpoints, savedProgress).catch(
+            (error) => {
+              console.warn("Agent catch-up progress was not saved", error);
+              // The copy went back to what is saved: the next save compares
+              // with that.
+              savedProgress = readCheckpoints(this.storage);
+            },
+          );
           savedProgress = checkpoints;
         },
       },

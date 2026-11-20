@@ -275,7 +275,7 @@ function byAgent(checkpoints: Checkpoints, only?: ReadonlySet<string>) {
  * written, so it keeps what the program that runs it saved, even when this
  * program's copy of it is older. Settles once every write is saved. */
 export async function writeCheckpoints(
-  storage: Pick<AgentStore, "set">,
+  storage: AgentStore,
   checkpoints: Checkpoints,
   saved: Checkpoints,
 ) {

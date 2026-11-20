@@ -108,6 +108,7 @@ import {
   MENTIONS,
   readCheckpoints,
   streamKey,
+  writeCheckpoints,
 } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
@@ -11130,13 +11131,14 @@ it("saves interleaved replay once per tick and recovers without redelivering it"
 });
 
 it.each([false, true])(
-  "recovers a failed checkpoint write before restart (superseded: %s)",
-  async (superseded) => {
+  "replays only unsaved events after a native checkpoint failure (another writer: %s)",
+  async (anotherWriter) => {
     vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
     const start = nowSeconds();
     const disk = new Map<string, string>();
     const entered = runnerGate();
     const release = runnerGate();
+    let writeFromPeer: (() => Promise<void>) | undefined;
     let failNext = false;
     const save = vi.fn(async (key: string, value: string | null) => {
       if (key.startsWith(CATCH_UP_PREFIX) && failNext) {
@@ -11148,7 +11150,15 @@ it.each([false, true])(
       if (value === null) disk.delete(key);
       else disk.set(key, value);
     });
-    const storage = fileStore(new Map(disk), save);
+    const open = () =>
+      fileStore(new Map(disk), save, undefined, async (key) => {
+        const value = disk.get(key) ?? null;
+        // A peer can save after a native read took its snapshot and before a
+        // retry uses that snapshot.
+        if (key.startsWith(CATCH_UP_PREFIX)) await writeFromPeer?.();
+        return value;
+      });
+    const storage = open();
     const first = await setup({
       storage,
       identities: [echo],
@@ -11161,42 +11171,80 @@ it.each([false, true])(
       const agent = first.service.find(bot);
       assert.exists(agent);
       const checkpoint = streamKey(agent.key, "watch/chat", channel);
-      const progress = () =>
-        readCheckpoints(fileStore(new Map(disk), save))[checkpoint];
+      const progress = () => readCheckpoints(open())[checkpoint];
       await vi.waitFor(() => expect(progress()?.through).toBe(start));
       vi.setSystemTime((start + 1) * 1000);
-      const events = [posted("first", start + 1), posted("second", start + 1)];
+      const saved = posted("saved", start + 1);
+      first.emit({ replay: true, channelId: channel, events: [saved] });
+      await vi.waitFor(() =>
+        expect(progress()?.heard?.map(({ id }) => id)).toEqual([saved.id]),
+      );
+      vi.setSystemTime((start + 3) * 1000);
+      const events = [
+        posted("first", start + 2),
+        posted("second", start + 3),
+      ] as const;
       save.mockClear();
       failNext = true;
-      first.emit({ replay: true, channelId: channel, events });
+      first.emit({
+        replay: true,
+        channelId: channel,
+        events: [...events, events[0]],
+      });
       await entered.promise;
-      if (superseded) {
-        const newest = posted("newest", start + 1);
-        first.emit({ replay: true, channelId: channel, events: [newest] });
-        events.push(newest);
-        await vi.waitFor(() =>
-          expect(readCheckpoints(storage)[checkpoint]?.heard).toHaveLength(3),
-        );
+      const newer = posted("newer", start + 4);
+      const settled = anotherWriter ? [saved, ...events, newer] : [saved];
+      if (anotherWriter) {
+        const peer = open();
+        const previous = readCheckpoints(peer);
+        writeFromPeer = async () => {
+          writeFromPeer = undefined;
+          await writeCheckpoints(
+            peer,
+            {
+              ...previous,
+              [checkpoint]: {
+                through: start,
+                heard: settled.map(({ id, created_at }) => ({
+                  id,
+                  created_at,
+                })),
+              },
+            },
+            previous,
+          );
+        };
       }
       release.resolve();
-      await vi.waitFor(() => {
-        expect(heard(first.run)).toEqual(events.map(({ content }) => content));
-        expect(progress()?.heard).toHaveLength(events.length);
-      });
+      await vi.waitFor(() =>
+        expect(heard(first.run)).toEqual(["saved", "first", "second"]),
+      );
+      // A failed native write rolls the local copy back before its rejection
+      // reaches the service. Drain its promise callbacks before counting.
       await settle();
+      await writeFromPeer?.();
       expect(
         save.mock.calls.filter(([key]) => key.startsWith(CATCH_UP_PREFIX)),
-      ).toHaveLength(2);
+      ).toHaveLength(anotherWriter ? 2 : 1);
+      expect(progress()?.heard?.map(({ id }) => id)).toEqual(
+        settled.map(({ id }) => id),
+      );
 
       first.connect(false);
-      vi.setSystemTime((start + 2) * 1000);
+      vi.setSystemTime((start + 5) * 1000);
       const second = await setup({
-        storage: fileStore(new Map(disk), save),
+        storage: open(),
         identities: [echo],
-        history: [...events, posted("unheard", start + 1)],
+        history: [saved, ...events, newer, posted("unheard", start + 5)],
       });
       try {
-        await vi.waitFor(() => expect(heard(second.run)).toEqual(["unheard"]));
+        await vi.waitFor(() =>
+          expect(heard(second.run)).toEqual(
+            anotherWriter
+              ? ["unheard"]
+              : ["first", "second", "newer", "unheard"],
+          ),
+        );
       } finally {
         await second.ctx.fiber.dispose();
       }

@@ -169,6 +169,7 @@ const resource = { uri: entityHref(resourceRoute), label: "Fix login" };
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   Object.defineProperty(navigator, "locks", {
     configurable: true,
     value: {
@@ -12518,7 +12519,7 @@ it.each(["blur", "hide", "visibilitychange", "pagehide", "unmount", "send"])(
 );
 
 it.each([true, false])(
-  "keeps an unflushed edit when another window wins the save (event delivered: %s)",
+  "reopens an unflushed edit after another window wins the save (event delivered: %s)",
   (notify) => {
     const h = mount();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -12541,11 +12542,57 @@ it.each([true, false])(
       expect(readView("scope", "draft:channel", "")).toBe(
         "Saved in another window",
       );
+      h.remount();
+      expect(h.input()).toHaveValue("Local work");
+      expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+      h.fill("Local work, revised");
+      h.remount();
+      expect(h.input()).toHaveValue("Local work, revised");
+      expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+      expect(readView("scope", "draft:channel", "")).toBe(
+        "Saved in another window",
+      );
+
+      const choice = notify ? "Keep my draft" : "Load saved draft";
+      fireEvent.click(screen.getByRole("button", { name: choice }));
+      h.remount();
+      expect(h.input()).toHaveValue(
+        notify ? "Local work, revised" : "Saved in another window",
+      );
+      expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }
   },
 );
+
+it("retires a conflict backup once the same version becomes canonical", () => {
+  const h = mount();
+  h.fill("Local work");
+  act(() => h.input().blur());
+  const key = 'buzz-view.v1:["scope","draft:channel"]';
+  const matching = localStorage.getItem(key);
+  if (matching === null) throw new Error("Expected a saved draft");
+
+  h.fill("Edit in progress");
+  h.fill("Local work");
+  localStorage.setItem(key, JSON.stringify("Saved elsewhere"));
+  fireEvent(
+    window,
+    new StorageEvent("storage", { storageArea: localStorage, key }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+
+  localStorage.setItem(key, matching);
+  h.remount();
+  expect(h.input()).toHaveValue("Local work");
+  expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+
+  localStorage.setItem(key, JSON.stringify("Newer saved work"));
+  h.remount();
+  expect(h.input()).toHaveValue("Newer saved work");
+  expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+});
 
 it("accepts another window's identical draft without an extra write or a conflict", () => {
   const key = 'buzz-view.v1:["scope","draft:channel"]';

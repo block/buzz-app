@@ -230,16 +230,27 @@ export function listDraftViews(
   return { entries: drafts, limited, unavailable };
 }
 
-/** Forgets every key saved under one scope, for a community the viewer has left. */
-export function clearViewScope(scope: string) {
-  const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+const conflictDraftPrefix = "buzz-draft-conflict.v1:";
+
+export function conflictDraftKey(scope: string, key: string) {
+  return `${conflictDraftPrefix}${JSON.stringify([scope, key])}`;
+}
+
+function clearScopedStorage(storage: Storage, prefix: string) {
   const stale: string[] = [];
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index);
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
     if (key?.startsWith(prefix)) stale.push(key);
   }
-  for (const key of stale) localStorage.removeItem(key);
+  for (const key of stale) storage.removeItem(key);
+}
+
+/** Forgets every key saved under one scope, for a community the viewer has left. */
+export function clearViewScope(scope: string) {
+  const keyPrefix = `${JSON.stringify([scope]).slice(0, -1)},`;
+  clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
   changed(scope);
+  clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);
 }
 
 /** Forgets one key in every scope where it holds `value`, as when the thing it

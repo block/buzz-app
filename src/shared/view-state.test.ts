@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   clearView,
   clearViewScope,
+  conflictDraftKey,
   draftCoordinates,
   listDraftViews as enumerateDrafts,
   readView,
@@ -133,6 +134,10 @@ it("community scope cleanup removes only that scope and notifies its same-window
   writeView(scope, "draft:room", "Leaving draft");
   writeView(scope, "scroll:room", { offset: 42 });
   writeView(`${scope}-other`, "draft:room", "Keep draft");
+  const conflictKey = conflictDraftKey(scope, "draft:room");
+  const otherConflictKey = conflictDraftKey(`${scope}-other`, "draft:room");
+  sessionStorage.setItem(conflictKey, "Unresolved draft");
+  sessionStorage.setItem(otherConflictKey, "Other unresolved draft");
   const listener = vi.fn();
   const stop = subscribeView(scope, listener);
   try {
@@ -143,8 +148,13 @@ it("community scope cleanup removes only that scope and notifies its same-window
       { key: "draft:room", value: "Keep draft" },
     ]);
     expect(listener).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem(conflictKey)).toBeNull();
+    expect(sessionStorage.getItem(otherConflictKey)).toBe(
+      "Other unresolved draft",
+    );
   } finally {
     stop();
+    sessionStorage.clear();
   }
 });
 

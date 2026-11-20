@@ -133,6 +133,8 @@ import {
 } from "./message-tokens";
 import type { RelaySession } from "../relay/session";
 import {
+  conflictDraftKey,
+  parseDraftView,
   readView,
   writeView,
   viewRevision,
@@ -675,6 +677,63 @@ function Composer({
   });
   const [initialRevision] = useState(() => viewRevision(scope, draftKey));
   const revision = useRef(initialRevision);
+  // A losing edit belongs to this window until the user resolves it.
+  const conflictKey = useMemo(
+    () => conflictDraftKey(scope, draftKey),
+    [scope, draftKey],
+  );
+  const [conflictOnOpen] = useState(() => {
+    if (submission || accepted) return;
+    try {
+      const raw = sessionStorage.getItem(conflictKey);
+      if (!raw) return;
+      if (raw === initialRevision) return { matched: raw };
+      const saved = parseDraftView(raw);
+      if (saved && saved !== "oversized")
+        return { draft: mentionDraft(saved.value) };
+    } catch {
+      // The canonical draft remains available if session storage is blocked.
+    }
+  });
+  const reopenedConflict = conflictOnOpen?.draft;
+  const matchedConflict = conflictOnOpen?.matched;
+  useLayoutEffect(() => {
+    if (!matchedConflict) return;
+    try {
+      if (sessionStorage.getItem(conflictKey) === matchedConflict)
+        sessionStorage.removeItem(conflictKey);
+    } catch {
+      // The matching canonical draft is already usable.
+    }
+  }, [conflictKey, matchedConflict]);
+  const conflictDraft = useRef<
+    { draft: MentionDraft; saved: MentionDraft | undefined } | undefined
+  >(
+    reopenedConflict
+      ? { draft: reopenedConflict, saved: reopenedConflict }
+      : undefined,
+  );
+  const flushConflict = useCallback(() => {
+    const pending = conflictDraft.current;
+    if (!pending || pending.draft === pending.saved) return;
+    try {
+      // Leaving the community can erase the backup before this view unmounts.
+      if (pending.saved && sessionStorage.getItem(conflictKey) === null) return;
+      sessionStorage.setItem(conflictKey, JSON.stringify(pending.draft));
+      pending.saved = pending.draft;
+    } catch {
+      // Keep the edit available in the mounted editor if storage fails.
+    }
+  }, [conflictKey]);
+  function forgetConflict() {
+    if (!conflictDraft.current) return;
+    conflictDraft.current = undefined;
+    try {
+      sessionStorage.removeItem(conflictKey);
+    } catch {
+      // A successful canonical save also supersedes an identical backup.
+    }
+  }
   const [diagnosticEditor] = useState(draftEditorId);
   function diagnose(
     operation: Parameters<typeof traceDraft>[2],
@@ -696,14 +755,22 @@ function Composer({
   // restoring a saved draft that may already have had its tag removed.
   const [seededKey] = useState(() =>
     !accepted?.next &&
+    !reopenedConflict &&
     !submission?.recoveredDraft &&
     (revision.current === null || revision.current === "null")
       ? draftKey
       : undefined,
   );
-  const dirty = useRef(false);
+  const dirty = useRef(!!reopenedConflict);
   const writing = useRef(false);
-  const [conflict, setConflict] = useState(false);
+  const [conflict, setConflict] = useState(!!reopenedConflict);
+  function reportConflict(draft?: MentionDraft) {
+    if (draft && !conflictDraft.current) {
+      conflictDraft.current = { draft, saved: undefined };
+      flushConflict();
+    }
+    setConflict(true);
+  }
   const [storageFailed, setStorageFailed] = useState(false);
   // A composer with nothing saved starts with the agents the viewer's latest
   // message in its conversation notified, in memory only: a draft is saved
@@ -722,6 +789,8 @@ function Composer({
   const seedKey = (source: Pick<ChannelMessage, "id">) =>
     `${draftKey}\n${source.id}`;
   const [initial] = useState(() => {
+    if (reopenedConflict)
+      return { value: reopenedConflict, applied: undefined, automatic: false };
     const stored = mentionDraft(
       accepted?.next ??
         submission?.recoveredDraft ??
@@ -1161,10 +1230,11 @@ function Composer({
     clearTimeout(pending.timer);
     return pending;
   }, []);
-  const flushDraft = useCallback(
-    () => cancelDraftSave()?.save(),
-    [cancelDraftSave],
-  );
+  const flushDraft = useCallback(() => {
+    const result = cancelDraftSave()?.save();
+    flushConflict();
+    return result ?? (conflictDraft.current ? "changed" : undefined);
+  }, [cancelDraftSave, flushConflict]);
   useLayoutEffect(() => {
     if (!presented) flushDraft();
   }, [presented, flushDraft]);
@@ -1220,7 +1290,9 @@ function Composer({
     }
     cancelDraftSave();
     dirty.current = true;
-    if (conflict || accepted) return;
+    if (conflictDraft.current) conflictDraft.current.draft = next;
+    else if (conflict && !accepted) reportConflict(next);
+    if (conflict || conflictDraft.current || accepted) return;
     if (source === "editor")
       pendingDraftSave.current = {
         timer: setTimeout(flushDraft, 300),
@@ -1235,14 +1307,27 @@ function Composer({
     const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
     // Another writer can already have saved the same draft.
-    const result =
+    let result =
       current === serialized
         ? "saved"
         : replaceViewRevision(scope, draftKey, expected, serialized);
     writing.current = false;
-    diagnose(result, expected, viewRevision(scope, draftKey), serialized);
-    if (result === "saved") revision.current = serialized;
-    setConflict(result === "changed");
+    const observed = viewRevision(scope, draftKey);
+    if (
+      result === "failed" &&
+      observed !== undefined &&
+      observed !== expected &&
+      observed !== serialized
+    )
+      result = "changed";
+    diagnose(result, expected, observed, serialized);
+    if (result === "saved") {
+      revision.current = serialized;
+      forgetConflict();
+    }
+    if (result === "changed" && next === valueRef.current && dirty.current)
+      reportConflict(next);
+    else setConflict(result === "changed" || !!conflictDraft.current);
     setStorageFailed(result === "failed");
     return result;
   }
@@ -1608,6 +1693,7 @@ function Composer({
       next = mentionDraft("");
     }
     cancelDraftSave();
+    forgetConflict();
     revision.current = raw;
     dirty.current = false;
     valueRef.current = next;
@@ -1655,6 +1741,7 @@ function Composer({
       // conflict behavior.
       if (
         recovering &&
+        !conflictDraft.current &&
         !valueRef.current.text.trim() &&
         !valueRef.current.recipients.length &&
         !composerMarkdown(valueRef.current).trim() &&
@@ -1669,7 +1756,7 @@ function Composer({
           setStorageFailed(false);
         } else {
           diagnose("changed", revision.current, current);
-          setConflict(true);
+          reportConflict(pending?.draft);
         }
         return;
       } else loadSaved(current);
@@ -2488,6 +2575,7 @@ function Composer({
     }
     if (
       !presented ||
+      conflict ||
       sendPending ||
       completion.composing.current ||
       editing.target
@@ -2580,7 +2668,7 @@ function Composer({
       seedClosed.current = false;
       return;
     }
-    if (editing.target || completion.composing.current) return;
+    if (conflict || editing.target || completion.composing.current) return;
     // Content the user put in, unlike this effect's own prefill, closes the
     // seed until the composer is shown again, even once it is cleared.
     const automatic =
@@ -2868,7 +2956,7 @@ function Composer({
       diagnose("send-start", revision.current, current);
       if (flushed === "changed" || current !== revision.current) {
         diagnose("send-start-conflict", revision.current, current);
-        setConflict(true);
+        reportConflict();
         return;
       }
     }
@@ -2948,7 +3036,7 @@ function Composer({
             const current = viewRevision(scope, draftKey);
             if (current !== savedRevision) {
               diagnose("send-upload-conflict", savedRevision, current);
-              setConflict(true);
+              reportConflict();
               return;
             }
             const next = mentionDraft("");
@@ -3107,7 +3195,7 @@ function Composer({
       const preparedRevision = viewRevision(scope, draftKey);
       if (preparedRevision !== savedRevision) {
         diagnose("send-prepare-conflict", savedRevision, preparedRevision);
-        setConflict(true);
+        reportConflict();
         return;
       }
       const content =
@@ -3144,7 +3232,7 @@ function Composer({
         const publishRevision = viewRevision(scope, draftKey);
         if (publishRevision !== savedRevision) {
           diagnose("send-publish-conflict", savedRevision, publishRevision);
-          setConflict(true);
+          reportConflict();
           return;
         }
         if (!current()) return;

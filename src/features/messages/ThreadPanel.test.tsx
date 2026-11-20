@@ -1648,6 +1648,60 @@ it("transfers keyboard focus to the thread history before removing the jump butt
   expect(h.element).not.toHaveAttribute("data-jump-visible");
 });
 
+it("loads every older page before Jump to top scrolls to the root", () => {
+  const h = messagesHarness();
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.render();
+  h.scroll(400);
+  expect(screen.queryByRole("button", { name: "Jump to top" })).toBeNull();
+  h.scroll(1000);
+  const jump = screen.getByRole("button", { name: "Jump to top" });
+  jump.focus();
+  fireEvent.click(jump);
+  expect(h.element).toHaveFocus();
+  expect(screen.queryByRole("button", { name: "Jump to top" })).toBeNull();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.snapshot.status = "loading";
+  h.render();
+  h.snapshot.status = "ready";
+  h.snapshot.replies = [{ ...row, id: "older", createdAt: 1 }];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledTimes(2);
+  expect(h.element.scrollTo).not.toHaveBeenCalledWith(
+    expect.objectContaining({ top: 0 }),
+  );
+  h.snapshot.status = "loading";
+  h.render();
+  h.snapshot.status = "ready";
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledTimes(2);
+  expect(h.element.scrollTo).toHaveBeenCalledWith({
+    top: 0,
+    behavior: "smooth",
+  });
+});
+
+it("stops the Jump to top walk at a reader gesture", () => {
+  const h = messagesHarness();
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.render();
+  h.scroll(1000);
+  fireEvent.click(screen.getByRole("button", { name: "Jump to top" }));
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  fireEvent.wheel(h.element, { deltaY: 40 });
+  h.snapshot.status = "loading";
+  h.render();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element.scrollTo).not.toHaveBeenCalledWith(
+    expect.objectContaining({ top: 0 }),
+  );
+});
+
 it("routes media in replies through the resolved root review workspace", () => {
   const open = vi.fn();
   const h = messagesHarness(undefined, open);

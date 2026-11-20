@@ -2877,6 +2877,18 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   );
 }
 
+/* The top edge counterpart hangs below the history's top edge. */
+.jumpToTop {
+  align-items: flex-start;
+  position: sticky;
+  z-index: 2;
+  top: var(--space-3);
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
 .jumpToLatestSurface {
   @apply glass-secondary;
   display: flex;
@@ -2891,13 +2903,13 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     filter var(--duration-fast) var(--easing-state),
     visibility 0s var(--duration-fast);
 }
-.jumpToLatestSurface [data-jump-to-latest] {
+.jumpToLatestSurface :is([data-jump-to-latest], [data-jump-to-top]) {
   padding-inline: var(--space-2);
 }
 .jumpToLatestSurface > button > [class~="buzz-button-label"] {
   gap: var(--space-1);
 }
-.jumpToLatest[data-visible="true"] .jumpToLatestSurface {
+:is(.jumpToLatest, .jumpToTop)[data-visible="true"] .jumpToLatestSurface {
   visibility: visible;
   pointer-events: auto;
   opacity: 1;
@@ -2908,7 +2920,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .jumpToLatestSurface,
-  .jumpToLatest[data-visible="true"] .jumpToLatestSurface {
+  :is(.jumpToLatest, .jumpToTop)[data-visible="true"] .jumpToLatestSurface {
     transform: none;
     filter: none;
     transition-property: opacity, visibility;

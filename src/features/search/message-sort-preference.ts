@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 import type { SearchSort } from "../../app/shell/useSearchMessages";
-import type { DeviceSetting } from "../../shared/device-settings";
 
 const preferenceKey = "buzz-search-message-sort.v1";
 const changedEvent = "buzz-search-message-sort-changed";
@@ -49,21 +48,3 @@ export function setMessageSortPreference(value: SearchSort): void {
   }
   window.dispatchEvent(new Event(changedEvent));
 }
-
-/** The default message order as a device setting. */
-export const messageSortSetting: DeviceSetting = {
-  key: "search.message_sort",
-  description:
-    "The order a new search of one conversation starts with: most relevant or most recent.",
-  schema: { type: "string", enum: ["relevance", "newest"] },
-  applies:
-    "New searches of one conversation with text, where the relay supports sorting; other searches with text stay most relevant.",
-  read: () => ({
-    value: messageSortPreference(),
-    unsaved:
-      unsavedPreference === undefined
-        ? null
-        : "This order is active, but could not be saved on this device.",
-  }),
-  write: (value) => setMessageSortPreference(value as SearchSort),
-};

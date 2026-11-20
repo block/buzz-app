@@ -36,7 +36,6 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "conversations.autocorrect", value: false, saved: true },
     { key: "agents.remember_mentioned", value: true, saved: true },
     { key: "search.unread_first", value: true, saved: true },
-    { key: "search.message_sort", value: "relevance", saved: true },
   ]);
   appearance.dispose();
 });

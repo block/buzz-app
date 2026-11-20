@@ -997,10 +997,15 @@ Quitting Buzz also turns it off.
 - **Reminder counts** show how many reminders are due in a small capsule on the
   app tile's corner. It shows `99+` above 99; its accessible label keeps the
   exact count.
+- **Create a reminder** from **Reminders → New reminder** (+). Write what you
+  want to remember, pick a time, and choose **Set reminder**. To use a message
+  instead, open its menu and choose **Remind me**. Back hides a new reminder's
+  editor without losing its draft, and Forward restores it. Cancel, Close, or
+  saving ends that draft. Drafts are kept only in memory for the current session.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
-- **Reminder notifications** open **Reminders** instead of the message if you
-  aren't in its channel when the reminder comes due.
+- **Reminder notifications** open **Reminders** for reminders you wrote, or
+  for message reminders if you aren't in the channel when they come due.
 - **Inline code** in single backticks wraps with prose, with rounded ends on
   each line. In tables, code follows the non-wrapping columns and scrolls with
   the table. Fenced code blocks wrap long lines while preserving indentation and

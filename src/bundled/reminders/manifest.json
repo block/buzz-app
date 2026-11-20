@@ -2,6 +2,6 @@
   "id": "buzz.reminders",
   "name": "Reminders",
   "apiVersion": 1,
-  "description": "Set message reminders and review what is due.",
+  "description": "Write your own reminders or set them from messages.",
   "discovery": { "category": "productivity", "tags": ["tasks"] }
 }

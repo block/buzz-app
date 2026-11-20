@@ -651,11 +651,14 @@ function workspace(
     membership,
     lifecycle,
     handoff = false,
+    replica,
   }: {
     membership?: CommunityMembership;
     lifecycle?: (event: RelayEvent) => Promise<void>;
     /** Mount the shell's channel navigation, which owns lifecycle actions. */
     handoff?: boolean;
+    /** What reads that are not strong see; `events` is the writer. */
+    replica?: RelayEvent[];
   } = {},
 ) {
   const owner = createRelaySession(
@@ -663,7 +666,20 @@ function workspace(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) => relayQuery(authority, events, filters),
+      query: async (filters) =>
+        replica
+          ? [
+              ...new Set(
+                filters.flatMap((filter) =>
+                  relayQuery(
+                    authority,
+                    filter.consistency === "strong" ? events : replica,
+                    [filter],
+                  ),
+                ),
+              ),
+            ]
+          : relayQuery(authority, events, filters),
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},

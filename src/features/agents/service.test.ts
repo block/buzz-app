@@ -8444,11 +8444,27 @@ it("refuses an agent type with more skill folders than the composer can list", a
   ).toThrow("skillFolders");
   const skillFolders = Array.from({ length: 8 }, (_, n) => `~/.skills/${n}`);
   plugin.agents.register({ ...type, skillFolders });
-  skillFolders.push("~/.skills/8");
   expect(
     service.types().find((entry) => entry.key === "example/skills")
       ?.skillFolders,
-  ).toEqual(skillFolders.slice(0, 8));
+  ).toEqual(skillFolders);
+});
+
+it("keeps the skill folders an agent type registered when the caller changes its list later", async () => {
+  const { plugin, service } = await setup();
+  const skillFolders = ["~/.skills/a"];
+  plugin.agents.register({
+    id: "skills",
+    title: "Skills",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+    skillFolders,
+  });
+  skillFolders.push("~/.skills/b");
+  expect(
+    service.types().find((entry) => entry.key === "example/skills")
+      ?.skillFolders,
+  ).toEqual(["~/.skills/a"]);
 });
 
 it("returns the created agent after the community changes mid-create", async () => {

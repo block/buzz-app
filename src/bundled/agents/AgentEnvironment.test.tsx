@@ -296,3 +296,15 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
     expect.anything(),
   );
 });
+
+it("offers no restart while the list has unsaved edits", async () => {
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  const restart = await screen.findByRole("button", { name: "Restart agent" });
+  expect(restart).not.toHaveAttribute("aria-disabled", "true");
+  await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
+  expect(restart).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByText("Save your changes first.")).toBeInTheDocument();
+  await user.click(restart);
+  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+});

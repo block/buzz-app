@@ -178,13 +178,17 @@ export function AgentEnvironment({
         )}
         <PreferenceRow
           title="Restart agent"
-          subtitle="Processes already running keep the variables they started with."
+          subtitle={
+            dirty
+              ? "Save your changes first."
+              : "Processes already running keep the variables they started with."
+          }
           trailing={
             <Button
               ref={restart}
               size="sm"
-              // A restart would race a save still being written.
-              disabled={pending || restarting}
+              // A restart would race a save, or drop unsaved edits.
+              disabled={pending || restarting || dirty}
               loading={restarting}
               focusableWhenDisabled
               onClick={() => setConfirm(true)}

@@ -108,6 +108,7 @@ vi.mock("./MessageComposer", () => ({
     placeholder,
     focusRequest,
     threadSeed,
+    alsoSendToChannel,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -123,6 +124,17 @@ vi.mock("./MessageComposer", () => ({
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
       </button>
+      {alsoSendToChannel && (
+        <button
+          type="button"
+          aria-pressed={alsoSendToChannel.pressed}
+          onClick={() =>
+            alsoSendToChannel.onPressedChange(!alsoSendToChannel.pressed)
+          }
+        >
+          Also send to channel
+        </button>
+      )}
     </section>
   ),
 }));
@@ -1700,6 +1712,42 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.snapshot.root = undefined;
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+});
+it("keeps Also send to channel per thread head, clears it after a send, and offers it only for the opening message", () => {
+  const h = messagesHarness();
+  const parent = {
+    ...row,
+    id: "parent",
+    content: "parent",
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [parent];
+  h.render();
+  const toggle = () =>
+    screen.getByRole("button", { name: "Also send to channel" });
+  expect(toggle()).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(toggle());
+  expect(toggle()).toHaveAttribute("aria-pressed", "true");
+
+  h.snapshot.root = { ...row, id: "other-root" };
+  h.render();
+  expect(toggle()).toHaveAttribute("aria-pressed", "false");
+  h.snapshot.root = undefined;
+  h.render();
+  h.snapshot.root = row;
+  h.render();
+  expect(toggle()).toHaveAttribute("aria-pressed", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  expect(
+    screen.queryByRole("button", { name: "Also send to channel" }),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  expect(toggle()).toHaveAttribute("aria-pressed", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  expect(toggle()).toHaveAttribute("aria-pressed", "false");
 });
 it("does not count an own nested reply sent while reading above as a new message", () => {
   const h = messagesHarness();

@@ -10235,6 +10235,130 @@ it("does not replace a nonempty draft and confines channel/thread targets to the
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
 
+describe("Also send to channel", () => {
+  const root = "e".repeat(64);
+  const toggle = (pressed = false) => ({
+    pressed,
+    onPressedChange: vi.fn(),
+  });
+  const button = (name: string | RegExp = /^Also send to/) =>
+    screen.queryByRole("button", { name });
+
+  it("is offered only when the thread composer is given it, and toggles through its owner", async () => {
+    const plain = mount({ threadRootId: root });
+    expect(button()).toBeNull();
+    plain.unmount();
+    const alsoSendToChannel = toggle();
+    const h = mount({ threadRootId: root, alsoSendToChannel });
+    const control = screen.getByRole("button", {
+      name: "Also send to #General",
+    });
+    expect(control).toHaveAttribute("aria-pressed", "false");
+    await h.user.click(control);
+    expect(alsoSendToChannel.onPressedChange).toHaveBeenLastCalledWith(true);
+    const pressed = toggle(true);
+    h.retarget({ alsoSendToChannel: pressed });
+    expect(
+      screen.getByRole("button", { name: "Also send to #General" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await h.user.click(
+      screen.getByRole("button", { name: "Also send to #General" }),
+    );
+    expect(pressed.onPressedChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each(["dm", "solo"] as const)(
+    "names the conversation in a %s",
+    (channelType) => {
+      const h = mount({ threadRootId: root, alsoSendToChannel: toggle() });
+      const list = {
+        status: "ready" as const,
+        channels: [
+          {
+            id: "channel",
+            name: "Honey DM",
+            channelType,
+            members: [first.pubkey, second.pubkey],
+          },
+        ],
+      };
+      h.retarget({
+        session: {
+          ...h.session,
+          channels: {
+            ...h.session.channels,
+            list: () => list,
+            get: () => list.channels[0],
+          },
+        },
+      });
+      expect(button("Also send to conversation")).toBeVisible();
+      expect(button("Also send to #General")).toBeNull();
+    },
+  );
+
+  it("sends a pressed reply to the thread's opening message once, with the broadcast flag", () => {
+    const h = mount({ threadRootId: root, alsoSendToChannel: toggle(true) });
+    h.fill("hello thread");
+    h.submit();
+    expect(h.messages.reply).toHaveBeenCalledOnce();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    const call = h.messages.reply.mock.calls[0];
+    expect(call?.slice(0, 3)).toEqual(["channel", root, "hello thread"]);
+    expect(call?.[9]).toBe(true);
+  });
+
+  it("sends a plain thread reply without the flag when the toggle is off", () => {
+    const h = mount({ threadRootId: root, alsoSendToChannel: toggle() });
+    h.fill("hello thread");
+    h.submit();
+    expect(h.messages.reply).toHaveBeenCalledOnce();
+    expect(h.messages.reply.mock.calls[0]?.[9]).toBeUndefined();
+  });
+
+  it("does not call its owner back when the send fails, so the choice stays", () => {
+    const alsoSendToChannel = toggle(true);
+    const h = mount({ threadRootId: root, alsoSendToChannel });
+    h.messages.reply.mockImplementationOnce(() => {
+      throw new Error("Relay rejected the reply");
+    });
+    h.fill("hello thread");
+    h.submit();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Relay rejected the reply",
+    );
+    expect(h.onSend).not.toHaveBeenCalled();
+    expect(alsoSendToChannel.onPressedChange).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Also send to #General" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("is hidden while editing a message", () => {
+    setEditWithUpArrowPreference(true);
+    const reply = editableMessage({
+      id: "d".repeat(64),
+      content: "Thread reply",
+      threadRootId: root,
+    });
+    const h = mount(
+      {
+        threadRootId: root,
+        editMessages: [reply],
+        alsoSendToChannel: toggle(true),
+      },
+      undefined,
+      first.pubkey,
+    );
+    expect(button()).toBeVisible();
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    expect(button()).toBeNull();
+    fireEvent.keyDown(h.input(), { key: "Escape", keyCode: 27 });
+    expect(button()).toBeVisible();
+  });
+});
+
 describe.each([false, true])(
   "empty rich drafts with Up Arrow editing enabled: %s",
   (enabled) => {

@@ -2560,7 +2560,15 @@ it("opens the exact source thread from a shared message", () => {
   }
 });
 
-it.each(["own", "other", "root", "pending", "archived", "read-only"])(
+it.each([
+  "own",
+  "other",
+  "root",
+  "pending",
+  "archived",
+  "read-only",
+  "broadcast",
+])(
   "offers Send to channel only for a writable authored reply: %s",
   async (scenario) => {
     const snapshot = {
@@ -2592,6 +2600,7 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       threadRootId: scenario === "root" ? undefined : "a".repeat(64),
       authorId: scenario === "other" ? "other" : row.authorId,
       ...(scenario === "pending" ? { delivery: "sending" as const } : {}),
+      ...(scenario === "broadcast" ? { broadcast: true as const } : {}),
     };
     try {
       renderDom(

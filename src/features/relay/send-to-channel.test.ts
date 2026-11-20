@@ -105,6 +105,20 @@ it("rejects third-party authors, pending messages, mismatched destinations and u
   expect(() => setup([root]).messages.sendToChannel(row)).toThrow(/Load/);
   expect(outbox.snapshot()).toHaveLength(0);
 });
+it("refuses a reply that was already broadcast to the channel, publishing nothing", () => {
+  const broadcast = message(author, "channel", "Already shared", 2, [
+    ["e", root.id, "", "reply"],
+    ["broadcast", "1"],
+  ]);
+  const { messages, outbox } = setup([root, broadcast]);
+  const row = foldMessages("channel", other.pubkey, [root, broadcast], {
+    includeReplies: true,
+  }).find((item) => item.id === broadcast.id);
+  assert.exists(row);
+  expect(row.broadcast).toBe(true);
+  expect(() => messages.sendToChannel(row)).toThrow(/already in the channel/);
+  expect(outbox.snapshot()).toHaveLength(0);
+});
 it("ignores malformed provenance on received messages", () => {
   const invalid = message(author, "channel", "Hello", 4, [
     ["buzz:sent-from-thread", "invalid"],

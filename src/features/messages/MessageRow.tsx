@@ -1183,6 +1183,7 @@ function MessageRowContent({
         row.threadRootId &&
         row.authorId === session.viewer &&
         !row.agentEnvelope &&
+        !row.broadcast &&
         !row.diff &&
         (!row.delivery || ["accepted", "seen"].includes(row.delivery)) &&
         session.outbox?.supports(9)

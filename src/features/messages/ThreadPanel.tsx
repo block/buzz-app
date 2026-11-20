@@ -708,6 +708,7 @@ function ThreadMessages({
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
+  const [alsoSendRoot, setAlsoSendRoot] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -2085,6 +2086,8 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
+  const alsoSendToChannel =
+    !!composerRoot && !replyParent && alsoSendRoot === composerRoot.id;
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);
@@ -2385,6 +2388,15 @@ function ThreadMessages({
           threadRootId={composerRoot.id}
           threadSeed={threadSeed}
           replyParentId={replyParent}
+          alsoSendToChannel={
+            replyParent
+              ? undefined
+              : {
+                  pressed: alsoSendToChannel,
+                  onPressedChange: (pressed) =>
+                    setAlsoSendRoot(pressed ? composerRoot.id : undefined),
+                }
+          }
           disabled={
             disabled ||
             (requireReadyRoot &&
@@ -2433,6 +2445,10 @@ function ThreadMessages({
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
             onSend?.(id);
+            if (alsoSendToChannel)
+              setAlsoSendRoot((current) =>
+                current === composerRoot.id ? undefined : current,
+              );
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

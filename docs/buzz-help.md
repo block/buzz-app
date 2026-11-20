@@ -670,6 +670,14 @@ Quitting Buzz also turns it off.
   channel thread selected in Activity opens the same way, though selecting it
   marks it read. Opening a specific reply, such as a mention, opens at that
   reply.
+- **Also send to #channel**, the `#→` button beside Send in a thread's reply
+  box, publishes your reply once so it appears both in the thread and in the
+  channel. Both places show the same message, so reactions, edits and deletion
+  apply to both. It is offered only when replying to the thread's opening
+  message, not to a nested reply or while editing; in a DM it reads **Also send
+  to conversation**. It turns off once the reply is sent and stays on if sending
+  is refused. **Send to channel** in the More menu of your own existing thread
+  reply instead posts a separate copy with its own reactions and edits.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.

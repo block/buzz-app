@@ -28,6 +28,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.content === right.content &&
     left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
+    left.broadcast === right.broadcast &&
     left.audience === right.audience &&
     left.request === right.request &&
     !!left.diff === !!right.diff &&

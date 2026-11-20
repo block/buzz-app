@@ -466,6 +466,11 @@ export function foldMessages(
         ...(forward ? { forward } : {}),
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
+        ...(event.tags.some(
+          (entry) => entry[0] === "broadcast" && entry[1] === "1",
+        )
+          ? { broadcast: true as const }
+          : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
         ...(() => {
           // One exact id, or none: conflicting claims bind no request.

@@ -92,6 +92,7 @@ import {
 import {
   ArrowUpIcon,
   ChatCircleIcon,
+  HashArrowInIcon,
   LockIcon,
   PaperclipIcon,
   PencilSimpleIcon,
@@ -358,6 +359,11 @@ export type MessageComposerProps = {
    * seedMentions); other composers read their own channel window. */
   threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
+  /** Offers publishing a reply to the thread's opening message once, so the
+   * channel timeline shows the same event. Not offered for edits. */
+  alsoSendToChannel?:
+    | { pressed: boolean; onPressedChange(pressed: boolean): void }
+    | undefined;
   /** Bind a timecoded reply to the selected gallery attachment. */
   mediaTargetUrl?: string | undefined;
   replyContext?: ReactNode;
@@ -543,6 +549,7 @@ function Composer({
   threadRootId,
   threadSeed,
   replyParentId,
+  alsoSendToChannel,
   mediaTargetUrl,
   replyContext,
   mediaTimeSeconds,
@@ -755,6 +762,8 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
+  const alsoSendRef = useRef(alsoSendToChannel);
+  alsoSendRef.current = alsoSendToChannel;
   // Only a composer holding nothing but its own prefill reads its window, so
   // typing never rescans the history and the always-mounted composers
   // subscribe only while they could seed. Nothing is loaded here: the host
@@ -1367,6 +1376,10 @@ function Composer({
     : editing.target
       ? "Edit message"
       : (customLabel ?? "Reply to thread");
+  const alsoSendLabel =
+    channelType === "dm" || channelType === "solo" || solo
+      ? "Also send to conversation"
+      : `Also send to ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`;
   const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
@@ -2822,6 +2835,7 @@ function Composer({
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const broadcast = !!alsoSendRef.current?.pressed;
     const capturedRecipients = routing ? recipientsNow : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
     // Mention resolution can update recipients before their picker commits.
@@ -3117,6 +3131,7 @@ function Composer({
               ...(threadRootId ? { rootId: threadRootId } : {}),
               ...(replyParentId ? { parentId: replyParentId } : {}),
               ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
+              ...(broadcast ? { broadcast } : {}),
               mentions: recipients,
               references,
               attachments: uploaded,
@@ -3131,14 +3146,19 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId || references.length || tuned || mediaTargetUrl
+              ...(replyParentId ||
+              references.length ||
+              tuned ||
+              mediaTargetUrl ||
+              broadcast
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || mediaTargetUrl
+              ...(references.length || tuned || mediaTargetUrl || broadcast
                 ? [references]
                 : []),
-              ...(tuned || mediaTargetUrl ? [sentPicks] : []),
-              ...(mediaTargetUrl ? [mediaTargetUrl] : []),
+              ...(tuned || mediaTargetUrl || broadcast ? [sentPicks] : []),
+              ...(mediaTargetUrl || broadcast ? [mediaTargetUrl] : []),
+              ...(broadcast ? [true] : []),
             )
           : references.length || tuned
             ? sender.messages.send(
@@ -4046,6 +4066,22 @@ function Composer({
                   place={sessionPlace}
                 />
               )}
+            {active && alsoSendToChannel && !editing.target && (
+              <IconButton
+                hint="helpful"
+                size="sm"
+                variant={alsoSendToChannel.pressed ? "subtle" : "ghost"}
+                aria-label={alsoSendLabel}
+                aria-pressed={alsoSendToChannel.pressed}
+                title={alsoSendLabel}
+                disabled={editingDisabled}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  alsoSendToChannel.onPressedChange(!alsoSendToChannel.pressed)
+                }
+                icon={<HashArrowInIcon size={16} />}
+              />
+            )}
             <IconButton
               variant={
                 draft.trim() ||

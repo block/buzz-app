@@ -3,7 +3,6 @@ import type { MessageLinkOrigin } from "./MessageRow";
 import {
   useCallback,
   useContext,
-  useMemo,
   useRef,
   useSyncExternalStore,
   type RefObject,
@@ -22,10 +21,8 @@ import {
 } from "../profiles/target";
 import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
-import {
-  useChannelActivitySnapshot,
-  type ActivityPresentation,
-} from "./activity-presentation";
+import type { ActivityPresentation } from "./activity-presentation";
+import { useChannelActivitySnapshot } from "../agents/use-channel-agent-activity";
 
 const noSubscribe = () => () => {};
 
@@ -74,10 +71,9 @@ export function ActivityGroupActions({
   const stopping = useRef(false);
   const tracking = active || stopping.current;
   const channelId = group.latest.channelId;
-  const channels = useMemo(() => new Set([channelId]), [channelId]);
   const snapshot = useChannelActivitySnapshot(
     tracking ? session.agentActivity : undefined,
-    channels,
+    channelId,
   );
   const choices = useSyncExternalStore(
     tracking ? session.agentChoices.subscribe : noSubscribe,

@@ -1,11 +1,6 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChannelMessage } from "../relay/contracts";
+import { useChannelActivitySnapshot } from "../agents/use-channel-agent-activity";
 import type { RelaySession } from "../relay/session";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
@@ -49,53 +44,6 @@ export type ActivityRowPresentation = {
   showAuthor?: boolean;
   container: "history" | "bubble" | "standalone";
 };
-const noSubscribe = () => () => {};
-
-const sameItems = <T>(a: readonly T[], b: readonly T[]) =>
-  a.length === b.length && a.every((item, index) => item === b[index]);
-/** Whether two snapshots agree on everything a request projection in these
- * channels reads: their records, turns and local work, status and trimming. */
-function sameChannelActivity(
-  a: Snapshot | undefined,
-  b: Snapshot | undefined,
-  channels: ReadonlySet<string>,
-) {
-  if (a === b) return true;
-  if (!a || !b || a.status !== b.status || a.trimmed !== b.trimmed)
-    return false;
-  const records = (snapshot: Snapshot) =>
-    snapshot.records.filter((record) =>
-      record.channelIds.some((id) => channels.has(id)),
-    );
-  const local = (snapshot: Snapshot) =>
-    (snapshot.local ?? []).filter((work) => channels.has(work.channelId));
-  const turns = (snapshot: Snapshot) =>
-    JSON.stringify(
-      snapshot.turns.filter(
-        (turn) => !!turn.channelId && channels.has(turn.channelId),
-      ),
-    );
-  return (
-    sameItems(records(a), records(b)) &&
-    sameItems(local(a), local(b)) &&
-    turns(a) === turns(b)
-  );
-}
-/** The activity snapshot, changing only when these channels' evidence does:
- * work elsewhere in the session does not re-render this conversation. */
-export function useChannelActivitySnapshot(
-  activity: Activity | undefined,
-  channels: ReadonlySet<string>,
-) {
-  const held = useRef<Snapshot | undefined>(undefined);
-  const read = () => {
-    const live = activity?.snapshot();
-    if (!sameChannelActivity(held.current, live, channels)) held.current = live;
-    return held.current;
-  };
-  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
-}
-
 /** Requests whose local run published each row: exact causal evidence that
  * the root-flattened reply link of a thread reply cannot carry. */
 function publishedRequests(
@@ -418,11 +366,7 @@ export function useActivityPresentation(
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  const channels = useMemo(
-    () => new Set(rows.map((row) => row.channelId)),
-    [rows],
-  );
-  const snapshot = useChannelActivitySnapshot(activity, channels);
+  const snapshot = useChannelActivitySnapshot(activity, rows[0]?.channelId);
   return useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],

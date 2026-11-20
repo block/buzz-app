@@ -1,11 +1,11 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { useChannelActivitySnapshot } from "../agents/use-channel-agent-activity";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
-  useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns } from "./activity-groups";
@@ -633,10 +633,9 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
   const activitySnapshot = useChannelActivitySnapshot(
     session.agentActivity,
-    threadChannels,
+    channelId,
   );
   const stableActivity = useStableRowActivity();
   const resolvedRoot = snapshot.root?.id;

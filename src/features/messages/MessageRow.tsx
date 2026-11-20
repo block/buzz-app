@@ -4,6 +4,7 @@ import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
@@ -202,8 +203,9 @@ function useCompletedMessageWork(
   activity: RelaySession["agentActivity"] | undefined,
   row: ChannelMessage,
 ) {
+  const subscribe = useChannelActivitySubscription(activity, row.channelId);
   const read = () => {
-    const snapshot = activity?.snapshot();
+    const snapshot = activity?.snapshot(row.channelId);
     if (!snapshot) return false;
     const published = (snapshot.local ?? []).filter(
       (work) =>
@@ -225,7 +227,7 @@ function useCompletedMessageWork(
       )
     );
   };
-  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
@@ -2165,8 +2167,12 @@ function useThreadAgents(
     get,
   );
   // Subscribe to this thread's working agents, not every activity step.
+  const subscribeWork = useChannelActivitySubscription(
+    session?.agentActivity,
+    channelId,
+  );
   const getWork = () => {
-    const activity = session?.agentActivity?.snapshot();
+    const activity = session?.agentActivity?.snapshot(channelId);
     const typers = threadWorkingAgents(
       activity,
       keys ? keys.split(",") : [],
@@ -2187,11 +2193,7 @@ function useThreadAgents(
       typers.length > 0 && typers.every((agent) => breathing(local.get(agent)));
     return `${waiting ? "waiting" : "working"}:${typers.join(",")}`;
   };
-  const work = useSyncExternalStore(
-    session?.agentActivity?.subscribe ?? noSubscribe,
-    getWork,
-    getWork,
-  );
+  const work = useSyncExternalStore(subscribeWork, getWork, getWork);
   const [state, joined = ""] = work.split(/:(.*)/s);
   const typers = joined ? joined.split(",") : [];
   const hasWork = typers.length > 0;

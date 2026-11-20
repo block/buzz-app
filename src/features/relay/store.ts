@@ -3435,7 +3435,7 @@ export function createChannelStore(
     savedVerified = [];
     savedAuthority = undefined;
     savedDiscovery = undefined;
-    await persistence?.clear().catch(() => {});
+    await persistence?.clear();
   }
   /** One background head read at a time; warm never competes with demand reads
    * for foreground slots and is dropped wholesale when the session resets. */

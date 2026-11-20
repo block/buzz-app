@@ -225,7 +225,7 @@ export function CommunityLocalSettings({
         <SettingsGroup>
           <PreferenceRow
             title="Cached data"
-            subtitle={`Channels, messages and images this device saved from this community. Clearing them frees space; Buzz loads them again as needed.${usage ? ` ${usageText(usage)}` : ""}`}
+            subtitle={`Channels, messages and images this device saved from this community. Buzz loads them again as needed. Clearing also cancels uploads in progress.${usage ? ` ${usageText(usage)}` : ""}`}
             trailing={
               <Button
                 type="button"

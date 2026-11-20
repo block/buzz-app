@@ -52,6 +52,11 @@ test("working badges align in their rows and clear the Solo actions button", asy
     chat
       .locator(".navigation-item-label")
       .evaluate((label) => label.getBoundingClientRect().width);
+  const labelMask = () =>
+    chat.locator(".navigation-item-label").evaluate((label) => {
+      const style = getComputedStyle(label);
+      return style.maskImage || style.webkitMaskImage;
+    });
   const actionClearance = () =>
     soloRow.evaluate((row) => {
       const badge = row
@@ -103,8 +108,10 @@ test("working badges align in their rows and clear the Solo actions button", asy
         .toEqual({ center: 0, inset: 0.625 });
     }
     const restingWidth = await titleWidth();
+    await expect.poll(labelMask).toBe("none");
     await chat.hover({ position: { x: 24, y: 14 } });
     await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(labelMask).toContain("linear-gradient");
     await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
     await expect.poll(titleWidth).toBe(restingWidth);
     await expect(preview).toBeVisible();
@@ -115,6 +122,7 @@ test("working badges align in their rows and clear the Solo actions button", asy
     await page.keyboard.press("Tab");
     await expect(action).toBeFocused();
     await expect(action).toHaveCSS("opacity", "1");
+    await expect.poll(labelMask).toContain("linear-gradient");
     await expect.poll(actionClearance).toBeGreaterThanOrEqual(0);
     await expect.poll(titleWidth).toBe(restingWidth);
   }

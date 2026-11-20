@@ -12,7 +12,7 @@ import { Badge } from "../../shared/design-system/ui/Badge";
 import { formatTime } from "../../shared/datetime";
 import { CaretRightIcon } from "../../shared/design-system/icons";
 import type { RelayedRun } from "./activity-groups";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { MessageTimestamp, useMessageTimeVisible } from "./MessageTimestamp";
 import { useReferenceDirectory } from "./ReferenceText";
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import styles from "./Messages.module.css";
@@ -52,6 +52,7 @@ export function RelayedRunPreview({
   const last = run.relayed.at(-1);
   const resolveName = useChannelIdentityNames(session, first?.channelId);
   const directory = useReferenceDirectory(session);
+  const showTime = useMessageTimeVisible(session?.channels, first?.channelId);
   useActivityFocusHandoff(container);
   if (!first || !last) return null;
   // The latest sender leads the stack, as it leads the line.
@@ -99,7 +100,13 @@ export function RelayedRunPreview({
   const label = `${expanded ? "Collapse" : "Show"} ${run.relayed.length} messages${from} by ${names}. Latest, ${latest?.name}: ${preview}, ${formatTime(last.createdAt)}`;
   return (
     <div ref={container} className={styles.relayedRun} data-layout={layout}>
-      <div className={styles.relayedHeader} data-open={expanded || undefined}>
+      <div
+        className={styles.relayedHeader}
+        data-open={expanded || undefined}
+        // Closed, this line shows the latest message, so it lets a reader at
+        // the bottom catch up; opened, that message's own row does.
+        data-preview-message-id={expanded ? undefined : last.id}
+      >
         <button
           type="button"
           data-buzz-ui=""
@@ -112,7 +119,7 @@ export function RelayedRunPreview({
           }}
         />
         <span className={styles.relayedAvatar} aria-hidden="true">
-          <AvatarStack size="mini" items={named} />
+          <AvatarStack size="mini" items={named.slice(0, 3)} />
         </span>
         {/* Opened, each line below names its sender, so only the source stays. */}
         {!expanded && (
@@ -148,7 +155,7 @@ export function RelayedRunPreview({
           </span>
         )}
         <span className={styles.relayedTime} aria-hidden="true">
-          <MessageTimestamp createdAt={last.createdAt} />
+          <MessageTimestamp createdAt={last.createdAt} visible={showTime} />
         </span>
         <CaretRightIcon className={styles.relayedCaret} aria-hidden="true" />
       </div>

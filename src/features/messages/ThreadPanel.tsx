@@ -702,9 +702,9 @@ function ThreadMessages({
       ])
       .find((group) => group.some((row) => row.id === messageId));
     // A target that joins a group later, as a relay does once its owner
-    // verifies, opens that group; an unchanged one stays as the reader left it.
-    const first = group?.[0]?.id;
-    const request = [messageId, navigation?.signal, revealRequest, first];
+    // verifies, opens that group. One that stays in a group stays as the
+    // reader left it, even when paging or the unread line reshapes the group.
+    const request = [messageId, navigation?.signal, revealRequest, !!group];
     if (request.every((part, index) => part === activityVisit.current[index]))
       return;
     activityVisit.current = request;
@@ -1482,6 +1482,22 @@ function ThreadMessages({
         setExpanded((current) => new Set([...current, ...closed]));
         return;
       }
+      // A place inside a folded group reopens that group before it is
+      // measured: every member, so either side of the unread line opens.
+      const folded =
+        anchor && !element.querySelector(`[data-message-id="${anchor.id}"]`)
+          ? [...tree.children.values()]
+              .flatMap((rows) => [
+                ...activityRuns(rows),
+                ...relayedRuns(rows).map((run) => run.relayed),
+              ])
+              .find((group) => group.some((row) => row.id === anchor.id))
+              ?.map((row) => row.id)
+          : undefined;
+      if (folded?.some((id) => !expandedActivity.has(id))) {
+        setExpandedActivity((current) => new Set([...current, ...folded]));
+        return;
+      }
       const row =
         anchor &&
         [anchor.id, ...anchor.ancestors]
@@ -1623,6 +1639,7 @@ function ThreadMessages({
     selectedOffset,
     tree,
     expanded,
+    expandedActivity,
     boundary,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
@@ -1793,10 +1810,12 @@ function ThreadMessages({
     const siblings = chronologicalSiblings;
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
+    // A group stays open while any of its rows was opened, so one that gains
+    // an earlier row from paging keeps the reader's choice.
+    const open = (ids: readonly string[]) =>
+      ids.some((id) => expandedActivity.has(id));
     const hidden = new Set(
-      groups.flatMap((group) =>
-        expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
-      ),
+      groups.flatMap((group) => (open(group.ids) ? [] : group.ids)),
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
@@ -1899,9 +1918,12 @@ function ThreadMessages({
         targetAnchor.current = undefined;
         setExpandedActivity((current) => {
           const next = new Set(current);
-          const first = group?.ids[0] ?? row.id;
-          if (next.has(first)) next.delete(first);
-          else next.add(first);
+          const ids = group?.ids ?? [row.id];
+          const opened = ids.some((id) => next.has(id));
+          for (const id of ids) {
+            if (opened) next.delete(id);
+            else next.add(id);
+          }
           return next;
         });
       };
@@ -1946,7 +1968,8 @@ function ThreadMessages({
 
           {group && (
             <>
-              {day && hidden.has(row.id) && (
+              {/* A relayed run lists its lines without their own dividers. */}
+              {day && ("relayed" in group || hidden.has(row.id)) && (
                 <DayDivider createdAt={row.createdAt} />
               )}
               {"relayed" in group ? (
@@ -1957,7 +1980,7 @@ function ThreadMessages({
                   profiles={profiles}
                   agentPubkeys={agentPubkeys}
                   media={session.media}
-                  expanded={expandedActivity.has(group.ids[0] ?? "")}
+                  expanded={open(group.ids)}
                   onToggle={toggleGroup}
                   extensions={extensions}
                   scope={scope}
@@ -1974,7 +1997,7 @@ function ThreadMessages({
                   profiles={profiles}
                   media={session.media}
                   layout="thread"
-                  expanded={expandedActivity.has(group.ids[0] ?? "")}
+                  expanded={open(group.ids)}
                   onToggle={toggleGroup}
                 />
               )}

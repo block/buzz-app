@@ -4199,6 +4199,11 @@ html[data-keyboard-navigation] .activityExpansion {
   > .relayedHeader:not(:hover) {
   background: var(--affordance-subtle);
 }
+html[data-keyboard-navigation]
+  .relayedHeader:has(> .relayedTrigger:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
 /* The line's button covers it; the source chat link stays above it. */
 .relayedTrigger {
   position: absolute;

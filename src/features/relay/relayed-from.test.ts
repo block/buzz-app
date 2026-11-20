@@ -16,3 +16,22 @@ it("removes only the signed original's notice from the shown text", () => {
     "First\n\nSecond",
   );
 });
+
+it("keeps an edit that only begins like the notice", () => {
+  expect(withoutRelayNotice("Build status is green.", "Build status")).toBe(
+    "Build status is green.",
+  );
+  expect(
+    withoutRelayNotice("Build status, corrected\n\nGreen", "Build status"),
+  ).toBe("Build status, corrected\n\nGreen");
+});
+
+it("removes a notice whose mention an edit bound to a profile link", () => {
+  const notice = "@Juno From Zerk (relayed)";
+  expect(
+    withoutRelayNotice(
+      "[@Juno](nostr:npub1example) From Zerk (relayed)\n\nRebase",
+      notice,
+    ),
+  ).toBe("Rebase");
+});

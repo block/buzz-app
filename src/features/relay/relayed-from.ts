@@ -24,13 +24,23 @@ export function relayNotice(content: string) {
   return end > 0 ? content.slice(0, end) : undefined;
 }
 
+/** A mention the editor bound to its profile reads as its label. */
+const mentionLabels = (text: string) =>
+  text.replace(/\[((?:\\.|[^\]\\])*)\]\(nostr:[^)\s]+\)/g, (_, label: string) =>
+    label.replace(/\\(.)/g, "$1"),
+  );
+
 /** A client that draws attribution from the tag omits the notice, but only
- * while the shown text still starts with it: an edit may have replaced it. */
+ * while the shown text still opens with the whole notice paragraph: an edit
+ * may have replaced it, or bound its mention to a profile link. */
 export function withoutRelayNotice(
   content: string,
   notice: string | undefined,
 ) {
-  return notice && content.startsWith(notice)
-    ? content.slice(notice.length).replace(/^\s*\n/, "")
-    : content;
+  if (!notice) return content;
+  const end = content.indexOf("\n\n");
+  const first = end < 0 ? content : content.slice(0, end);
+  if (first !== notice && mentionLabels(first) !== mentionLabels(notice))
+    return content;
+  return end < 0 ? "" : content.slice(end).replace(/^\s*\n/, "");
 }

@@ -1477,6 +1477,68 @@ it("a filled page keeps the follower at the bottom; a later page is anchored", (
   }
 });
 
+it("opens a relayed run around a linked message that joins it after the reveal", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(3).map(({ audience: _audience, ...row }) => ({
+      ...row,
+      authorId: "owner",
+      content: `Notice\n\nRelayed ${row.id}`,
+    }));
+    const visit = {
+      messageId: "activity-1",
+      signal: new AbortController().signal,
+    };
+    // The link lands while the owner's verification is still pending.
+    const view = render(
+      content(
+        rows.map((row) => ({
+          ...row,
+          relayedFrom: { agent: "zerk", verified: false },
+        })),
+        visit,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Retain activity-1" }),
+    ).toBeVisible();
+    // Verification folds the run; the same visit opens it around the target.
+    view.rerender(
+      content(
+        rows.map((row) => ({
+          ...row,
+          relayedFrom: { agent: "zerk", verified: true },
+        })),
+        visit,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", { name: "Retain activity-1" }),
+    ).toBeVisible();
+    // Closed by the reader, it stays closed when the group is reshaped.
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+    );
+    view.rerender(
+      content(
+        rows.slice(1).map((row) => ({
+          ...row,
+          relayedFrom: { agent: "zerk", verified: true },
+        })),
+        visit,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: /^Show 2 messages by zerk\./ }),
+    ).toHaveAttribute("aria-expanded", "false");
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("folds a run of relayed messages into one line that opens to each message", () => {
   const { owner, updates, content } = activityFixture();
   try {

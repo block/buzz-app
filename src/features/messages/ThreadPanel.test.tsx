@@ -2669,6 +2669,40 @@ it("a retained reader reveals its exact selected message, again for each new req
   expect(revealedReply()).toBe(false);
 });
 
+it("an open relayed group stays open when paging adds an earlier member", async () => {
+  const h = messagesHarness();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...row,
+    id: id.repeat(64),
+    authorId: viewer,
+    content: `Relayed ${index}`,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  h.snapshot.replies = relayed.slice(1);
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  );
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    await screen.findByRole("button", {
+      name: /^Collapse 3 messages by zerk\./,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  // Closing it closes every member, the earlier one included.
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /^Show 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
 it("reopens collapsed activity for a new reveal of the same step", async () => {
   const h = messagesHarness();
   const replies = ["d", "e"].map((id, index) => ({
@@ -2833,6 +2867,33 @@ it.each([
   // it: the place, not the end of the thread.
   expect(h.element.scrollTop).toBe(100);
   expect(h.element).not.toHaveAttribute("data-positioning");
+});
+
+it("Back to a place inside a folded relayed group reopens that group at it", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...threadReply(id, row.id),
+    authorId: viewer,
+    threadRootId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  const place = relayed[1];
+  if (!place) throw new Error("Missing relayed fixture");
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(100);
 });
 
 it.each([

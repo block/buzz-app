@@ -10,7 +10,6 @@ import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
-import { useClockPreference } from "../../shared/clock-preference";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -41,6 +40,7 @@ import { MessageLink } from "../conversation/MessageLink";
 import {
   DayDivider,
   MessageTimestamp,
+  useMessageTimeVisible,
   MessageTimestampHint,
 } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -346,20 +346,12 @@ function MessageRowContent({
     row.channelId,
     (channel) => !!channel?.readOnly,
   );
-  const { messageTimestamps } = useClockPreference();
-  const solo = useListedChannel(
-    references?.channels,
-    row.channelId,
-    (channel) => channel?.channelType === "solo",
-  );
   const dmMembers = useListedChannel(
     references?.channels,
     row.channelId,
     (channel) => (channel?.channelType === "dm" && channel.members) || none,
   );
-  const showTime =
-    messageTimestamps === "show" ||
-    (messageTimestamps === "hide-solo" && !solo);
+  const showTime = useMessageTimeVisible(references?.channels, row.channelId);
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -2127,6 +2119,7 @@ function RelayedMessageRow(props: MessageRowProps) {
   }, [open, keepMounted, row.id]);
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
+  const showTime = useMessageTimeVisible(references?.channels, row.channelId);
   const shown = useMemo(() => {
     const content = withoutRelayNotice(row.content, row.relayedFrom?.notice);
     const removed = row.content.length - content.length;
@@ -2258,7 +2251,10 @@ function RelayedMessageRow(props: MessageRowProps) {
                 </span>
               )}
               <span className={styles.relayedTime} aria-hidden="true">
-                <MessageTimestamp createdAt={row.createdAt} />
+                <MessageTimestamp
+                  createdAt={row.createdAt}
+                  visible={showTime}
+                />
               </span>
               <CaretRightIcon
                 className={styles.relayedCaret}

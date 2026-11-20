@@ -89,7 +89,7 @@ export function ToastProvider({
   const id = useId();
   // WebKitGTK can crash while compositing an animated blur on a toast.
   const skipBlur =
-    navigator.platform.startsWith("Linux") &&
+    globalThis.navigator?.platform?.startsWith("Linux") &&
     navigator.vendor === "Apple Computer, Inc.";
   useEffect(() => {
     // Sonner's global hotkey must not bypass the host's modal focus boundary.

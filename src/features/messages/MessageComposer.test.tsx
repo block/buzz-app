@@ -12015,6 +12015,65 @@ describe("repository resource picker", () => {
     ).toEqual([]);
   });
 
+  it("lists a repository that holds the typed text before a title that holds its words apart", async () => {
+    const notes = {
+      ...repository,
+      dtag: "release-notes",
+      address: `30617:${resourceOwner}:release-notes`,
+      name: "Release notes",
+    };
+    const other = {
+      ...repository,
+      dtag: "notes",
+      address: `30617:${resourceOwner}:notes`,
+      name: "Notes",
+    };
+    const issue = (
+      id: string,
+      title: string,
+      created_at: number,
+      address = repository.address,
+    ) => ({
+      ...item,
+      id: id.repeat(64),
+      created_at,
+      content: title,
+      tags: [
+        ["a", address],
+        ["subject", title],
+      ],
+    });
+    const p = picker(
+      () =>
+        Promise.resolve({
+          status: "home",
+          repositories: [repository, notes, other],
+        }),
+      [
+        issue("a", "Release checklist", 9, other.address),
+        issue("b", "Notes for release", 7),
+        issue("c", "Fix typo", 5, notes.address),
+        issue("d", "Draft release notes", 1),
+      ],
+    );
+    await p.open();
+    const titles = async () =>
+      (await screen.findAllByRole("button", { name: /, Issue in / })).map(
+        (choice) => choice.getAttribute("aria-label")?.split(",")[0],
+      );
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "release notes");
+    // Whole text: in the title, then only in the repository name. Words
+    // apart: all in the title, then one only in the repository name. The
+    // creation times run against this order.
+    expect(await titles()).toEqual([
+      "Draft release notes",
+      "Fix typo",
+      "Notes for release",
+      "Release checklist",
+    ]);
+  });
+
   it("highlights and announces the row that Tab focuses", async () => {
     const p = picker(undefined, [
       item,

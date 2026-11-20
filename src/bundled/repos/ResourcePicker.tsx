@@ -32,6 +32,8 @@ import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./ResourcePicker.module.css";
 
 const kinds = { issue: "Issue", pr: "Pull request" } as const;
+/** Text found only in the repository name: after every title rank. */
+const REPOSITORY_ONLY = MatchRank.words + 1;
 /** A title's contiguous match, the only kind the picker underlines. */
 const titleMatch = (label: string, text: string) => {
   const match = matchName(label, text);
@@ -183,26 +185,29 @@ export function ResourcePicker({
   // An item matches when its title and repository name hold the typed text
   // or, failing that, each typed word (`rankTerms`). Order by how well the
   // title matches, as the other pickers do: exact, then prefix, then word
-  // start, then the rest, newest first within each rank. A title that holds
-  // the words only apart follows, and a repository-only match comes last.
+  // start, then the rest, newest first within each rank, and a
+  // repository-only match last. Rows that hold the words only apart follow,
+  // in the same order.
   const shown =
     items.status === "ready"
       ? items.items
-          .filter((item) => {
+          .flatMap((item) => {
             const text = `${item.label} ${item.repository.name}`.toLowerCase();
-            return (
-              rankTerms(query, (part) =>
-                text.includes(part) ? 0 : undefined,
-              ) !== undefined
+            const rank = rankTerms(query, (part) =>
+              text.includes(part)
+                ? (matchRank(item.label, part) ?? REPOSITORY_ONLY)
+                : undefined,
             );
+            return rank === undefined
+              ? []
+              : [
+                  {
+                    item,
+                    matches: matchedPositions(item.label, query, titleMatch),
+                    rank,
+                  },
+                ];
           })
-          .map((item) => ({
-            item,
-            matches: matchedPositions(item.label, query, titleMatch),
-            rank:
-              rankTerms(query, (text) => matchRank(item.label, text)) ??
-              Number.MAX_VALUE,
-          }))
           .sort((a, b) => a.rank - b.rank)
       : [];
   const busy = !!checking && !checking.failed;

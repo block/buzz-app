@@ -8,6 +8,7 @@ import english from "@emoji-mart/data/i18n/en.json";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
+import { customEmojiId } from "./emoji-usage";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import {
   SKIN_TONE_SLOT,
@@ -35,7 +36,6 @@ function checkMartPropTimer(picker: HTMLElement) {
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
-const prefix = "buzz-custom/";
 // Idle and with no matches, the footer shows only its actions; the empty grid
 // under the query already says nothing matched.
 const previewStrings = {
@@ -124,7 +124,7 @@ export function mountEmojiMart({
   const emojis = entries.flatMap(({ shortcode, url }) => {
     const src = media(url);
     if (!src) return [];
-    const id = `${prefix}${encodeURIComponent(scope)}/${shortcode}`;
+    const id = customEmojiId(scope, shortcode);
     const literal = `:${shortcode}:`;
     values.set(id, { literal, shortcode });
     // Match Mart's first-hyphen query normalization as well as individual words.

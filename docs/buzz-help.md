@@ -1010,6 +1010,11 @@ Quitting Buzz also turns it off.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
+- **Smooth mouse-wheel scrolling**: in the Mac app and Safari, a mouse wheel
+  glides through a conversation's messages and thread replies instead of
+  jumping a notch at a time. It is on by default and is set in **Settings →
+  Appearance**; in the Mac app a change applies at once in every window.
+  Trackpad scrolling is unchanged, and Reduce motion turns it off.
 - **Back and Forward**: after following a channel or message link to another
   channel, Back and Forward restore the thread tab you last selected in the
   channel you left.

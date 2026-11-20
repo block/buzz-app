@@ -39,6 +39,7 @@ import {
   clockPreference,
   setClockPreference,
 } from "../shared/clock-preference";
+import { smoothWheelPreference } from "../features/messages/smooth-wheel-preference";
 
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
@@ -56,6 +57,7 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
+  smoothWheelPreference.set(true);
   setClockPreference({
     hourCycle: "system",
     seconds: false,
@@ -599,6 +601,45 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
+});
+
+it("offers smooth mouse-wheel scrolling only on Mac WebKit, on until this device turns it off", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const page = (smoothWheelAvailable: boolean) => (
+    <AppearanceSettings
+      appearance={appearance}
+      smoothWheelAvailable={smoothWheelAvailable}
+    />
+  );
+  const name = "Smooth mouse-wheel scrolling";
+  const view = render(page(false), { wrapper: ToastProvider });
+  expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
+  view.rerender(page(true));
+  expect(screen.getByRole("switch", { name })).toBeChecked();
+  // A choice that can't be saved stays active, and Retry saves the same one.
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(screen.getByRole("switch", { name }));
+  expect(smoothWheelPreference.read()).toBe(false);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Scrolling preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving smooth scrolling" }),
+  );
+  expect(localStorage.getItem("buzz-smooth-mouse-wheel.v1")).toBe("off");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  cleanup();
+  render(page(true), { wrapper: ToastProvider });
+  expect(screen.getByRole("switch", { name })).not.toBeChecked();
 });
 
 it("leads search with unread until this device turns it off", async () => {

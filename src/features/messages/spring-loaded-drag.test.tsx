@@ -12,6 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   SPRING_LOAD_ATTRIBUTE,
   SPRING_LOAD_BLINK_MS,
+  SPRING_LOAD_GRACE_MS,
   SPRING_LOAD_DELAY_MS,
   SPRING_LOAD_LIVE_MS,
   SPRING_LOAD_STALE_MS,
@@ -111,17 +112,27 @@ function hold(target: Element, ms: number) {
 }
 const beforeBlink = SPRING_LOAD_DELAY_MS - SPRING_LOAD_BLINK_MS;
 
-it("highlights at once, blinks, then opens once after the delay", () => {
+it("highlights after the grace period, blinks twice, then opens once after the delay", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
   drag(row("General"), "dragEnter");
-  expect(state("General")).toBe("hover");
-  hold(row("General"), beforeBlink - 1);
-  expect(state("General")).toBe("hover");
+  rest(SPRING_LOAD_GRACE_MS - 1);
+  expect(state("General")).toBeNull();
   rest(1);
-  expect(state("General")).toBe("blink");
-  hold(row("General"), SPRING_LOAD_BLINK_MS - 1);
-  expect(open).not.toHaveBeenCalled();
+  expect(state("General")).toBe("on");
+  rest(beforeBlink - SPRING_LOAD_GRACE_MS - 1);
+  expect(state("General")).toBe("on");
+  rest(1);
+  drag(row("General"), "dragOver");
+  const phase = SPRING_LOAD_BLINK_MS / 4;
+  for (const expected of ["off", "on", "off", "on"]) {
+    expect(state("General")).toBe(expected);
+    rest(phase - 1);
+    expect(state("General")).toBe(expected);
+    drag(row("General"), "dragOver");
+    expect(open).not.toHaveBeenCalled();
+    rest(1);
+  }
   rest(1);
   expect(open).toHaveBeenCalledExactlyOnceWith("General");
   expect(state("General")).toBeNull();
@@ -138,8 +149,9 @@ it("reduced motion keeps the highlight and skips the blink", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
   drag(row("General"), "dragEnter");
+  expect(state("General")).toBeNull();
   hold(row("General"), SPRING_LOAD_DELAY_MS - 1);
-  expect(state("General")).toBe("hover");
+  expect(state("General")).toBe("on");
   expect(open).not.toHaveBeenCalled();
   rest(1);
   expect(open).toHaveBeenCalledExactlyOnceWith("General");
@@ -167,10 +179,9 @@ it("leaving the target cancels the delay and the highlight", () => {
   drag(row("General"), "dragEnter");
   move(row("General"), label);
   hold(label, beforeBlink);
-  expect(state("General")).toBe("blink");
+  expect(state("General")).toBe("off");
   move(label, screen.getByText("Elsewhere"));
   expect(state("General")).toBeNull();
-  expect(row("General").style.length).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
   rest(SPRING_LOAD_DELAY_MS);
   expect(open).not.toHaveBeenCalled();
@@ -186,6 +197,27 @@ it("leaving the window or cancelling the drag reports only a leave", () => {
   expect(open).not.toHaveBeenCalled();
 });
 
+it("a drag that only passes over a target does not highlight it", () => {
+  const open = vi.fn();
+  render(<Targets open={open} />);
+  const seen: (string | null)[] = [];
+  drag(row("General"), "dragEnter");
+  for (const [from, to] of [
+    ["General", "Random"],
+    ["Random", "General"],
+  ] as const) {
+    rest(SPRING_LOAD_GRACE_MS - 1);
+    seen.push(state(from));
+    move(row(from), row(to));
+    seen.push(state(from), state(to));
+  }
+  move(row("General"), screen.getByText("Elsewhere"));
+  rest(SPRING_LOAD_DELAY_MS);
+  expect(seen).toEqual([null, null, null, null, null, null]);
+  expect(open).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("moving to another target restarts the delay there", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
@@ -193,7 +225,7 @@ it("moving to another target restarts the delay there", () => {
   hold(row("General"), SPRING_LOAD_DELAY_MS - 1);
   move(row("General"), row("Random"));
   expect(state("General")).toBeNull();
-  expect(state("Random")).toBe("hover");
+  expect(state("Random")).toBeNull();
   hold(row("Random"), SPRING_LOAD_DELAY_MS - 1);
   expect(open).not.toHaveBeenCalled();
   rest(1);
@@ -307,9 +339,9 @@ it("a drag that ended without a leave opens nothing and loses its highlight", ()
   // Escape, with no leave reported: the dragovers simply stop.
   rest(SPRING_LOAD_DELAY_MS - 100);
   expect(open).not.toHaveBeenCalled();
-  expect(state("General")).toBe("hover");
+  expect(state("General")).toBe("on");
   rest(SPRING_LOAD_STALE_MS - 1);
-  expect(state("General")).toBe("hover");
+  expect(state("General")).toBe("on");
   rest(1);
   expect(state("General")).toBeNull();
   expect(vi.getTimerCount()).toBe(0);
@@ -365,8 +397,9 @@ it("a target that slides under a resting drag waits for the drag to move", () =>
   expect(open).toHaveBeenCalledTimes(1);
   nudge();
   drag(row("Random"), "dragOver");
-  expect(state("Random")).toBe("hover");
-  hold(row("Random"), SPRING_LOAD_DELAY_MS);
+  rest(SPRING_LOAD_GRACE_MS);
+  expect(state("Random")).toBe("on");
+  hold(row("Random"), SPRING_LOAD_DELAY_MS - SPRING_LOAD_GRACE_MS);
   expect(open).toHaveBeenLastCalledWith("Random");
   expect(open).toHaveBeenCalledTimes(2);
 });

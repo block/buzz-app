@@ -11,7 +11,11 @@ import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { ThreadPanel } from "./ThreadPanel";
-import { SPRING_LOAD_ATTRIBUTE, useSpringLoaded } from "./spring-loaded-drag";
+import {
+  SPRING_LOAD_ATTRIBUTE,
+  SPRING_LOAD_GRACE_MS,
+  useSpringLoaded,
+} from "./spring-loaded-drag";
 import { useFileDrop, useRejectUnclaimedDrops } from "./use-file-drop";
 
 afterEach(cleanup);
@@ -232,9 +236,15 @@ it("a drop on a spring-loaded target inside a pane still attaches to that pane",
     </Composer>,
   );
   const summary = screen.getByRole("button", { name: "3 replies" });
-  drag(summary, "dragEnter");
+  vi.useFakeTimers();
+  try {
+    drag(summary, "dragEnter");
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+  } finally {
+    vi.useRealTimers();
+  }
   expect(drag(summary, "dragOver").transfer.dropEffect).toBe("copy");
-  expect(summary).toHaveAttribute(SPRING_LOAD_ATTRIBUTE, "hover");
+  expect(summary).toHaveAttribute(SPRING_LOAD_ATTRIBUTE, "on");
   expect(screen.getByText("Drop files")).toBeVisible();
   expect(drag(summary, "drop").event.defaultPrevented).toBe(true);
   expect(attach).toHaveBeenCalledOnce();

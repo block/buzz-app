@@ -10,7 +10,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { SPRING_LOAD_DELAY_MS } from "../../features/messages/spring-loaded-drag";
+import {
+  SPRING_LOAD_DELAY_MS,
+  SPRING_LOAD_GRACE_MS,
+} from "../../features/messages/spring-loaded-drag";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 
 afterEach(cleanup);
@@ -132,7 +135,9 @@ it("opens its conversation when a file drag rests on it, unless already open", (
     vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
     expect(onSelect).not.toHaveBeenCalled();
     drag("dragEnter", row);
-    expect(row).toHaveAttribute("data-spring-loaded", "hover");
+    expect(row).not.toHaveAttribute("data-spring-loaded");
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+    expect(row).toHaveAttribute("data-spring-loaded", "on");
     rest();
     expect(onSelect).toHaveBeenCalledExactlyOnceWith("general");
     drag("dragLeave", row);

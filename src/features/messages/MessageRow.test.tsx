@@ -23,7 +23,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
-import { SPRING_LOAD_DELAY_MS } from "./spring-loaded-drag";
+import {
+  SPRING_LOAD_DELAY_MS,
+  SPRING_LOAD_GRACE_MS,
+} from "./spring-loaded-drag";
 import { useShowingDraft } from "./draft-places";
 import { clearView, writeView } from "../../shared/view-state";
 import {
@@ -5536,7 +5539,8 @@ it("opens the thread when a file drag rests on its summary, unless already open"
       name: "View thread: 23 replies",
     });
     drag("dragEnter", summary);
-    expect(summary).toHaveAttribute("data-spring-loaded", "hover");
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+    expect(summary).toHaveAttribute("data-spring-loaded", "on");
     rest(summary);
     expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("root", "root");
     drag("dragLeave", summary);

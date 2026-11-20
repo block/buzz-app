@@ -2,18 +2,22 @@ import { useEffect, useRef, type DragEvent } from "react";
 
 /** How long a file drag rests on a target before it opens, as in Finder. */
 export const SPRING_LOAD_DELAY_MS = 500;
-/** The double blink fills the end of the delay: four phases of 75 ms, as in
- * Finder. Reduced motion skips it. */
+/** The highlight waits this long, inside the delay, so a drag that only
+ * passes over a target does not flash it. */
+export const SPRING_LOAD_GRACE_MS = 80;
+/** The double blink fills the end of the delay: off, on, off, on in equal
+ * phases of 75 ms, as in Finder. Reduced motion skips it. */
 export const SPRING_LOAD_BLINK_MS = 300;
+const BLINK_PHASES = ["off", "on", "off", "on"] as const;
 /** A drag is known to be live for this long after its last dragover. A drag
  * that was cancelled without a leave stops producing them. */
 export const SPRING_LOAD_LIVE_MS = 200;
 /** A target whose delay ended with no live drag waits this long for one. */
 export const SPRING_LOAD_STALE_MS = 1000;
 
-/** Set on the hovered target: "hover" at once, then "blink" before it opens. */
+/** Set on the hovered target once the grace period is over: "on" while it is
+ * highlighted and "off" in the gaps of the blink. globals.css paints it. */
 export const SPRING_LOAD_ATTRIBUTE = "data-spring-loaded";
-const BLINK_DURATION_PROPERTY = "--spring-loaded-blink";
 
 type Hover = {
   owner: object;
@@ -39,15 +43,9 @@ let sprungAt: { x: number; y: number } | undefined;
 const carriesFiles = (event: DragEvent) =>
   !!event.dataTransfer?.types.includes("Files");
 
-function paint(element: HTMLElement, state?: "hover" | "blink") {
+function paint(element: HTMLElement, state?: "on" | "off") {
   if (state) element.setAttribute(SPRING_LOAD_ATTRIBUTE, state);
   else element.removeAttribute(SPRING_LOAD_ATTRIBUTE);
-  if (state === "blink")
-    element.style.setProperty(
-      BLINK_DURATION_PROPERTY,
-      `${SPRING_LOAD_BLINK_MS}ms`,
-    );
-  else element.style.removeProperty(BLINK_DURATION_PROPERTY);
 }
 
 /** A drop, the end of the drag, or its target's unmount ends the hover. */
@@ -77,7 +75,7 @@ function due(current: Hover) {
   // leave. The next dragover proves the drag is live and opens the target;
   // without one the highlight is dropped.
   current.phase = "due";
-  paint(current.element, "hover");
+  paint(current.element, "on");
   current.timer = setTimeout(cancel, SPRING_LOAD_STALE_MS);
 }
 
@@ -85,16 +83,40 @@ function arm(current: Hover) {
   const reducedMotion = !!window.matchMedia?.(
     "(prefers-reduced-motion: reduce)",
   ).matches;
+  // Each step is a painted state and how long it lasts; then the delay is over.
+  const steps: [state: "on" | "off" | undefined, ms: number][] = [
+    [undefined, SPRING_LOAD_GRACE_MS],
+    [
+      "on",
+      SPRING_LOAD_DELAY_MS -
+        SPRING_LOAD_GRACE_MS -
+        (reducedMotion ? 0 : SPRING_LOAD_BLINK_MS),
+    ],
+    ...(reducedMotion
+      ? []
+      : BLINK_PHASES.map(
+          (state) =>
+            [state, SPRING_LOAD_BLINK_MS / BLINK_PHASES.length] as [
+              typeof state,
+              number,
+            ],
+        )),
+  ];
+  // Each step is timed from the start, so a late timer does not add up.
+  const start = Date.now();
+  let elapsed = 0;
+  const step = (index: number) => {
+    const [state, ms] = steps[index] ?? [];
+    if (ms === undefined) return due(current);
+    paint(current.element, state);
+    elapsed += ms;
+    current.timer = setTimeout(
+      () => step(index + 1),
+      start + elapsed - Date.now(),
+    );
+  };
   current.phase = "armed";
-  paint(current.element, "hover");
-  current.timer = setTimeout(
-    () => {
-      if (reducedMotion) return due(current);
-      paint(current.element, "blink");
-      current.timer = setTimeout(() => due(current), SPRING_LOAD_BLINK_MS);
-    },
-    SPRING_LOAD_DELAY_MS - (reducedMotion ? 0 : SPRING_LOAD_BLINK_MS),
-  );
+  step(0);
 }
 
 /**

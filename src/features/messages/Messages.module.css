@@ -3744,19 +3744,24 @@ html[data-keyboard-navigation] .message:focus-visible::after {
   position: relative;
 }
 /* A tint and a border mark the pane as the drop target without hiding it:
-   the drag can still rest on a thread summary to open it. The label sits in a
-   badge at the bottom edge, over the composer rather than the messages. */
+   the drag can still rest on a thread summary to open it. The border runs
+   along the pane's edge, outside its header's controls, and the label sits in
+   a badge at the top, clear of the composer however narrow the pane, and
+   below the pane's header where the zone includes one. */
 .fileDropOverlay {
   position: absolute;
-  inset: var(--space-2);
+  inset: 0;
   z-index: 5;
   display: grid;
-  place-items: end center;
+  place-items: start center;
   padding: var(--space-3);
   border: 2px dashed var(--border-focus);
   border-radius: var(--radius-panel);
   background: var(--affordance-backdrop-hover);
   pointer-events: none;
+}
+[data-attachment-drop-zone]:has([class~="panel-header"]) > .fileDropOverlay {
+  padding-block-start: calc(var(--size-panel-header) + var(--space-3));
 }
 .fileDropBadge {
   @apply glass-secondary;

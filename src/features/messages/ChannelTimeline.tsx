@@ -1322,10 +1322,17 @@ function Timeline({
     offerMessageLinks ? navigation : undefined,
     verifiedRoot,
   );
-  const inactiveRoot = offerMessageLinks ? undefined : verifiedRoot();
+  const pendingOffer = useRef<PageNavigation | undefined>(undefined);
   useLayoutEffect(() => {
-    if (inactiveRoot) navigation?.complete({ status: "opened" });
-  }, [navigation, inactiveRoot]);
+    if (offerMessageLinks) {
+      pendingOffer.current = offeringLink ? navigation : undefined;
+      return;
+    }
+    // A tab selection can interrupt this reader's offer before it reveals the row.
+    if (navigation && pendingOffer.current === navigation && verifiedRoot())
+      navigation.complete({ status: "opened" });
+    pendingOffer.current = undefined;
+  }, [navigation, offerMessageLinks, offeringLink, verifiedRoot]);
   useMessageReveal({
     scroller,
     focus: focusesTarget && inlineTarget?.focus !== false,

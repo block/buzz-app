@@ -1000,11 +1000,8 @@ export function createThreadView({
           publish({ canLoadMore: false });
           throw new Error("The original thread message is unavailable.");
         }
-        const firstProof =
-          proofEpoch === rootProofEpoch && verifiedRootId !== rootId;
-        if (firstProof) verifiedRootId = rootId;
+        if (proofEpoch === rootProofEpoch) verifiedRootId = rootId;
         if (!retain(union(remote, related(root)))) return;
-        if (firstProof) publish();
       }
       // A strict refresh re-reads from the newest end. Live replay covers
       // minutes, not a long disconnect, so keep paging until a reply kept

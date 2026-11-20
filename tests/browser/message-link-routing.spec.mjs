@@ -340,6 +340,9 @@ withCompanion(
     await expect(destination(page)).toBeVisible();
     const visit = (await state(page)).entry.id;
     const address = page.url();
+    expect(decodeURIComponent(new URL(address).hash)).not.toContain(
+      "messageLink",
+    );
     const draft = page.getByRole("textbox", { name: "Destination draft" });
     const companion = page.getByRole("complementary", {
       name: "Companion fixture",
@@ -384,11 +387,27 @@ withCompanion(
     expect((await state(page)).entry.id).toBe(visit);
     expect(page.url()).toBe(address);
 
-    await openSettings(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await composer.focus();
+    await expect(composer).toBeFocused();
+    await page.evaluate(() => {
+      void window.fixtureNavigation.open({ version: 1, kind: "settings" });
+    });
+    await expect(modal).toBeVisible();
     await page.evaluate(() => {
       window.fixtureMessageLinks.mode = "match";
     });
     await closeSettings(page);
+    await expect(composer).toBeFocused();
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+    expect(await offers(page)).toHaveLength(3);
+    expect((await state(page)).entry.id).toBe(visit);
+    expect(page.url()).toBe(address);
+
+    await activate(1);
     await expect(destination(page)).toBeVisible();
     await expect(draft).toHaveValue("");
     expect((await state(page)).entry.id).toBe(visit);

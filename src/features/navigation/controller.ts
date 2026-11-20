@@ -481,11 +481,25 @@ export function createNavigationController(
           openingDecision = undefined;
         }
         try {
+          const { current, invalidAddress } = history.snapshot();
           if (
-            !history.snapshot().invalidAddress &&
-            targetKey(target) === targetKey(history.snapshot().current.target)
-          )
+            !invalidAddress &&
+            targetKey(target) === targetKey(current.target)
+          ) {
+            if (
+              target.kind === "conversation" &&
+              current.target.kind === "conversation" &&
+              target.messageLink !== current.target.messageLink
+            ) {
+              resolving = active;
+              try {
+                history.resolve(target);
+              } finally {
+                resolving = undefined;
+              }
+            }
             return start(options?.focus, false, options?.sidebar);
+          }
           opening = true;
           openingFocus = options?.focus;
           openingSidebar = options?.sidebar;

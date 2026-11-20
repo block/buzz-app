@@ -599,5 +599,11 @@ export function parseOpenTarget(input: unknown): OpenTarget {
 }
 
 export function targetKey(target: OpenTarget): string {
-  return JSON.stringify(parseOpenTarget(target));
+  const normalized = parseOpenTarget(target);
+  if (normalized.kind === "conversation" && normalized.messageLink) {
+    // Link provenance belongs to the visit's routing state, not its address.
+    const { messageLink: _messageLink, ...address } = normalized;
+    return JSON.stringify(address);
+  }
+  return JSON.stringify(normalized);
 }

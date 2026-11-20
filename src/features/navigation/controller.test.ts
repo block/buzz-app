@@ -97,6 +97,32 @@ describe("navigation attempts over one history driver", () => {
     nav.dismiss([joined.id], withoutJoin(joined.target));
     expect(nav.snapshot().entry).toEqual(original);
   });
+  it("reopens the same message visit when the source of its address changes", () => {
+    const { navigation: nav, history } = setup();
+    const message: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+      messageId: "b".repeat(64),
+    };
+    void nav.open(message);
+    const entry = nav.snapshot().entry;
+    const source = { ...message, messageLink: true } as const;
+
+    void nav.open(source);
+    const linked = nav.snapshot().attempt;
+    expect(linked.entry).toEqual({ ...entry, target: source });
+    expect(history.snapshot().previous?.target).toEqual(homeTarget);
+
+    void nav.open(message);
+    expect(nav.snapshot().entry).toEqual(entry);
+    expect(linked.signal.aborted).toBe(true);
+    expect(history.snapshot().previous?.target).toEqual(homeTarget);
+  });
   it("keeps Members through passive traversal but retires an explicit dismissal", async () => {
     const { host, navigation: nav } = setup();
     const conversation: OpenTarget = {

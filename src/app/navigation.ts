@@ -402,15 +402,7 @@ export function useAppNavigation(
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
     if (!settings && previous?.owner === owner) return;
-    const visitTarget = owner.attempt.entry.target;
-    // Returning from Settings is another visit to the original message address.
-    // The retained Channels request may have finished before a provider was ready.
-    const messageLink = isMessageLink(visitTarget);
-    if (
-      !settings &&
-      !messageLink &&
-      previous?.presentation.resume(owner.attempt)
-    ) {
+    if (!settings && previous?.presentation.resume(owner.attempt)) {
       presented.set({ owner, request: previous.presentation.request });
       previous.owner = owner;
       return;
@@ -432,6 +424,7 @@ export function useAppNavigation(
       previous?.presentation.dispose();
       workspace.current = undefined;
     }
+    const visitTarget = owner.attempt.entry.target;
     const link =
       visitTarget.kind === "conversation" &&
       visitTarget.messageLink &&

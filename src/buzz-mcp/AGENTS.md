@@ -9,6 +9,10 @@ deliberately.
 
 - `tools.ts`: each tool's name, description and schema in `TOOLS`, and its
   behavior in `HANDLERS`.
+- `tool-titles.ts`: every tool's display title by name, which each definition
+  takes as its MCP `title` and the app shows in agent activity. It imports
+  nothing, so the renderer can read it without the tool set. A new tool needs
+  a title here before it compiles.
 - `attention.ts`: the attention tools (`interest_*`, `watch_*`).
 - `solo-worker.ts`: the Solo worker tools (`solo_worker_*`), which ask an
   owner's Buzz to run its workers; `solo-worker-protocol.ts` is their wire

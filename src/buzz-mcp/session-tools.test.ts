@@ -2,12 +2,14 @@ import { expect, it, vi } from "vitest";
 import { ATTENTION_TOOLS } from "./attention";
 import { type Listing, respond } from "./rpc";
 import {
+  BUZZ_SESSION,
   callSessionTool,
   type AddedTool,
   addedKey,
   sessionHint,
   sessionTools,
 } from "./session-tools";
+import { TOOL_TITLES, toolTitle } from "./tool-titles";
 import { TOOLS } from "./tools";
 import type { ProtectionAction } from "../features/agent-protection/service";
 
@@ -26,6 +28,34 @@ it("keys the added tools whatever order plugins started in", () => {
   expect(
     addedKey([tool("notes_add"), tool("tasks_create", "Creates a task.")]),
   ).not.toBe(key);
+});
+
+it("titles every Buzz tool, and lists the title with it", async () => {
+  // Every tool set a session has: the Buzz, attention, Solo worker, plugin,
+  // settings and Bestie tools.
+  for (const each of BUZZ_SESSION.tools) {
+    expect(each.title, each.name).toMatch(/^[A-Z]\S* \S/);
+    expect(toolTitle(each.name), each.name).toBe(each.title);
+  }
+  // No title outlives its tool.
+  expect(Object.keys(TOOL_TITLES).sort()).toEqual(
+    BUZZ_SESSION.tools.map((each) => each.name).sort(),
+  );
+  expect(toolTitle("channel_list")).toBe("List channels");
+  for (const name of ["notes_add", "toString", "__proto__", ""])
+    expect(toolTitle(name), name).toBeUndefined();
+  const list = (await respond(undefined, {}, { id: 1, method: "tools/list" }, [
+    tool("notes_add"),
+  ])) as { result: { tools: { name: string; title?: string }[] } };
+  const listed = (name: string) =>
+    list.result.tools.find((each) => each.name === name);
+  expect(listed("channel_list")?.title).toBe("List channels");
+  // A plugin's tool is listed as it was added, with no title made up for it.
+  expect(listed("notes_add")).toEqual({
+    name: "notes_add",
+    description: "Does it.",
+    inputSchema: { type: "object" },
+  });
 });
 
 // The retired owner-read tools, listed here rather than taken from a catalog.

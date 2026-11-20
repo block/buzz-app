@@ -1,3 +1,4 @@
+import { namedToolTitle } from "../../buzz-mcp/tool-titles";
 import type { AgentSessionAssociation } from "./session-admission";
 import type { MentionRefusal } from "./owner-attestation";
 
@@ -784,5 +785,9 @@ export function stepText(step: WorkStep) {
   if (phrase && step.target) return phrase(step.target);
   const known = untargeted[step.tool] ?? verbs[step.tool];
   if (known) return known;
-  return step.target ? `${step.tool} · ${step.target}` : step.tool;
+  // Harnesses report a Buzz tool by its bare name, the same string as a tool
+  // of their own with that name. Pi's own `edit` edits a file, so `edit` is
+  // never given the Buzz title.
+  const name = (step.tool !== "edit" && namedToolTitle(step.tool)) || step.tool;
+  return step.target ? `${name} · ${step.target}` : name;
 }

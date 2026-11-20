@@ -14,6 +14,7 @@ import {
   promptEventIds,
   sentEventIds,
   sectionTitle,
+  buzzToolTitle,
   type PromptSection,
   type ToolDiff,
   type ToolItem,
@@ -183,7 +184,7 @@ const ACTIONS: Record<string, string> = {
 function toolLabel(item: ToolItem) {
   const title = toolName(item);
   const action = ACTIONS[item.kind];
-  if (!action) return { action: title, detail: "" };
+  if (!action) return { action: buzzToolTitle(item) ?? title, detail: "" };
   const prefix = new RegExp(`^${action}(?:\\s+|$)`, "i");
   return { action, detail: title.replace(prefix, "") };
 }
@@ -857,7 +858,8 @@ function Tool({ item, agentName }: { item: ToolItem; agentName: string }) {
         )
       }
     >
-      {item.title.includes("\n") && (
+      {/* The title as sent: all of a long one, or a Buzz tool's own name. */}
+      {(item.title.includes("\n") || buzzToolTitle(item)) && (
         <pre className={styles.pre}>{item.title}</pre>
       )}
       {item.input && (

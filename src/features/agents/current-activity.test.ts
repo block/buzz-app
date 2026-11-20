@@ -110,6 +110,13 @@ it.each([
     "Running a command",
   ],
   [{ title: "unknown", kind: "other" }, "Running a tool"],
+  [{ title: "mcp__buzz__channel_list", kind: "other" }, "List channels"],
+  [{ title: "buzz: send", kind: "other" }, "Send message"],
+  [{ title: "channel_list", kind: "other" }, "List channels"],
+  [{ title: "mcp__other__read", kind: "other" }, "Running a tool"],
+  [{ title: "other: send", kind: "other" }, "Running a tool"],
+  [{ title: "search", kind: "search" }, "Searching"],
+  [{ title: "channel_list", status: "pending" }, "Preparing a tool"],
   [{ status: "pending" }, "Preparing a tool"],
   [{ status: "completed" }, "Working", "no-current-step"],
   [

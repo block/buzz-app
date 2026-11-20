@@ -385,6 +385,51 @@ it("words readable steps from the harness's own tool names and targets", () => {
   expect(text("custom_tool")).toBe("custom_tool");
 });
 
+it("words a Buzz tool's step by its title, after the fixed phrases", () => {
+  const text = (tool: string, target?: string) =>
+    stepText(target ? { tool, target } : { tool });
+  // Every bundled harness reports a Buzz tool by its bare name.
+  expect(text("channel_list")).toBe("List channels");
+  expect(text("search", "release notes")).toBe(
+    "Search messages · release notes",
+  );
+  // The parser is the transcript's, so a qualified name reads the same.
+  for (const tool of [
+    "mcp__buzz__channel_list",
+    "buzz__channel_list",
+    "buzz.channel_list",
+    "buzz: channel_list",
+  ])
+    expect(text(tool), tool).toBe("List channels");
+  // A fixed phrase wins over a title, with or without a target.
+  expect(text("send")).toBe("Sending a message");
+  expect(text("send", "notes.md")).toBe("Sending a message");
+  expect(text("read")).toBe("Reading the conversation");
+  expect(text("read", "notes.md")).toBe("Reading the conversation");
+  // A harness's own tool keeps its wording: these are not Buzz tool names.
+  expect(text("Read")).toBe("Reading a file");
+  expect(text("Read", "a.ts")).toBe("Reading a.ts");
+  expect(text("Grep", "agent")).toBe("Searching for agent");
+  expect(text("Edit")).toBe("Editing a file");
+  // Pi's own `edit` is reported as the Buzz `edit` is: neither is retitled.
+  expect(text("edit")).toBe("edit");
+  expect(text("edit", "notes.md")).toBe("edit · notes.md");
+  // Anything else is shown as sent, another server's tool included.
+  for (const tool of [
+    "mcp__other__channel_list",
+    "other__channel_list",
+    "other.channel_list",
+    "other: channel_list",
+    "Channel_List",
+    "channel_lists",
+    "shell",
+    "bash",
+  ]) {
+    expect(text(tool), tool).toBe(tool);
+    expect(text(tool, "x"), tool).toBe(`${tool} · x`);
+  }
+});
+
 const request = (messageId = "m") => ({
   scope: "s",
   agent: "a",

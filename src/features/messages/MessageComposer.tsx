@@ -205,6 +205,7 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
 };
 const noSubscription = () => () => {};
 const noAgents: readonly string[] = [];
+const cannotOpen = () => false;
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -3426,8 +3427,9 @@ function Composer({
     (a, b) => a.pubkey === b.pubkey && a.name === b.name,
   );
   const addressedAgents = useEqualList(addressedKeys, Object.is);
+  // Availability is read during render, so it stays a prop that changes with
+  // the host's panels; dispatch goes through the latest handler.
   const accessoryCommands = useLatestCallbacks({
-    canOpen: (target: string) => canOpenLink?.(target) ?? false,
     open: (target: string) => onOpenLink?.(target) ?? false,
   });
   const context = (
@@ -3447,7 +3449,7 @@ function Composer({
           scope={scope}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpen={accessoryCommands.canOpen}
+          canOpen={canOpenLink ?? cannotOpen}
           open={accessoryCommands.open}
         />
       )}

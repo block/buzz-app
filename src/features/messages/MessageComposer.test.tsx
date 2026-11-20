@@ -42,6 +42,8 @@ import { useEffect, useLayoutEffect } from "react";
 import { createRecovery } from "../relay/recovery";
 import type { Contribution } from "../../plugins/contributions";
 import type {
+  ComposerAccessory,
+  ComposerAccessoryProps,
   ComposerCompletion,
   ComposerCompletionProps,
   ComposerTool,
@@ -15272,6 +15274,37 @@ async function mountGifComposer() {
   const h = mount({ extensions: service });
   return { h, enable };
 }
+
+it("re-renders a composer accessory when panel availability changes", () => {
+  function Accessory({ canOpen }: ComposerAccessoryProps) {
+    return (
+      <button type="button" disabled={!canOpen("panel:notes")}>
+        Open notes
+      </button>
+    );
+  }
+  const accessory: Contribution<ComposerAccessory> = {
+    id: "notes",
+    key: "test/notes",
+    pluginId: "test",
+    revision: "1",
+    title: "Notes",
+    component: Accessory,
+  };
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const accessories = [accessory];
+  const extensions = {
+    tools: none,
+    inline: none,
+    accessories: { snapshot: () => accessories, subscribe: () => () => {} },
+  };
+  const h = mount();
+  h.retarget({ extensions, canOpenLink: () => false });
+  expect(h.getByRole("button", { name: "Open notes" })).toBeDisabled();
+  h.retarget({ canOpenLink: () => true });
+  expect(h.getByRole("button", { name: "Open notes" })).toBeEnabled();
+});
 
 it("guards automatic recipient changes using the current draft prose", () => {
   const h = mount();

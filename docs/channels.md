@@ -252,7 +252,8 @@ A–Z writes a null register and removes that group's legacy override.
 Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
 coordinate: Unreads is `unreads`, Active is `active`, and All
 writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
-stores each group’s duration in whole-day seconds; absence means 30 days. Presets
+stores each group’s duration in whole-day seconds; absence means 30 days. The
+Active dialog offers 1, 3, 7, 30 and 90 days. Presets
 and custom values share this representation. Apply publishes mode and duration
 in one encrypted update, and both hosts confirm both values on readback. Other
 modes preserve the last duration; section removal clears it. Older fixed-window

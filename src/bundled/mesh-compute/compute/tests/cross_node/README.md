@@ -2,7 +2,7 @@
 
 `scripts/ci-mesh-cross-node.sh` builds the real Buzz lifecycle test worker
 and runs two separate processes on Linux x86-64 using a checksum-pinned
-v0.79.0 CPU runtime and revision/checksum-pinned SmolLM2-135M GGUF. The workflow
+v0.80.0 CPU runtime and revision/checksum-pinned SmolLM2-135M GGUF. The workflow
 runs on relevant PRs/main pushes and supports manual dispatch. Budget: 20 minutes
 including compilation; the Python smoke has a 10-minute outer deadline.
 

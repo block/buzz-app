@@ -15,6 +15,7 @@ import { Virtualizer } from "virtua";
 import {
   ArrowRightIcon,
   type ChatCircleIcon,
+  SparklesIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import type { PeekFollow, PeekTarget } from "./SearchPreview";
@@ -104,6 +105,9 @@ export type SearchGroup = {
   headingStatus?: string | undefined;
   /** Why the group sits where it does, e.g. "Exact name". */
   why?: string | undefined;
+  /** Its rows are in the order a decision provider judged best, which a
+   * small mark after the heading shows. */
+  reranked?: boolean | undefined;
   /** How many it holds when that differs from its rows, e.g. "20+". */
   count?: string | undefined;
   /** The group's icon in the rail. */
@@ -1178,6 +1182,7 @@ export function SearchChoices({
                       notice,
                       headingStatus,
                       why,
+                      reranked,
                       tone,
                       multiline,
                     }) => {
@@ -1212,6 +1217,13 @@ export function SearchChoices({
                               {" "}
                               · {why}
                             </span>
+                          )}
+                          {reranked && (
+                            <SparklesIcon
+                              size={12}
+                              title="Reranked"
+                              className="search-peek-reranked"
+                            />
                           )}
                           {headingStatus && (
                             <span aria-hidden="true"> · {headingStatus}</span>

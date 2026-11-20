@@ -2237,8 +2237,11 @@ export function SearchResults({
     tone: "message",
     rank: messageLead === 0 ? -Infinity : Infinity,
     why: hits
-      ? `${words >= 3 ? "Reads like a topic" : `${messageCount ?? hits} mention it`}${rerank.reranked ? " · Reranked" : ""}`
+      ? words >= 3
+        ? "Reads like a topic"
+        : `${messageCount ?? hits} mention it`
       : undefined,
+    reranked: rerank.reranked,
     count: messageCount,
     destinations: messageRows,
     // Until the relay answers, Messages has no heading or empty state: after
@@ -2333,17 +2336,12 @@ export function SearchResults({
                   label: "Messages",
                   rank: Infinity,
                   icon: ChatCircleIcon,
-                  why:
-                    [
-                      sortable
-                        ? order
-                        : hasOperator
-                          ? "Filters apply to messages"
-                          : undefined,
-                      rerank.reranked ? "Reranked" : undefined,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || undefined,
+                  why: sortable
+                    ? order
+                    : hasOperator
+                      ? "Filters apply to messages"
+                      : undefined,
+                  reranked: rerank.reranked,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,

@@ -343,6 +343,10 @@
     color: var(--text-subtle);
     font-size: var(--text-caption);
   }
+  .search-peek-reranked {
+    flex: none;
+    color: var(--text-subtle);
+  }
   .search-palette-group .navigation-section-heading[data-search-cut] {
     position: sticky;
     /* Over the scroller's top padding, so no row shows above it. */

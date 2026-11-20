@@ -862,7 +862,8 @@ Quitting Buzz also turns it off.
   (Settings → Decisions API), searching messages by relevance reads the first
   60 matches, then has the provider reorder them by how well each answers what
   you typed. The keyword order shows first; the reordered list replaces it a
-  moment later, and the heading says **Reranked**. If you've already moved the
+  moment later, and a small sparkle appears at the end of the Messages heading
+  (hover it to see **Reranked**). If you've already moved the
   highlight or chosen a result, the order stays as it is. The provider sees the query and those
   messages' text, conversation names and authors. Newest-first and filter-only
   searches aren't reranked.

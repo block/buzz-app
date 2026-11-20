@@ -1,3 +1,4 @@
+import { scrollAvatarPalette } from "../../features/profiles/scroll-avatar-palette";
 import { useMediaCorners } from "../../features/messages/use-media-corners";
 import { animatedImage } from "../../features/messages/prepare-attachment";
 import { AgentAvatarBackdrop } from "./AgentAvatarBackdrop";
@@ -285,32 +286,8 @@ export function AgentAvatarPicker({
     const surface = dockSurface.current;
     if (!surface) return;
     // The dock hides its scrollbar; the dominant axis of any wheel moves it.
-    const wheel = (event: WheelEvent) => {
-      const dock = surface.querySelector("fieldset");
-      if (!dock || event.ctrlKey) return;
-      const unit =
-        event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? dock.clientWidth
-          : event.deltaMode === WheelEvent.DOM_DELTA_LINE
-            ? 16
-            : 1;
-      const delta =
-        (Math.abs(event.deltaX) > Math.abs(event.deltaY)
-          ? event.deltaX
-          : event.deltaY) * unit;
-      const room = dock.scrollWidth - dock.clientWidth;
-      if (
-        !delta ||
-        room <= 0 ||
-        (delta < 0 && dock.scrollLeft <= 0) ||
-        (delta > 0 && dock.scrollLeft >= room)
-      )
-        return;
-      event.preventDefault();
-      dock.scrollBy({ left: delta, behavior: "instant" });
-    };
-    surface.addEventListener("wheel", wheel, { passive: false });
-    return () => surface.removeEventListener("wheel", wheel);
+    surface.addEventListener("wheel", scrollAvatarPalette, { passive: false });
+    return () => surface.removeEventListener("wheel", scrollAvatarPalette);
   }, []);
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
   useEffect(

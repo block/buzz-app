@@ -12,8 +12,11 @@ export function avatarSource(value: unknown): string | undefined {
   if (source.length > 2048) return undefined;
   try {
     const url = new URL(source);
-    if (url.protocol === "https:" && !url.username && !url.password)
+    if (url.protocol === "https:" && !url.username && !url.password) {
+      // Display metadata is generated locally, never trusted from a profile.
+      if (url.hash.startsWith("#buzz-avatar-display=")) url.hash = "";
       return url.href;
+    }
   } catch {
     /* Missing/invalid optional artwork falls back to initials. */
   }
@@ -64,10 +67,45 @@ function emojiSvg(emoji: string, color: string) {
  * session's authenticated media path (never the raw URL). */
 export function avatarMedia(
   value: unknown,
-  media: ((url: string, size: "small") => string | undefined) | undefined,
+  media: ((url: string, size?: "small") => string | undefined) | undefined,
 ) {
   const source = avatarSource(value);
+  const animated = animatedAvatarSource(source);
+  if (animated && media) {
+    const poster = media(animated.poster, "small");
+    const animation = media(animated.animation);
+    return poster && animation
+      ? `${poster.split("#", 1)[0]}#buzz-avatar-display=${encodeURIComponent(animation)}`
+      : poster;
+  }
   return source?.startsWith("data:")
     ? source
-    : source && media?.(source, "small");
+    : source && media?.(source.split("#buzz-anim=", 1)[0] ?? source, "small");
+}
+
+/** Decode the interoperable poster/animation descriptor before authorizing media. */
+export function animatedAvatarSource(value: string | undefined) {
+  const parts = avatarAnimationParts(value);
+  if (!parts) return;
+  const poster = avatarSource(parts.poster);
+  const animation = avatarSource(parts.animation);
+  if (poster?.startsWith("https://") && animation?.startsWith("https://"))
+    return { poster, animation };
+}
+
+/** Also used after both URLs have been mapped through the authorized media adapter. */
+export function avatarAnimationParts(
+  value: string | undefined,
+  marker = "#buzz-anim=",
+) {
+  const index = value?.indexOf(marker) ?? -1;
+  if (!value || index <= 0 || value.indexOf("#") !== index) return;
+  try {
+    return {
+      poster: value.slice(0, index),
+      animation: decodeURIComponent(value.slice(index + marker.length)),
+    };
+  } catch {
+    // Malformed optional metadata leaves the still image usable.
+  }
 }

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "@base-ui/react/popover";
 import { useEffect, useLayoutEffect, useId, useRef, useState } from "react";
@@ -26,8 +27,15 @@ import {
   uploadAvatar,
 } from "./avatar-upload";
 import { useAvatarPreview } from "./use-avatar-preview";
+import { avatarColors as colors } from "./avatar-colors";
 import { AvatarCustomColor } from "./AvatarCustomColor";
 import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
+
+const AnimatedAvatarCapture = lazy(() =>
+  import("./AnimatedAvatarCapture").then((module) => ({
+    default: module.AnimatedAvatarCapture,
+  })),
+);
 
 type Props = {
   triggerStyle?: "dotted-squircle";
@@ -43,7 +51,7 @@ type Props = {
   personal?: boolean;
   size?: "compact" | "default";
   /** Reuse the active session's already-authorized cached thumbnail in compact previews. */
-  thumbnailMedia?: (url: string, size: "small") => string | undefined;
+  thumbnailMedia?: (url: string, size?: "small") => string | undefined;
   disabled?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
@@ -59,32 +67,6 @@ type DraftPreview = {
   move?: (update: (offset: number) => number) => void;
 };
 
-const colors = [
-  "#FFFFFF",
-  "#FFF4CC",
-  "#FFE75C",
-  "#FFB84D",
-  "#FF8652",
-  "#F6534F",
-  "#FF6B9A",
-  "#FB60C4",
-  "#D66BFF",
-  "#B141FF",
-  "#7C5CFF",
-  "#476CFF",
-  "#3399FF",
-  "#63C6F2",
-  "#41EBC1",
-  "#2ED3A2",
-  "#73EF75",
-  "#9FE870",
-  "#C7D36F",
-  "#CCCCCC",
-  "#8A8F98",
-  "#4B5563",
-  "#000000",
-];
-
 /** Not the popup, nor the emoji preview it moves from outside the popup. */
 const outsideEditor = (popup: HTMLElement | null, target: EventTarget | null) =>
   target instanceof Element &&
@@ -95,6 +77,7 @@ const outsideEditor = (popup: HTMLElement | null, target: EventTarget | null) =>
 export function AvatarEditor(props: Props) {
   const setupAnchor = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(!!props.inlinePicker);
+  const [hasAnimatedTake, setHasAnimatedTake] = useState(false);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
   const [sizeTarget, setSizeTarget] = useState<HTMLElement | null>(null);
   // Compact profile previews reuse the header's cached thumbnail; full-size
@@ -104,6 +87,7 @@ export function AvatarEditor(props: Props) {
     props.community,
     props.size === "compact" ? "small" : undefined,
     props.size === "compact" ? props.thumbnailMedia : undefined,
+    props.personal,
   );
   const pictureError = (
     props.personal ? profilePictureError : avatarPictureError
@@ -115,10 +99,11 @@ export function AvatarEditor(props: Props) {
   const popupElement = useRef<HTMLDivElement>(null);
   // What the preview shows and Done could apply (an emoji needs a community).
   const unsaved =
-    !!draftPreview &&
-    (draftPreview.emoji
-      ? !!props.community
-      : draftPreview.picture !== props.value);
+    hasAnimatedTake ||
+    (!!draftPreview &&
+      (draftPreview.emoji
+        ? !!props.community
+        : draftPreview.picture !== props.value));
   const callback = useRef(props.onBusyChange);
   callback.current = props.onBusyChange;
   useEffect(() => {
@@ -151,6 +136,7 @@ export function AvatarEditor(props: Props) {
     <AvatarDraft
       key={props.community ?? "local"}
       {...props}
+      onAnimatedDraftChange={setHasAnimatedTake}
       onPreview={setDraftPreview}
       sizeTarget={sizeTarget}
       done={(value) => {
@@ -291,6 +277,7 @@ export function AvatarEditor(props: Props) {
                 data-shape={props.shape ?? "circle"}
               >
                 <Avatar
+                  autoPlay={!!props.personal}
                   src={preview}
                   alt={open ? "Avatar preview" : "Avatar"}
                   fallback={props.name}
@@ -505,12 +492,14 @@ function AvatarDraft({
   community,
   personal,
   onPreview,
+  onAnimatedDraftChange,
   sizeTarget,
   disabled = false,
   done,
 }: Props & {
   done(value: string): void;
   onPreview(value: DraftPreview | null): void;
+  onAnimatedDraftChange(dirty: boolean): void;
   sizeTarget: HTMLElement | null;
 }) {
   const [customColorOpen, setCustomColorOpen] = useState(false);
@@ -550,7 +539,9 @@ function AvatarDraft({
     };
   }, [footer]);
   const [picture, setPicture] = useState(value);
-  const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
+  const [mode, setMode] = useState<
+    "image" | "emoji" | "background" | "animated"
+  >("image");
   const [emoji, setEmoji] = useState("😀");
   const [color, setColor] = useState("#FFF4CC");
   // The slider is relative to the default size, so 100% never crops a circle.
@@ -567,7 +558,7 @@ function AvatarDraft({
   useEffect(() => {
     onPreview({
       picture,
-      ...(mode !== "image"
+      ...(mode === "emoji" || mode === "background"
         ? {
             emoji,
             color,
@@ -673,7 +664,16 @@ function AvatarDraft({
   );
 
   const renderPanel = (tab: string) =>
-    tab === "image" ? (
+    tab === "animated" && personal ? (
+      <Suspense fallback={<p role="status">Loading camera…</p>}>
+        <AnimatedAvatarCapture
+          community={community}
+          disabled={disabled}
+          onApply={done}
+          onDraftChange={onAnimatedDraftChange}
+        />
+      </Suspense>
+    ) : tab === "image" ? (
       <div
         className={styles.imagePanel}
         data-surface={inlinePicker ? "panel" : undefined}
@@ -826,11 +826,18 @@ function AvatarDraft({
           value={mode}
           label="Avatar source"
           variant="panel"
-          items={[
-            { value: "image", label: "Image" },
-            { value: "emoji", label: "Emoji" },
-            { value: "background", label: "Background" },
-          ]}
+          items={
+            personal
+              ? [
+                  { value: "image", label: "Image" },
+                  { value: "animated", label: "Animated" },
+                ]
+              : [
+                  { value: "image", label: "Image" },
+                  { value: "emoji", label: "Emoji" },
+                  { value: "background", label: "Background" },
+                ]
+          }
           onValueChange={(next) => {
             if (!busy && !disabled) {
               setMode(next);
@@ -852,11 +859,11 @@ function AvatarDraft({
         )}
         {!community && (
           <p className="text-body-sm text-subtle">
-            Select a community to upload an image or emoji. Your local default
-            can use a public HTTPS image URL.
+            Select a community to upload an avatar. Your local default can use a
+            public HTTPS image URL.
           </p>
         )}
-        {!(mode === "background" && customColorOpen) && (
+        {mode !== "animated" && !(mode === "background" && customColorOpen) && (
           <div ref={setFooter} className={styles.footer}>
             {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
             {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}

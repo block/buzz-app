@@ -13,7 +13,15 @@ import {
 
 /** The host may supply artwork for recognized sources; unknown images keep normal loading. */
 export const AvatarArtworkContext = createContext<
-  ((src: string) => ReactNode) | null
+  | ((
+      src: string,
+      options: {
+        autoPlay: boolean;
+        fallback: ReactNode;
+        loading: "eager" | "lazy" | undefined;
+      },
+    ) => ReactNode)
+  | null
 >(null);
 
 type AvatarSize = "tiny" | "compact" | "small" | "default" | "large" | "fill";
@@ -40,12 +48,14 @@ function rememberAvatar(src: string, outcome: "loaded" | "failed") {
 const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
 const failedAvatars = new Map<string, Set<() => void>>();
 
-function AvatarArtwork({
+export function AvatarArtwork({
+  transparent = false,
   src,
   fallback,
   loading,
 }: {
   src: string;
+  transparent?: boolean;
   fallback: ReactNode;
   loading: "eager" | "lazy" | undefined;
 }) {
@@ -106,6 +116,7 @@ function AvatarArtwork({
       <img
         ref={image}
         src={src}
+        data-transparent={transparent || undefined}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         loading={loading ?? (outcome === "loaded" ? "eager" : "lazy")}
@@ -138,6 +149,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  autoPlay = false,
   loading,
 }: {
   src?: string | null | undefined;
@@ -149,13 +161,16 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  autoPlay?: boolean;
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
   const renderArtwork = useContext(AvatarArtworkContext);
-  const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
+  const artwork = src
+    ? renderArtwork?.(src, { autoPlay, fallback: content, loading })
+    : undefined;
   return (
     <span
       className="buzz-avatar-status"

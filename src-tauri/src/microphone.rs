@@ -1,4 +1,4 @@
-//! Microphone access for Huddles and voice notes on Linux and Windows.
+//! Camera and microphone access for the main app on Linux and Windows.
 //!
 //! macOS keeps Wry's default grant and the TCC prompt. Elsewhere an unhandled
 //! request is denied (WebKitGTK) or prompts for `tauri.localhost` (WebView2).
@@ -14,7 +14,7 @@ pub(crate) fn decide(
     development: Option<&Url>,
     kind: PermissionKind,
 ) -> PermissionResponse {
-    if !matches!(kind, PermissionKind::Microphone) {
+    if !matches!(kind, PermissionKind::Microphone | PermissionKind::Camera) {
         return PermissionResponse::Default;
     }
     // `tauri://` has an opaque URL origin, so compare scheme and host instead.
@@ -37,7 +37,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_main_app_page_gets_the_microphone() {
+    fn only_the_main_app_page_can_capture_audio_or_video() {
         use PermissionResponse::{Allow, Default, Deny};
         let development = Url::parse("http://localhost:1430").unwrap();
         let cases = [
@@ -52,19 +52,16 @@ mod tests {
         ];
         for (label, page, expected) in cases {
             let page = Url::parse(page).unwrap();
-            let decision = decide(
-                label,
-                Some(&page),
-                Some(&development),
-                PermissionKind::Microphone,
-            );
-            assert_eq!(decision, expected, "{label} {page}");
+            for kind in [PermissionKind::Microphone, PermissionKind::Camera] {
+                let decision = decide(label, Some(&page), Some(&development), kind);
+                assert_eq!(decision, expected, "{label} {page}");
+            }
             // Other permissions keep the platform default, even for the app page.
             let decision = decide(
                 label,
                 Some(&page),
                 Some(&development),
-                PermissionKind::Camera,
+                PermissionKind::Geolocation,
             );
             assert_eq!(decision, Default, "{label} {page}");
         }

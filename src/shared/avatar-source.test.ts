@@ -38,3 +38,50 @@ it.each(["\ud83d", "\udef9", "🛹\ud83d"])(
     expect(avatarSource(picture)).toBeUndefined();
   },
 );
+
+it("authorizes the poster thumbnail and original animation independently", () => {
+  const calls: [string, string | undefined][] = [];
+  const result = avatarMedia(
+    "https://relay.example/poster.png#buzz-anim=https%3A%2F%2Frelay.example%2Fanimation.png",
+    (url, size) => {
+      calls.push([url, size]);
+      return `buzz-media://localhost/${size ?? "full"}/${encodeURIComponent(url)}`;
+    },
+  );
+  expect(calls).toEqual([
+    ["https://relay.example/poster.png", "small"],
+    ["https://relay.example/animation.png", undefined],
+  ]);
+  expect(result).toContain("#buzz-avatar-display=buzz-media%3A");
+});
+it("does not authorize invalid animation metadata", () => {
+  const calls: string[] = [];
+  avatarMedia(
+    "https://relay.example/poster.png#buzz-anim=file%3A%2F%2F%2Fprivate",
+    (url) => {
+      calls.push(url);
+      return url;
+    },
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatch(/^https:/);
+});
+
+it.each(["/api/relay/private", "buzz-media://localhost/private", "%bad"])(
+  "discards invalid persisted animation metadata: %s",
+  (animation) => {
+    const result = avatarMedia(
+      `https://example.org/poster.png#buzz-anim=${encodeURIComponent(animation)}`,
+      (url) => url,
+    );
+    expect(result).toBe("https://example.org/poster.png");
+  },
+);
+it("strips forged local display metadata from external profiles", () => {
+  expect(
+    avatarMedia(
+      "https://example.org/poster.png#buzz-avatar-display=%2Fapi%2Frelay%2Fprivate",
+      (url) => url,
+    ),
+  ).toBe("https://example.org/poster.png");
+});

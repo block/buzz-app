@@ -134,6 +134,10 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   brings that identity over without signing in; **Not now** keeps the welcome
   screen, and the offer returns after signing out. Use the options actually
   shown; do not invent a setup sequence.
+- Human profile avatars offer **Image** and **Animated**. In the avatar editor,
+  choose **Animated → Start camera → Record**, review the recording, then choose
+  **Done** and save the profile. Camera access is required. Hover a person’s message avatar to open their profile preview, or click to open their full profile. Their animation plays in the open profile and respects reduced-motion settings. Existing emoji avatars
+  remain visible; agent avatar editors still offer emoji.
 - The **public key** identifies someone and is safe to share. Pasting
   someone's `npub` (with or without `nostr:`) or hex key finds them in New
   message, in ⌘K search's People results (Ctrl+K on Windows and Linux), in

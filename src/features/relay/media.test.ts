@@ -12,6 +12,11 @@ import {
   takeDecodedImage,
 } from "./media";
 
+const remembered = vi.hoisted(() => vi.fn());
+vi.mock("../../shared/design-system/useReadyImage", () => ({
+  rememberLoadedImage: remembered,
+}));
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -84,6 +89,29 @@ it("overlaps up to eight warm requests", () => {
     Array.from({ length: 10 }, (_, i) => `u${i}`),
   );
   expect(created).toHaveLength(8);
+});
+
+it("starts the next warm as one settles and remembers only loaded ones", async () => {
+  vi.useFakeTimers();
+  try {
+    remembered.mockClear();
+    const created = stubImages();
+    const media = createMediaPreparation();
+    media.prepare(Array.from({ length: 11 }, (_, i) => `u${i}`));
+    expect(created).toHaveLength(8);
+    created[0]?.onload?.();
+    await flushDecode();
+    expect(created).toHaveLength(9);
+    created[1]?.onerror?.();
+    expect(created).toHaveLength(10);
+    // The remaining eight time out together, which starts the last one.
+    vi.advanceTimersByTime(10_000);
+    expect(created).toHaveLength(11);
+    media.dispose();
+    expect(remembered.mock.calls).toEqual([["u0"]]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("Save-Data disables warming but nothing else", () => {

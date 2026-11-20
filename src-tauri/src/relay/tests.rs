@@ -1988,6 +1988,7 @@ fn thumbnail_server(status: &'static str) -> (Url, std::sync::Arc<std::sync::Mut
                 let kind = match path.rsplit_once('.').map(|(_, ext)| ext) {
                     Some("svg") => "image/svg+xml",
                     Some("pdf") => "application/pdf",
+                    Some("mp4") => "video/mp4",
                     _ => "image/jpeg",
                 };
                 format!("HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg")
@@ -2481,6 +2482,8 @@ async fn only_whole_inline_images_that_fit_an_entry_are_saved() {
     // SVG is served as an attachment, so it never renders from the cache.
     assert_eq!(saved_kind(&served("svg").await), None);
     assert_eq!(saved_kind(&served("pdf").await), None);
+    // Inline, but not an image: a whole-file video read is never saved.
+    assert_eq!(saved_kind(&served("mp4").await), None);
     let large = tauri::http::Response::builder()
         .status(200)
         .header("content-type", "image/jpeg")

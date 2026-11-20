@@ -1913,6 +1913,27 @@ fn a_development_seed_keeps_folder_access_and_retries_past_read_only_ones() {
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// Copies with other identifiers share the key but keep their own caches, so a
+/// sign-out another one finished deletes this one's saved images before any
+/// identity reads them.
+#[test]
+fn a_sign_out_another_copy_finished_forgets_saved_images() {
+    let (_dir, paths) = fixture();
+    let launch = || {
+        let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+        forget_signed_out_key(&instance, &paths, || Ok(()))
+    };
+    launch().unwrap();
+    fs::create_dir_all(&paths.media).unwrap();
+    fs::write(paths.media.join("entry"), "private").unwrap();
+    launch().unwrap();
+    assert!(paths.media.exists());
+    // Another identifier's copy finishes signing out of the shared key.
+    fs::write(&paths.finished, ".").unwrap();
+    launch().unwrap();
+    assert!(!paths.media.exists());
+}
+
 #[test]
 fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
     let (_dir, paths) = fixture();
@@ -1923,7 +1944,7 @@ fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
     ));
     let launch = || {
         let instance = boot(&paths, no_agents, || Ok(())).unwrap();
-        forget_signed_out_key(&instance, || {
+        forget_signed_out_key(&instance, &paths, || {
             // Decided and removed holding the record alone: another launch
             // reads it only once this one has recorded the count.
             #[allow(clippy::incompatible_msrv)]
@@ -1953,7 +1974,7 @@ fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
     fs::write(&paths.finished, "..").unwrap();
     let instance = boot(&paths, no_agents, || Ok(())).unwrap();
     assert_eq!(
-        forget_signed_out_key(&instance, || Err("denied".into())),
+        forget_signed_out_key(&instance, &paths, || Err("denied".into())),
         Err(FAILED.into())
     );
     drop(instance);

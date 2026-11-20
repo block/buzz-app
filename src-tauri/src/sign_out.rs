@@ -425,10 +425,18 @@ pub(crate) fn boot(
 /// and never deletes a key saved since.
 pub(crate) fn forget_signed_out_key(
     instance: &Instance,
+    paths: &Paths,
     remove_current_key: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
+    let forget = || {
+        // Another copy signed out of the key this one shares, so the next
+        // identity here must not see the saved images (see `finish`).
+        missing(fs::remove_dir_all(&paths.media))
+            .map_err(|error| format!("delete saved images: {error}"))?;
+        remove_current_key()
+    };
     // std can't sync a folder on Windows.
-    reconcile_sign_outs(instance, remove_current_key, |folder| {
+    reconcile_sign_outs(instance, forget, |folder| {
         if cfg!(unix) {
             File::open(folder)?.sync_all()
         } else {

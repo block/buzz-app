@@ -1000,7 +1000,7 @@ pub fn run() {
             },
         )
         .and_then(|instance| {
-            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+            sign_out::forget_signed_out_key(&instance, &paths, identity::remove_current_key)
                 .map(|()| instance)
         })
         .unwrap_or_else(|message| sign_out::exit_with(&message))

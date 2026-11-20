@@ -23,13 +23,18 @@ const date = (seconds: number) =>
     day: "numeric",
   });
 
+// Settings can remount before the native command reaches the main thread.
+let pendingInspectorWrite: Promise<boolean> | undefined;
+
 function WebInspectorSettings() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [changing, setChanging] = useState(false);
   const [error, setError] = useState(false);
   useEffect(() => {
     let active = true;
-    void invoke<boolean | null>("web_inspector").then(
+    const read = () => invoke<boolean | null>("web_inspector");
+    const status = pendingInspectorWrite?.catch(read) ?? read();
+    void status.then(
       (value) => {
         if (active && typeof value === "boolean") setEnabled(value);
       },
@@ -41,13 +46,18 @@ function WebInspectorSettings() {
   }, []);
 
   async function change(checked: boolean) {
+    if (pendingInspectorWrite) return;
     setChanging(true);
     setError(false);
     try {
-      setEnabled(await invoke<boolean>("web_inspector", { enabled: checked }));
+      pendingInspectorWrite = invoke<boolean>("web_inspector", {
+        enabled: checked,
+      });
+      setEnabled(await pendingInspectorWrite);
     } catch {
       setError(true);
     } finally {
+      pendingInspectorWrite = undefined;
       setChanging(false);
     }
   }

@@ -133,6 +133,39 @@ it("keeps the last confirmed Web Inspector state when native rejects a change", 
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+it("shows the confirmed Web Inspector state after returning to Security during a change", async () => {
+  let finishChange!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finishChange = resolve;
+  });
+  let inspectable = false;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "credential_pairings_list") return [];
+    if (command !== "web_inspector")
+      throw new Error(`Unexpected command ${command}`);
+    if (args) {
+      await pending;
+      inspectable = true;
+    }
+    return inspectable;
+  });
+
+  const name = "Allow Safari Web Inspector";
+  const settings = render(<SecuritySettings />);
+  try {
+    const control = await screen.findByRole("switch", { name });
+    await userEvent.click(control);
+    expect(control).toHaveAttribute("aria-busy", "true");
+    settings.unmount();
+    render(<SecuritySettings />);
+    await screen.findByText("No paired tools");
+    expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
+  } finally {
+    await act(async () => finishChange());
+  }
+  expect(await screen.findByRole("switch", { name })).toBeChecked();
+});
+
 it("lists paired tools and revokes one after asking", async () => {
   let release = () => {};
   vi.mocked(invoke).mockImplementation((command) =>

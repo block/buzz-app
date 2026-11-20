@@ -18,6 +18,7 @@ import {
   useActivityPresentation,
   useStableRowActivity,
 } from "./activity-presentation";
+import { useMembershipRowsPreference } from "./membership-preference";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
@@ -360,9 +361,10 @@ function Timeline({
       agentPubkeys,
     ],
   );
+  const { enabled: showMembership } = useMembershipRowsPreference();
   const chronologicalRows = useMemo(
-    () => membershipRows(visibleRows),
-    [visibleRows],
+    () => membershipRows(visibleRows, showMembership),
+    [visibleRows, showMembership],
   );
   const messageVisit = useMessageVisit(queries, channelId);
   const ownsMessageVisit = messageVisit !== undefined && messageVisit !== null;
@@ -891,7 +893,7 @@ function Timeline({
   }, [rows, focusedActivityId]);
   // Only read at mount and unmount, so build it on demand.
   const signature = () =>
-    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
+    `${geometrySignature(visibleRows, profiles, resolveName)}:${showMembership}:${JSON.stringify([...foldedActivity].sort())}`;
   // Mount the saved boundary before restoration measures its divider inset.
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||

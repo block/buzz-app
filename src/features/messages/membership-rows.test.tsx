@@ -130,6 +130,18 @@ it("hides self-joins and voluntary leaves before grouping, preserving messages a
     removal,
   ]);
 });
+it("drops every membership row when they are turned off, so a day of only membership has no row", () => {
+  const addition = row("added", joined(wes, pinky));
+  const removal = row("removed", removed(wes, brain));
+  const message = row("message");
+  expect(membershipRows([addition, message, removal], false)).toEqual([
+    message,
+  ]);
+  expect(membershipRows([addition, removal], false)).toEqual([]);
+  const rows = membershipRows([addition, message], false);
+  // A saved anchor on a turned-off row still resolves to a rendered one.
+  expect(renderedRowIndex(rows, [addition, message], "added")).toBe(0);
+});
 it("resolves a saved anchor on a hidden membership event to the nearest rendered row", () => {
   const first = row("first");
   const join = row("join", joined(pinky, pinky));

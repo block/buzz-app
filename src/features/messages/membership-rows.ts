@@ -37,12 +37,14 @@ const visibleMembership = (change: MembershipChange) =>
 
 /** Newest-anchored groups keep loaded keys stable when history is prepended.
  * Every uninterrupted membership run is one row, regardless of elapsed time.
- * A conversation entry (including a huddle) always breaks the group. */
+ * A conversation entry (including a huddle) always breaks the group. With
+ * `show` off, no membership activity is a row at all. */
 export function membershipRows(
   rows: readonly ChannelMessage[],
+  show = true,
 ): readonly TimelineRow[] {
   rows = rows.filter(
-    ({ membership }) => !membership || visibleMembership(membership),
+    ({ membership }) => !membership || (show && visibleMembership(membership)),
   );
   const result: TimelineRow[] = [];
   for (let end = rows.length - 1; end >= 0; ) {

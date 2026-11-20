@@ -3570,6 +3570,87 @@ real runtime. Native WebKit right-click selection and context-menu behavior,
 screen reader announcement of `aria-invalid`, and IME composition in the
 desktop app are not exercised there.
 
+### Send transforms
+
+`ctx.conversation.registerSendTransform({ id, title, matches, transform, order? })`
+lets a plugin rewrite, consume or block a new message typed in the composer
+before it is published, for example `!md` formatting, a `s/old/new/` correction
+that edits the previous message, or `+:emoji:` that reacts to it. Pass
+`order` (a number or a function of the draft; lower wins, default 0) as for
+other matched contributions.
+
+```js
+export const inject = ["conversation"];
+export function apply(ctx) {
+  ctx.conversation.registerSendTransform({
+    id: "md",
+    title: "!md formatter",
+    matches: (draft) => draft.text.startsWith("!md "),
+    transform: async ({ text, mentions }, { session, channelId, threadRootId, signal }) => ({
+      text: text.slice(4),
+      mentions,
+    }),
+  });
+}
+```
+
+- `matches(draft)` is synchronous and cheap. `draft` is `{ text, mentions }`: the
+  Markdown the composer would send and the people it notifies, as
+  `{ pubkey, name }`. A throwing matcher is skipped. When several transforms
+  match, one winner is chosen as for other contributions (lowest `order`, then the
+  contribution key); transforms never chain.
+- `transform(draft, { session, channelId, threadRootId, signal })` resolves to the
+  `{ text, mentions }` to send instead. Return both fields, `mentions: []` for
+  none: a result without `mentions` is invalid, so a rewrite cannot drop the
+  typed recipients by accident. `mentions` become exactly the message's `p`
+  tags and need not appear in `text`, so a plugin can drop recipients or, outside
+  Solo chats, add silent ones. `session` is the host session, so a transform can
+  react to or edit messages. `signal` aborts when the person cancels or leaves,
+  or when the transform has run for 10 seconds; the host stops waiting then even
+  if the plugin ignores `signal`, re-enables Send and discards any late result.
+- Returning empty text with no mentions consumes the message: nothing is
+  published, no prompt opens and the draft clears, as for a composer command
+  such as `/leave`. Anything that is not `{ text: string, mentions: { pubkey, name }[] }`
+  with 64-hex pubkeys, or mentions with no text, is rejected like a throw.
+- A throw or rejection sends nothing, keeps the original draft and shows the
+  error under the composer, prefixed with the plugin's id so a person can tell
+  which plugin to disable. A send that fails afterwards restores the original
+  draft, and Retry on the failed message does not run the transform again.
+- Side effects. The transform runs before the checks and prompts below, and a
+  prompt the person dismisses leaves the draft unsent, so the next Send runs the
+  transform again. A transform that writes through `session` (an edit or a
+  reaction) should therefore consume the message by returning empty text. A
+  transform that returns text to send should not write.
+- Recipients a transform returns go through the checks typed mentions get, before
+  any membership change or prompt: each new key must be admitted by the composer
+  (archived or deleted agents, closed rosters and the channel's rules), at most 32
+  are allowed, and then the usual prompts to add or reference people outside the
+  channel apply. A key the send already addressed keeps its name. Any other key
+  is named from the host's profiles and agent lists, never from the plugin's
+  `name`, and one the host cannot name is refused. A plugin is no more
+  privileged than a typed mention.
+- In a Solo chat a transform can drop recipients but cannot add any: a send that
+  returns someone the send did not already address is refused with an error
+  and the draft stays. So a plugin cannot add an agent to a chat, and only the
+  agents you chose can ever seed the toolbar again after a reopen. In other
+  channels a recipient the transform tagged is tagged like a typed one, and
+  the next composer seeds the agents the latest message tagged as for any
+  message.
+- The transform runs once per send, after a composer command (`/leave`) and
+  before those checks. It is skipped for edits of sent messages, forwards,
+  drafts with attachments, GIFs, chat cards or unresolved chips, composers that
+  start a conversation (New Message and a new Solo chat), other detached
+  composers such as huddle windows and agent or MCP sends. It does run in thread
+  replies and when the draft has mentions. Signed chips stay on the message only
+  if the transform leaves the text unchanged.
+- There is no preview or undo; both are left open for later. A transform that
+  never settles holds Send for 10 seconds: then the host aborts `signal`, discards
+  any late result and fails the send with `<plugin id>: timed out`, keeping the
+  draft.
+
+The jsdom suites cover the composer and the registration through the real
+runtime. Behavior in the desktop app is exercised by hand with a local plugin.
+
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.

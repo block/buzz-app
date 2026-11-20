@@ -8,7 +8,6 @@ import {
   useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
-import { activityRuns } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
@@ -60,7 +59,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
-import { useMessageReveal } from "./use-message-reveal";
+import { beginReveal, useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -307,7 +306,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         return;
       }
       if (prior?.view.snapshot().root) {
-        if (navigation) setRouting(navigation);
+        if (navigation) {
+          setRouting(navigation);
+          // The request starts now; its reveal waits for the retarget.
+          beginReveal(navigation.signal);
+        }
         let result: ThreadRetarget;
         try {
           result = await prior.view.retarget(messageId, signal);
@@ -687,25 +690,27 @@ function ThreadMessages({
     unreadSnapshot,
     unreadSnapshot,
   );
+  // Histories the reader opened, by their first row.
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const activityVisit = useRef<unknown[]>([]);
+  // Exact targets whose activity history a visit opened. The disclosure
+  // follows the target, not the group that held it when the visit began:
+  // later evidence regroups a level while the reader collapses nothing. A cold
+  // visit's window forms the group that absorbs a failure, and a late request
+  // splits it. The reader's collapse drops the target until the next request.
+  const [disclosedTargets, setDisclosedTargets] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each request discloses its target once, so a reader's collapse holds.
   useLayoutEffect(() => {
-    const request = [messageId, navigation?.signal, revealRequest];
-    if (
-      !messageId ||
-      request.every((part, index) => part === activityVisit.current[index]) ||
-      !snapshot.replies.some((row) => row.id === messageId)
-    )
-      return;
-    activityVisit.current = request;
-    const group = [...tree.children.values()]
-      .flatMap((rows) => activityRuns(rows))
-      .find((group) => group.some((row) => row.id === messageId));
-    const first = group?.[0]?.id;
-    if (first) setExpandedActivity((current) => new Set([...current, first]));
-  }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
+    setDisclosedTargets((current) =>
+      current.has(messageId) ? current : new Set([...current, messageId]),
+    );
+  }, [messageId, navigation?.signal, revealRequest]);
+  const activityExpanded = (ids: readonly string[]) =>
+    expandedActivity.has(ids[0] ?? "") ||
+    ids.some((id) => disclosedTargets.has(id));
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -835,18 +840,19 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
-  // A late ancestor reparents the exact row. Transfer only focus owned at detach,
-  // within this commit/layout expansion; a later user expansion must not restore it.
-  const selectedBranchRef = useMemo(() => {
+  // One commit can replace the exact row: a late ancestor reparents it, or an
+  // activity history absorbs, releases or regroups it. Transfer only focus the
+  // row owned when it was removed, within this commit/layout expansion; a
+  // later user expansion must not restore it.
+  const selectedHandoff = useMemo(() => {
     let restore = false;
-    return (branch: HTMLElement | null) => {
-      if (!branch) return;
-      const row = branch.querySelector<HTMLElement>("[data-message-id]");
+    return () => {
+      const row = selectedRow();
       if (
         restore &&
         row &&
         !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
+        !row.closest("[inert]") &&
         document.activeElement === document.body
       ) {
         row.tabIndex = -1;
@@ -854,9 +860,11 @@ function ThreadMessages({
       }
       restore = false;
       return () => {
+        // The replacement may already be in the document.
+        const focused = document.activeElement;
         restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
+          focused?.getAttribute("data-message-id") === messageId &&
+          !!scroller.current?.contains(focused);
         // Ancestor expansion happens synchronously in a layout effect. Do not
         // retain focus intent after this update (deletion or unmount).
         queueMicrotask(() => {
@@ -864,7 +872,7 @@ function ThreadMessages({
         });
       };
     };
-  }, [messageId, navigation?.signal]);
+  }, [messageId, navigation?.signal, selectedRow]);
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -1784,9 +1792,7 @@ function ThreadMessages({
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
     const hidden = new Set(
-      groups.flatMap((group) =>
-        expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
-      ),
+      groups.flatMap((group) => (activityExpanded(group.ids) ? [] : group.ids)),
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
@@ -1884,17 +1890,16 @@ function ThreadMessages({
           open={!hidden.has(row.id) && !groupedIds.has(row.id)}
           enabled={row.audience === "agents"}
         >
-          {renderMessage(row)}
+          <RowLifetime
+            handoff={row.id === messageId ? selectedHandoff : undefined}
+          >
+            {renderMessage(row)}
+          </RowLifetime>
         </ActivityExpansion>
       );
       return (
         <li
           key={row.id}
-          ref={
-            row.id === messageId && !groupedIds.has(row.id)
-              ? selectedBranchRef
-              : undefined
-          }
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
@@ -1929,26 +1934,36 @@ function ThreadMessages({
                 openActivity={onOpenLink}
                 canOpenActivity={canOpenLink}
                 renderHistory={(entry) => (
-                  <div
-                    ref={entry.id === messageId ? selectedBranchRef : undefined}
+                  <RowLifetime
+                    handoff={
+                      entry.id === messageId ? selectedHandoff : undefined
+                    }
                   >
-                    {renderMessage(entry, true)}
-                  </div>
+                    <div>{renderMessage(entry, true)}</div>
+                  </RowLifetime>
                 )}
                 profiles={profiles}
                 media={session.media}
                 layout="thread"
-                expanded={expandedActivity.has(group.ids[0] ?? "")}
+                expanded={activityExpanded(group.ids)}
                 onToggle={() => {
                   follow.current = false;
                   targetAnchor.current = undefined;
+                  const open = activityExpanded(group.ids);
                   setExpandedActivity((current) => {
                     const next = new Set(current);
                     const first = group.ids[0] ?? row.id;
-                    if (next.has(first)) next.delete(first);
+                    if (open) next.delete(first);
                     else next.add(first);
                     return next;
                   });
+                  if (open)
+                    setDisclosedTargets(
+                      (current) =>
+                        new Set(
+                          [...current].filter((id) => !group.ids.includes(id)),
+                        ),
+                    );
                 }}
               />
             </>
@@ -2457,6 +2472,21 @@ function ThreadMessages({
       )}
     </MessageEditScope>
   );
+}
+/**
+ * Brackets a row's time in the document. Unlike a ref on an element that
+ * stays mounted, which detaches only after its children are removed, the
+ * cleanup of `handoff` runs while a row being removed is still in place.
+ */
+function RowLifetime({
+  handoff,
+  children,
+}: {
+  handoff: (() => () => void) | undefined;
+  children: ReactNode;
+}) {
+  useLayoutEffect(() => handoff?.(), [handoff]);
+  return children;
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
 // How far a saved reading row has moved from its saved viewport offset. WebKit

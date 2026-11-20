@@ -69,7 +69,7 @@ type ItemProps = {
   onShareChat?:
     | ((channel: ChannelSummary, trigger: HTMLElement) => void)
     | undefined;
-  onOpenThread: (channelId: string, rootId: string) => void;
+  onOpenThread: (channelId: string, messageId: string, rootId: string) => void;
   onOpenMessage: (channelId: string, messageId: string) => void;
   onOpenWorkingAgent?: (
     channelId: string,
@@ -370,7 +370,9 @@ function ChannelSidebarItemCore({
             agentProfiles={agentProfiles}
             {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
             {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
-            onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
+            onOpenThread={(item) =>
+              onOpenThread(item.channelId, item.latestMessageId, item.rootId)
+            }
             onOpenMention={(item) =>
               onOpenMessage(item.channelId, item.messageId)
             }

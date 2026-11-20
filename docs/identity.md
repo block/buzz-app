@@ -1511,7 +1511,7 @@ scoped to its origin. The scheme signs a fresh 60-second `get` token per request
 and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
 are served with download disposition and `nosniff`. Whole image responses up to
 2 MiB (not ranges, downloads or other types) are also saved in the app cache directory, grouped
-by community origin, up to 500 MiB with least-recently-used eviction. Relay media is
+by community origin, up to 256 MiB with least-recently-used eviction. Relay media is
 content-addressed, so a saved image is served without a relay read and never goes
 stale. Clear cache, an access refusal and leaving a community delete that community's
 saved images; signing out deletes the cache directory. A saved image skips the

@@ -19,7 +19,7 @@ use std::{
 use url::Url;
 
 /// Bytes kept on disk before the least recently used entries are deleted.
-const BUDGET: u64 = 500 * 1024 * 1024;
+const BUDGET: u64 = 256 * 1024 * 1024;
 /// Larger images, such as full-size photos, are fetched each time, so a few of
 /// them cannot evict the avatars and thumbnails this cache is for.
 const ENTRY_MAX: usize = 2 * 1024 * 1024;

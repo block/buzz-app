@@ -1226,15 +1226,38 @@ it.each([true, false])(
       },
     );
     const h = fixture();
+    const viewer = h.session.viewer;
+    assert(viewer);
+    h.roster([
+      ...h.session.channels.list().channels,
+      {
+        id: "source",
+        name: "Source channel",
+        channelType: "stream",
+        members: [viewer],
+      },
+    ]);
     await h.register({
       component: function FilterableBody(props) {
         const [filtered, setFiltered] = useState(false);
+        const [expanded, setExpanded] = useState(true);
+        const Group = props.ui.ChannelGroup;
+        assert(Group);
         return (
           <>
             <button type="button" onClick={() => setFiltered(true)}>
               Filter chats
             </button>
-            {!filtered && <Body {...props} />}
+            <Group
+              channelId="source"
+              onSelect={() => {}}
+              expanded={expanded}
+              controls="source-tasks"
+              disclosureLabel="Toggle source tasks"
+              onToggle={() => setExpanded(!expanded)}
+            >
+              {!filtered && <Body {...props} />}
+            </Group>
           </>
         );
       },
@@ -1326,6 +1349,16 @@ it.each([true, false])(
     fireEvent.click(reveal);
     expect(viewport.scrollTop).toBe(160);
     expect(screen.getByRole("button", { name: "Owned" })).toHaveFocus();
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    const group = screen.getByRole("button", { name: "Toggle source tasks" });
+    fireEvent.click(group);
+    reveal.focus();
+    fireEvent.click(reveal);
+    expect(group).toHaveFocus();
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
+    await userEvent.setup().keyboard("{Enter}");
+    expect(group).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Work").parentElement).toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "Filter chats" }));
     expect(screen.queryByRole("button", { name: "Owned" })).toBeNull();

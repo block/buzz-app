@@ -75,9 +75,11 @@ function revealCurrent(viewport: HTMLElement, sectionKey?: string) {
     let owner = entry;
     for (let node: HTMLElement | null = entry; node && node !== viewport; ) {
       if (node.hidden) {
-        // A notice can sit between the section heading and its panel.
+        // A card can wrap its disclosure and panel in separate containers.
         const heading = node.id
-          ? node.parentElement?.querySelector<HTMLElement>(
+          ? (
+              node.closest("[data-sidebar-section]") ?? section
+            ).querySelector<HTMLElement>(
               `:is(summary,button)[aria-controls="${CSS.escape(node.id)}"]`,
             )
           : undefined;

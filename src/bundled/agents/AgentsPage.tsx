@@ -1523,7 +1523,9 @@ function InventoryCard({
       )}
       {remove && (
         <MenuItem tone="danger" onClick={remove}>
-          Delete agent
+          {agent.place === "elsewhere"
+            ? "Remove from this community"
+            : "Delete agent"}
         </MenuItem>
       )}
     </>
@@ -1596,27 +1598,23 @@ function InventoryCard({
   );
   return (
     <>
-      {agent.place === "elsewhere" ? (
-        card()
-      ) : (
-        <AgentDelete
-          agents={service}
-          agent={agent}
-          onRemoved={onRemoved}
-          trigger={(remove) =>
-            inSeveral(service, agent) ? (
-              <AgentRemoveHere
-                agents={service}
-                agent={agent}
-                onRemoved={onRemoved}
-                trigger={(leave) => card(remove, leave)}
-              />
-            ) : (
-              card(remove)
-            )
-          }
-        />
-      )}
+      <AgentDelete
+        agents={service}
+        agent={agent}
+        onRemoved={onRemoved}
+        trigger={(remove) =>
+          inSeveral(service, agent) ? (
+            <AgentRemoveHere
+              agents={service}
+              agent={agent}
+              onRemoved={onRemoved}
+              trigger={(leave) => card(remove, leave)}
+            />
+          ) : (
+            card(remove)
+          )
+        }
+      />
       {sharing && session && (
         <AgentShareDialog
           agent={agent}
@@ -1694,7 +1692,7 @@ function AgentPeek({
           {type && !type.remote ? (
             <>
               Its key is on another of your devices, which runs it. Open Agents
-              there to change or delete it.
+              there to change it. You can remove it from this community here.
             </>
           ) : (
             <>
@@ -1730,6 +1728,9 @@ function AgentPeek({
             </Section>
           )}
         </>
+      )}
+      {agent.place === "elsewhere" && (
+        <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
       )}
     </div>
   );

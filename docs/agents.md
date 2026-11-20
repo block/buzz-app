@@ -1402,6 +1402,21 @@ archived by an ordinary owner: Delete stops unfinished and says so. Where the
 community advertises no archive authority, the archive is skipped, and a provider
 failure says the agent wasn't archived.
 
+An agent listed on another device offers **Remove from this community**. The
+selected community's owner binding issues the archive proof, without claiming
+or importing the agent's key. Archive support and a confirmed archive are
+required; a missing ownership attestation cannot be repaired without that key.
+After archiving, removal unshares the agent, deletes the owner's listing and
+tries to leave its channels through the existing relay-removal helper. Failures
+before listing deletion leave it available to retry. Agent choices and the
+community's Bestie selection are refreshed before deleting the listing. No key, files or process on
+another device are deleted, and other communities are untouched. The archive
+controls discovery, not publishing authority: the owning device republishes its
+listing whenever its own listing read finds it missing, so an online device
+lists the agent again right away, and a returning one does so when it
+reconnects. It stays archived, so it shows as on another device again, with
+Remove offered again.
+
 An agent in several communities leaves each of them this way, one at a time,
 and its key is erased once none is left. Delete marks every row `deleting` with
 one save to each of `identities.json` and `memberships.json` (below), so if the

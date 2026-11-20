@@ -71,10 +71,16 @@ import { type ConfigAgent, fields } from "./community-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
-import { keypair, message, signed } from "../relay/testing";
+import {
+  archiveRelay,
+  keypair,
+  message,
+  ownedProfile,
+  signed,
+} from "../relay/testing";
 import { createRelayReader } from "../relay/reader";
 import type { LiveBatch } from "../relay/incoming";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { huddleDescription } from "../huddle/lifecycle";
 import type { AgentIdentity } from "./native";
 import {
@@ -13385,9 +13391,204 @@ it("shows the owner's agents on other devices without running them, and leaves e
   await settle();
   expect(run).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(sibling, 0);
-  await expect(service.remove(sibling)).rejects.toThrow(/device that runs it/);
   await expect(service.save(sibling, { name: "Near" })).rejects.toThrow();
 });
+
+it("removes an owned agent on another device using the owner's archive proof, without its key", async () => {
+  const { service, native, archives, session, authorize } = await setup({
+    listed: [record(sibling)],
+  });
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  const changed = vi.fn();
+  const stop = service.subscribe(changed);
+  try {
+    await service.remove(sibling);
+    expect(steps).toEqual(["archive", "unshare", "leave"]);
+    expect(archives.request).toHaveBeenCalledWith(
+      "archive",
+      sibling,
+      expect.any(AbortSignal),
+      authorize,
+      undefined,
+    );
+    expect(records.removeAgent).toHaveBeenCalledWith(
+      session,
+      viewer,
+      sibling,
+      expect.any(AbortSignal),
+      { issue: authorize },
+    );
+    expect(native.remove).not.toHaveBeenCalled();
+    expect(native.beginDelete).not.toHaveBeenCalled();
+    expect(forgetDefaultAgent).not.toHaveBeenCalled();
+    expect(clearDeletedDefaultAgent).toHaveBeenCalledWith(
+      session,
+      `https://relay.example.test:${viewer}`,
+      sibling,
+    );
+    expect(service.find(sibling)).toBeUndefined();
+    expect(changed).toHaveBeenCalled();
+    expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+      fresh: true,
+    });
+  } finally {
+    stop();
+  }
+});
+
+it.each([
+  "unsupported",
+  "read-only",
+  "unknown",
+  "refused",
+  "unattested",
+] as const)(
+  "keeps an agent on another device listed when its archive is %s",
+  async (failure) => {
+    const { service, archives } = await setup({ listed: [record(sibling)] });
+    await vi.waitFor(() =>
+      expect(service.find(sibling)?.place).toBe("elsewhere"),
+    );
+    if (failure === "unsupported") archives.unavailable = true;
+    if (failure === "read-only") archives.writable = false;
+    if (failure === "unknown") archives.unknown = true;
+    if (failure === "refused")
+      archives.request.mockRejectedValueOnce(new Error("refused"));
+    if (failure === "unattested")
+      archives.request.mockRejectedValueOnce(new UnattestedProfile());
+    await expect(service.remove(sibling)).rejects.toThrow(
+      failure === "unattested"
+        ? /Only the device holding its key/
+        : /archive|refused/i,
+    );
+    expect(service.find(sibling)?.place).toBe("elsewhere");
+    expect(records.unshare).not.toHaveBeenCalled();
+    expect(records.removeAgent).not.toHaveBeenCalled();
+  },
+);
+
+it("retries removal on another device after a record failure without archiving twice", async () => {
+  const { service, archives } = await setup({ listed: [record(sibling)] });
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  records.removeAgent.mockRejectedValueOnce(new Error("record refused"));
+  await expect(service.remove(sibling)).rejects.toThrow("record refused");
+  expect(service.find(sibling)?.place).toBe("elsewhere");
+  expect(archives.archived.has(sibling)).toBe(true);
+  await service.remove(sibling);
+  expect(service.find(sibling)).toBeUndefined();
+  expect(archives.request).toHaveBeenCalledOnce();
+});
+
+it("refuses another device's agent whose profile names a different owner, even for a relay admin", async () => {
+  // The real archive module over a relay that holds the agent's signed
+  // profile: its owner proof names a stranger, and the viewer is an admin, so
+  // the relay would accept an admin-signed archive.
+  const agent = keypair();
+  const stranger = keypair();
+  const relay = archiveRelay(
+    { pubkey: viewer, secret: keypair().secret },
+    keypair(),
+    [await ownedProfile(agent, stranger, "Far")],
+    { [viewer]: "admin" },
+  );
+  const real = createRelaySession(relay.transport);
+  try {
+    const { service, session } = await setup({
+      listed: [record(agent.pubkey)],
+    });
+    await vi.waitFor(() =>
+      expect(service.find(agent.pubkey)?.place).toBe("elsewhere"),
+    );
+    Object.assign(session, { archives: real.session.archives });
+    expect(
+      await real.session.archives.consent(
+        agent.pubkey,
+        new AbortController().signal,
+      ),
+    ).toEqual({ admin: true });
+    await expect(service.remove(agent.pubkey)).rejects.toThrow(
+      /must name you as its owner/,
+    );
+    expect(relay.published).toEqual([]);
+    expect(records.unshare).not.toHaveBeenCalled();
+    expect(records.removeAgent).not.toHaveBeenCalled();
+    expect(service.find(agent.pubkey)?.place).toBe("elsewhere");
+  } finally {
+    real.dispose();
+  }
+});
+
+it("lists a removed agent again when its device republishes the record, and removes it again without a second archive", async () => {
+  const { service, archives, connect } = await setup({
+    listed: [record(sibling)],
+  });
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  await service.remove(sibling);
+  expect(service.find(sibling)).toBeUndefined();
+  // The owning device is online and lists it again: the next read finds it.
+  connect(false);
+  connect(true);
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  expect(archives.archived.has(sibling)).toBe(true);
+  await service.remove(sibling);
+  expect(service.find(sibling)).toBeUndefined();
+  expect(archives.request).toHaveBeenCalledOnce();
+  expect(records.removeAgent).toHaveBeenCalledTimes(2);
+});
+
+it("does not remove an unlisted agent through another device's removal path", async () => {
+  const { service, archives } = await setup();
+  await expect(service.remove(sibling)).rejects.toThrow("No such agent");
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(records.removeAgent).not.toHaveBeenCalled();
+});
+
+it.each(["choices", "Bestie"])(
+  "keeps another device's agent retryable when %s cleanup fails",
+  async (step) => {
+    const { service, session } = await setup({ listed: [record(sibling)] });
+    await vi.waitFor(() =>
+      expect(service.find(sibling)?.place).toBe("elsewhere"),
+    );
+    let reject!: (reason: Error) => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = new Promise<never>((_, fail) => {
+      reject = fail;
+    });
+    const operation =
+      step === "choices"
+        ? vi.mocked(session.agentChoices.refresh)
+        : vi.mocked(clearDeletedDefaultAgent);
+    operation.mockImplementationOnce(() => {
+      started();
+      return pending;
+    });
+    const removal = service.remove(sibling);
+    const failed = expect(removal).rejects.toThrow("refresh refused");
+    try {
+      await entered;
+      expect(service.find(sibling)?.place).toBe("elsewhere");
+      expect(records.removeAgent).not.toHaveBeenCalled();
+    } finally {
+      reject(new Error("refresh refused"));
+    }
+    await failed;
+    expect(service.find(sibling)?.place).toBe("elsewhere");
+    await service.remove(sibling);
+    expect(service.find(sibling)).toBeUndefined();
+  },
+);
 
 it("shows hosted agents while a slow background read holds the relay's background slot", async () => {
   const { service, plugin, session, connect } = await setup();

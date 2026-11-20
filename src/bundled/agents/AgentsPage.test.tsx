@@ -3604,6 +3604,9 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   await user.click(within(grid).getByText("Far"));
   expect(screen.getByText(/another of your devices/)).toBeInTheDocument();
   expect(
+    screen.getByRole("button", { name: "Remove from this community" }),
+  ).toBeInTheDocument();
+  expect(
     screen.queryByRole("button", { name: "Open" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
@@ -3621,6 +3624,28 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   expect(agents.finish).toHaveBeenCalledWith(sky.pubkey);
   await user.dblClick(within(grid).getByText("Sky"));
   expect(screen.getByRole("grid")).toBeInTheDocument();
+});
+
+it("removes an agent on another device from its card menu after confirmation", async () => {
+  const user = userEvent.setup();
+  const far: Agent = { ...agent("Far", 3), place: "elsewhere" };
+  const { agents, show } = setup([far]);
+  agents.remove.mockImplementationOnce(async () => show([]));
+  await user.click(screen.getByRole("button", { name: "Actions for Far" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove from this community" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Remove Far from this community?",
+  });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(agents.remove).toHaveBeenCalledWith(far.key));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("gridcell", { name: "Far" }),
+    ).not.toBeInTheDocument(),
+  );
 });
 
 it("moves focus from Finish setup to the first tab once the setup finishes", async () => {

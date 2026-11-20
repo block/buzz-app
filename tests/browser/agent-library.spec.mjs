@@ -2,6 +2,69 @@ import { pauseClock } from "./clock.mjs";
 import { settleDialogMotion } from "./navigation.mjs";
 import { test, expect } from "./source-fixture.mjs";
 
+// Browser-only boundary: menu/confirmation portals, focus restoration and
+// footer reachability at narrow widths with enlarged text.
+test("another device's removal confirmation fits and returns keyboard focus", async ({
+  page,
+}, info) => {
+  for (const dark of [false, true]) {
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.goto("/tests/fixtures/agent-library.html?harness=elsewhere");
+      await page.evaluate(
+        ({ dark, fontSize }) => {
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.fontSize = fontSize;
+        },
+        { dark, fontSize: width === 390 ? "20px" : "16px" },
+      );
+      const trigger = page.getByRole("button", { name: "Actions for Ada" });
+      await trigger.focus();
+      await trigger.press("Enter");
+      await page
+        .getByRole("menuitem", { name: "Remove from this community" })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Remove Ada from this community?",
+      });
+      await expect(
+        dialog.getByRole("button", { name: "Cancel" }),
+      ).toBeFocused();
+      await settleDialogMotion(dialog);
+      const confirm = dialog.getByRole("button", {
+        name: "Remove",
+        exact: true,
+      });
+      await expect(confirm).toBeInViewport();
+      const bounds = await dialog.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      await page.screenshot({
+        path: info.outputPath(
+          `remove-elsewhere-${dark ? "dark" : "light"}-${width}.png`,
+        ),
+      });
+      await page.keyboard.press("Enter");
+      await expect(dialog).toBeHidden();
+      await expect(trigger).toBeFocused();
+      await expect(
+        page.getByRole("gridcell", { name: "Ada", exact: true }),
+      ).toBeVisible();
+      await trigger.click();
+      await page
+        .getByRole("menuitem", { name: "Remove from this community" })
+        .click();
+      await confirm.click();
+      await expect(
+        page.getByRole("gridcell", { name: "Ada", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("gridcell", { name: "Bo", exact: true }),
+      ).toBeVisible();
+    }
+  }
+});
+
 test("create-time Thinking uses each provider control in the Agents shell", async ({
   page,
 }, info) => {

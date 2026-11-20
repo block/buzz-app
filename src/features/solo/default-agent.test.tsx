@@ -66,6 +66,21 @@ it("choosing a default updates new-chat routing only in its account/community sc
   expect(screen.getByLabelText("one").textContent).toBe("First");
 });
 
+it("clears a removed agent's device choice only in its community when no account choice exists", async () => {
+  const key = "b".repeat(64);
+  const session = {} as RelaySession;
+  setDefaultAgent("removed-community", key);
+  setDefaultAgent("kept-community", key);
+  await clearDeletedDefaultAgent(session, "removed-community", key);
+  expect(readView("removed-community", "solo:default-agent", null)).toBeNull();
+  expect(readView("kept-community", "solo:default-agent", null)).toBe(key);
+  setDefaultAgent("removed-community", "c".repeat(64));
+  await clearDeletedDefaultAgent(session, "removed-community", key);
+  expect(readView("removed-community", "solo:default-agent", null)).toBe(
+    "c".repeat(64),
+  );
+});
+
 it("waits for complete fallback and settled archive evidence, but honors an available explicit choice", () => {
   const relay = { pubkey: "a".repeat(64), name: "Relay", managed: false };
   const local = { pubkey: "b".repeat(64), name: "Local", managed: true };

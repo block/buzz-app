@@ -79,6 +79,45 @@ it("retries an unchecked archive state and shows what is left", async () => {
   expect(unarchive).toHaveBeenCalledWith(agent.key);
 });
 
+it("explains another device's removal limits, preserves a failure and retries after confirmation", async () => {
+  const user = userEvent.setup();
+  const remove = vi
+    .fn<Agents["remove"]>()
+    .mockRejectedValueOnce(new Error("Archive refused"))
+    .mockResolvedValueOnce(undefined);
+  const onRemoved = vi.fn();
+  render(
+    <AgentDelete
+      agents={{ remove } as unknown as Agents}
+      agent={{ ...agent, place: "elsewhere" }}
+      onRemoved={onRemoved}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Remove from this community" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Remove Ada from this community?",
+  });
+  expect(dialog).toHaveTextContent(
+    "If that device is online, it lists the agent again right away, so remove it there instead.",
+  );
+  expect(remove).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Archive refused",
+  );
+  expect(onRemoved).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(onRemoved).toHaveBeenCalledOnce());
+  expect(remove).toHaveBeenCalledWith(agent.key);
+});
+
 it.each(["delete", "remove"] as const)(
   "%s starts on Cancel and Enter leaves the agent unchanged",
   async (action) => {

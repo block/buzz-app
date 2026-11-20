@@ -264,7 +264,10 @@ export async function clearDeletedDefaultAgent(
   pubkey: string,
 ) {
   const account = session.mainAgent;
-  if (!account) return false;
+  if (!account) {
+    if (chosenAgent(scope) === pubkey) cache(scope, null);
+    return false;
+  }
   if (account.clear) {
     explicit.add(account);
     const attempt = advance(account);

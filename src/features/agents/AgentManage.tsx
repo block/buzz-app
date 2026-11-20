@@ -52,6 +52,8 @@ export function AgentDelete({
   const [error, setError] = useState("");
   // Forgot where it couldn't reach, so Delete is what is left to press.
   const [forgot, setForgot] = useState(false);
+  const elsewhere = agent.place === "elsewhere";
+  const action = elsewhere ? "Remove" : "Delete";
   const memberships =
     agent.place === "here" ? agents.memberships(agent.pubkey) : [];
   const several = memberships.length > 1;
@@ -99,7 +101,8 @@ export function AgentDelete({
           variant="ghost"
           onClick={() => setConfirming(true)}
         >
-          <TrashIcon size={14} aria-hidden="true" /> Delete agent
+          <TrashIcon size={14} aria-hidden="true" />{" "}
+          {elsewhere ? "Remove from this community" : "Delete agent"}
         </Button>
       )}
       <Dialog
@@ -107,13 +110,19 @@ export function AgentDelete({
         open={confirming}
         initialFocus={cancel}
         onOpenChange={setConfirming}
-        title={`Delete ${agent.name}?`}
+        title={
+          elsewhere
+            ? `Remove ${agent.name} from this community?`
+            : `Delete ${agent.name}?`
+        }
         description={
-          agent.place === "hosted"
-            ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
-            : several
-              ? "It stops in every community it's in. In each one it leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
-              : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
+          elsewhere
+            ? "It is archived and removed from your agent list here. Buzz also tries to remove its channel memberships. The other device keeps its key, files and running process. If that device is online, it lists the agent again right away, so remove it there instead. Other communities are unchanged."
+            : agent.place === "hosted"
+              ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+              : several
+                ? "It stops in every community it's in. In each one it leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
+                : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
         }
         preventClose={removing}
         actions={
@@ -130,7 +139,7 @@ export function AgentDelete({
               loading={removing}
               onClick={() => void remove()}
             >
-              Delete
+              {action}
             </Button>
           </>
         }

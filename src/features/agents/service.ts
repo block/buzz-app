@@ -1813,7 +1813,8 @@ export type Agents = {
    * stays listed and stopped, and this rejects saying so; Delete again runs it
    * all again. Called while one runs, it joins it. A hosted agent is archived,
    * leaves its channels and is removed from its provider before this resolves.
-   * One on another device is deleted there. An agent here leaves every
+   * One on another device is archived and removed from the selected community;
+   * its key and files on that device are not erased. An agent here leaves every
    * community it is in this way, one at a time; one whose community cannot
    * be reached stays, and the rejection names it. */
   remove(agent: AgentKey): Promise<void>;
@@ -6430,8 +6431,13 @@ export class AgentsService extends Service implements Agents {
 
   async remove(key: AgentKey): Promise<void> {
     const pubkey = pubkeyOf(key);
-    if (!this.identities.some((identity) => identity.pubkey === pubkey))
-      return this.removeHosted(pubkey);
+    if (!this.identities.some((identity) => identity.pubkey === pubkey)) {
+      return this.state.agents.some(
+        (agent) => agent.pubkey === pubkey && agent.place === "elsewhere",
+      )
+        ? this.removeElsewhere(pubkey)
+        : this.removeHosted(pubkey);
+    }
     const running = this.deleting.get(pubkey);
     if (running) return running;
     const work = this.removeLocal(pubkey).finally(() =>
@@ -6781,6 +6787,56 @@ export class AgentsService extends Service implements Agents {
     this.update();
     this.notify();
     return done ? undefined : stillArchived(identity.name);
+  }
+
+  /** Removes an owned listing without the other device's key. The archive
+   * must be confirmed before the listing goes: deleting a listing alone does
+   * not make its identity unavailable in this community. */
+  private removeElsewhere(pubkey: string) {
+    return this.exclusive(pubkey, async () => {
+      const agent = this.state.agents.find(
+        (entry) => entry.pubkey === pubkey && entry.place === "elsewhere",
+      );
+      const binding = agent && this.bindingOf(agent);
+      if (!agent || !binding)
+        throw new Error("No owned agent in this community");
+      const { archives } = binding.session;
+      if (!archives.supported)
+        throw new Error(
+          "This community cannot archive agents. Remove it on the device that runs it.",
+        );
+      if (!archives.writable)
+        throw new Error("Archive is unavailable on this connection");
+      const { signal } = binding.controller;
+      const unattested = new Error(
+        `${agent.name} wasn't removed: its profile must name you as its owner. Only the device holding its key can update that profile.`,
+      );
+      // The listing is the viewer's own record, so it proves nothing about
+      // ownership, and admin authority alone could archive anyone's agent.
+      // Require the profile's owner proof naming the viewer.
+      if (!(await archives.consent(pubkey, signal))?.auth) throw unattested;
+      const owner = { issue: this.authorize };
+      try {
+        await archiveAgent(binding.session, pubkey, signal, owner);
+      } catch (error) {
+        if (error instanceof UnattestedProfile) throw unattested;
+        throw error;
+      }
+      await unshare(binding.session, binding.viewer, pubkey, signal);
+      // Keep its listing until these can finish, so a failure still has a
+      // visible Remove action to retry. Only this community's Bestie changes.
+      await binding.session.agentChoices.refresh(true, { fresh: true });
+      await clearDeletedDefaultAgent(binding.session, binding.scope, pubkey);
+      await removeRelayAgent(
+        binding.session,
+        binding.viewer,
+        pubkey,
+        signal,
+        owner,
+      );
+      this.unlist(binding.origin, pubkey);
+      this.update();
+    });
   }
 
   /** Has a hosted agent's provider remove it, then takes it out of the

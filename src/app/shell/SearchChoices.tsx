@@ -1186,6 +1186,21 @@ export function SearchChoices({
                       tone,
                       multiline,
                     }) => {
+                      const shown = truncated.get(label);
+                      const count = countOf(
+                        ranked.find((group) => group.label === label) ?? {
+                          label,
+                          destinations,
+                        },
+                      );
+                      // The heading's cut and rerank mark are hidden from
+                      // assistive technology, so the group describes them.
+                      const summary = [
+                        shown !== undefined && `Top ${shown} of ${count}`,
+                        reranked && "Reranked",
+                      ]
+                        .filter(Boolean)
+                        .join(", ");
                       const heading = (
                         <span
                           className={`navigation-section-label text-body text-secondary${headingStatus ? " truncate" : ""}`}
@@ -1200,13 +1215,8 @@ export function SearchChoices({
                                 aria-hidden="true"
                               >
                                 {" "}
-                                {truncated.has(label) &&
-                                  `· Top ${truncated.get(label)} of `}
-                                {countOf(
-                                  ranked.find(
-                                    (group) => group.label === label,
-                                  ) ?? { label, destinations },
-                                )}
+                                {shown !== undefined && `· Top ${shown} of `}
+                                {count}
                               </span>
                             )}
                           {why && (
@@ -1236,6 +1246,11 @@ export function SearchChoices({
                           key={label}
                           role={hasControls ? "rowgroup" : "group"}
                           aria-label={label}
+                          aria-describedby={
+                            summary
+                              ? `${peekPanelId(label)}-summary`
+                              : undefined
+                          }
                           // A status-only group has no rows yet; busy states why.
                           aria-busy={
                             (!!headingStatus && !destinations.length) ||
@@ -1244,6 +1259,11 @@ export function SearchChoices({
                           className="search-palette-group"
                           data-tone={tone}
                         >
+                          {summary && (
+                            <span id={`${peekPanelId(label)}-summary`} hidden>
+                              {summary}
+                            </span>
+                          )}
                           <div className="navigation-section" data-buzz-ui="">
                             {!hideLabel && (
                               <div

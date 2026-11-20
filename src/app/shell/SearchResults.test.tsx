@@ -1469,12 +1469,19 @@ it("reranks message hits once the decision provider can answer, holding them onc
     await answer();
     expect(order()).toEqual(["one", "two", "runbook"]);
     expect(screen.queryByTitle("Reranked")).toBeNull();
+    expect(
+      screen.getByRole("group", { name: "Messages" }),
+    ).not.toHaveAccessibleDescription(/Reranked/);
 
     // New text isn't held.
     await search("deploys");
     await answer();
     expect(order()).toEqual(["runbook", "one", "two"]);
     expect(screen.getByTitle("Reranked")).toBeInTheDocument();
+    // The mark is hidden from assistive technology; the group says it.
+    expect(
+      screen.getByRole("group", { name: "Messages" }),
+    ).toHaveAccessibleDescription(/Reranked/);
 
     // Nor is the earlier text, once the person has typed past it.
     await search("deploy");
@@ -1608,6 +1615,9 @@ it.each([
         to ? ["runbook", "one", "two"] : ["guide", "three", "four"],
       );
       expect(screen.getByTitle("Reranked")).toBeInTheDocument();
+      expect(
+        screen.getByRole("group", { name: "Messages" }),
+      ).toHaveAccessibleDescription(/Reranked/);
     } finally {
       cleanup();
       owner.dispose();

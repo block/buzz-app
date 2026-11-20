@@ -357,7 +357,7 @@
   /* A row the keyboard reveals stops below its pinned heading. */
   .navigation-section-heading[data-search-cut]
     + .navigation-section-rows
-    [data-search-result] {
+    :is([data-search-result], .search-control-row) {
     scroll-margin-top: var(--size-row);
   }
 

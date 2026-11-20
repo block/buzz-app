@@ -553,9 +553,16 @@ it("says how much of a group Top results shows and opens the rest from its heade
   expect(channels.getByRole("heading")).toHaveTextContent(
     "Channels · Top 5 of 6",
   );
+  // The heading's cut is hidden from assistive technology; the group says it.
+  expect(
+    screen.getByRole("group", { name: "Channels" }),
+  ).toHaveAccessibleDescription("Top 5 of 6");
   // A group shown whole is not cut, so it has no Show all.
   const pages = within(screen.getByRole("group", { name: "Pages" }));
   expect(pages.getByRole("heading")).toHaveTextContent(/^Pages 2$/);
+  expect(
+    screen.getByRole("group", { name: "Pages" }),
+  ).toHaveAccessibleDescription("");
   expect(pages.queryByRole("button", { name: /^Show all/ })).toBeNull();
   fireEvent.click(channels.getByRole("button", { name: "Show all Channels" }));
   expect(screen.getAllByRole("option")).toHaveLength(6);

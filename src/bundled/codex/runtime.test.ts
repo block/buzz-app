@@ -8878,6 +8878,29 @@ describe("a conversation given its own folder", () => {
     expect(inputText(steer())).not.toContain("They are for reading.");
   });
 
+  it("keeps the Canvas's worktree rule for a community session when the chat kept a folder", async () => {
+    // Assigned while the agent's sessions were per conversation: a community
+    // session works in the agent's workspace instead.
+    const f = await withFolder(folders(), "/repos/worktree", "channel");
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    const d = f.delivery("@Codex solo", root);
+    await f.runtime.run({ ...d, config: scoped(d).config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const turn = inputText(f.starts()[0]);
+    expect(turn).toContain("create a new worktree");
+    expect(turn).not.toContain("They are for reading.");
+  });
+
   it("starts its thread there and names the agent's workspace", async () => {
     const resolveDirectory = folders();
     const f = await withFolder(resolveDirectory, "/repos/worktree");

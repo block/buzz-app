@@ -2149,9 +2149,12 @@ export class CodexRuntime {
     // The Canvas states the rule for its folders from whether the
     // conversation has one of its own, which a plugin can assign as its
     // session is admitted. A turn renders it again for where it works.
+    // A community session works in the agent's workspace, as
+    // `conversationPlace` has it, whatever folder the chat kept.
     const canvasProjectOf = (
-      // A Solo chat is one conversation, with no thread root.
-      elsewhere = Boolean(this.folder(reads.scope, agent.key, channelId)),
+      elsewhere = settings.scope !== "community" &&
+        // A Solo chat is one conversation, with no thread root.
+        Boolean(this.folder(reads.scope, agent.key, channelId)),
     ) => canvasRead && project(canvasRead.text, elsewhere);
     const projectOf = (elsewhere?: boolean) =>
       [

@@ -541,6 +541,126 @@ it("leads plugin switches with Manage plugins and notification switches with the
   ]);
 });
 
+function catalog(
+  ...manifests: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+  }[]
+) {
+  const state = {
+    configuration: {
+      status: "ready",
+      catalog: {
+        plugins: manifests.map(({ category, ...manifest }) => ({
+          manifest: { ...manifest, discovery: { category } },
+          enabled: true,
+        })),
+      },
+    },
+    activation: {},
+    busy: false,
+  };
+  return {
+    subscribe: () => () => {},
+    snapshot: () => state,
+    change: vi.fn(),
+  } as unknown as AppServices["plugins"];
+}
+
+/** The rows `query` lists in a group, as "title — subtitle". */
+function listed(
+  { Palette }: ReturnType<typeof sections>,
+  query: string,
+  group: string,
+) {
+  const view = render(<Palette query={query} />);
+  const found = screen.queryByRole("rowgroup", { name: group });
+  // Rows are labelled only in the grid that a switch or select makes of the
+  // results. Plain sections alone are a listbox, which would read as empty.
+  if (!found) expect(screen.queryByRole("group", { name: group })).toBeNull();
+  // The group's notice is a row too; it has no label.
+  const names = found
+    ? within(found)
+        .getAllByRole("row")
+        .flatMap((row) => row.getAttribute("aria-label") ?? [])
+    : [];
+  view.unmount();
+  return names;
+}
+
+it("matches a plugin's description and a setting's keywords by contiguous text only", () => {
+  const plugins = catalog(
+    {
+      id: "buzz.agent-activity",
+      name: "Agent Activity",
+      description: "Show live and recent agent work alongside conversations.",
+      category: "agent-tools",
+    },
+    {
+      id: "buzz.huddles",
+      name: "Huddles",
+      description: "Start audio conversations with people in your channels.",
+      category: "communication",
+    },
+  );
+  const { notifications } = fixture();
+  const palette = sections({ plugins, notifications });
+  // A person's name is often in a sentence as letters merely in order.
+  expect(listed(palette, "alice", "Plugins")).toEqual([]);
+  // Word starts across a sentence: "[pl]ugins Show live [a]nd".
+  expect(listed(palette, "pla", "Plugins")).toEqual([]);
+  expect(listed(palette, "audio", "Plugins")).toEqual([
+    "Communication — Huddles",
+  ]);
+  expect(listed(palette, "plugins", "Plugins")).toEqual([
+    "Agent tools — Agent Activity",
+    "Communication — Huddles",
+  ]);
+  // "direct mess[a]ges co[n]versatio[n] [a]lerts"
+  expect(listed(palette, "anna", "Settings")).toEqual([]);
+  expect(listed(palette, "alerts", "Settings")).toEqual([
+    "Notifications — Sound",
+    "Notifications — Notify while viewing",
+  ]);
+});
+
+it("matches a plugin's category by word runs but not by letters merely in order", () => {
+  const palette = sections({
+    plugins: catalog({
+      id: "buzz.profiles",
+      name: "Profiles",
+      description: "View member and agent profiles and recent activity.",
+      category: "people-and-communities",
+    }),
+  });
+  // "People & co[m]m[u]ni[t]i[e]s"
+  expect(listed(palette, "mute", "Plugins")).toEqual([]);
+  expect(listed(palette, "pc", "Plugins")).toEqual([
+    "People & communities — Profiles",
+  ]);
+});
+
+it("matches a row's name contiguously but not by scattered letters", () => {
+  const plugins = catalog({
+    id: "buzz.reminders",
+    name: "Reminders",
+    description: "Set message reminders and review what is due.",
+    category: "productivity",
+  });
+  const { notifications } = fixture();
+  const palette = sections({ plugins, notifications });
+  expect(listed(palette, "remnders", "Plugins")).toEqual([]);
+  expect(listed(palette, "remind", "Plugins")).toEqual([
+    "Productivity — Reminders",
+  ]);
+  expect(listed(palette, "sund", "Settings")).toEqual([]);
+  expect(listed(palette, "sound", "Settings")).toEqual([
+    "Notifications — Sound",
+  ]);
+});
+
 it("lists only Personal space and app sections without a selected community", () => {
   const cards = [
     { key: "buzz.emoji/custom-emoji", title: "Custom emoji" },

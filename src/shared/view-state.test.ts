@@ -27,6 +27,20 @@ afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
 });
+
+it("bounds stored retirement metadata for repeated clears of one draft", () => {
+  const scope = "example-scope";
+  for (let index = 0; index < 64; index++) {
+    writeView(scope, "draft:room", `Draft ${index}`);
+    clearView(scope, "draft:room");
+  }
+  const size = Object.entries(localStorage).reduce(
+    (total, [key, value]) => total + key.length + value.length,
+    0,
+  );
+  expect(size).toBeLessThan(2300);
+  expect(viewRevision(scope, "draft:room")).toBeNull();
+});
 it("enumerates only this viewer's existing channel/thread composer keys, including punctuated channel IDs", () => {
   const root = "a".repeat(64);
   writeView("relay:alice", "draft:room.with-hyphen", { text: "first" });

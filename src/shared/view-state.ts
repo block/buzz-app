@@ -60,14 +60,20 @@ export function subscribeView(
         notify();
         return;
       }
-      if (!event.key.startsWith("buzz-view.v1:")) return;
-      const pair: unknown = JSON.parse(event.key.slice("buzz-view.v1:".length));
+      const prefix = event.key.startsWith(draftRetirementPrefix)
+        ? draftRetirementPrefix
+        : "buzz-view.v1:";
+      if (!event.key.startsWith(prefix)) return;
+      const pair: unknown = JSON.parse(event.key.slice(prefix.length));
       if (Array.isArray(pair) && pair[0] === scope) {
         const key = typeof pair[1] === "string" ? pair[1] : undefined;
         if (key) traceDraft(scope, key, "storage");
         notify(
           key,
-          key && event.newValue === null && event.oldValue !== null
+          prefix === "buzz-view.v1:" &&
+            key &&
+            event.newValue === null &&
+            event.oldValue !== null
             ? [{ key, revision: event.oldValue }]
             : undefined,
         );
@@ -108,7 +114,12 @@ export function writeView(scope: string, key: string, value: unknown) {
   }
 }
 
-function writeViewRevision(scope: string, key: string, revision: string) {
+function writeViewRevision(
+  scope: string,
+  key: string,
+  revision: string,
+  retired?: string,
+) {
   let phase: "write-failed" | "notify-failed" = "write-failed";
   try {
     traceDraft(scope, key, "write");
@@ -125,7 +136,12 @@ function writeViewRevision(scope: string, key: string, revision: string) {
       return false;
     }
     phase = "notify-failed";
-    changed(scope, key);
+    if (retired !== undefined) recordDraftRetirement(scope, key, retired);
+    changed(
+      scope,
+      key,
+      retired === undefined ? undefined : [{ key, revision: retired }],
+    );
     return true;
   } catch {
     traceDraft(scope, key, phase);
@@ -158,6 +174,27 @@ export function replaceViewRevision(
   if (current === undefined) return "failed";
   if (current !== expected) return "changed";
   return writeViewRevision(scope, key, revision) ? "saved" : "failed";
+}
+
+/** Outbox admission retires the sent revision without overwriting peer edits. */
+export function retireViewDraft(
+  scope: string,
+  key: string,
+  expected: string | null | undefined,
+  replacement: string,
+): "saved" | "changed" | "failed" {
+  const current = viewRevision(scope, key);
+  if (current === undefined || expected === undefined) return "failed";
+  // The detached owner may already have saved the follow-up on our behalf.
+  if (current === replacement) return "saved";
+  if (current !== expected) {
+    if (expected !== null && recordDraftRetirement(scope, key, expected))
+      changed(scope, key, [{ key, revision: expected }]);
+    return "changed";
+  }
+  return writeViewRevision(scope, key, replacement, expected ?? undefined)
+    ? "saved"
+    : "failed";
 }
 
 // Rich snapshots contain structure as well as text (up to 32,001 nodes).
@@ -251,7 +288,10 @@ export function listDraftViews(
 }
 
 const conflictDraftPrefix = "buzz-draft-conflict.v1:";
-const draftDeletionPrefix = "buzz-draft-delete.v1:";
+const draftRetirementPrefix = "buzz-ret.v1:";
+const draftRetirementKey = (scope: string, key: string) =>
+  `${draftRetirementPrefix}${JSON.stringify([scope, key])}`;
+const maxRetiredRevisions = 32;
 const viewScopePurgeKey = (scope: string) =>
   `buzz-view-purge.v1:${JSON.stringify(scope)}`;
 
@@ -268,16 +308,65 @@ export function conflictDraftKey(scope: string, key: string) {
   return `${conflictDraftPrefix}${JSON.stringify([scope, key])}`;
 }
 
-// Exact deletion receipts outlive a composer and carry no draft text.
-const draftDeletionKey = (scope: string, key: string, revision: string) =>
-  `${draftDeletionPrefix}${JSON.stringify([scope, key, bytesToHex(sha256(utf8ToBytes(revision)))])}`;
+function retirementHistory(scope: string, key: string): [number, ...string[]] {
+  return JSON.parse(
+    localStorage.getItem(draftRetirementKey(scope, key)) ?? "[0]",
+  );
+}
 
-export function draftDeletionToken(
+export function draftRetirementCursor(scope: string, key: string) {
+  try {
+    return retirementHistory(scope, key)[0];
+  } catch {
+    return undefined;
+  }
+}
+
+const revisionDigest = (revision: string) =>
+  bytesToHex(sha256(utf8ToBytes(revision)));
+
+export function draftWasRetired(
   scope: string,
   key: string,
   revision: string,
+  cursor: number,
+  reopening = false,
 ) {
-  return localStorage.getItem(draftDeletionKey(scope, key, revision));
+  try {
+    const [end, ...revisions] = retirementHistory(scope, key);
+    // A backup older than the retained history cannot prove it survived.
+    return (
+      ((reopening || !revisions.length) && cursor < end - revisions.length) ||
+      revisions
+        .slice(Math.max(0, cursor - end + revisions.length))
+        .includes(revisionDigest(revision))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function recordDraftRetirement(scope: string, key: string, revision: string) {
+  try {
+    const [end, ...previous] = retirementHistory(scope, key);
+    const digest = revisionDigest(revision);
+    const recent = previous.slice(1 - maxRetiredRevisions);
+    for (const revisions of [[...recent, digest], [digest], []]) {
+      try {
+        localStorage.setItem(
+          draftRetirementKey(scope, key),
+          JSON.stringify([end + 1, ...revisions]),
+        );
+        return true;
+      } catch {
+        // A short legacy draft may only free room for the cursor. That
+        // invalidates older backups whose retirement we cannot check.
+      }
+    }
+  } catch {
+    // Storage failure must not prevent clearing the draft itself.
+  }
+  return false;
 }
 
 function clearScopedStorage(storage: Storage, prefix: string) {
@@ -302,7 +391,7 @@ export function clearViewScope(scope: string) {
     retry = true;
   }
   clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
-  clearScopedStorage(localStorage, `${draftDeletionPrefix}${keyPrefix}`);
+  clearScopedStorage(localStorage, `${draftRetirementPrefix}${keyPrefix}`);
   try {
     if (retry) localStorage.setItem(purgeKey, token);
   } finally {
@@ -349,16 +438,12 @@ export function clearView(scope: string, ...keys: string[]) {
   for (const key of keys) {
     const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
     const revision = localStorage.getItem(storageKey);
-    // Leave the draft available to retry if the deletion receipt cannot be saved.
-    if (revision !== null && draftCoordinates(key))
-      localStorage.setItem(
-        draftDeletionKey(scope, key, revision),
-        crypto.randomUUID(),
-      );
     localStorage.removeItem(storageKey);
     if (localStorage.getItem(storageKey) !== null)
       throw new Error("Could not clear the saved message. Try again.");
     if (revision !== null) removed.push({ key, revision });
   }
+  for (const { key, revision } of removed)
+    if (draftCoordinates(key)) recordDraftRetirement(scope, key, revision);
   changed(scope, keys.length === 1 ? keys[0] : undefined, removed);
 }

@@ -1113,7 +1113,9 @@ and are asked to sign in again in Buzz.
   Buzz saves conversation drafts when you pause typing or leave the composer. If
   another window saves a different version while you edit, choose **Load saved
   draft** or **Keep my draft** before sending. Reloading the same window
-  restores your conflicting text so you can still choose.
+  restores your conflicting text so you can still choose. If another window
+  sends or clears that exact version, Buzz retires it and keeps any distinct
+  edit available for recovery.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages

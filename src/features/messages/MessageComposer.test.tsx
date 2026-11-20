@@ -12600,6 +12600,7 @@ it.each([
   "storage event",
   "delayed storage event",
   "same-window clear",
+  "after reopening a conflict",
   "while composer is closed",
 ])("does not restore a deleted conflict version (%s)", (path) => {
   const key = 'buzz-view.v1:["scope","draft:channel"]';
@@ -12623,9 +12624,14 @@ it.each([
   signal(local, peer);
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
 
+  if (path === "after reopening a conflict") h.remount();
   localStorage.setItem(key, local);
   if (path === "while composer is closed") h.unmount();
-  if (path === "same-window clear" || path === "while composer is closed")
+  if (
+    path === "same-window clear" ||
+    path === "while composer is closed" ||
+    path === "after reopening a conflict"
+  )
     act(() => clearDraft({ scope: "scope" }, "draft:channel"));
   else {
     if (path === "storage event") signal(peer, local);
@@ -12634,6 +12640,10 @@ it.each([
     signal(local, null);
   }
 
+  if (path === "after reopening a conflict") {
+    expect(h.input()).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Keep my draft" })).toBeNull();
+  }
   if (path !== "while composer is closed") h.remount();
   const reopened = path === "while composer is closed" ? mount() : h;
   expect(reopened.input()).toHaveValue("");
@@ -12653,6 +12663,38 @@ it("reopens an already saved local version when another window replaces it", () 
   expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
 });
 
+it.each([false, true])(
+  "retires a peer's sent draft while preserving a distinct pending edit (%s)",
+  async (pending) => {
+    const firstWindow = mount();
+    firstWindow.fill("Saved to send");
+    act(() => firstWindow.input().blur());
+    const secondWindow = mount();
+    if (pending)
+      secondWindow.messages.send.mockImplementationOnce(() => {
+        // Another browser window can edit without moving this window's focus.
+        const field = firstWindow.input();
+        field.value = "My next draft";
+        fireEvent.input(field);
+        return "accepted-id";
+      });
+
+    secondWindow.submit();
+    await waitFor(() =>
+      expect(secondWindow.messages.send).toHaveBeenCalledOnce(),
+    );
+    await waitFor(() => expect(secondWindow.input()).toHaveValue(""));
+    expect(firstWindow.input()).toHaveValue(pending ? "My next draft" : "");
+    firstWindow.remount();
+    expect(firstWindow.input()).toHaveValue(pending ? "My next draft" : "");
+    const choose = within(firstWindow.container).queryByRole("button", {
+      name: "Keep my draft",
+    });
+    if (pending) expect(choose).toBeInTheDocument();
+    else expect(choose).toBeNull();
+  },
+);
+
 it("can recover text entered again after an earlier deletion", () => {
   const h = mount();
   h.fill("Local work");
@@ -12669,25 +12711,27 @@ it("can recover text entered again after an earlier deletion", () => {
   expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
 });
 
-it("keeps a draft available to retry when deletion evidence cannot be saved", () => {
+it("clears a saved draft while storage is full", () => {
   const h = mount();
   h.fill("Local work");
   act(() => h.input().blur());
+  const setItem = Storage.prototype.setItem;
   const write = vi
     .spyOn(Storage.prototype, "setItem")
-    .mockImplementationOnce(() => {
-      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    .mockImplementation(function (this: Storage, key, value) {
+      if (
+        this === localStorage &&
+        viewRevision("scope", "draft:channel") !== null
+      )
+        throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+      setItem.call(this, key, value);
     });
   try {
-    expect(() => clearDraft({ scope: "scope" }, "draft:channel")).toThrow();
-    expect(readView("scope", "draft:channel", null)).toMatchObject({
-      text: "Local work",
-    });
+    act(() => clearDraft({ scope: "scope" }, "draft:channel"));
+    expect(viewRevision("scope", "draft:channel")).toBeNull();
   } finally {
     write.mockRestore();
   }
-  act(() => clearDraft({ scope: "scope" }, "draft:channel"));
-  expect(viewRevision("scope", "draft:channel")).toBeNull();
 });
 
 it.each([false, true])(
@@ -12794,7 +12838,7 @@ it("empties for a draft cleared elsewhere, and a stale composer never restores i
   h.fill("Edited here");
   act(() => h.input().blur());
   act(() => clearDraft({ scope: "scope" }, "draft:channel"));
-  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  expect(h.input()).toHaveValue("");
   h.remount();
   expect(h.input()).toHaveValue("");
   expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();

@@ -3,7 +3,7 @@ import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { onAutomatic } from "../agents/recommended";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
-import { readView, writeView } from "../../shared/view-state";
+import { retireViewDraft } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -308,8 +308,12 @@ export function createHuddleComposerOwner(
         // keeps the remembered agents in memory (see seedMentions).
         const scope = session.scope;
         const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(scope, key, mentionDraft(""));
+        retireViewDraft(
+          scope,
+          key,
+          draft === "null" ? null : draft,
+          JSON.stringify(mentionDraft("")),
+        );
         for (const file of files) release(file);
         return id;
       }

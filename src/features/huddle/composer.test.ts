@@ -24,7 +24,12 @@ import {
   relayGifRequests,
 } from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
 import { createHuddleComposerClient } from "./composer-client";
 import type { ComposerCommand, ComposerResponse } from "./composer-contract";
@@ -137,6 +142,9 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
   expect(communityFromScope(remote.scope)).toBe("https://example.test");
   const draft = { text: "Hello", recipients: [] };
   writeView(h.scope, "draft:room", draft);
+  const revision = viewRevision(h.scope, "draft:room");
+  const changed = vi.fn();
+  const stop = subscribeView(h.scope, changed, "draft:room");
   h.send.mockImplementationOnce(() => {
     throw new Error("Rejected");
   });
@@ -144,6 +152,7 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     "Rejected",
   );
   expect(readView(h.scope, "draft:room", null)).toEqual(draft);
+  expect(changed).not.toHaveBeenCalled();
   await expect(remote.messages.send("room", "Hello")).resolves.toBe(
     "accepted-id",
   );
@@ -151,6 +160,10 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     text: "",
     recipients: [],
   });
+  expect(changed).toHaveBeenCalledExactlyOnceWith("draft:room", [
+    { key: "draft:room", revision },
+  ]);
+  stop();
   await remote.agentChoices.refresh();
   expect(h.refresh).toHaveBeenCalledWith(true);
   h.revoke();
@@ -364,6 +377,54 @@ it.each([false, true])(
     );
   },
 );
+
+it("keeps a peer draft saved while a detached send prepares its files", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  if (!remote.attachments) throw new Error("Missing attachments");
+  const upload =
+    Promise.withResolvers<
+      Awaited<ReturnType<typeof remote.attachments.upload>>
+    >();
+  const transfer = vi
+    .spyOn(remote.attachments, "upload")
+    .mockReturnValue(upload.promise);
+  const publish = vi.spyOn(remote.messages, "send");
+  const caption = { text: "Original caption", recipients: [] };
+  writeView(h.scope, "draft:room", caption);
+  const files = attachmentDraft(remote, `${h.scope}:draft:room`, "room");
+  const prepare = vi.spyOn(files, "prepareForSend");
+  cleanup.push(() => files.clear());
+  files.add([new File(["notes"], "notes.txt", { type: "text/plain" })]);
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+    }),
+  );
+  await waitFor(() => expect(transfer).toHaveBeenCalledOnce());
+  const send = screen.getByRole("button", { name: "Send message" });
+  fireEvent.click(send);
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(send).toBeDisabled();
+  const newer = { text: "Peer caption", recipients: [] };
+  act(() => writeView(h.scope, "draft:room", newer));
+  await act(async () => {
+    upload.resolve({
+      name: "notes.txt",
+      url: "https://example.test/notes.txt",
+      sha256: "ab".repeat(32),
+      type: "text/plain",
+      size: 5,
+    });
+  });
+  expect(screen.getByRole("button", { name: "Keep my draft" })).toBeVisible();
+  expect(readView(h.scope, "draft:room", null)).toEqual(newer);
+  expect(publish).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
+});
 
 it("retains valid voice metadata and releases enriched upload identities", async () => {
   // Node's BroadcastChannel does not preserve File instances as browsers do.

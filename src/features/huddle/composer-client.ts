@@ -1,5 +1,5 @@
 import type { GifRequests } from "../relay/gifs";
-import { readView } from "../../shared/view-state";
+import { viewRevision } from "../../shared/view-state";
 import type { ComposerSession } from "../messages/composer-session";
 import { createNameProvider } from "../identity-names/directory";
 import { resolveIdentityNames } from "../identity-names/policy";
@@ -231,9 +231,8 @@ export function createHuddleComposerClient(token: string) {
             attachments,
             references,
             picks,
-            draft: JSON.stringify(
-              readView(initial.scope, `draft:${initial.room}`, null),
-            ),
+            draft:
+              viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
           }),
       },
       messages: {
@@ -254,9 +253,8 @@ export function createHuddleComposerClient(token: string) {
             mentions,
             attachments,
             references,
-            draft: JSON.stringify(
-              readView(initial.scope, `draft:${initial.room}`, null),
-            ),
+            draft:
+              viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
           });
         },
         reply: unavailable,

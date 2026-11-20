@@ -134,7 +134,8 @@ import {
 import type { RelaySession } from "../relay/session";
 import {
   conflictDraftKey,
-  draftDeletionToken,
+  draftRetirementCursor,
+  draftWasRetired,
   parseDraftView,
   readView,
   writeView,
@@ -142,6 +143,7 @@ import {
   viewScopePurgeToken,
   replaceView,
   replaceViewRevision,
+  retireViewDraft,
   subscribeView,
 } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -680,6 +682,10 @@ function Composer({
   const [initialRevision] = useState(() => viewRevision(scope, draftKey));
   const [purgeToken] = useState(() => viewScopePurgeToken(scope));
   const revision = useRef(initialRevision);
+  const [initialCursor] = useState(() =>
+    draftRetirementCursor(scope, draftKey),
+  );
+  const savedCursor = useRef(initialCursor);
   // A losing edit belongs to this window until the user resolves it.
   const conflictKey = useMemo(
     () => conflictDraftKey(scope, draftKey),
@@ -693,18 +699,21 @@ function Composer({
       const split = raw.indexOf("\n");
       if (split < 0) return { stale: raw };
       const savedRevision = raw.slice(split + 1);
+      const [savedPurgeToken, cursor] = JSON.parse(raw.slice(0, split));
       if (
         savedRevision === initialRevision ||
-        raw.slice(0, split) !==
-          JSON.stringify([
-            purgeToken,
-            draftDeletionToken(scope, draftKey, savedRevision),
-          ])
+        savedPurgeToken !== purgeToken ||
+        typeof cursor !== "number" ||
+        draftWasRetired(scope, draftKey, savedRevision, cursor, true)
       )
         return { stale: raw };
       const saved = parseDraftView(savedRevision);
       if (saved && saved !== "oversized")
-        return { draft: mentionDraft(saved.value) };
+        return {
+          draft: mentionDraft(saved.value),
+          revision: savedRevision,
+          cursor,
+        };
     } catch {
       // The canonical draft remains available if session storage is blocked.
     }
@@ -721,28 +730,37 @@ function Composer({
     }
   }, [conflictKey, staleConflict]);
   const conflictDraft = useRef<
-    { draft: MentionDraft; saved: MentionDraft | undefined } | undefined
+    | {
+        draft: MentionDraft;
+        saved?: { draft: MentionDraft; revision: string; cursor: number };
+      }
+    | undefined
   >(
-    reopenedConflict
-      ? { draft: reopenedConflict, saved: reopenedConflict }
+    conflictOnOpen?.draft
+      ? { draft: conflictOnOpen.draft, saved: conflictOnOpen }
       : undefined,
   );
   const flushConflict = useCallback(() => {
     const pending = conflictDraft.current;
-    if (!pending || pending.draft === pending.saved) return;
+    if (!pending || pending.draft === pending.saved?.draft) return;
     if (purgeToken === undefined || viewScopePurgeToken(scope) !== purgeToken)
       return;
     try {
-      const revision = JSON.stringify(pending.draft);
-      const history = [
-        purgeToken,
-        draftDeletionToken(scope, draftKey, revision),
-      ];
+      const saved =
+        pending.draft === draftAtRevision.current
+          ? revision.current
+          : undefined;
+      const raw = saved ?? JSON.stringify(pending.draft);
+      const cursor =
+        saved == null
+          ? draftRetirementCursor(scope, draftKey)
+          : savedCursor.current;
+      if (cursor === undefined) return;
       sessionStorage.setItem(
         conflictKey,
-        `${JSON.stringify(history)}\n${revision}`,
+        `${JSON.stringify([purgeToken, cursor])}\n${raw}`,
       );
-      pending.saved = pending.draft;
+      pending.saved = { draft: pending.draft, revision: raw, cursor };
     } catch {
       // Keep the edit available in the mounted editor if storage fails.
     }
@@ -787,14 +805,13 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(!!reopenedConflict);
   function reportConflict(draft = valueRef.current) {
-    // Keep the chooser in this editor, but don't restore a deleted revision
-    // on reopen unless the editor contains a different draft.
+    // Only a distinct edit needs a backup when the shared draft is absent.
     if (
       !conflictDraft.current &&
       (viewRevision(scope, draftKey) !== null ||
         JSON.stringify(draft) !== revision.current)
     ) {
-      conflictDraft.current = { draft, saved: undefined };
+      conflictDraft.current = { draft };
       flushConflict();
     }
     setConflict(true);
@@ -880,6 +897,7 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
+  const draftAtRevision = useRef(value);
   // Only a composer holding nothing but its own prefill reads its window, so
   // typing never rescans the history and the always-mounted composers
   // subscribe only while they could seed. Nothing is loaded here: the host
@@ -1329,7 +1347,11 @@ function Composer({
       };
     else persist(next);
   };
-  function persist(next: MentionDraft, expected = revision.current) {
+  function persist(
+    next: MentionDraft,
+    expected = revision.current,
+    retire = false,
+  ) {
     const currentPurgeToken = viewScopePurgeToken(scope);
     if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
       return "changed";
@@ -1338,8 +1360,9 @@ function Composer({
     const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
     // Another writer can already have saved the same draft.
-    let result =
-      current === serialized
+    let result = retire
+      ? retireViewDraft(scope, draftKey, expected, serialized)
+      : current === serialized
         ? "saved"
         : replaceViewRevision(scope, draftKey, expected, serialized);
     writing.current = false;
@@ -1354,6 +1377,8 @@ function Composer({
     diagnose(result, expected, observed, serialized);
     if (result === "saved") {
       revision.current = serialized;
+      draftAtRevision.current = next;
+      savedCursor.current = draftRetirementCursor(scope, draftKey);
       forgetConflict();
     }
     if (result === "changed" && next === valueRef.current && dirty.current)
@@ -1729,6 +1754,8 @@ function Composer({
     cancelDraftSave();
     forgetConflict();
     revision.current = raw;
+    draftAtRevision.current = next;
+    savedCursor.current = draftRetirementCursor(scope, draftKey);
     dirty.current = false;
     valueRef.current = next;
     updateDraft(next);
@@ -1739,6 +1766,23 @@ function Composer({
     caret.current = undefined;
     setConflict(false);
     setStorageFailed(false);
+  }
+  function visibleDraftWasRetired(current: string | null, removed?: string) {
+    const backup = conflictDraft.current?.saved;
+    const local = valueRef.current;
+    const unchangedBackup = backup?.draft === local;
+    const raw = unchangedBackup
+      ? backup.revision
+      : draftAtRevision.current === local
+        ? revision.current
+        : undefined;
+    const cursor = unchangedBackup ? backup.cursor : savedCursor.current;
+    return (
+      raw != null &&
+      current !== raw &&
+      (raw === removed ||
+        (cursor !== undefined && draftWasRetired(scope, draftKey, raw, cursor)))
+    );
   }
   // Message-local picks return with their recovered draft. Solo preferences
   // remain the chat's current choices, including edits made during an upload.
@@ -1771,13 +1815,7 @@ function Composer({
       }
       const current = viewRevision(scope, draftKey);
       if (current === undefined) return;
-      // A peer can make the backup canonical and delete it before the
-      // storage event arrives. The removed revision identifies that draft.
-      if (
-        deletedRevision !== undefined &&
-        conflictDraft.current &&
-        JSON.stringify(conflictDraft.current.draft) === deletedRevision
-      ) {
+      if (visibleDraftWasRetired(current, deletedRevision)) {
         loadSaved(current);
         return;
       }
@@ -1807,6 +1845,8 @@ function Composer({
         // Two windows can independently arrive at the same draft before saving.
         if (pending && current === JSON.stringify(pending.draft)) {
           revision.current = current;
+          draftAtRevision.current = pending.draft;
+          savedCursor.current = draftRetirementCursor(scope, draftKey);
           setStorageFailed(false);
         } else {
           diagnose("changed", revision.current, current);
@@ -1874,7 +1914,7 @@ function Composer({
       setStorageFailed(true);
       return;
     }
-    if (keep) {
+    if (keep && !visibleDraftWasRetired(current)) {
       dirty.current = true;
       persist(valueRef.current, current);
     } else loadSaved(current);
@@ -1884,7 +1924,7 @@ function Composer({
       reconcileDraft();
       return;
     }
-    const result = persist(pending.next, pending.revision);
+    const result = persist(pending.next, pending.revision, true);
     // No stale sent text needs cleanup if nothing was saved and absence is
     // still readable.
     if (
@@ -3453,6 +3493,13 @@ function Composer({
         setSending(true);
         const uploaded = await attachments.store.prepareForSend(attempt.signal);
         attempt.signal.throwIfAborted();
+        // The detached client reads the stored revision when it publishes.
+        const current = viewRevision(scope, draftKey);
+        if (current !== savedRevision) {
+          diagnose("send-publish-conflict", savedRevision, current);
+          reportConflict();
+          return;
+        }
         id = await publish(uploaded);
       } else if (capturedAttachments.length) {
         // The revision acceptance saves; remembered agents are not a draft.

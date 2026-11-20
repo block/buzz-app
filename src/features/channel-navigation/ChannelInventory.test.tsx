@@ -4371,23 +4371,27 @@ it("caps Solo at its newest chats and remembers Show more and Show fewer", async
     ),
   );
   expect(
-    screen.queryByRole("button", { name: "Show fewer in Solo" }),
+    screen.queryByRole("button", { name: "Show fewer in Solo chats" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Show more in Solo" }));
+  await user.click(
+    screen.getByRole("button", { name: "Show more in Solo chats" }),
+  );
   expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3);
   // Show more is spent; focus stays on the row's remaining action.
   expect(
-    screen.queryByRole("button", { name: "Show more in Solo" }),
+    screen.queryByRole("button", { name: "Show more in Solo chats" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Show fewer in Solo" }),
+    screen.getByRole("button", { name: "Show fewer in Solo chats" }),
   ).toHaveFocus();
   unmount();
   render(h.view("gamma"));
   await waitFor(() =>
     expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3),
   );
-  await user.click(screen.getByRole("button", { name: "Show fewer in Solo" }));
+  await user.click(
+    screen.getByRole("button", { name: "Show fewer in Solo chats" }),
+  );
   expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP);
 });
 
@@ -4404,7 +4408,7 @@ it("keeps the Show more steps Solo saved before sections were unified", async ()
     expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3),
   );
   expect(
-    screen.getByRole("button", { name: "Show fewer in Solo" }),
+    screen.getByRole("button", { name: "Show fewer in Solo chats" }),
   ).toBeVisible();
 });
 
@@ -4420,7 +4424,7 @@ it("keeps the open chat listed past Solo's cap", async () => {
     ]),
   );
   expect(
-    screen.getByRole("button", { name: "Show more in Solo" }),
+    screen.getByRole("button", { name: "Show more in Solo chats" }),
   ).toBeVisible();
 });
 

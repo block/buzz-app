@@ -8,15 +8,12 @@ import {
   upper,
   wheel,
 } from "./timeline.mjs";
-import { dumpGeometry, mark, recordGeometry } from "./debug-geometry.mjs";
 
 test.use({
   enabledPlugins: ["buzz.workflows"],
   productionBroker: true,
   historyCounts: { alpha: 640, beta: 20 },
 });
-test.beforeEach(async ({ page }) => recordGeometry(page));
-test.afterEach(async ({ page }, testInfo) => dumpGeometry(page, testInfo));
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 
@@ -639,7 +636,6 @@ test.describe("pages inside one second", () => {
       const height = await history(page).evaluate((e) => e.scrollHeight);
       await holdFrames(page);
       try {
-        await mark(page, "release");
         pending.release();
         await expect
           .poll(() => history(page).evaluate((e) => e.scrollHeight))
@@ -676,19 +672,16 @@ test.describe("pages inside one second", () => {
           )
             await wheel(page, -300);
         await expect(history(page)).not.toHaveAttribute("data-scroll-ended");
-        await mark(page, "input ended");
         if (input === "drag") await page.mouse.up();
         // The timeline renders new rows before the page's rows measure, and
         // holds the reader's row again for them.
         app.append("primary", "alpha", undefined, true, false);
         await expect(latest(page)).toHaveText("1 new message");
       } finally {
-        await mark(page, "release frames");
         await page.evaluate(() => window.releaseFrames());
       }
       await measured(page);
       const before = await anchor(page);
-      await mark(page, `anchor ${JSON.stringify(before)}`);
       // The reader's row and the rows after it in view grow below their
       // paragraphs. A hold left on any of them would move the reader's row.
       await history(page).evaluate((e, id) => {
@@ -704,9 +697,7 @@ test.describe("pages inside one second", () => {
           paragraph.after(extra);
         }
       }, before.id);
-      await mark(page, "grown");
       await settle(page);
-      await mark(page, "settled");
       await expectAnchor(page, before);
     };
   }

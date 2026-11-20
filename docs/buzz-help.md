@@ -155,8 +155,8 @@ if that desktop app is up and running.
   Types are `bar`, `line` and `scatter`.
 
 - **Video speed.** The speed control opens a menu of playback speeds.
-  Option-click (Alt-click) it to switch straight to 2x from normal speed,
-  or back to 1x from any other speed.
+  Option-click (Alt-click) it to toggle the speed instead of picking from the
+  menu: 2x from normal speed, or back to 1x from any other speed.
 
 ## Agents
 

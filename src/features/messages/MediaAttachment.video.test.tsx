@@ -260,6 +260,17 @@ it("shares the saved playback speed with mounted previews and later videos", () 
   ).toBeInTheDocument();
 });
 
+/** The events a real mouse sends, so Base UI records the pointer type. */
+function mouseClick(target: Element, init: MouseEventInit = {}) {
+  fireEvent.pointerDown(target, { pointerType: "mouse", ...init });
+  fireEvent.mouseDown(target, init);
+  fireEvent.click(target, { detail: 1, ...init });
+}
+
+function optionClick(target: Element) {
+  mouseClick(target, { altKey: true });
+}
+
 it.each([
   [undefined, "1", 2],
   ["2", "2", 1],
@@ -285,8 +296,7 @@ it.each([
       name: `Playback speed: ${shown}x`,
     })[0];
     if (!control) throw new Error("Missing speed control");
-    fireEvent.mouseDown(control, { altKey: true });
-    fireEvent.click(control, { altKey: true });
+    optionClick(control);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(
       [...container.querySelectorAll("video")].map(
@@ -311,6 +321,52 @@ it("opens the speed menu without changing speed on a plain click", () => {
   expect(container.querySelector("video")?.playbackRate).toBe(1);
   expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
 });
+
+it("toggles speed and keeps a hover-opened speed menu open on Option-click", async () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+  fireEvent.mouseEnter(control);
+  fireEvent.mouseMove(control);
+  await screen.findByRole("menu");
+  optionClick(control);
+  expect(container.querySelector("video")?.playbackRate).toBe(2);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(screen.getByRole("menuitemradio", { name: "2x" })).toBeChecked();
+  expect(screen.getByRole("menuitemradio", { name: "1x" })).not.toBeChecked();
+  optionClick(control);
+  expect(container.querySelector("video")?.playbackRate).toBe(1);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(screen.getByRole("menuitemradio", { name: "1x" })).toBeChecked();
+});
+
+it.each([
+  ["plain mouse click", (control: Element) => mouseClick(control)],
+  [
+    "click with no pointer press",
+    (control: Element) => fireEvent.click(control),
+  ],
+  [
+    "Option-Enter",
+    (control: Element) => {
+      fireEvent.keyDown(control, { key: "Enter", altKey: true });
+      fireEvent.click(control, { altKey: true });
+    },
+  ],
+])(
+  "opens the speed menu on a %s after an Option-click",
+  async (_, activate) => {
+    const { container } = render(
+      <MediaAttachment attachment={videoAttachment} media={media} />,
+    );
+    optionClick(screen.getByRole("button", { name: "Playback speed: 1x" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    activate(screen.getByRole("button", { name: "Playback speed: 2x" }));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(container.querySelector("video")?.playbackRate).toBe(2);
+  },
+);
 
 it("uses normal speed when a saved preference is invalid", () => {
   localStorage.setItem("buzz.video.playback-speed", "NaN");

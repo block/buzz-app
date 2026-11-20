@@ -401,14 +401,16 @@ export function VideoControls({
                 </Button>
               }
               aria-label={`Playback speed: ${rate}x`}
-              // Option-click switches between normal and double speed instead of opening the menu.
+              // Option-click toggles normal and double speed instead of picking from the menu.
+              // Only the press is kept from Base UI, which opens on mousedown: its click
+              // handler must still run to clear the pointer type recorded on pointerdown.
               onMouseDown={(event) => {
                 if (event.altKey) event.preventBaseUIHandler();
               }}
               onClick={(event) => {
-                if (!event.altKey) return;
-                event.preventBaseUIHandler();
-                changeSpeed(rate === 1 ? 2 : 1);
+                // Keyboard and programmatic clicks have no click count; they open the menu.
+                if (event.altKey && event.detail > 0)
+                  changeSpeed(rate === 1 ? 2 : 1);
               }}
             >
               {rate}x

@@ -2923,7 +2923,10 @@ current community alone. Unknown providers/routes fail with the target retained
 for retry, rather than silently opening another page.
 
 Pages receive optional `navigation` in `PageProps`. Its optional `focus` is
-`"content"` by default or `"preserve"` when the opening control keeps focus; page
+`"content"` by default, `"preserve"` when the opening control keeps focus, or
+`"composer"` when a conversation opening should focus its composer (a thread's
+reply box for a thread) rather than its revealed message (other pages treat it
+as `"content"`); page
 autofocus must honor it. This is per-opening presentation intent, never route data
 or a saved history value. Session binding and default resolution carry it forward;
 retry preserves it, while explicit openings and history traversal default to

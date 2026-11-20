@@ -116,6 +116,32 @@ it("deduplicates in this running session and routes clicks through existing navi
   expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
   expect(t.navigation.navigation.snapshot().status).toBe("opening");
 });
+it("a message alert click asks its opening to focus the composer; a plugin alert keeps content focus", async () => {
+  const t = setup();
+  const categories = ["mention", "direct", "thread", "agent", "test.updates"];
+  for (const category of categories)
+    expect(
+      await t.service.admit(
+        category,
+        category,
+        { sourceKey: category, target },
+        () => true,
+      ),
+    ).toBe(true);
+  await flush();
+  expect(t.clicks).toHaveLength(categories.length);
+  const focus = t.clicks.map((click) => {
+    click();
+    return t.navigation.navigation.snapshot().attempt.focus;
+  });
+  expect(focus).toEqual([
+    "composer",
+    "composer",
+    "composer",
+    "composer",
+    "content",
+  ]);
+});
 it("more than 256 sequential alerts do not fill a persistent inbox or pause delivery", async () => {
   const t = setup();
   for (let i = 0; i < 300; i++) {

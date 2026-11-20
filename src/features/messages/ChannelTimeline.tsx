@@ -1201,7 +1201,16 @@ function Timeline({
   );
   useMessageReveal({
     scroller,
-    focus: focusesTarget && inlineTarget?.focus !== false,
+    focus:
+      focusesTarget &&
+      inlineTarget?.focus !== false &&
+      // A composer-focused opening leaves its own reveal's focus to the
+      // composer, when the conversation has one to take it.
+      !(
+        navigation?.focus === "composer" &&
+        targetSignal === navigation.signal &&
+        !composerless
+      ),
     mark: focusesTarget,
     settled,
     messageId: targetId,

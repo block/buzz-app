@@ -24,6 +24,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
+import { usePendingRequest } from "../../features/messages/use-pending-request";
 import { ChannelBody } from "./ChannelBody";
 import {
   type ConversationTab,
@@ -416,6 +417,8 @@ function ChannelWorkspace({
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  // A request lapses at the next input, so a later composer mount cannot replay it.
+  const pendingComposerFocus = usePendingRequest(composerFocus);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
   // The channel whose lost membership took focus from the conversation.
@@ -773,6 +776,8 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
+  // The bound request arrives after the composer's first render.
+  const openingFocus = navigation?.focus ?? navigator?.snapshot().attempt.focus;
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";
@@ -1168,6 +1173,30 @@ function ChannelWorkspace({
       detailReply,
     ],
   );
+  // A composer-focused opening focuses the conversation composer unless its
+  // message opens in a thread, which then owns focus. A live reader waits for
+  // the exact placement; a cached one uses what it has.
+  const composerOwnsOpening =
+    !requestedThread &&
+    !routedThread &&
+    (!requestedMessage || cached || !!current?.cached || !!exact);
+  // The conversation already shown keeps its composer mounted, so autofocus
+  // cannot take it; request it once per visit. A session rebinding the same
+  // visit is not a new opening.
+  const composerVisit = useRef<string>(undefined);
+  useEffect(() => {
+    if (
+      navigation?.focus !== "composer" ||
+      navigation.signal.aborted ||
+      composerVisit.current === navigation.entryId ||
+      !currentId ||
+      currentId !== requestedChannel ||
+      !composerOwnsOpening
+    )
+      return;
+    composerVisit.current = navigation.entryId;
+    setComposerFocus((value) => value + 1);
+  }, [navigation, currentId, requestedChannel, composerOwnsOpening]);
   // Open in channel also shows the thread's root in the timeline, reading
   // older pages to find it. The thread keeps focus; Members covers both.
   // The target alone decides, so the list is held from the visit's start.
@@ -2054,7 +2083,7 @@ function ChannelWorkspace({
     !requestedThread &&
     !membersOpen &&
     !showingMediaReview &&
-    (navigation?.focus ?? navigator?.snapshot().attempt.focus) !== "preserve" &&
+    openingFocus !== "preserve" &&
     tabState.tabs.some(
       (tab) =>
         tab.kind === "thread" &&
@@ -2458,13 +2487,13 @@ function ChannelWorkspace({
                 committedVisit.current?.channelType === "solo" &&
                 current.channelType !== "solo"
               ) &&
-              // The bound request arrives after the composer's first render.
-              (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
-                "preserve" &&
               !current.readOnly &&
-              !requestedMessage &&
-              !requestedThread &&
-              !routedThread
+              (openingFocus === "composer"
+                ? composerOwnsOpening
+                : openingFocus !== "preserve" &&
+                  !requestedMessage &&
+                  !requestedThread &&
+                  !routedThread)
             }
             trailingTool={
               solo ? (
@@ -2491,7 +2520,7 @@ function ChannelWorkspace({
             }
             onSend={onComposerSend}
             onCommand={handleCommand}
-            focusRequest={composerFocus}
+            focusRequest={pendingComposerFocus ?? 0}
           />
         )}
     </div>

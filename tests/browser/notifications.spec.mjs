@@ -403,7 +403,7 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
 });
 
 for (const kind of ["mention", "thread reply"]) {
-  test(`live ${kind} notification focuses its exact row in the normal conversation, then ordinary dwell reads it`, async ({
+  test(`live ${kind} notification reveals its exact row and focuses the composer, then ordinary dwell reads it`, async ({
     page,
     app,
   }) => {
@@ -452,8 +452,14 @@ for (const kind of ["mention", "thread reply"]) {
       exact: true,
     });
     const row = surface.locator(`[data-message-id="${incoming.id}"]`);
-    await expect(row).toBeFocused();
     await expect(row).toBeVisible();
+    // The alert opens ready to reply: a thread reply in the thread's box.
+    await expect(
+      page.getByRole("textbox", {
+        name: root ? "Reply to thread" : "Message #Beta",
+        exact: true,
+      }),
+    ).toBeFocused();
     await expect(row.locator("strong").filter({ hasText: kind })).toHaveText(
       kind,
     );

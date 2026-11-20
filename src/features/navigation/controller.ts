@@ -45,8 +45,11 @@ export type OpenResult = Readonly<
       reauthorize?: (reopen: () => void) => () => void;
     }
 >;
-/** Focus is per opening, never part of a saved address or history entry. */
-export type NavigationFocus = "content" | "preserve";
+/** Focus is per opening, never part of a saved address or history entry.
+ * `composer`: a conversation opening focuses its composer (a thread's reply
+ * box for a thread), not its revealed message, which it still reveals and
+ * marks. Other destinations treat it as `content`. */
+export type NavigationFocus = "content" | "preserve" | "composer";
 export type NavigationOpenOptions = {
   replace?: boolean;
   /** @deprecated For explicit Close use Navigation.dismiss, which retires visits.

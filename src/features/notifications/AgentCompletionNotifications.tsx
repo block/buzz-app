@@ -61,7 +61,8 @@ export function AgentCompletionNotifications({
             work.state === "error" ? "error" : "success",
             {
               label: "View",
-              onClick: () => void services.navigation.open(target),
+              onClick: () =>
+                void services.navigation.open(target, { focus: "composer" }),
             },
           );
         },

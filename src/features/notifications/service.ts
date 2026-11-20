@@ -68,6 +68,8 @@ const categories = Object.freeze([
   { key: "thread", label: "Thread replies" },
   { key: "agent", label: "Solo chat completions" },
 ]);
+const builtIn = (category: string) =>
+  categories.some(({ key }) => key === category);
 const FRESH_MS = 120_000;
 export type NotificationSnapshot = Readonly<{
   viewer: string | undefined;
@@ -382,9 +384,7 @@ export class NotificationsService extends Service implements Notifications {
       "scope" in target && target.scope
         ? target.scope.communityOrigin
         : "local";
-    const source = categories.some((item) => item.key === category)
-      ? "message"
-      : category;
+    const source = builtIn(category) ? "message" : category;
     const key = JSON.stringify([scope, source, input.sourceKey]);
     const now = Date.now();
     this.revalidate();
@@ -476,7 +476,14 @@ export class NotificationsService extends Service implements Notifications {
             // owns current membership/channel access; admission's
             // selected-session gate must not turn a still-valid prior
             // notification into a dead click.
-            void this.navigation.open(item.target).catch(this.reportError);
+            // A message alert opens ready to reply; plugin targets keep
+            // their destination's default focus.
+            void this.navigation
+              .open(
+                item.target,
+                builtIn(item.category) ? { focus: "composer" } : undefined,
+              )
+              .catch(this.reportError);
           },
           (error) => {
             // Native failure can arrive before `show` resolves. Cancellation is

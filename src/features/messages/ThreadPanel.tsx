@@ -1157,10 +1157,22 @@ function ThreadMessages({
   }, [revealSelected, revealRequest]);
   const revealSignal =
     inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
+  // The reply composer, and the activity lane its TypingIndicator needs.
+  const composerRoot =
+    !preview &&
+    !soloConversation &&
+    (!requireReadyRoot ||
+      (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
+      ? snapshot.root
+      : undefined;
+  // A composer-focused opening focuses the reply box; a thread without one
+  // (preview access, Solo, an unavailable root) keeps the reveal's focus.
+  const replyFocused = navigation?.focus === "composer" && !!composerRoot;
   const revealed = useMessageReveal({
     scroller,
     focus:
       revealFocus !== false &&
+      !(replyFocused && revealSignal === navigation?.signal) &&
       !(
         navigation?.target.kind === "conversation" &&
         navigation.target.panel === "members"
@@ -1252,6 +1264,20 @@ function ThreadMessages({
   useEffect(() => {
     if (focusRequest) setReplyFocus((value) => value + 1);
   }, [focusRequest]);
+  // Once per visit: a session rebinding the same visit is not a new opening.
+  const composerVisit = useRef<string>(undefined);
+  useEffect(() => {
+    if (
+      !navigation ||
+      !replyFocused ||
+      navigation.signal.aborted ||
+      !active ||
+      composerVisit.current === navigation.entryId
+    )
+      return;
+    composerVisit.current = navigation.entryId;
+    setReplyFocus((value) => value + 1);
+  }, [navigation, active, replyFocused]);
   const pendingReplyFocus = usePendingRequest(replyFocus);
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
@@ -2077,14 +2103,6 @@ function ThreadMessages({
     )
       history.focus({ preventScroll: true });
   }, [session.channels, channelId]);
-  // The reply composer, and the activity lane its TypingIndicator needs.
-  const composerRoot =
-    !preview &&
-    !soloConversation &&
-    (!requireReadyRoot ||
-      (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
-      ? snapshot.root
-      : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);

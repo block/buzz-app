@@ -1162,7 +1162,9 @@ Quitting Buzz also turns it off.
   devices or while the Activity page is open.
 - **Live message alerts** still follow your notification settings when a channel
   read loads the message before its live delivery arrives. Loading history alone
-  does not send alerts.
+  does not send alerts. Clicking a mention, DM, thread reply or Solo chat
+  alert opens its message and puts the cursor in the composer (the thread's
+  reply box for a thread reply) so you can reply right away.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community

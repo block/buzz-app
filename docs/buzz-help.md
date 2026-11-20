@@ -148,6 +148,8 @@ if that desktop app is up and running.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.
+  Several words find a channel, DM, person, page, setting or plugin that has
+  every word, in any order; matches for the text as typed come first.
 - **Finder.** With the Finder plugin on (it's off by default), ⌘P (Ctrl+P)
   finds a message in the channel you're in from any piece you remember, and
   ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes

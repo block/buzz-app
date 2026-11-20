@@ -8804,6 +8804,171 @@ it("opens an existing DM from a person row, and a draft to someone without one",
   }
 });
 
+it("finds channels, direct messages and people by typed words in any order", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair(),
+    carol = keypair();
+  const discovery = [
+    metadata(relay, "buzz-community", "buzz-community", 1700000000),
+    roster(relay, "buzz-community", [viewer.pubkey]),
+    metadata(relay, "community", "community", 1700000001),
+    roster(relay, "community", [viewer.pubkey]),
+    metadata(relay, "dm", "opaque", 1700000002, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { display_name: "Alice Fixture" }),
+    profile(carol, { display_name: "Alice Q. Fixture" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // The directory finds nobody for these words. Carol's profile is cached.
+  const t = peopleSession(owner.session);
+  const props = {
+    session: t.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openNewMessage: () => {},
+    openConversation: () => {},
+  };
+  const rows = async (group: string) =>
+    within(await screen.findByRole("group", { name: group }))
+      .getAllByRole("option")
+      .map((row) => [
+        // The label is the element that holds the underlined runs.
+        row.querySelector("mark")?.parentElement?.textContent,
+        [...row.querySelectorAll("mark")].map((mark) => mark.textContent),
+      ]);
+  try {
+    const view = render(<SearchResults {...props} query="community buzz" />);
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () =>
+      owner.session.profiles.ensure([alice.pubkey, carol.pubkey]),
+    );
+    // Both words, each underlined; "community" alone holds no "buzz".
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([
+        ["buzz-community", ["buzz", "community"]],
+      ]),
+    );
+    view.rerender(<SearchResults {...props} query="fixture alice" />);
+    await waitFor(async () =>
+      expect(await rows("Direct messages")).toEqual([
+        ["Alice Fixture", ["Alice", "Fixture"]],
+      ]),
+    );
+    // The directory is asked for the whole text, and finds nobody.
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith(
+        "fixture alice",
+        1,
+        expect.anything(),
+      ),
+    );
+    // Alice's direct message already lists her. Carol has none, and is found
+    // by the people rule for each word, from her cached profile.
+    await waitFor(async () =>
+      expect(await rows("People")).toEqual([
+        ["Alice Q. Fixture", ["Alice", "Fixture"]],
+      ]),
+    );
+    // The people rule holds for each word: no match inside a word.
+    view.rerender(<SearchResults {...props} query="ixture alice" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith(
+        "ixture alice",
+        1,
+        expect.anything(),
+      ),
+    );
+    expect(screen.queryByRole("group", { name: "People" })).toBeNull();
+    // One word lists what it always has, in the same order.
+    view.rerender(<SearchResults {...props} query="community" />);
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([
+        ["community", ["community"]],
+        ["buzz-community", ["community"]],
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("lists a page found word by word through its detail after names that hold the words", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const discovery = [
+    metadata(relay, "reports", "reports-team-dashboards", 1700000000),
+    roster(relay, "reports", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+  });
+  const page = (label: string, detail?: string) => ({
+    key: label,
+    label,
+    ...(detail ? { detail } : {}),
+    icon: ChatCircleIcon,
+    run: () => {},
+  });
+  // PageSearch found "Reports" by one word in its label and one in its
+  // detail. No name here holds the typed text whole.
+  const found = page("Reports", "Team dashboards");
+  const props = {
+    session: owner.session,
+    query: "dashboards reports",
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    openNewMessage: () => {},
+    openConversation: () => {},
+  };
+  try {
+    const view = render(<SearchResults {...props} pages={[found]} />);
+    await screen.findByRole("option", { name: /^reports-team-dashboards/ });
+    // The channel holds both words in its name, so its group comes first.
+    expect(
+      within(screen.getByRole("listbox"))
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Channels", "Pages"]);
+    // So does a page that holds both words in its label.
+    view.rerender(
+      <SearchResults
+        {...props}
+        pages={[found, page("Reports and dashboards")]}
+      />,
+    );
+    expect(
+      within(screen.getByRole("group", { name: "Pages" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Reports and dashboards", expect.stringMatching(/^Reports/)]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("opens a DM from a person row through the confirmed open until the relay's hidden DMs load", async () => {
   // Before the first visibility snapshot, a DM the relay hides looks
   // visible. The confirmed open asks the relay to unhide it, so the sidebar

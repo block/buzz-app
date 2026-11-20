@@ -1376,6 +1376,44 @@ it("finds public channels by the joined-channel name rule, not only by substring
   expect(h.pending).toHaveLength(0);
 });
 
+it("finds public channels by typed words in any order, after whole-text matches", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `11500000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const page = [
+    open(0, "buzz-community"),
+    open(1, "community buzz chat"),
+    open(2, "release-notes"),
+    open(3, "community"),
+  ];
+  const done = h.channels.searchPublic?.("community buzz");
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  const resolve = await h.next(39000);
+  // Only the names that hold both words are resolved.
+  expect([...(resolve.filters[0]?.["#d"] ?? [])].sort()).toEqual([
+    id(0),
+    id(1),
+  ]);
+  resolve.respond(page.slice(0, 2));
+  // The name that starts with the text, then the one holding its words apart.
+  const order = ["community buzz chat", "buzz-community"];
+  expect((await done)?.channels.map(({ name }) => name)).toEqual(order);
+  expect(
+    h.channels.matchPublic?.("community buzz").map(({ name }) => name),
+  ).toEqual(order);
+  // An exact lookup names one channel by its whole name, never by its words.
+  expect(h.channels.matchPublic?.("community buzz", { exact: true })).toEqual(
+    [],
+  );
+  expect(h.pending).toHaveLength(0);
+});
+
 it("orders public matches by the shared ranks, best first", async () => {
   const h = setup();
   h.channels.ensureList();

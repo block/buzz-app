@@ -1,3 +1,4 @@
+import { rankTerms } from "./match";
 import { matchTier, normalizeName } from "./person-match";
 import { searchOrder, type SearchUsage } from "./usage";
 import { typedPublicKey } from "../../shared/identity/public-key";
@@ -58,20 +59,34 @@ function personMatch(
  * so callers list the directory's rows first, in the order the relay ranked
  * them. `score` is the same order without the band, on the scale channel and
  * page rows use, so a caller can place the whole group among other groups.
+ *
+ * With `terms`, as in Command-K, text of several words that matches no name
+ * whole also finds a person whose names hold every word, each by the name
+ * rule and in any order. Those rows follow every whole match (`rankTerms`).
  */
 export function rankPeople<T extends PersonCandidate>(
   people: readonly T[],
   needle: string,
   usage: SearchUsage,
   picked: string | undefined,
+  options?: { terms?: boolean },
 ) {
   // A pasted public key names its person exactly, though no name matches it.
   const key = typedPublicKey(needle);
-  // Fold the query once, not once per person.
-  const folded = needle.trim() ? [...normalizeName(needle)] : undefined;
+  // Fold each text once, not once per person.
+  const folds = new Map<string, readonly string[] | undefined>();
+  const fold = (text: string) => {
+    if (!folds.has(text))
+      folds.set(text, text.trim() ? [...normalizeName(text)] : undefined);
+    return folds.get(text);
+  };
+  const match = (person: T) =>
+    options?.terms
+      ? rankTerms(needle, (text) => personMatch(person, fold(text)))
+      : personMatch(person, fold(needle));
   return people
     .flatMap((person) => {
-      const rank = person.pubkey === key ? 0 : personMatch(person, folded);
+      const rank = person.pubkey === key ? 0 : match(person);
       if (rank === undefined) return [];
       const row = {
         key: personKey(person.pubkey),

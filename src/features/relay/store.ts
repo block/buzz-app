@@ -62,7 +62,7 @@ import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
 import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
 import type { WindowPage } from "./window";
-import { MatchRank, matchRank } from "../search/match";
+import { MatchRank, matchRank, rankTerms } from "../search/match";
 import { RESUME_READ_AGE } from "./live";
 
 type Listener = () => void;
@@ -252,14 +252,16 @@ const describe = (error: unknown) =>
  * a row, so a larger read risks its read timeout. */
 const AUX_PAGE = 50;
 const isAbort = (error: unknown) => readErrorKind(error) === "cancelled";
-/** An open channel name's match rank: the joined-channel rule (`matchRank`),
- * so "buzz community" finds "buzz-community"; an exact lookup names one. */
+/** An open channel name's match rank: the joined-channel rule (`matchRank`
+ * for the whole typed text, or failing that for each of its words), so
+ * "buzz community" and "community buzz" find "buzz-community"; an exact
+ * lookup names one. */
 const publicRank = (name: string, needle: string, exact?: boolean) =>
   exact
     ? name.toLowerCase() === needle
       ? MatchRank.exact
       : undefined
-    : matchRank(name, needle);
+    : rankTerms(needle, (text) => matchRank(name, text));
 /** How long a completed read answers a repeated trigger without asking again. */
 export const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on

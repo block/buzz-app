@@ -116,3 +116,67 @@ export function matchName(
 
 export const matchRank = (label: string, needle: string) =>
   matchName(label, needle)?.rank;
+
+/** The words of typed text. Each is a search term of its own. */
+export const searchTerms = (needle: string) =>
+  needle.split(/\s+/u).filter(Boolean);
+
+/** Where the ranks of rows found only word by word begin: after every row
+ * that matches the whole typed text, whatever its caller adds to that rank
+ * (field penalties here; relationship bands, ten apart, in people search). */
+export const TERMS_APART = 100;
+
+/**
+ * A row's rank for typed text, or undefined. `rank` is the row's own rule for
+ * one piece of text: the best of its fields, with their caps and penalties,
+ * and undefined or Infinity for no match.
+ *
+ * The whole text is tried first, so a row it matches ranks as before. Failing
+ * that, text of several words matches when every word does, in any order and
+ * each in any of the row's fields. Such a row ranks by its weakest word,
+ * `TERMS_APART` later. One word is only ever the whole text.
+ */
+export function rankTerms(
+  needle: string,
+  rank: (text: string) => number | undefined,
+): number | undefined {
+  const found = (text: string) => {
+    const value = rank(text);
+    return value !== undefined && Number.isFinite(value) ? value : undefined;
+  };
+  const whole = found(needle);
+  if (whole !== undefined) return whole;
+  const terms = searchTerms(needle);
+  if (terms.length < 2) return undefined;
+  let weakest = 0;
+  for (const term of terms) {
+    const value = found(term);
+    if (value === undefined) return undefined;
+    weakest = Math.max(weakest, value);
+  }
+  return TERMS_APART + weakest;
+}
+
+/**
+ * The code points of a shown label to underline for typed text: where the
+ * whole text matches it or, failing that, where each typed word does. A word
+ * the row holds in another field underlines nothing. `match` is the label's
+ * own rule, `matchName` unless the caller caps it or matches people.
+ */
+export function matchedPositions(
+  label: string,
+  needle: string,
+  match: (
+    label: string,
+    text: string,
+  ) => { positions: number[] } | undefined = matchName,
+): number[] | undefined {
+  const whole = match(label, needle);
+  if (whole) return whole.positions;
+  const terms = searchTerms(needle);
+  if (terms.length < 2) return undefined;
+  const positions = new Set(
+    terms.flatMap((term) => match(label, term)?.positions ?? []),
+  );
+  return positions.size ? [...positions].sort((a, b) => a - b) : undefined;
+}

@@ -456,6 +456,40 @@ it("completes open channels by word runs, without scattered letters", async () =
     vi.useRealTimers();
   }
 });
+
+it("does not complete a name that holds the typed words apart, as Command-K finds one", async () => {
+  vi.useFakeTimers();
+  try {
+    const apart = channel("apart", {
+      name: "buzz-community",
+      members: [],
+      readOnly: true,
+    });
+    const prefixed = channel("prefixed", {
+      name: "community buzz chat",
+      members: [],
+      readOnly: true,
+    });
+    const t = fixture([channel("joined", { name: "buzz-community-team" })]);
+    const previews = new Map(
+      [apart, prefixed].map((entry) => [entry.id, entry]),
+    );
+    Object.assign(t.session.channels, {
+      // The store's answer may hold names found word by word; completion
+      // drops them, so prose after `#name` still closes the popup.
+      searchPublic: vi.fn(async () => ({
+        channels: [prefixed, apart],
+        partial: false,
+      })),
+      get: (id: string) => previews.get(id),
+    });
+    render(t.element("community buzz"));
+    await act(async () => vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS));
+    expect(t.result().items.map((item) => item.id)).toEqual(["prefixed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("finds multi-word open channel names by prefix", async () => {
   vi.useFakeTimers();
   try {

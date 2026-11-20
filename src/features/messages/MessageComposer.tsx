@@ -3427,6 +3427,9 @@ function Composer({
           threadRootId={threadRootId}
           canOpen={(target) => canOpenLink?.(target) ?? false}
           open={(target) => onOpenLink?.(target) ?? false}
+          onFocusedRemoval={() => {
+            if (permitted.current) input.current?.focus();
+          }}
         />
       )}
     </div>

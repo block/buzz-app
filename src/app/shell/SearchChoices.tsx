@@ -48,6 +48,9 @@ export type SearchDestination = {
   rank?: number;
   key: string;
   label: string;
+  /** Shown in place of `label` where text alone cannot show it, as a
+   * message's mention chips; `matches` still index `label`. */
+  labelContent?: ReactNode;
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
@@ -149,6 +152,9 @@ export type SearchPeek = {
    * too short to search messages, say), so they may still come back, each
    * with the reason shown while it's chosen. */
   unsearched?: Readonly<Record<string, ReactNode>> | undefined;
+  /** Called once the person moves the highlight for this text: rows on
+   * screen shouldn't move under them after that. */
+  onMove?: (() => void) | undefined;
 };
 
 /** The person's keys for the previous and next result, which the field
@@ -159,6 +165,18 @@ export const DEFAULT_SEARCH_STEPS: SearchSteps = {
   next: { key: "ArrowDown" },
 };
 export const SearchStepsContext = createContext(DEFAULT_SEARCH_STEPS);
+/** Vim's and Emacs's keys, with Control itself on every platform: a step to
+ * the next or previous result, or to the next or previous group as Tab. */
+const CONTROL_STEPS = new Map<string, readonly ["result" | "group", boolean]>([
+  ["j", ["result", true]],
+  ["n", ["result", true]],
+  ["k", ["result", false]],
+  ["p", ["result", false]],
+  ["l", ["group", true]],
+  ["f", ["group", true]],
+  ["h", ["group", false]],
+  ["b", ["group", false]],
+]);
 
 /** Top results shows this many rows of its first group, and of the rest. */
 const LEAD_ROWS = 5;
@@ -432,6 +450,18 @@ export function SearchChoices({
     if (resultsContent.current) resultsContent.current.scrollTop = 0;
     if (focusInput) input.current?.focus();
   };
+  /** Shows the group after or before the one shown, Top results (or an empty
+   * search's first group) first; false past either end. */
+  const stepScope = (forward: boolean) => {
+    const order = [
+      ...(home ? [] : [undefined]),
+      ...tabs.map(({ label }) => label),
+    ];
+    const next = order.indexOf(scoped?.label) + (forward ? 1 : -1);
+    if (next < 0 || next >= order.length) return false;
+    showScope(order[next]);
+    return true;
+  };
   const hasControls = groups.some((group) =>
     group.destinations.some((row) => row.content),
   );
@@ -447,7 +477,11 @@ export function SearchChoices({
     // waiting for results never runs one of its rows.
     query: onBack ? `\u0000${query}` : query,
     keys,
-    onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
+    onChoose: (key) => {
+      // Choosing acts on the order shown: a later rerank must not move it.
+      peek?.onMove?.();
+      destinations.find((row) => row.key === key)?.run();
+    },
     open,
     pending,
     isAction,
@@ -462,6 +496,11 @@ export function SearchChoices({
         : {}),
   });
   const selected = highlight.active;
+  const onMove = peek?.onMove;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reports each text's first move once.
+  useEffect(() => {
+    if (highlight.moved) onMove?.();
+  }, [highlight.moved, query]);
   const moved = previewing && highlight.moved;
   const steps = useContext(SearchStepsContext);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
@@ -631,6 +670,7 @@ export function SearchChoices({
       content,
       key,
       label,
+      labelContent,
       detail,
       detailIcon: DetailIcon,
       detailIconLabel,
@@ -768,7 +808,9 @@ export function SearchChoices({
             label={
               <>
                 <span className="block truncate text-body-sm">
-                  <MatchedLabel label={label} positions={matches} />
+                  {labelContent ?? (
+                    <MatchedLabel label={label} positions={matches} />
+                  )}
                 </span>
                 {detail && (
                   <span
@@ -905,6 +947,44 @@ export function SearchChoices({
               }
               // Other arrow chords, such as Shift+Down, edit the text.
               if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
+              // Control's letter keys step after the person's keys, in place
+              // of the text field's own Emacs keys. Group keys only take
+              // over while there are groups to show. An app shortcut that
+              // runs inside search, such as one the person moved to one of
+              // these, comes first: the window's dispatcher sees the key
+              // after this field, so the step waits there and is skipped
+              // once a shortcut has claimed the key.
+              const control =
+                native.ctrlKey &&
+                !native.metaKey &&
+                !native.altKey &&
+                !native.shiftKey &&
+                !native.getModifierState("AltGraph")
+                  ? CONTROL_STEPS.get(event.key.toLowerCase())
+                  : undefined;
+              const host = event.currentTarget.ownerDocument.defaultView;
+              if (
+                host &&
+                control &&
+                (control[0] === "result" || (peek?.ranked && tabs.length))
+              ) {
+                const [kind, forward] = control;
+                const step = (later: Event) => {
+                  if (later !== native) return;
+                  host.removeEventListener("keydown", step);
+                  if (native.defaultPrevented) return;
+                  native.preventDefault();
+                  if (kind === "group") return void stepScope(forward);
+                  restore.current = 0;
+                  highlight.move(forward);
+                };
+                host.addEventListener("keydown", step);
+                // A key stopped before the window edits the text as before.
+                host.setTimeout(() =>
+                  host.removeEventListener("keydown", step),
+                );
+                return;
+              }
             }
             const shortcutNumber = /^Digit([1-9])$/.exec(event.code)?.[1];
             if (
@@ -965,16 +1045,8 @@ export function SearchChoices({
               !event.metaKey &&
               !event.altKey
             ) {
-              const order = [
-                ...(home ? [] : [undefined]),
-                ...tabs.map(({ label }) => label),
-              ];
-              const next =
-                order.indexOf(scoped?.label) + (event.shiftKey ? -1 : 1);
-              if (tabs.length ? next >= 0 && next < order.length : peek.busy) {
+              if (tabs.length ? stepScope(!event.shiftKey) : peek.busy)
                 event.preventDefault();
-                if (tabs.length) showScope(order[next]);
-              }
               return;
             }
             // Escape from one group returns to Top results, or the first

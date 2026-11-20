@@ -66,6 +66,8 @@ import {
   forgetDefaultAgent,
 } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
+import { artifactTemplate } from "./agent-config-artifacts";
+import { type ConfigAgent, fields } from "./community-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
@@ -104,6 +106,7 @@ import { CATCH_UP_PREFIX, MENTIONS, readCheckpoints } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
+import { saveOwnerSections } from "./prompt-sections";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
@@ -146,6 +149,8 @@ import {
 } from "../messages/mention-admission";
 import type { ComposerSession } from "../messages/composer-session";
 import {
+  CHECK_MS,
+  onRecommended,
   recommendationReady,
   recommendedSetup,
   setRuntimeRecommendation,
@@ -268,9 +273,22 @@ async function setup({
 } = {}) {
   const ctx = new Context();
   let settled = false;
+  // As the plugin runtime does, startup's end notifies status listeners.
+  const statusListeners = new Set<() => void>();
+  const settle = () => {
+    settled = true;
+    for (const listener of statusListeners) listener();
+  };
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
-    subscribe: subscribePlugin,
+    subscribe: (listener: () => void) => {
+      statusListeners.add(listener);
+      const stop = subscribePlugin(listener);
+      return () => {
+        statusListeners.delete(listener);
+        stop();
+      };
+    },
     settled: () => settled,
   });
   const fake = fakeRelay();
@@ -390,7 +408,7 @@ async function setup({
   // The Attention plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
-  settled = !starting;
+  if (!starting) settle();
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -400,9 +418,7 @@ async function setup({
     service,
     typesafe,
     /** Ends startup, as when the last plugin finishes starting. */
-    settleStartup: () => {
-      settled = true;
-    },
+    settleStartup: settle,
     type,
     native,
     storage,
@@ -415,6 +431,7 @@ async function setup({
     fail: fake.fail,
     relay: fake.relay,
     reconnecting: fake.reconnecting,
+    reload: fake.reload,
     recover: fake.recover,
     unrouted: fake.unrouted,
     learned: fake.learned,
@@ -555,9 +572,10 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     id: "native",
     title: "Native",
     execution: true,
+    settingsProposal: { voice: true },
     protection: true,
     retire,
-    defaults: () => ({ config: {} }),
+    defaults: () => ({ config: { voice: "cove" } }),
     run: vi.fn(),
   });
   const target = {
@@ -584,6 +602,23 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     name: "Dedicated",
   });
   await service.retype(agent.key, "example/native");
+  await vi.waitFor(() =>
+    expect(plugin.agents.handle(agent.key)?.updateAgent).toBeDefined(),
+  );
+  const propose = plugin.agents.handle(agent.key)?.updateAgent;
+  if (!propose) throw new Error("Missing update handle");
+  const { requestId } = await propose({
+    agent: agent.pubkey,
+    settings: { workspace: "/other/workspace" },
+  });
+  const { requestId: voiceRequest } = await propose({
+    agent: agent.pubkey,
+    settings: { voice: "maple" },
+  });
+  const { requestId: modelRequest } = await propose({
+    agent: agent.pubkey,
+    settings: { model: "local-model" },
+  });
   const beforeBinding = service.local();
   expect(
     beforeBinding.agents.find((item) => item.pubkey === agent.pubkey)
@@ -614,6 +649,72 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     finishRetirement();
   }
   await changing;
+  await vi.waitFor(() =>
+    expect(plugin.agents.handle(agent.key)?.updateAgent).toBeDefined(),
+  );
+  const handle = plugin.agents.handle(agent.key);
+  if (!handle?.updateAgent) throw new Error("Missing update handle");
+  await expect(
+    handle.updateAgent({
+      agent: agent.pubkey,
+      settings: { workspace: "/other/workspace" },
+    }),
+  ).rejects.toThrow("execution adapter manages");
+  const opened = service.find(agent.key);
+  if (!opened) throw new Error("Missing agent");
+  await expect(
+    service.approveUpdate(
+      requestId,
+      {
+        type: opened.type,
+        name: opened.name,
+        config: { workspace: "/other/workspace" },
+      },
+      opened,
+    ),
+  ).rejects.toThrow("execution adapter manages");
+  expect(service.find(agent.key)?.config).toEqual(opened.config);
+  expect(service.updateRequests()[0]?.id).toBe(requestId);
+  service.dismissUpdate(requestId);
+  await expect(
+    handle.updateAgent({ agent: agent.pubkey, settings: { voice: "maple" } }),
+  ).rejects.toThrow("can only propose the default Huddle voice");
+  const approval = { type: opened.type, name: opened.name };
+  await expect(
+    service.approveUpdate(
+      voiceRequest,
+      { ...approval, config: { voice: "maple" } },
+      opened,
+    ),
+  ).rejects.toThrow("can only propose the default Huddle voice");
+  service.dismissUpdate(voiceRequest);
+  for (const settings of [{ model: "target-model" }, { effort: "high" }]) {
+    await expect(
+      handle.updateAgent({ agent: agent.pubkey, settings }),
+    ).rejects.toThrow("does not support model or thinking proposals");
+  }
+  await expect(
+    service.approveUpdate(
+      modelRequest,
+      { ...approval, config: { model: "local-model" } },
+      opened,
+    ),
+  ).rejects.toThrow("does not support model or thinking proposals");
+  expect(service.find(agent.key)?.config).toEqual(opened.config);
+  expect(service.updateRequests().map(({ id }) => id)).toEqual([modelRequest]);
+  service.dismissUpdate(modelRequest);
+  const { requestId: defaultVoiceRequest } = await handle.updateAgent({
+    agent: agent.pubkey,
+    settings: { voice: "" },
+  });
+  await service.approveUpdate(
+    defaultVoiceRequest,
+    { ...approval, config: { voice: "" } },
+    opened,
+  );
+  expect(service.find(agent.key)?.config).toEqual({ voice: "" });
+  expect(service.updateRequests()).toEqual([]);
+
   expect(
     service.local().agents.find((item) => item.pubkey === agent.pubkey)
       ?.execution,
@@ -3584,6 +3685,470 @@ it("asks the first plugin that recommends, and waits for plugins to start before
   }
 });
 
+describe("an agent on Automatic and the recommended harness", () => {
+  // A synthetic recommendation: codex first, then goose.
+  const recommendation = {
+    candidates: [
+      { harness: "codex", model: "model-a", effort: "high", label: "Model A" },
+      {
+        harness: "goose",
+        provider: "example",
+        model: "model-b",
+        effort: "high",
+        label: "Model B",
+      },
+    ],
+  };
+  type Harness = Record<string, string>;
+  /** goose and codex stand-ins; `ready` holds the harnesses set up here. */
+  async function harnesses(
+    options: Parameters<typeof setup>[0] & {
+      ready?: Set<string>;
+      codexReady?: () => Promise<boolean>;
+      sessionScopes?: true;
+      remoteCodex?: true;
+      /** Codex describes its apps setting for a migration, as the real one. */
+      codexApps?: true;
+    } = {},
+  ) {
+    setRuntimeRecommendation(recommendation);
+    const ready = options.ready ?? new Set(["codex", "goose"]);
+    const f = await setup(options);
+    const make = (id: string) => {
+      const recommends = vi.fn(async () =>
+        id === "codex" && options.codexReady
+          ? options.codexReady()
+          : ready.has(id),
+      );
+      const run = vi.fn<(delivery: Delivery<Harness>) => Promise<void>>(
+        async () => {},
+      );
+      const type: AgentType<Harness> = {
+        id,
+        title: id,
+        defaults: () => ({
+          config: { reply: "", workspace: "~/.buzz", scope: "thread" },
+        }),
+        adopt: (carry, saved) => ({
+          ...saved,
+          reply: carry.instructions ?? saved.reply ?? "",
+          workspace: carry.workspace ?? saved.workspace ?? "~/.buzz",
+        }),
+        carry: ({ reply, workspace }) => ({
+          ...(reply && { instructions: reply }),
+          ...(workspace && workspace !== "~/.buzz" && { workspace }),
+        }),
+        recommends,
+        run,
+        ...(id === "codex" &&
+          options.codexApps && {
+            describeMigration: (saved: Harness) => [
+              {
+                id: "apps",
+                label: "Codex apps and plugins",
+                isOverride: saved.apps === "true",
+              },
+            ],
+          }),
+        ...(options.sessionScopes && {
+          sessionControls: {
+            scope: (agent) =>
+              (agent.config as Harness).scope === "channel"
+                ? "channel"
+                : "thread",
+            state: () => "idle",
+            run: async () => {},
+            subscribe: () => () => {},
+          },
+        }),
+      };
+      f.plugin.agents.register(type);
+      return { recommends, run };
+    };
+    const goose = make("goose");
+    const codex = make("codex");
+    return { ...f, goose, codex };
+  }
+  afterEach(() => {
+    setRuntimeRecommendation(undefined);
+    vi.restoreAllMocks();
+  });
+  const automatic = { preset: "recommended", reply: "Be kind." };
+
+  it("moves to the first ready candidate's harness, carrying its instructions and staying on Automatic", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { ...automatic, workspace: "~/work" },
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(f.native.setType).toHaveBeenCalledExactlyOnceWith(
+      bot,
+      "example/codex",
+    );
+    const { config } = f.service.find(bot) ?? {};
+    expect(config).toMatchObject({
+      preset: "recommended",
+      reply: "Be kind.",
+      workspace: "~/work",
+    });
+    expect(onRecommended(config)).toBe(true);
+    // One short line, naming harnesses only.
+    expect(info).toHaveBeenCalledExactlyOnceWith(
+      "An agent on Automatic moved from example/goose to example/codex, the recommended harness ready here",
+    );
+    // A new session on the new harness, which runs it from now on.
+    f.emit({
+      events: [
+        event("after", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.codex.run).toHaveBeenCalledOnce());
+    expect(f.goose.run).not.toHaveBeenCalled();
+  });
+
+  it("moves once per launch, even when the recommendation changes after", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    setRuntimeRecommendation({
+      candidates: [...recommendation.candidates].reverse(),
+    });
+    await f.service.save(bot, { name: "Agent A2" });
+    f.emit({
+      events: [
+        event("later", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.codex.run).toHaveBeenCalledOnce());
+    await settle();
+    expect(f.native.setType).toHaveBeenCalledOnce();
+    expect(f.service.find(bot)?.type).toBe("example/codex");
+  });
+
+  it("keeps its harness when the recommended one isn't ready here", async () => {
+    const f = await harnesses({ ready: new Set(["goose"]) });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
+  it("leaves a Custom agent's harness alone", async () => {
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { reply: "Be kind." },
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("leaves it to the copy of Buzz that runs it", async () => {
+    const f = await harnesses();
+    f.native.claim.mockResolvedValue(false);
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("keeps its harness when its session setting wouldn't carry over", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ sessionScopes: true });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { ...automatic, scope: "channel" },
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: moving would reset a setting of its own",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
+  it("moves an agent on a harness with no candidate to the top ready one", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    // Codex only: goose has no candidate, so it ranks last.
+    setRuntimeRecommendation({
+      candidates: recommendation.candidates.slice(0, 1),
+    });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+  });
+
+  it("moves down the list when the harness above is definitely not ready", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    // On codex, the top harness, which says plainly it isn't ready here.
+    const f = await harnesses({ ready: new Set(["goose"]) });
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/goose"),
+    );
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+  });
+
+  it("keeps its harness this launch when a check ahead fails, and moves the next", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    // Codex first: on goose, while codex's check fails rather than answering.
+    const f = await harnesses({
+      codexReady: () => Promise.reject(new Error("offline")),
+    });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "Agents on Automatic keep their harness this launch: a recommended harness's check didn't answer",
+      ),
+    );
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    // The next launch, with the same agent, where codex answers.
+    const next = await harnesses({
+      storage: f.storage,
+      identities: await f.native.list(),
+    });
+    await vi.waitFor(() =>
+      expect(next.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(next.native.setType).toHaveBeenCalledExactlyOnceWith(
+      bot,
+      "example/codex",
+    );
+  });
+
+  it("keeps its harness this launch when a check ahead times out", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      const f = await harnesses({
+        codexReady: () => new Promise<boolean>(() => {}),
+      });
+      await f.service.create({
+        type: "example/goose",
+        name: "Agent A",
+        config: automatic,
+      });
+      await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(CHECK_MS);
+      await vi.waitFor(() =>
+        expect(info).toHaveBeenCalledWith(
+          "Agents on Automatic keep their harness this launch: a recommended harness's check didn't answer",
+        ),
+      );
+      expect(f.native.setType).not.toHaveBeenCalled();
+      expect(f.service.find(bot)?.type).toBe("example/goose");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps its harness when it is switched to Custom while the check runs", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await f.service.save(bot, { config: { reply: "Be kind." } });
+    check.resolve(true);
+    await settle();
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(false);
+  });
+
+  it("keeps its harness when an execution target is bound while the check runs", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    // A plugin execution target is bound to it during the check.
+    const { executions } = f.service as unknown as {
+      executions: { read(key: string): unknown };
+    };
+    vi.spyOn(executions, "read").mockImplementation((key) =>
+      key === bot ? { provider: "example.target" } : undefined,
+    );
+    check.resolve(true);
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: it runs on an execution target now",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
+  it("waits for every harness plugin to start before it picks", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ starting: true });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    f.settleStartup();
+    await f.service.save(bot, { name: "Agent A2" });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+  });
+
+  it("keeps a Codex agent with its apps setting on when goose is recommended first", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ codexApps: true });
+    setRuntimeRecommendation({
+      candidates: [...recommendation.candidates].reverse(),
+    });
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent A",
+      config: { ...automatic, apps: "true" },
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: moving would reset a setting of its own",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("checks an agent created later afresh, not with an earlier pick", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const ready = new Set(["goose"]);
+    const f = await harnesses({ ready });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await settle();
+    // Codex is signed in since: an agent made on it now stays there.
+    ready.add("codex");
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent B",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(sibling)?.type).toBe("example/codex");
+  });
+
+  it("leaves a hosted agent alone", async () => {
+    const f = await harnesses();
+    f.plugin.agents.register(cloud().type);
+    const agent = await f.service.create({
+      type: "example/cloud",
+      name: "Agent A",
+      config: automatic,
+    });
+    expect(agent).toMatchObject({ place: "hosted" });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("waits while it is answering, then moves once it is idle", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    const answer = runnerGate();
+    f.goose.run.mockImplementationOnce(() => answer.promise);
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    f.emit({
+      events: [
+        event("busy", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.goose.run).toHaveBeenCalledOnce());
+    check.resolve(true);
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+    answer.resolve();
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(f.native.setType).toHaveBeenCalledOnce();
+  });
+});
+
 it("ignores session tags even for a type with immediate session controls", async () => {
   const { service, run, emit } = await setup({
     sessionControls: { state: () => "idle", run: async () => {} },
@@ -4502,6 +5067,25 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
 });
 
+it("gives a harness the owner's base section choices as they are saved now", async () => {
+  const { service, plugin, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const choices = () => plugin.agents.handle(bot)?.promptSections?.();
+  expect(choices()).toEqual({ owner: {} });
+  await saveOwnerSections(storage, {
+    progress: { mode: "off" },
+    etiquette: { mode: "custom", text: "Be brief." },
+  });
+  // Read at each call, so the next prompt has them without a restart.
+  expect(choices()).toEqual({
+    owner: {
+      progress: { mode: "off" },
+      etiquette: { mode: "custom", text: "Be brief." },
+    },
+  });
+});
+
 it("hands a plugin its own agents outside any run, while this copy runs them", async () => {
   const { service, plugin, ctx, native, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5279,6 +5863,199 @@ describe("an agent in several communities", () => {
       warn.mockRestore();
     });
 
+    it("uses the reviewed revision if the agent's settings change during retirement", async () => {
+      const c = channels("home synced", "example/echo");
+      let release!: () => void;
+      const retiring = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const retire = vi.fn(() => retiring);
+      const f = await joined({ retire });
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore;
+      const side = settings(home);
+      const opened = store.state(side).head?.id;
+      if (!opened) throw new Error("Missing reviewed settings");
+      const retyping = f.service.retype(
+        bot,
+        "other/relay",
+        { config: {} },
+        { settings: opened },
+      );
+      const rejected = expect(retyping).rejects.toThrow(
+        "settings changed while changing harnesses",
+      );
+      try {
+        await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+        store.applyRead(side, store.capture(side), {
+          kind: "head",
+          event: settingsFor("example/echo"),
+        });
+      } finally {
+        release();
+      }
+      await rejected;
+      expect(c.get(home)?.save).not.toHaveBeenCalled();
+      expect(f.native.setType).not.toHaveBeenCalled();
+    });
+
+    it("saves reviewed instructions as well as the new harness", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore;
+      const instructionsSide = instructions(home);
+      const opened = {
+        settings: store.state(settings(home)).head?.id ?? null,
+        instructions: store.state(instructionsSide).head?.id ?? null,
+      };
+      const savedInstructions = revision("Reviewed instructions");
+      const save = c.get(home)?.save;
+      save?.mockImplementationOnce(async () => {
+        store.applyRead(instructionsSide, store.capture(instructionsSide), {
+          kind: "head",
+          event: savedInstructions,
+        });
+        return { instructions: { status: "saved", head: savedInstructions } };
+      });
+      const config = { instructions: "Reviewed instructions" };
+      await f.service.retype(bot, "other/relay", { config }, opened);
+      expect(save).toHaveBeenNthCalledWith(1, expect.anything(), config, {
+        instructions: opened.instructions,
+      });
+      expect(save).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ type: "other/relay" }),
+        config,
+        {
+          settings: opened.settings,
+        },
+      );
+      expect(f.service.find(bot)?.type).toBe("other/relay");
+      expect(store.state(instructionsSide).head?.id).toBe(savedInstructions.id);
+    });
+
+    it("keeps the Automatic mark and tag in the synced settings when it follows the recommended harness", async () => {
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      setRuntimeRecommendation({
+        candidates: [
+          { harness: "codex", model: "model-a", effort: "high", label: "A" },
+          {
+            harness: "goose",
+            provider: "example",
+            model: "model-b",
+            effort: "high",
+            label: "B",
+          },
+        ],
+      });
+      try {
+        // Its settings' head is on Automatic, as the goose stand-in's.
+        const head = (agentType: string) =>
+          finalizeEvent(
+            {
+              kind: 45010,
+              created_at: 1,
+              content: JSON.stringify({
+                version: 1,
+                agentType,
+                settings: {},
+                preset: "recommended",
+              }),
+              tags: [["op", "create"]],
+            },
+            generateSecretKey(),
+          ) as RelayEvent;
+        const save = vi.fn(
+          async (agent: ConfigAgent, _config: object, _base: unknown) => {
+            const side = settings(home);
+            const event = head(agent.type);
+            live?.applyRead(side, live.capture(side), { kind: "head", event });
+            return { settings: { status: "saved", head: event } };
+          },
+        );
+        let live: AgentConfigStore | undefined;
+        coordinators.make = (community, store) => {
+          if (community === home) live = store;
+          const bound = new Map<string, unknown>();
+          return {
+            attach: vi.fn(async (agents: readonly { pubkey: string }[]) => {
+              if (community !== home) return;
+              for (const { pubkey } of agents) {
+                const side = settings(community);
+                store.markBound(side);
+                if (!store.state(side).head)
+                  store.applyRead(side, store.capture(side), {
+                    kind: "head",
+                    event: head("example/goose"),
+                  });
+                bound.set(pubkey, {
+                  settings: { mode: "synced", subject: side },
+                });
+              }
+            }),
+            binding: (pubkey: string) => bound.get(pubkey),
+            remove: vi.fn(async () => {}),
+            exclusive: vi.fn((_: string, work: () => Promise<unknown>) =>
+              work(),
+            ),
+            save,
+            history: () => [],
+            dispose: vi.fn(),
+          };
+        };
+        const f = await setup();
+        for (const id of ["goose", "codex"])
+          f.plugin.agents.register({
+            id,
+            title: id,
+            defaults: () => ({ config: { reply: "" } }),
+            adopt: (carry, saved) => ({
+              ...saved,
+              reply: carry.instructions ?? "",
+            }),
+            carry: ({ reply }) => (reply ? { instructions: reply } : {}),
+            recommends: async () => true,
+            syncedSettings: { schema: {}, withSynced: (config) => config },
+            run: vi.fn(),
+          } satisfies AgentType<Config>);
+        // Its own config holds no mark: the synced head's is the agent's.
+        await f.service.create({
+          type: "example/goose",
+          name: "Agent A",
+          config: { reply: "Be kind." },
+        });
+        await vi.waitFor(() =>
+          expect(f.service.find(bot)?.type).toBe("example/codex"),
+        );
+        expect(save).toHaveBeenCalledOnce();
+        const [agent, config] = save.mock.calls[0] ?? [];
+        expect(agent?.type).toBe("example/codex");
+        expect(config).toEqual({ reply: "Be kind.", preset: "recommended" });
+        // As the config channel publishes it: the mark and its tag.
+        const body = fields("settings", agent as ConfigAgent, config as object);
+        expect(body).toMatchObject({
+          agentType: "example/codex",
+          preset: "recommended",
+        });
+        expect(
+          artifactTemplate({
+            ...settings(home),
+            d: "d",
+            op: "update",
+            prev: "p",
+            title: "Agent settings",
+            content: JSON.stringify(body),
+          }).tags,
+        ).toContainEqual(["preset", "recommended"]);
+        expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+      } finally {
+        setRuntimeRecommendation(undefined);
+      }
+    });
+
     it("refuses a History revert of its settings while their head names another type", async () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
@@ -5297,6 +6074,7 @@ describe("an agent in several communities", () => {
         event: settingsFor("other/relay"),
       });
       const history = f.service.configHistory(bot);
+      expect(history?.settingsProblem).toContain("another harness");
       await expect(
         history?.revise("settings", {} as never),
       ).resolves.toMatchObject({
@@ -21952,7 +22730,7 @@ describe("agent gateway gate", () => {
 
   /** An agent of `gateway`-capable (or not) type, mentioned once. */
   async function mentioned(
-    capable: boolean,
+    capable: boolean | "attribution",
     asked = mention,
     channelId = channel,
     prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
@@ -21970,7 +22748,11 @@ describe("agent gateway gate", () => {
       defaults: () => ({ config: {} }),
       run,
       models,
-      ...(capable ? { gateway: { harness: "relay" } } : {}),
+      ...(capable === "attribution"
+        ? { gateway: { harness: "relay", mode: "attribution" as const } }
+        : capable
+          ? { gateway: { harness: "relay" } }
+          : {}),
     });
     await f.service.create({ type: "example/relay", name: "Relay" });
     f.emit({ events: [asked], channelId });
@@ -22171,6 +22953,100 @@ describe("agent gateway gate", () => {
       expect(f.models).not.toHaveBeenCalled();
       gatewayRoutes.removeMembership(bot as never);
     }
+  });
+
+  it("runs an attribution-only type's turn unattributed on a 401 or 403, with a notice, instead of failing it", async () => {
+    for (const status of [401, 403]) {
+      const { answer } = liveRoutes();
+      answer(status);
+      const f = await mentioned(
+        "attribution",
+        event(`attr-auth-${status}`, {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      );
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const delivery = f.run.mock.calls[0]?.[0];
+      expect(delivery).not.toHaveProperty("gateway");
+      const notice =
+        "Ran without gateway attribution: the agent gateway didn't accept your sign-in or denied this agent.";
+      expect(delivery?.gatewayFallback).toEqual({ reason: "auth", notice });
+      expect(f.activity.reader.work()[0]).toMatchObject({ notice });
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("error");
+      gatewayRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("runs an attribution-only type's turn at once while its access check is pending, unattributed, and routes the next once it settles", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const { routes, request, answer } = liveRoutes();
+      expect(request).toHaveBeenCalledTimes(1);
+      const f = await mentioned("attribution");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(ready).toHaveBeenCalledWith(bot, undefined);
+      expect(timeout).not.toHaveBeenCalledWith(TURN_READINESS_WAIT_MS);
+      const first = f.run.mock.calls[0]?.[0];
+      expect(first).not.toHaveProperty("gateway");
+      expect(first?.gatewayFallback).toEqual({
+        reason: "readiness_pending",
+        notice:
+          "Ran without gateway attribution: Buzz was still checking this agent's gateway access.",
+      });
+      answer(200, '{"harnesses":["relay"]}');
+      await vi.waitFor(() =>
+        expect(routes.routeFor(bot as never)).toMatchObject({
+          kind: "eligible",
+        }),
+      );
+      f.emit({
+        events: [
+          event("b2", {
+            pubkey: viewer,
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ],
+        channelId: channel,
+      });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+      const next = f.run.mock.calls[1]?.[0];
+      expect(next?.gateway?.route).toMatchObject({
+        kind: "eligible",
+        harnesses: ["relay"],
+      });
+      expect(next).not.toHaveProperty("gatewayFallback");
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("falls back an attribution-only type's turn on any other blocked route with attribution wording", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned("attribution");
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(ready).toHaveBeenCalledWith(bot, undefined);
+    expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
+      reason: "network",
+      notice:
+        "Ran without gateway attribution: Buzz couldn't reach the gateway.",
+    });
+  });
+
+  it("hands an eligible route to an attribution-only type, as to a forwarding one", async () => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned("attribution");
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.gateway?.route).toBe(eligible);
+    expect(delivery?.gateway?.upstream).toBe(RELAY_UPSTREAM);
+    expect(delivery).not.toHaveProperty("gatewayFallback");
   });
 
   it("fails the next turn when a 403 from inference re-probes as 403, instead of falling back while pending", async () => {
@@ -22852,4 +23728,485 @@ it("does not call a consumer when protection denies its provider operation", asy
     ),
   ).rejects.toThrow("Provider operation denied");
   expect(called).not.toHaveBeenCalled();
+});
+
+it("keeps self and sibling settings proposals out of agent state until the owner approves them", async () => {
+  const { service, native, plugin, type } = await setup();
+  plugin.agents.register({
+    ...type,
+    id: "settings",
+    settingsProposal: { voice: true, apps: true, compactAt: true },
+  });
+  const kind = "example/settings";
+  await service.create({ type: kind, name: "Proposer" });
+  await service.create({ type: kind, name: "Sibling" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const siblingOpened = service.find(sibling);
+  if (!siblingOpened) throw new Error("Missing sibling");
+  const proposerConfig = service.find(bot)?.config;
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: sibling,
+      scope: "thread",
+      workspace: "~/.buzz",
+      apps: false,
+      compactAt: "",
+    }),
+  ).rejects.toThrow("The proposed settings match the saved settings");
+  expect(service.updateRequests()).toEqual([]);
+  await callTool(client, {}, "agent_update", {
+    agent: sibling,
+    name: "Reviewer",
+    scope: "thread",
+  });
+  const [rename] = service.updateRequests();
+  expect(rename).toMatchObject({ name: "Reviewer" });
+  expect(rename?.settings).toBeUndefined();
+  if (rename) service.dismissUpdate(rename.id);
+  const siblingConfig = { scope: "community", compactAt: "150000" };
+  await callTool(client, {}, "agent_update", {
+    agent: sibling,
+    ...siblingConfig,
+  });
+  const [siblingReview] = service.updateRequests();
+  if (!siblingReview) throw new Error("Missing sibling review");
+  expect(siblingReview).toMatchObject({
+    requester: bot,
+    agent: sibling,
+    settings: siblingConfig,
+  });
+  expect(service.find(sibling)?.config).toEqual(siblingOpened.config);
+  await service.approveUpdate(
+    siblingReview.id,
+    { type: kind, name: "Sibling", config: siblingConfig },
+    siblingOpened,
+  );
+  expect(service.find(sibling)?.config).toEqual(siblingConfig);
+  expect(service.find(bot)?.config).toEqual(proposerConfig);
+  expect(service.updateRequests()).toEqual([]);
+  const settings = { scope: "community", voice: "maple", apps: false };
+  const propose = () =>
+    callTool(client, {}, "agent_update", { agent: bot, ...settings });
+  const opened = service.find(bot);
+  if (!opened) throw new Error("Missing agent");
+  const savedConfig = opened.config;
+  await propose();
+  const [draft] = service.updateRequests();
+  if (!draft) throw new Error("Missing draft");
+  expect(draft.settings).toEqual(settings);
+  expect(service.find(bot)?.config).toEqual(savedConfig);
+  expect(native.setType).not.toHaveBeenCalled();
+  service.dismissUpdate(draft.id);
+  expect(service.find(bot)?.config).toEqual(savedConfig);
+
+  await propose();
+  const [review] = service.updateRequests();
+  if (!review) throw new Error("Missing review");
+  const approved = {
+    type: kind,
+    name: "Proposer",
+    config: { ...settings, voice: "cove" },
+  };
+  await service.save(bot, { config: { scope: "channel" } });
+  await expect(
+    service.approveUpdate(review.id, approved, opened),
+  ).rejects.toThrow("changed while this review was open");
+  expect(service.find(bot)?.config).toEqual({ scope: "channel" });
+  service.dismissUpdate(review.id);
+
+  await propose();
+  const [fresh] = service.updateRequests();
+  if (!fresh) throw new Error("Missing new review");
+  const freshOpened = service.find(bot);
+  const renamed = { ...approved, name: "Reviewer" };
+  native.rename.mockRejectedValueOnce(new Error("Cannot rename right now"));
+  await expect(
+    service.approveUpdate(fresh.id, renamed, freshOpened),
+  ).rejects.toThrow("Cannot rename right now");
+  expect(service.find(bot)?.config).toEqual(approved.config);
+  await service.approveUpdate(fresh.id, renamed, freshOpened);
+  expect(service.find(bot)?.config).toEqual(approved.config);
+  expect(service.updateRequests()).toEqual([]);
+
+  await propose();
+  const [beforeRetype] = service.updateRequests();
+  if (!beforeRetype) throw new Error("Missing pre-retype review");
+  await service.retype(bot, "example/echo");
+  const afterRetype = service.find(bot);
+  if (!afterRetype) throw new Error("Missing retyped agent");
+  await expect(
+    service.approveUpdate(
+      beforeRetype.id,
+      { type: afterRetype.type, name: afterRetype.name },
+      afterRetype,
+    ),
+  ).rejects.toThrow("changed harnesses after this proposal");
+  expect(service.updateRequests()[0]?.id).toBe(beforeRetype.id);
+});
+
+it("retries a proposal after saving a synced settings revision and failing to rename", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const { service, native, plugin, type, ctx } = await setup({
+    binding: () => ({ settings: { mode: "synced", subject } }),
+  });
+  const kind = "example/settings";
+  plugin.agents.register({
+    ...type,
+    id: "settings",
+    settingsProposal: {},
+    syncedSettings: {
+      schema: { effort: ["low", "max"] },
+      withSynced: (config, settings) => ({ ...config, ...settings }),
+    },
+  });
+  try {
+    await service.create({ type: kind, name: "Before" });
+    const { configStore, communityConfigs } = internals(service);
+    const secret = generateSecretKey();
+    const revision = (effort: string, created_at: number) =>
+      finalizeEvent(
+        {
+          kind: 45010,
+          created_at,
+          content: JSON.stringify({
+            version: 1,
+            agentType: kind,
+            settings: { effort },
+          }),
+          tags: [["op", "create"]],
+        },
+        secret,
+      ) as RelayEvent;
+    const openedHead = revision("low", 1);
+    const savedHead = revision("max", 2);
+    configStore.applyRead(subject, configStore.capture(subject), {
+      kind: "head",
+      event: openedHead,
+    });
+    const save = vi.fn(
+      async (_agent: unknown, _config: unknown, base: unknown) => {
+        expect(base).toEqual({ settings: openedHead.id });
+        configStore.applyRead(subject, configStore.capture(subject), {
+          kind: "head",
+          event: savedHead,
+        });
+        return { settings: { status: "saved", head: savedHead } };
+      },
+    );
+    communityConfigs.set(subject.community, {
+      attach: vi.fn(),
+      dispose: vi.fn(),
+      save,
+    });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const client = appClient(handle, {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    await callTool(client, {}, "agent_update", {
+      agent: bot,
+      name: "After",
+      effort: "max",
+    });
+    const [review] = service.updateRequests();
+    const opened = service.find(bot);
+    if (!review || !opened) throw new Error("Missing settings review");
+    expect(opened.configBase?.settings).toBe(openedHead.id);
+
+    const approved = {
+      type: kind,
+      name: "After",
+      config: { reply: "ok", effort: "max" },
+    };
+    native.rename.mockRejectedValueOnce(new Error("Cannot rename right now"));
+    await expect(
+      service.approveUpdate(review.id, approved, opened),
+    ).rejects.toThrow(
+      "Saved so far: Settings. Cannot rename right now. You can retry Save.",
+    );
+    expect(service.find(bot)).toMatchObject({
+      name: "Before",
+      config: approved.config,
+      configBase: { settings: savedHead.id },
+    });
+    await service.approveUpdate(review.id, approved, opened);
+    expect(save).toHaveBeenCalledOnce();
+    expect(service.find(bot)?.name).toBe("After");
+    expect(service.updateRequests()).toEqual([]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+describe("reload in place", () => {
+  it("keeps custody and the working turn through a reload that times out, retries and is ready", async () => {
+    const { service, run, emit, native, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    let finish: () => void = () => {};
+    run.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    emit({
+      events: [
+        event("1", { tags: [["p", bot]] }),
+        event("2", { tags: [["p", bot]] }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    reload();
+    await settle();
+    // Its attempt timed out, and its automatic retry is still the reload.
+    reload({ retrying: true });
+    await settle();
+    reload();
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    connect(true);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    finish();
+    // The queued mention starts once the community is ready again.
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(native.release).not.toHaveBeenCalled();
+  });
+
+  it("cancels the working turn, then releases custody, when a reload settles in a refusal", async () => {
+    const { service, run, emit, native, reload } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+    let signal: AbortSignal | undefined;
+    let handle: Delivery["agent"] | undefined;
+    run.mockImplementationOnce((delivery) => {
+      signal = delivery.signal;
+      handle = delivery.agent;
+      return new Promise<void>(() => {});
+    });
+    emit({ events: [event("1", { tags: [["p", bot]] })] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    let abortedAtRelease: boolean | undefined;
+    native.release.mockImplementation(async () => {
+      abortedAtRelease = signal?.aborted;
+    });
+    reload();
+    await settle();
+    expect(signal?.aborted).toBe(false);
+    reload({ denied: true });
+    await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+    expect(abortedAtRelease).toBe(true);
+    if (!handle) throw new Error("Expected the turn's handle");
+    await expect(
+      handle.publish({ kind: 9, content: "late", tags: [["h", channel]] }),
+    ).rejects.toThrow();
+    await settle();
+    expect(native.release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["its protection", { protectionRevision: 1 }],
+    ["its type", { type: "other/relay" }],
+  ])(
+    "releases custody held by a retrying reload when %s changes",
+    async (_label, change) => {
+      const identities: AgentIdentity[] = [];
+      const { ctx, service, native, reload } = await setup({ identities });
+      ctx
+        .extend({
+          pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+        })
+        .agents.register({
+          id: "relay",
+          title: "Relay",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+      reload();
+      reload({ retrying: true });
+      await settle();
+      expect(native.release).not.toHaveBeenCalled();
+      const identity = identities[0];
+      if (!identity) throw new Error("Missing native identity");
+      identities[0] = { ...identity, ...change };
+      await service.refresh();
+      await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+    },
+  );
+
+  it("answers a mention posted while a reload reconnects, once", async () => {
+    const { service, run, emit, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await settle();
+    const before = Math.floor(Date.now() / 1000);
+    reload();
+    await settle();
+    const gap = event("gap", { created_at: before + 5, tags: [["p", bot]] });
+    // The reload is ready well after the mention was posted.
+    const now = vi.spyOn(Date, "now").mockReturnValue((before + 60) * 1000);
+    try {
+      connect(true);
+      await settle();
+      // Replay sends it again, as each resubscription does; it runs once.
+      emit({ events: [gap], replay: true });
+      emit({ events: [gap], replay: true });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("releases custody when a reload is disconnected", async () => {
+    const { service, native, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+    reload();
+    await settle();
+    connect(false);
+    await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+  });
+
+  it("holds a request made after a reload is ready until its new gateway check answers", async () => {
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    const checked = vi
+      .spyOn(gatewayRoutes, "routeForTurn")
+      .mockImplementation(async () => {
+        await answered;
+        return { kind: "external", revision: 2 } as never;
+      });
+    try {
+      const { service, plugin, reload, connect } = await setup();
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+      const handle = plugin.agents.handle(bot);
+      if (!handle?.settle) throw new Error("Expected a handle that settles");
+      const signal = new AbortController().signal;
+      // Outside a reload nothing waits on the gateway.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).not.toHaveBeenCalled();
+      reload();
+      await settle();
+      connect(true);
+      await settle();
+      // Only a gateway turn waits for the check; other harnesses go on.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).not.toHaveBeenCalled();
+      // A fresh gateway request after relay-ready waits for the new check.
+      let waited: boolean | undefined;
+      const call = handle
+        .settle(signal, true)
+        .then((result) => (waited = result));
+      await vi.waitFor(() => expect(checked).toHaveBeenCalledOnce());
+      await settle();
+      expect(waited).toBeUndefined();
+      answer();
+      await call;
+      expect(waited).toBe(true);
+      // Once answered, the marker is gone.
+      await expect(handle.settle(signal)).resolves.toBe(false);
+      expect(checked).toHaveBeenCalledOnce();
+    } finally {
+      checked.mockRestore();
+    }
+  });
+
+  it("forgets a reload's gateway marker when its session disconnects", async () => {
+    const checked = vi
+      .spyOn(gatewayRoutes, "routeForTurn")
+      .mockResolvedValue({ kind: "external", revision: 2 } as never);
+    try {
+      const { service, plugin, reload, connect } = await setup();
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+      reload();
+      await settle();
+      connect(true);
+      await settle();
+      const markers = (service as unknown as { reloaded: Map<string, unknown> })
+        .reloaded;
+      expect(markers.size).toBe(1);
+      // Disconnected, it no longer holds the old session alive.
+      connect(false);
+      await settle();
+      expect(markers.size).toBe(0);
+      expect(checked).not.toHaveBeenCalled();
+    } finally {
+      checked.mockRestore();
+    }
+  });
+
+  it("holds a mem_get during a reload and answers it from the new session", async () => {
+    const { service, plugin, relay, reload, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Expected active handle");
+    const before = relay.snapshot().session;
+    const build = () => {
+      // What a harness reads when it builds its client.
+      const session = relay.snapshot().session;
+      return appClient(handle, {
+        read: vi.fn(),
+        memories: async () => ({
+          entries: [
+            {
+              slug: session === before ? "old" : "new",
+              body: "",
+              createdAt: 1,
+            },
+          ],
+          partial: false,
+        }),
+      });
+    };
+    reload();
+    let answered: unknown;
+    const call = callSessionTool(build, {}, "mem_get", {}).then(
+      (reply) => (answered = reply),
+    );
+    await settle();
+    expect(answered).toBeUndefined();
+    connect(true);
+    await call;
+    expect(String(answered)).toMatch(/^new /);
+  });
+
+  it("rejects a mem_get waiting on a reload when its call is canceled", async () => {
+    const { service, plugin, reload } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Expected active handle");
+    const canceled = new AbortController();
+    reload();
+    const call = callSessionTool(
+      () =>
+        appClient(handle, {
+          read: vi.fn(),
+          callSignal: canceled.signal,
+          memories: async () => ({ entries: [], partial: false }),
+        }),
+      {},
+      "mem_get",
+      {},
+    );
+    canceled.abort(new Error("canceled"));
+    await expect(call).rejects.toThrow("canceled");
+  });
 });

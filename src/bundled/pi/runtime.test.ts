@@ -446,6 +446,24 @@ it("keeps one agent's two communities' storage apart, each under its membership'
   );
 });
 
+it("builds a turn's instructions with the owner's base section choices", async () => {
+  const { host, deliver, agent } = setup();
+  Object.assign(agent, {
+    promptSections: () => ({
+      owner: {
+        etiquette: { mode: "custom", text: "Be brief." },
+        progress: { mode: "off" },
+      },
+    }),
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const instructions = String(host.requests("deliver")[0]?.params.instructions);
+  expect(instructions).toContain(
+    '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
+  );
+  expect(instructions).not.toContain("## Progress");
+});
+
 it("hands a conversation its own community repositories without changing its workspace", async () => {
   const repositories = vi.fn(
     () => "<community-repositories>/code/own</community-repositories>",
@@ -592,6 +610,37 @@ it.each([
     ...(reason ? [reason] : []),
   );
   expect(host.processes).toEqual([]);
+});
+
+it("keeps steering a busy run's effort through a follow-up without a pick", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver } = setup({ wait: () => finished.promise });
+  await deliver(
+    { type: "mention", event: reply("2", "first") },
+    { effort: "high" },
+  ).run;
+  await deliver({ type: "mention", event: reply("3", "no pick") }).run;
+  await deliver(
+    { type: "mention", event: reply("4", "high again") },
+    { effort: "high" },
+  ).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(3));
+  finished.resolve(undefined);
+});
+
+it("steers a follow-up's own effort into a busy run", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver } = setup({ wait: () => finished.promise });
+  await deliver(
+    { type: "mention", event: reply("2", "first") },
+    { effort: "high" },
+  ).run;
+  await deliver(
+    { type: "mention", event: reply("3", "low now") },
+    { effort: "low" },
+  ).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  finished.resolve(undefined);
 });
 
 it("ignores a mention from someone who is not the owner", async () => {
@@ -885,6 +934,149 @@ const pluginWake = (root?: string, where = channel) => ({
   text: "CI failed: lint",
   id: WAKE_ID,
   at: 200_000,
+});
+
+it("keeps a Pi run going until every placed destination has its final reply", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver, runtime } = setup({ wait: () => finished.promise });
+  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+  const mention = reply("2", "threaded");
+  await deliver({ type: "mention", event: mention }, { config }).run;
+  await deliver({ ...pluginWake(), topLevel: true }, { config }).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  for (const [request, entry] of [
+    [mention.id, 1],
+    [`plugin/${WAKE_ID}`, 2],
+  ] as const)
+    runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request,
+      entry,
+    });
+  const send = (args: Record<string, unknown>) =>
+    host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name: "send",
+      arguments: { audience: "everyone", final: true, ...args },
+    });
+  const thread = await send({ text: "Thread reply", reply: root.id });
+  expect(thread?.result).not.toMatchObject({ isError: true });
+  expect(thread?.result).not.toMatchObject({ final: true });
+  const top = await send({ text: "Channel reply", channel });
+  expect(top?.result).toMatchObject({ final: true });
+  finished.resolve(undefined);
+});
+
+it.each([
+  ["send", "reply"],
+  ["reply_in_subthread", "parent"],
+])(
+  "counts a %s under a message in the thread as the thread's final reply",
+  async (name, field) => {
+    const finished = deferred<unknown>();
+    const { host, deliver, agent, runtime } = setup({
+      wait: () => finished.promise,
+    });
+    const mention = reply("2", "threaded");
+    agent.query.mockImplementation(async (...args: unknown[]) => {
+      const [[filter] = []] = args as { ids?: string[] }[][];
+      return filter?.ids?.includes(mention.id) ? [mention] : [];
+    });
+    const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+    await deliver({ type: "mention", event: mention }, { config }).run;
+    await deliver({ ...pluginWake(), topLevel: true }, { config }).run;
+    await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+    for (const [request, entry] of [
+      [mention.id, 1],
+      [`plugin/${WAKE_ID}`, 2],
+    ] as const)
+      runtime.event({
+        agent: self,
+        conversation: CONVERSATION,
+        type: "placed",
+        request,
+        entry,
+      });
+    const call = (tool: string, args: Record<string, unknown>) =>
+      host.processes[0]?.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel },
+        name: tool,
+        arguments: { audience: "everyone", final: true, ...args },
+      });
+    const top = await call("send", { text: "Channel reply", channel });
+    expect(top?.result).not.toMatchObject({ isError: true });
+    expect(top?.result).not.toMatchObject({ final: true });
+    const thread = await call(name, {
+      text: "Thread reply",
+      [field]: ` ${mention.id} `,
+    });
+    expect(thread?.result).not.toMatchObject({ isError: true });
+    expect(thread?.result).toMatchObject({ final: true });
+    finished.resolve(undefined);
+  },
+);
+
+it("does not credit the default thread for a subthread under another thread", async () => {
+  const finished = deferred<unknown>();
+  const { host, deliver, agent, runtime, published } = setup({
+    wait: () => finished.promise,
+  });
+  const mention = reply("2", "thread T");
+  const other = message("3", "thread U");
+  agent.query.mockImplementation(async (...args: unknown[]) => {
+    const [[filter] = []] = args as { ids?: string[] }[][];
+    return [root, mention, other].filter((event) =>
+      filter?.ids?.includes(event.id),
+    );
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  await deliver({ type: "mention", event: mention }, { config }).run;
+  await deliver(pluginWake(other.id), { config }).run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  for (const [request, entry] of [
+    [mention.id, 1],
+    [`plugin/${WAKE_ID}`, 2],
+  ] as const)
+    runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request,
+      entry,
+    });
+  const call = (name: string, args: Record<string, unknown>) =>
+    host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: other.id },
+      name,
+      arguments: { audience: "everyone", final: true, ...args },
+    });
+  const nested = await call("reply_in_subthread", {
+    text: "T nested answer",
+    parent: root.id,
+  });
+  const thread = await call("send", {
+    text: "T answer",
+    channel,
+    reply: root.id,
+  });
+  expect(nested?.result).not.toMatchObject({ isError: true });
+  expect(thread?.result).not.toMatchObject({ isError: true });
+  expect(
+    published.every(({ tags }) =>
+      tags.some(([name, id]) => name === "e" && id === root.id),
+    ),
+  ).toBe(true);
+  // U still has no answer.
+  expect(thread?.result).not.toMatchObject({ final: true });
+  finished.resolve(undefined);
 });
 
 it.each([true, false])(
@@ -2438,7 +2630,46 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
   }
 });
 
-it("waits for a recovered threaded wake before changing the shared conversation to channel posting", async () => {
+it("waits for a recovered Solo run before a threaded mention in the chat shared since", async () => {
+  const old = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "e".repeat(64),
+          context: { channel, topLevel: true },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? old.promise
+        : Promise.resolve({ status: "done", answer: 10, text: "New answer" }),
+  });
+  try {
+    const next = f.deliver(
+      { type: "mention", event: reply("2", "threaded") },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    );
+    await vi.waitFor(() =>
+      expect(
+        f.host.requests("wait").map(({ params }) => params.submission),
+      ).toContain(41),
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+    old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    await next.run;
+  } finally {
+    old.resolve({ status: "unanswered", reason: "aborted" });
+    f.runtime.dispose();
+  }
+});
+
+it("delivers a compatible channel wake while a recovered threaded wake is active", async () => {
   const old = deferred<unknown>();
   const f = setup({
     unfinished: () => ({
@@ -2469,11 +2700,18 @@ it("waits for a recovered threaded wake before changing the shared conversation 
       },
       { config: { ...DEFAULT_CONFIG, scope: "channel" } },
     );
-    await vi.waitFor(() => expect(f.host.requests("wait")).toHaveLength(1));
-    expect(f.host.requests("deliver")).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(
+        f.host.requests("wait").map(({ params }) => params.submission),
+      ).toContain(41),
+    );
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    expect(f.host.requests("deliver")[0]?.params).toMatchObject({
+      key: channel,
+      reply: { channel, topLevel: true },
+    });
     old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
     await next.run;
-    expect(f.host.requests("deliver")).toHaveLength(1);
   } finally {
     old.resolve({ status: "unanswered", reason: "aborted" });
     f.runtime.dispose();
@@ -4238,4 +4476,121 @@ it("notes a wake's fallback on its own turn, and leaves a mention's to its reque
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("holds a model request until its reload settles, then admits it against the route", async () => {
+  const r = routes(eligible);
+  let route = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  const settled = deferred<boolean>();
+  const settle = vi.fn(() => settled.promise);
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => route,
+    bindingAdmits: (current) =>
+      current.kind === "eligible"
+        ? { ok: true, revision: 2 }
+        : {
+            ok: false,
+            reason: "binding_changed",
+            message: "Checking the model gateway",
+            revision: 1,
+          },
+  });
+  Object.assign(f.agent, { settle });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  let admitted: unknown;
+  const admit = process
+    ?.tool({ op: "admit", agent: self, binding: { v: 1 } }, "gateway")
+    .then((answer) => (admitted = answer));
+  await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  // Admission asks for the gateway check a reload starts, not only the reconnect.
+  expect(settle).toHaveBeenCalledWith(expect.anything(), true);
+  expect(admitted).toBeUndefined();
+  route = { ...eligible, revision: 2 };
+  settled.resolve(true);
+  await admit;
+  expect(admitted).toMatchObject({ result: { ok: true, revision: 2 } });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
+});
+
+it("refuses a model request on a pending route at once outside a reload", async () => {
+  const r = routes(eligible);
+  const pending = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => pending,
+    bindingAdmits: () => ({
+      ok: false,
+      reason: "binding_changed",
+      message: "Checking the model gateway",
+      revision: 1,
+    }),
+  });
+  Object.assign(f.agent, { settle: vi.fn(async () => false) });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  await expect(
+    process?.tool({ op: "admit", agent: self, binding: { v: 1 } }, "gateway"),
+  ).resolves.toMatchObject({
+    result: { ok: false, message: "Checking the model gateway" },
+  });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
+});
+
+it("holds a turn's bind until its reload settles, then binds against the route", async () => {
+  const r = routes(eligible);
+  let route = {
+    kind: "blocked",
+    reason: "readiness_pending",
+    message: "Checking the model gateway",
+  } as unknown as GatewayRoute;
+  const settled = deferred<boolean>();
+  const settle = vi.fn(() => settled.promise);
+  const answered = deferred<unknown>();
+  const f = setup({ wait: () => answered.promise }, [], undefined, undefined, {
+    ...r.seam,
+    routeFor: () => route,
+  });
+  Object.assign(f.agent, { settle });
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  const [process] = f.host.processes;
+  let bound: unknown;
+  const bind = process
+    ?.tool(
+      {
+        op: "bind",
+        agent: self,
+        event: "new_generation",
+        saved: null,
+        turn: {},
+      },
+      "gateway",
+    )
+    .then((answer) => (bound = answer));
+  await vi.waitFor(() => expect(settle).toHaveBeenCalled());
+  // So does a bind.
+  expect(settle).toHaveBeenCalledWith(expect.anything(), true);
+  expect(bound).toBeUndefined();
+  route = eligible;
+  settled.resolve(true);
+  await bind;
+  expect(bound).toMatchObject({ result: { ok: true, binding: { v: 1 } } });
+  answered.resolve({ status: "done", answer: 1, text: "" });
+  await f.settled(turn);
 });

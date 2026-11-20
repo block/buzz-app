@@ -438,7 +438,6 @@ export function SoloInventory({
             {
               id: route?.linked ?? route?.project ?? "solo",
               projectId: route?.project,
-              selected,
               content: (
                 <NavigationItem
                   label="New chat"

@@ -1384,7 +1384,6 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.changesets"
                 | "buzz.charts"
                 | "buzz.web-previews"
-                | "buzz.file-viewer"
                 | "buzz.performance-diagnostics"
         );
         assert_eq!(plugin.enabled, default, "{id}");

@@ -75,7 +75,9 @@ function attachmentName(url: string): string | undefined {
   }
 }
 
-export function imetaAttachmentUrls(event: EventData): ReadonlySet<string> {
+export function imetaAttachmentUrls(event: {
+  tags: readonly (readonly string[])[];
+}): ReadonlySet<string> {
   const urls = new Set<string>();
   for (const entry of event.tags) {
     if (entry[0] !== "imeta") continue;
@@ -502,7 +504,7 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits.length ? { edited: true as const } : {}),
+        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

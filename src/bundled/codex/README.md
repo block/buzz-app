@@ -111,11 +111,16 @@ Mentions wait for installation; a failed first download is retried on the next m
 ```sh
 bin/pnpm exec vitest run src/bundled/codex
 bin/node src/bundled/codex/isolation-live.mjs
+bin/node src/bundled/codex/resume-live.mjs
 bin/node src/bundled/codex/live.mjs
 ```
 
 The isolation check uses disposable homes, synthetic sign-in and a loopback model;
-it makes no external model or relay requests. The opt-in live check uses the
+it makes no external model or relay requests. The resume check works the same
+way and prints which developer instructions a resumed thread runs on: with
+Codex 0.169.0, always the ones the thread started with. So Buzz sends a
+resumed thread its current instructions and changed base sections with each
+turn. The opt-in live check uses the
 installed Codex account with a disposable workspace and simulated relay. It sends
 no Buzz messages. Set `BUZZ_CODEX_TEST_MODEL` to override its model.
 

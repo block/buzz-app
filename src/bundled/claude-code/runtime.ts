@@ -44,7 +44,10 @@ import {
   mentionAuthority,
   workflowOf,
 } from "../../features/agents/owner-attestation";
-import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import {
+  promptSections,
+  type TranscriptTurn,
+} from "../../features/agents/activity-transcript";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
@@ -98,11 +101,27 @@ import {
   systemPrompt,
   turnPrompt,
 } from "./prompt";
-import { AgentSessions, localSessions, Spare } from "./sessions";
+import {
+  AgentSessions,
+  type Attribute,
+  localSessions,
+  Spare,
+} from "./sessions";
+import { PROTECTED, refused } from "./attribution";
+import {
+  bindSession,
+  inferenceBundle,
+  isBuzzUuid,
+  isHex64,
+  type SessionEvent,
+  type TurnContext,
+} from "../../features/agents/gateway/contract";
+import type { EligibleRoute } from "../../features/agents/gateway/route";
 import {
   readLatestTurns,
   readSessionTitle,
   readTranscript,
+  withNotices,
   type Conversation,
   type SessionsPlace,
 } from "./transcript";
@@ -190,13 +209,19 @@ type Entry = {
   directories: Map<string, readonly string[]>;
   /** The folders each conversation's owner messages referenced. */
   referenced: Map<string, readonly string[]>;
+  /** Session id → a hash of the base prompt its process was last given. */
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
   policies: Map<
     string,
     {
-      topLevel: boolean;
+      solo: boolean;
       steerable?(model?: string, effort?: string): boolean;
+      /** The running turn's effective model and effort picks. */
+      picks?: Readonly<{
+        model?: string | undefined;
+        effort?: string | undefined;
+      }>;
       handed: Promise<unknown>;
       settled: Promise<unknown>;
       cancel(): void;
@@ -229,6 +254,19 @@ const listing = (added: readonly AddedTool[]): Listing => ({
 
 /** How long a session start waits for the agent's recent notes. */
 const NOTES_WAIT_MS = 2_000;
+/** What a remote Claude agent's Activity shows instead of its transcript. */
+const REMOTE_TRANSCRIPTS =
+  "Transcripts are unavailable for remote Claude agents";
+/** The attribution notices kept for each agent, the oldest dropped first. */
+const NOTICE_LIMIT = 100;
+
+/** A turn's gateway route and frozen context, as `Delivery.gateway` has it. */
+type Gateway = Readonly<{ route: EligibleRoute; turn: TurnContext }>;
+/** The label of a base prompt that a saved session prompt got later. */
+const BASE_LABEL = "base ";
+/** The base prompt in a system prompt. */
+const baseOf = (systemPrompt: string) =>
+  promptSections(systemPrompt).find(({ tag }) => tag === "base")?.body ?? "";
 
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
 export const HANDOVER_MS = 2 * 60_000;
@@ -265,6 +303,8 @@ export class ClaudeRuntime {
   >();
   /** Solo chats whose title was already offered to the host this app run. */
   private readonly titled = new Set<string>();
+  /** Each agent's turn notices, by the id of the message each ran from. */
+  private readonly notices = new Map<AgentKey, Map<string, string>>();
   /** Counts changes of credentials, which start processes again. */
   private credentials = 0;
   /** One process started ahead of need, for any agent's next new conversation. */
@@ -312,6 +352,11 @@ export class ClaudeRuntime {
       signal: AbortSignal,
       channelId: string | undefined,
     ) => Promise<AgentReads | undefined>,
+    /** The agent's eligible gateway route for a session control, which has
+     * no delivery; absent while Claude declares no harness. */
+    private readonly gatewayRoute?: (
+      agent: AgentKey,
+    ) => EligibleRoute | undefined,
   ) {}
 
   /** A failed turn's error as its report says it, such as where to fix
@@ -544,6 +589,7 @@ export class ClaudeRuntime {
       retiring = (async () => {
         const entry = this.agents.get(pubkey);
         this.agents.delete(pubkey);
+        this.notices.delete(pubkey);
         for (const pending of this.opening.values())
           if (pending.agent === pubkey)
             pending.abort.abort(new Error("Claude is retired"));
@@ -771,7 +817,12 @@ export class ClaudeRuntime {
     signal: AbortSignal,
   ) {
     if (await this.inspect?.(conversation.agent))
-      throw new Error("Transcripts are unavailable for remote Claude agents.");
+      // Where the gateway would attribute it, also say that it isn't.
+      throw new Error(
+        this.gatewayRoute?.(conversation.agent)
+          ? `${REMOTE_TRANSCRIPTS}. They aren't attributed in the agent gateway yet.`
+          : `${REMOTE_TRANSCRIPTS}.`,
+      );
     const prompts = this.prompts(conversation.agent);
     return readTranscript(
       this.spawn,
@@ -788,9 +839,28 @@ export class ClaudeRuntime {
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
     ).then(
       (transcript) =>
-        transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
+        transcript && {
+          ...transcript,
+          turns: withNotices(
+            prompts.shown(transcript.turns),
+            this.notices.get(conversation.agent) ?? new Map(),
+          ),
+        },
     );
   }
+  /** Keeps a turn's notice for its Activity, by the id of the message it
+   * ran from, while the app runs. */
+  private noted(agent: AgentKey, uuid: string, notice: string) {
+    const notices = this.notices.get(agent) ?? new Map<string, string>();
+    notices.set(uuid, notice);
+    for (const oldest of notices.keys()) {
+      if (notices.size <= NOTICE_LIMIT) break;
+      notices.delete(oldest);
+    }
+    this.notices.set(agent, notices);
+    this.notify();
+  }
+
   /** The latest whole turns of a conversation's saved session, or undefined
    * when it has none to read that way. Its sessions' prompts are shown
    * once: not again on a session whose earlier turns `held` keeps. */
@@ -829,11 +899,15 @@ export class ClaudeRuntime {
     const kept = new Set(
       held.slice(0, Math.max(at, 0)).map((t) => t.sessionId),
     );
-    return this.prompts(conversation.agent)
-      .shown(turns)
-      .map((turn, index) =>
-        kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
-      );
+    // Decorated as a full read is, since these replace the turns it showed.
+    return withNotices(
+      this.prompts(conversation.agent)
+        .shown(turns)
+        .map((turn, index) =>
+          kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
+        ),
+      this.notices.get(conversation.agent) ?? new Map(),
+    );
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {
@@ -1012,7 +1086,23 @@ export class ClaudeRuntime {
         const change = () => entry.sessions.forget(key);
         await (reset ? reset(change) : change());
       } else {
-        const result = await entry.sessions.compact(key);
+        // Under the control's own context where the gateway enables Claude;
+        // otherwise it runs on Claude's own headers, never refused.
+        const route = this.gatewayRoute?.(agent.key);
+        const result = await entry.sessions.compact(
+          key,
+          this.attribution(
+            agent.key,
+            route && {
+              route,
+              turn: controlTurn(place, config(agent.config).scope),
+            },
+            "resume",
+            warned,
+          ),
+          signal,
+        );
+        signal.throwIfAborted();
         if (!result.ok) throw new Error(result.error);
       }
       signal.throwIfAborted();
@@ -1072,6 +1162,8 @@ export class ClaudeRuntime {
       superseded,
       interruptible,
       named,
+      gateway,
+      gatewayFallback,
     } = delivery;
     const settings = this.resolveConfig(
       raw,
@@ -1222,11 +1314,14 @@ export class ClaudeRuntime {
       return handoff.done;
     }
     const prior = entry.policies.get(key);
+    // A turn keeps the posting policy it was admitted with: a request in a
+    // Solo chat shared since, or the reverse, waits for its turns to settle
+    // rather than steering into them and changing their tools' context.
     const same =
       key === COMMUNITY_SESSION
         ? entry.config.scope === "community" &&
           prior?.steerable?.(model, effort) === true
-        : prior?.topLevel === topLevel;
+        : prior?.solo === solo;
     const wait =
       key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
@@ -1288,9 +1383,6 @@ export class ClaudeRuntime {
                 : text,
           };
         };
-        // A turn keeps the posting policy it was admitted with: a request under
-        // the other policy waits for the conversation's turns to settle rather
-        // than steering into them and changing their tools' context.
         await wait;
         if (interrupted) {
           delivered = Promise.resolve({ ok: true });
@@ -1382,6 +1474,12 @@ export class ClaudeRuntime {
             ...(effort ? { effort } : {}),
           },
           admit,
+          // Mentions already show the host's fallback under the request.
+          ...this.turnAttribution(
+            agent.key,
+            gateway,
+            wake ? gatewayFallback?.notice : undefined,
+          ),
         });
         void delivered.then(
           (result) => {
@@ -1409,13 +1507,21 @@ export class ClaudeRuntime {
     void done.then(() => {
       foregroundDone = true;
     });
+    // A steer without a pick runs on the turn's own picks.
+    const picks = same
+      ? {
+          model: model ?? prior?.picks?.model,
+          effort: effort ?? prior?.picks?.effort,
+        }
+      : { model, effort };
     const policy = {
-      topLevel,
+      solo,
       steerable: (nextModel?: string, nextEffort?: string) =>
         !interrupted &&
         !foregroundDone &&
-        (!nextModel || nextModel === model) &&
-        (!nextEffort || nextEffort === effort),
+        (!nextModel || nextModel === picks.model) &&
+        (!nextEffort || nextEffort === picks.effort),
+      picks,
       cancel() {
         interrupted = true;
         prior?.cancel();
@@ -1491,8 +1597,8 @@ export class ClaudeRuntime {
     }
   }
 
-  /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
-   * process: a new session that is not saved. */
+  /** Runs a watch or timer outside its source conversation. Only community
+   * scope reuses a saved session. */
   async runOnce(
     turn: StandaloneTurn,
     published?: () => void,
@@ -1606,6 +1712,11 @@ export class ClaudeRuntime {
                     current: () => !signal.aborted && delivery.current(),
                     delivered: () =>
                       entry.project.resolve(undefined, NO_PROJECT),
+                    ...this.turnAttribution(
+                      agent.key,
+                      delivery.gateway,
+                      delivery.gatewayFallback?.notice,
+                    ),
                   },
                 );
                 await entry.sessions.idle(COMMUNITY_SESSION);
@@ -1619,9 +1730,97 @@ export class ClaudeRuntime {
             },
             () => this.notify(),
           )
-        : entry.sessions.runOnce(key, prompt, signal);
+        : entry.sessions.runOnce(
+            key,
+            prompt,
+            signal,
+            this.attribution(agent.key, delivery.gateway, "standalone", warned),
+          );
     this.notify();
     return done.finally(() => this.notify());
+  }
+
+  /** Attaches this prompt's attribution notice to its Activity entry. */
+  private turnAttribution(
+    agent: AgentKey,
+    gateway: Gateway | undefined,
+    fallback?: string,
+  ) {
+    let notice = fallback;
+    const apply = this.attribution(agent, gateway, "resume", (text) => {
+      notice = text;
+    });
+    const attribute: Attribute = (process, saved) => {
+      // A retry on another process starts from the fallback again.
+      notice = fallback;
+      return apply(process, saved);
+    };
+    return {
+      attribute,
+      submitted: (uuid: string) => {
+        if (notice) this.noted(agent, uuid, notice);
+      },
+    };
+  }
+
+  /** How a new turn sets its gateway attribution: the shared contract's
+   * bundle for `gateway` over the process's own custom headers, or, without
+   * one, the process's own headers back. Its binding is the saved one for
+   * `resume` and a fresh unsaved one for `standalone`. Anything that keeps
+   * it unattributed is `noted`; the turn always runs. */
+  private attribution(
+    agent: AgentKey,
+    gateway: Gateway | undefined,
+    event: Extract<SessionEvent, "resume" | "standalone">,
+    noted: (notice: string) => void,
+  ): Attribute {
+    return async (process, saved) => {
+      // Remote Claude is outside this rollout: its settings are never read
+      // or changed. Its Activity says so (`transcript`).
+      if (this.target) return undefined;
+      // Its pinned launch reads none of the person's settings, so no gateway.
+      if (gateway && this.agents.get(agent)?.protected) {
+        noted(PROTECTED);
+        return undefined;
+      }
+      const restore = async (notice?: string) => {
+        const failed = await process.attribute(undefined);
+        const shown = notice ?? failed;
+        if (shown) noted(shown);
+      };
+      if (!gateway) {
+        await restore();
+        return undefined;
+      }
+      const { route, turn } = gateway;
+      let bound: ReturnType<typeof bindSession>;
+      try {
+        bound = bindSession(route, saved, event);
+      } catch (error) {
+        await restore(
+          refused(error instanceof Error ? error.message : String(error)),
+        );
+        return undefined;
+      }
+      // A saved binding for someone else is never replaced here: only New
+      // session starts another.
+      if (!bound.ok) {
+        await restore(refused(bound.message));
+        return undefined;
+      }
+      const bundle = inferenceBundle(route.profile, bound.binding, turn);
+      if (!bundle.ok) {
+        await restore(refused(bundle.message));
+        return bound.binding;
+      }
+      const notice = await process.attribute({
+        origin: route.gatewayOrigin,
+        profile: route.profile,
+        headers: bundle.value,
+      });
+      if (notice) noted(notice);
+      return bound.binding;
+    };
   }
 
   /** Why a new process can't run a synced effort, which is the agent's on
@@ -1757,6 +1956,7 @@ export class ClaudeRuntime {
     const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
+          Boolean(reads && this.folder(agent.key, key)),
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
@@ -1886,7 +2086,7 @@ export class ClaudeRuntime {
       (cwd: string): ToolServer =>
       async (conversation, message, signal, check) => {
         const handle = entry.handle;
-        const client =
+        const client = () =>
           handle &&
           appClient(handle, {
             // Its PreToolUse hook reviews every tool, Buzz's included.
@@ -1983,6 +2183,23 @@ export class ClaudeRuntime {
             session,
           );
       },
+      // The saved prompt shows the base sections again when a session
+      // resumes on other ones than it shows last. It is read from what is
+      // saved, so this also holds after the app starts again.
+      resumed: (session, text) => {
+        if (this.target) return;
+        const base = baseOf(text);
+        const parts = this.prompts(agent).get(session) ?? [];
+        const shown =
+          parts.filter(({ label }) => label.startsWith(BASE_LABEL)).at(-1)
+            ?.text ??
+          (parts[0] && baseOf(parts[0].text));
+        if (shown !== undefined && shown !== base)
+          void this.prompts(agent).add(session, {
+            label: `${BASE_LABEL}${new Date().toISOString()}`,
+            text: base,
+          });
+      },
       onChange: () => this.notify(),
       fingerprint: (key) =>
         JSON.stringify([
@@ -1999,6 +2216,9 @@ export class ClaudeRuntime {
           entry.memory,
           addedKey(this.added()),
           this.credentials,
+          // The base prompt's sections: a change gives an idle session the
+          // new prompt at its next turn.
+          entry.handle?.promptSections?.(),
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
@@ -2062,6 +2282,7 @@ export class ClaudeRuntime {
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
             notes,
+            sections: handle?.promptSections?.(),
           }),
         };
       },
@@ -2099,3 +2320,15 @@ export function modelName(model: string) {
   const name = family[0]?.toUpperCase() + family.slice(1);
   return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }
+
+/** A session control's own context: its channel, and its thread only for a
+ * thread's session; it carries no message. */
+const controlTurn = (place: SessionPlace, scope: string): TurnContext =>
+  Object.freeze({
+    channel_id: isBuzzUuid(place.channelId) ? place.channelId : null,
+    message_id: null,
+    thread_id: scope !== "channel" && isHex64(place.root) ? place.root : null,
+  });
+/** A notice with no turn in Activity to show on: a compaction's or a
+ * standalone turn's. It names no setting's value. */
+const warned = (notice: string) => console.warn(notice);

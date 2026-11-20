@@ -9,6 +9,7 @@ import type { SidebarContextProps } from "../../features/sidebar/contracts";
 import {
   useCallback,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -151,8 +152,13 @@ function ScopedSidebar({
   );
   const inventory =
     !!session && (connection.status === "ready" || !!connection.cached);
+  const floatingAction = useRef<HTMLDivElement>(null);
   const footer = props.creationAction && (
-    <div className={styles.sidebarCreation} data-sidebar-floating-action="">
+    <div
+      ref={floatingAction}
+      className={styles.sidebarCreation}
+      data-sidebar-floating-action=""
+    >
       {props.creationAction}
     </div>
   );
@@ -289,6 +295,7 @@ function ScopedSidebar({
                         <SidebarUnread
                           listRef={sidebar.list}
                           dmPreviews={dmPreviews}
+                          floatingAction={footer ? floatingAction : undefined}
                         >
                           {teamContent}
                           {slots

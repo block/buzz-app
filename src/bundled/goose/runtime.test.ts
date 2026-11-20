@@ -622,6 +622,7 @@ it("drops a delivery queued while its agent retires, without posting that goose 
     await f.deliver(message("1", "threaded work"));
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     await f.run({ ...pluginWake(), topLevel: true }, {
+      effort: "high",
       agent: { ...f.agent, restoreNotes },
     } as unknown as Partial<Delivery>);
     const retiring = f.runtime.retire(f.agent.key);
@@ -1197,6 +1198,26 @@ describe("GooseRuntime", () => {
         ["p", alice],
       ],
     ]);
+  });
+
+  it("builds the session's prompt with the owner's base section choices", async () => {
+    const { agent, deliver, goose } = setup();
+    Object.assign(agent, {
+      promptSections: () => ({
+        owner: {
+          etiquette: { mode: "custom", text: "Be brief." },
+          progress: { mode: "off" },
+        },
+      }),
+    });
+    await deliver(message("1", "@Gander hi"));
+    const prompt = () => [...(goose()?.prompts.values() ?? [])].join();
+    await vi.waitFor(() =>
+      expect(prompt()).toContain(
+        '## Etiquette\n<owner-section id="etiquette">\nBe brief.\n</owner-section>',
+      ),
+    );
+    expect(prompt()).not.toContain("## Progress");
   });
 
   it("starts a session from the host's core memory, reading none from the relay", async () => {
@@ -2383,7 +2404,7 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
 
-it("keeps a shared session's posting policy until its active turn settles", async () => {
+it("steers a channel session across threaded and top-level requests", async () => {
   const f = setup({ hold: true, scope: "channel" });
   f.agent.query.mockResolvedValue([message("1", "threaded work")]);
   try {
@@ -2401,6 +2422,11 @@ it("keeps a shared session's posting policy until its active turn settles", asyn
       text: "channel work",
     });
     await next;
+    await vi.waitFor(() =>
+      expect(process.turns[0]?.steered).toEqual([
+        expect.stringContaining("channel work"),
+      ]),
+    );
     const reply = await process.mcp(
       process.turns[0]?.sessionId ?? "",
       "tools/call",
@@ -2409,18 +2435,54 @@ it("keeps a shared session's posting policy until its active turn settles", asyn
         arguments: {
           audience: "everyone",
           text: "thread reply",
-          final: true,
           reply: "1".repeat(64),
         },
       },
     );
     expect(reply.result).not.toMatchObject({ isError: true });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const topLevelReply = await process.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      {
+        name: "send",
+        arguments: { channel, audience: "everyone", text: "channel reply" },
+      },
+    );
+    expect(topLevelReply.result).not.toMatchObject({ isError: true });
+    expect(
+      f.published.map((post) => [
+        post.content,
+        post.tags.filter(([tag]) => tag === "e"),
+      ]),
+    ).toEqual([
+      ["thread reply", [["e", "1".repeat(64), "", "reply"]]],
+      ["channel reply", []],
+    ]);
     expect(process.turns).toHaveLength(1);
+    process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("finishes a Solo turn under its policy when the chat is shared mid-turn", async () => {
+  const solo = new Set([channel]);
+  const f = setup({ hold: true, scope: "channel", solo });
+  f.agent.query.mockResolvedValue([message("2", "after share")]);
+  try {
+    await f.deliver(message("1", "solo work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    solo.delete(channel);
+    await f.deliver(message("2", "after share"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    // It waits for the Solo turn rather than steering into it.
     expect(process.turns[0]?.steered).toEqual([]);
+    expect(process.turns).toHaveLength(1);
     process.turns[0]?.finish();
     await vi.waitFor(() => expect(process.turns).toHaveLength(2));
-    expect(process.turns[1]?.text).toContain("channel work");
+    expect(process.turns[1]?.text).toContain("after share");
     process.turns[1]?.finish();
   } finally {
     f.runtime.dispose();
@@ -2435,15 +2497,18 @@ it("session Interrupt discards a channel wake queued behind threaded work", asyn
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     const process = f.goose();
     if (!process) throw new Error("Expected Goose process");
-    await f.run({
-      type: "plugin",
-      plugin: "example",
-      channel,
-      topLevel: true,
-      id: "f".repeat(64),
-      at: 200_000,
-      text: "channel work",
-    });
+    await f.run(
+      {
+        type: "plugin",
+        plugin: "example",
+        channel,
+        topLevel: true,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "channel work",
+      },
+      { effort: "high" },
+    );
     await f.runtime.session(
       {
         ...f.agent,
@@ -2476,6 +2541,7 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
     const process = f.goose();
     if (!process) throw new Error("Expected Goose process");
     await f.run({ ...pluginWake(), topLevel: true }, {
+      effort: "high",
       agent: { ...f.agent, notes, restoreNotes },
       workingUntil,
     } as unknown as Partial<Delivery>);
@@ -2515,6 +2581,37 @@ it("Interrupt during a queued prompt rebuild restores notes without starting a t
   }
 });
 
+it("keeps steering a turn's effort through a follow-up without a pick", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  try {
+    await f.deliver(message("1", "threaded work"), { effort: "high" });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    const wake = (id: string, text: string) => ({
+      type: "plugin" as const,
+      plugin: "example",
+      channel,
+      topLevel: true as const,
+      id: id.repeat(64),
+      at: 200_000,
+      text,
+    });
+    await f.run(wake("e", "no pick"));
+    await f.run(wake("f", "high again"), { effort: "high" });
+    await vi.waitFor(() =>
+      expect(process.turns[0]?.steered).toEqual([
+        expect.stringContaining("no pick"),
+        expect.stringContaining("high again"),
+      ]),
+    );
+    expect(process.turns).toHaveLength(1);
+    process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps a queued Goose prompt in its admitted scope after settings change", async () => {
   const f = setup({ hold: true, scope: "channel" });
   try {
@@ -2522,7 +2619,7 @@ it("keeps a queued Goose prompt in its admitted scope after settings change", as
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     const process = f.goose();
     if (!process) throw new Error("Expected Goose process");
-    await f.deliver(message("1", "threaded work"));
+    await f.deliver(message("1", "threaded work"), { effort: "high" });
     f.runtime.sync([
       {
         ...f.agent,
@@ -2578,6 +2675,7 @@ it("keeps an accepted policy wait after its handover deadline and reconfiguratio
     await f.run(
       { ...pluginWake(), topLevel: true },
       {
+        effort: "high",
         signal: handover.signal,
         workingUntil,
       },
@@ -2614,6 +2712,7 @@ it("refreshes a queued subscription's instructions when its policy wait ends", a
     await f.deliver(message("1", "threaded work"));
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     await f.run({ ...pluginWake(), topLevel: true, text: instructions }, {
+      effort: "high",
       wakeText: async () => instructions,
     } as unknown as Partial<Delivery>);
     instructions = "Updated Interest instructions";

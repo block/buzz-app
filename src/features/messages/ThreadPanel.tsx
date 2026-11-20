@@ -778,6 +778,7 @@ function ThreadMessages({
         contentHeight: number;
         scrollTop: number;
         anchor?: { element: HTMLElement; top: number };
+        line?: number;
       }
     | undefined
   >(undefined);
@@ -788,6 +789,9 @@ function ThreadMessages({
     const row = [
       ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
     ].find((row) => row.getBoundingClientRect().bottom > top);
+    const line = element.querySelector<HTMLElement>(
+      "[data-new-messages-boundary]",
+    );
     resizePosition.current = {
       width: element.clientWidth,
       height: element.clientHeight,
@@ -801,6 +805,7 @@ function ThreadMessages({
             },
           }
         : {}),
+      ...(line ? { line: line.getBoundingClientRect().top - top } : {}),
     };
   }, []);
   const jumpingToLatest = useRef(false);
@@ -1530,6 +1535,7 @@ function ThreadMessages({
         return;
       }
       restoredVisit.current = navigation.signal;
+      lineTop.current = undefined;
       const restoredId = row?.dataset.messageId;
       restoredRow.current = restoredId
         ? {
@@ -1553,6 +1559,12 @@ function ThreadMessages({
       reading &&
       (reading.scrollTop === element.scrollTop || clamped || reshown)
     ) {
+      // While the reader still starts at a placed line, the line holds its
+      // offset: replies around it can fold away, the first unread one too.
+      const line =
+        lineTop.current !== undefined && reading.line !== undefined
+          ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
+          : null;
       // A row remounted in place, as when a group folds and then opens around
       // it, keeps the saved offset on its replacement. The commit between may
       // anchor on another row; the remounted one still wins when it returns.
@@ -1571,8 +1583,18 @@ function ThreadMessages({
           : saved && element.contains(saved.element)
             ? saved
             : undefined;
-      if (anchor) {
-        correctScrollTop(element, readingDrift(element, anchor));
+      if (line && reading.line !== undefined) {
+        correctScrollTop(
+          element,
+          Math.round(
+            line.getBoundingClientRect().top -
+              element.getBoundingClientRect().top -
+              reading.line,
+          ),
+        );
+        lineTop.current = element.scrollTop;
+      } else if (anchor) {
+        correctScrollTop(element, readingDrift(element, shownAnchor(anchor)));
         if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
       }
     }
@@ -2570,6 +2592,15 @@ function readingDrift(
       element.getBoundingClientRect().top -
       anchor.top,
   );
+}
+
+// A saved row that has since shrunk, as a reply does when it becomes a group's
+// line, keeps its offset only while part of it stays shown. Otherwise its top
+// meets the viewport's.
+function shownAnchor(anchor: { element: HTMLElement; top: number }) {
+  return anchor.top + anchor.element.getBoundingClientRect().height > 0
+    ? anchor
+    : { element: anchor.element, top: 0 };
 }
 
 function ThreadLoading() {

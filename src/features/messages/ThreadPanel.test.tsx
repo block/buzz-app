@@ -1127,6 +1127,61 @@ it("a kept line still splits relayed replies while a late navigation decides it 
   ]);
   expect(groups()).toHaveLength(2);
 });
+it("an opening's line keeps its place when relayed replies around it fold later", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const relayed = (verified: boolean) =>
+    ["a", "b", "c", "d"].map((name, index) => ({
+      ...reply(`relayed ${name}`, 2 + index),
+      authorId: viewer,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const [readA, readB, first, later] = relayed(false);
+  if (!readA || !readB || !first || !later)
+    throw new Error("Missing relayed fixture");
+  unread.add(first.id).add(later.id);
+  // Rows and the line sit at these content offsets and scroll with the reader.
+  const tops = new Map([
+    [row.id, -1000],
+    [readA.id, 0],
+    [readB.id, 300],
+    ["line", 600],
+    [first.id, 620],
+    [later.id, 920],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const top = tops.get(
+        this.hasAttribute("data-new-messages-boundary")
+          ? "line"
+          : (this.dataset.messageId ?? ""),
+      );
+      return top === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            top - (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            20,
+          );
+    },
+  );
+  h.snapshot.direction = "older";
+  h.snapshot.replies = relayed(false);
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element.scrollTop).toBe(600);
+  // Verification folds the read replies into a 28 px group above the line,
+  // and the unread ones into a closed group below it.
+  tops.set("line", 28);
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    screen.getAllByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  ).toHaveLength(2);
+  expect(screen.getByRole("separator", { name: "New messages" })).toBe(line);
+  expect(h.element.scrollTop).toBe(28);
+});
 it("keeps a shown line while a late navigation for the opening decides it again", () => {
   // Opening a thread from the timeline mounts it before its route arrives.
   const h = messagesHarness();
@@ -3076,6 +3131,61 @@ it("Back keeps a restored reply's place when its group opens around it later", (
     h.element.querySelector(`[data-message-id="${place.id}"]`),
   ).not.toBeNull();
   expect(h.element.scrollTop).toBe(500);
+});
+
+it("Back keeps a restored reply shown when its group shrinks it to a line", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = (verified: boolean) =>
+    ["d", "e", "f"].map((id, index) => ({
+      ...threadReply(id, row.id),
+      authorId: viewer,
+      threadRootId: row.id,
+      replyCount: 0,
+      createdAt: 2 + index,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const [place, next, last] = relayed(false);
+  if (!place || !next || !last) throw new Error("Missing relayed fixture");
+  // Its top was left 100 px above the viewport, with its body shown.
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  // Rows sit at these content offsets and heights and scroll with the reader.
+  const rows = new Map([
+    [row.id, { top: -1000, height: 500 }],
+    [place.id, { top: 0, height: 500 }],
+    [next.id, { top: 500, height: 500 }],
+    [last.id, { top: 1000, height: 500 }],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const geometry = rows.get(this.dataset.messageId ?? "");
+      return geometry === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            geometry.top -
+              (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            geometry.height,
+          );
+    },
+  );
+  h.snapshot.replies = relayed(false);
+  h.render();
+  expect(h.element.scrollTop).toBe(100);
+  // Verification opens a group around it, where each reply is a 28 px line:
+  // the saved offset would leave the whole line above the viewport.
+  rows.set(place.id, { top: 0, height: 28 });
+  rows.set(next.id, { top: 28, height: 28 });
+  rows.set(last.id, { top: 56, height: 28 });
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(0);
 });
 
 it.each([

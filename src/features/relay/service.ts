@@ -549,8 +549,12 @@ export function provideRelay(
         .then(async () => {
           await retainedStore.clearCache();
           if (resume) {
-            // Saved images are optional; failing to forget them keeps the rest.
-            await clearNativeMedia(resume.scope).catch(() => {});
+            // A failed image delete still clears the rest, then fails the
+            // clear so its caller doesn't report saved images as gone.
+            let media = true;
+            await clearNativeMedia(resume.scope).catch(() => {
+              media = false;
+            });
             const disk = createHeadPersistence(resume.viewer, resume.scope);
             try {
               await disk.clear();
@@ -559,6 +563,7 @@ export function provideRelay(
             } finally {
               disk.close();
             }
+            if (!media) throw new Error("Saved images were not cleared");
           }
         })
         .finally(() => {

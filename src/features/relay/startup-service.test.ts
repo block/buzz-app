@@ -484,6 +484,16 @@ it.each(["success", "failure"])(
     expect(await disk.read()).toEqual([]);
   },
 );
+it("a clear that can't forget saved images clears the rest and then fails", async () => {
+  const { data, disk, restored } = setup();
+  await restored();
+  native.clear.mockRejectedValueOnce(new Error("busy"));
+  await expect(data.clearCache()).rejects.toThrow();
+  expect(native.clear).toHaveBeenCalledWith("primary");
+  expect(await disk.read()).toEqual([]);
+  expect(data.snapshot().session.channels.list().channels).toEqual([]);
+  await expect(data.clearCache()).resolves.toBeUndefined();
+});
 it("disconnect during a coalesced cache clear does not reconnect", async () => {
   const { data, disk, connections, restored } = setup();
   await restored();

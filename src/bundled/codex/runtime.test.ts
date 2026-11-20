@@ -8846,6 +8846,38 @@ describe("a conversation given its own folder", () => {
     expect(turn).not.toContain("create a new worktree");
   });
 
+  it("steers a Solo chat's running turn with the Canvas rule of where it works", async () => {
+    // Another conversation's folder: this chat has none as its turn starts.
+    const f = await withFolder(folders(), "/repos/other", `other/${root}`);
+    asSoloChat(f);
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead(
+        workspaceCanvas({
+          folders: ["/repos/app"],
+          worktree: { location: "/repos/trees", baseBranch: "main" },
+          canvas: "Use tokens.",
+        }),
+      ),
+    );
+    await f.runtime.run(f.delivery("@Codex first", root));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(inputText(f.starts()[0])).toContain("create a new worktree");
+    // Assigned while that turn runs in the agent's workspace.
+    await assignConversationFolder(
+      f.store,
+      scope,
+      pubkey,
+      "channel",
+      "/repos/worktree",
+    );
+    await f.runtime.run(f.delivery("@Codex more", root));
+    const steer = () => f.sent.find((wire) => wire.method === "turn/steer");
+    await vi.waitFor(() => expect(steer()).toBeDefined());
+    expect(inputText(steer())).toContain("create a new worktree");
+    expect(inputText(steer())).not.toContain("They are for reading.");
+  });
+
   it("starts its thread there and names the agent's workspace", async () => {
     const resolveDirectory = folders();
     const f = await withFolder(resolveDirectory, "/repos/worktree");

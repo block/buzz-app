@@ -91,7 +91,6 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 }
 
 const titles: Record<string, string> = {
-  pages: "Plugins",
   starred: "Starred",
   solo: "Solo",
   channels: "Team",
@@ -107,8 +106,6 @@ export function sidebarSections<T extends ChannelSummary>(
   chatsOnly = false,
   draftSections: ReadonlySet<string> = new Set(),
   dormantAssignments: ReadonlySet<string> = new Set(),
-  /** Include the orderable Plugins section for sidebar-placed pages. */
-  pages = false,
 ) {
   const groups = new Map(
     preferences?.sections.map((group) => [group.id, group]),
@@ -137,7 +134,8 @@ export function sidebarSections<T extends ChannelSummary>(
     else rowsBySection.set(key, [channel]);
   }
   return workspaceSectionOrder(preferences).flatMap((key) => {
-    if (key === SIDEBAR_PAGES_SECTION && !pages) return [];
+    // Older clients can still save this key. Plugin pages now live in the header.
+    if (key === SIDEBAR_PAGES_SECTION) return [];
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
     // The Solo heading owns New and its keyboard shortcut, even when every

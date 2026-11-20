@@ -2964,6 +2964,7 @@ export function EditableInput({
       },
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
+      pastingPlain: { configurable: true, get: () => plainPaste },
       replaceRecipients: { configurable: true, value: replaceRecipients },
       insertPendingMention: {
         configurable: true,

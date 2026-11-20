@@ -90,6 +90,46 @@ async function landedOnHeading(viewer: string | undefined) {
   else expect(key).toBeNull();
 }
 
+it("keeps the last confirmed Web Inspector state when native rejects a change", async () => {
+  const pending = Promise.withResolvers<boolean>();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "credential_pairings_list") return [];
+    if (command === "web_inspector" && !args) return false;
+    if (command === "web_inspector") return pending.promise;
+    throw new Error(`Unexpected command ${command}`);
+  });
+
+  render(<SecuritySettings />);
+  const control = await screen.findByRole("switch", {
+    name: "Allow Safari Web Inspector",
+  });
+  expect(control).not.toBeChecked();
+  try {
+    await userEvent.click(control);
+    expect(control).toHaveAttribute("aria-busy", "true");
+    expect(control).not.toBeChecked();
+    expect(control).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]) =>
+            command === "web_inspector" && args !== undefined,
+        ),
+    ).toEqual([["web_inspector", { enabled: true }]]);
+  } finally {
+    pending.reject(new Error("Web Inspector is unavailable"));
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent("Try again");
+  expect(control).not.toBeChecked();
+  expect(control).not.toHaveAttribute("aria-busy", "true");
+  vi.mocked(invoke).mockResolvedValueOnce(true);
+  await userEvent.keyboard(" ");
+  await waitFor(() => expect(control).toBeChecked());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("lists paired tools and revokes one after asking", async () => {
   let release = () => {};
   vi.mocked(invoke).mockImplementation((command) =>
@@ -346,14 +386,20 @@ it.each(viewers)(
 );
 
 it("shows an empty state, and a read failure", async () => {
-  vi.mocked(invoke).mockResolvedValueOnce([]);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "credential_pairings_list") return [];
+    return null;
+  });
   render(<SecuritySettings />);
   expect(await screen.findByText("No paired tools")).toBeInTheDocument();
   expect(screen.queryByText("Authorize external identity")).toBeNull();
   cleanup();
-  vi.mocked(invoke).mockRejectedValueOnce(
-    "Paired tools could not be read from secure storage",
-  );
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "credential_pairings_list") {
+      throw "Paired tools could not be read from secure storage";
+    }
+    return null;
+  });
   render(<SecuritySettings />);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "could not be read",

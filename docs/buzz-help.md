@@ -365,6 +365,14 @@ until you pair it again. Signing out revokes all of them, and a pairing unused
 for 30 days expires. If your sign-in expires, paired tools keep their pairing
 and are asked to sign in again in Buzz.
 
+## Inspect Buzz Beta on macOS
+
+In Buzz Beta on macOS 13.3 or later, open **Settings → Security** and turn on
+**Allow Safari Web Inspector**. In Safari, use the **Develop** menu to select
+the Buzz Beta window. Safari can inspect data in that window and capture
+JavaScript profiles and heap snapshots. Turn the switch off to end access.
+Quitting Buzz also turns it off.
+
 ## Conversations and communities
 
 - Notification sounds and their Settings previews do not become media players;

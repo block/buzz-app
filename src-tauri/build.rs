@@ -160,6 +160,7 @@ fn main() {
             "media_lift_subject_supported",
             "clipboard_write_text",
             "draft_diagnostics_save",
+            "web_inspector",
             "media_stream_base",
             "get_os_idle_seconds",
             "system_hour_cycle",

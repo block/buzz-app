@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
@@ -21,7 +23,62 @@ const date = (seconds: number) =>
     day: "numeric",
   });
 
-/** Local paired tools and authorization for applications with their own key. */
+function WebInspectorSettings() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [changing, setChanging] = useState(false);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void invoke<boolean | null>("web_inspector").then(
+      (value) => {
+        if (active && typeof value === "boolean") setEnabled(value);
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function change(checked: boolean) {
+    setChanging(true);
+    setError(false);
+    try {
+      setEnabled(await invoke<boolean>("web_inspector", { enabled: checked }));
+    } catch {
+      setError(true);
+    } finally {
+      setChanging(false);
+    }
+  }
+
+  if (enabled === null) return null;
+  return (
+    <section
+      className="mt-section-gap"
+      aria-labelledby="security-diagnostics-title"
+    >
+      <InlineHeader id="security-diagnostics-title" title="Diagnostics" />
+      <SettingsGroup>
+        <SwitchPreferenceRow
+          label="Allow Safari Web Inspector"
+          description="Safari can inspect this Buzz window, including its data. Turns off when you quit Buzz."
+          checked={enabled}
+          readOnly={changing}
+          aria-busy={changing || undefined}
+          onCheckedChange={(checked) => void change(checked)}
+        />
+      </SettingsGroup>
+      {error && (
+        <p role="alert" className="text-body-sm text-danger">
+          Buzz couldn’t change Web Inspector access. Try again.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Local access for paired tools, external apps, and diagnostics. */
 export function SecuritySettings({
   viewer,
 }: {
@@ -177,6 +234,7 @@ export function SecuritySettings({
         </AlertDialog>
       )}
       {viewer && <ExternalIdentityAuthorization key={viewer} viewer={viewer} />}
+      <WebInspectorSettings />
     </section>
   );
 }

@@ -36,7 +36,10 @@ Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;
 another channel's thread uses the side pane. When that channel isn't readable
-there, it opens as a click would. Other internal `buzz://` links and links outside
+there, it opens as a click would. When the linked channel is withheld from the
+reader, the link, its preview card and **Open link** don't open anything, while
+**Copy link** and selection copy keep the URL; the link opens again once a recheck
+admits the reader. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -889,7 +892,10 @@ preserved while private; explicitly choosing Public or View only selects the
 corresponding admission default without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Guests and readers of Guest-default channels
+without calling the editing capability. Owners and admins see the editable policy
+from the live channel summary the same way, with no read when the dialog opens;
+choosing a change reads fresh signed details before the confirmation, and saving
+verifies their version. Guests and readers of Guest-default channels
 see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
 Member-default channel instead sees “New people can participate. People already in
 the channel keep their access.” Other previews identify defaults that could not be

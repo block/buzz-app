@@ -77,8 +77,7 @@ export function useReadyImage(src: string, loading?: "eager" | "lazy") {
     };
     const waiting = failed.get(src) ?? new Set();
     failed.set(src, waiting.add(retry));
-    const delay =
-      requested.current < recoveries ? 0 : RETRY_DELAYS_MS[attempt];
+    const delay = requested.current < recoveries ? 0 : RETRY_DELAYS_MS[attempt];
     const timer = delay === undefined ? 0 : window.setTimeout(retry, delay);
     return () => {
       window.clearTimeout(timer);

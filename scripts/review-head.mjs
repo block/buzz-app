@@ -167,7 +167,7 @@ export function notProven(
 }
 
 export function renderSummary(receipt) {
-  const mark = { passed: "✅", failed: "❌", skipped: "⏭" };
+  const mark = { passed: "✅", failed: "❌", skipped: "⏭", running: "⏳" };
   const short = (sha) => sha.slice(0, 12);
   const subject = receipt.pr ? `PR #${receipt.pr}` : "commit";
   const lines = [
@@ -182,7 +182,9 @@ export function renderSummary(receipt) {
         `| ${lane.name} | ${mark[lane.status]} ${lane.status}${lane.reason ? `: ${lane.reason}` : ""} | ${Math.round(lane.seconds)}s | ${lane.commands.map((command) => `\`${command.display}\` → ${command.exit}`).join("<br>") || "—"} |`,
     ),
     "",
-    `**Exact head held:** worktree ${receipt.final.headUnchanged ? "✅" : "❌"} · remote ${{ null: "n/a", unknown: "⚠ unchecked", true: "✅", false: "❌ moved" }[receipt.final.remoteHeadUnchanged]} · tree clean ${receipt.final.treeClean ? "✅" : "❌"}`,
+    receipt.final
+      ? `**Exact head held:** worktree ${receipt.final.headUnchanged ? "✅" : "❌"} · remote ${{ null: "n/a", unknown: "⚠ unchecked", true: "✅", false: "❌ moved" }[receipt.final.remoteHeadUnchanged]} · tree clean ${receipt.final.treeClean ? "✅" : "❌"}`
+      : "**Exact head not checked:** the run stopped before its final checks. Lanes marked ⏳ were still running.",
     "",
     `**Selected:** ${receipt.selection.vitest.length} Vitest file(s), ${receipt.selection.browser.length} browser journey(s), ${receipt.changedFiles.length} changed file(s).`,
     "",
@@ -286,6 +288,9 @@ function main() {
     const lane = { name, status: "skipped", reason, seconds: 0, commands: [] };
     lanes.push(lane);
     if (commands.length === 0) return lane;
+    // Record as it goes, so a run killed mid-lane keeps the lanes that finished.
+    lane.status = "running";
+    record();
     lane.status = "passed";
     for (const argv of commands) {
       const log = join(out, "logs", `${name}-${lane.commands.length + 1}.log`);
@@ -313,16 +318,70 @@ function main() {
         break;
       }
     }
+    record();
     return lane;
   };
 
-  const setup = runLane("setup", [["scripts/bootstrap-worktree.sh", root]]);
   const files = git(["diff", "--name-only", mergeBase, target.head], worktree)
     .split("\n")
     .filter(Boolean);
   let selection = { vitest: [], browser: [] };
   let chosen = [];
+  let tools = null;
+  // Without `final`, the receipt is a progress record: result "incomplete".
+  const record = (final = null) => {
+    const passed =
+      final !== null &&
+      lanes.every((lane) => lane.status !== "failed") &&
+      final.headUnchanged &&
+      final.treeClean &&
+      final.remoteHeadUnchanged !== false;
+    const receipt = {
+      schema: 1,
+      repository: capture("git", ["remote", "get-url", target.remote], root),
+      pr: options.pr ?? null,
+      head: target.head,
+      base: { ref: target.base, sha: baseSha },
+      mergeBase,
+      worktree,
+      changedFiles: files,
+      selection,
+      host: { platform: platform(), arch: arch(), release: release() },
+      tools,
+      lanes,
+      final,
+      notProven: notProven(platform(), chosen, {
+        rustChanged: touchesRust(files),
+        tooling: touchesReviewTooling(files),
+        remote: final?.remoteHeadUnchanged,
+      }),
+      result: final === null ? "incomplete" : passed ? "passed" : "failed",
+      finishedAt: final === null ? null : new Date().toISOString(),
+    };
+    writeFileSync(
+      join(out, "receipt.json"),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+    );
+    writeFileSync(join(out, "summary.md"), renderSummary(receipt));
+    return receipt;
+  };
+
+  const setup = runLane("setup", [["scripts/bootstrap-worktree.sh", root]]);
   if (setup.status === "passed") {
+    tools = {
+      node: capture("bin/node", ["--version"], worktree, env),
+      pnpm: capture("bin/pnpm", ["--version"], worktree, env),
+      rustc: capture("bin/rustc", ["--version"], worktree, env),
+      // pnpm may print install chatter first; the version is the last line.
+      playwright: capture(
+        "bin/pnpm",
+        ["exec", "playwright", "--version"],
+        worktree,
+        env,
+      )
+        ?.split("\n")
+        .at(-1),
+    };
     const selected = capture(
       "bin/node",
       ["scripts/flake-check.mjs", "select", mergeBase, target.head],
@@ -412,56 +471,13 @@ function main() {
       cpSync(results, join(out, "browser"), { recursive: true });
   }
 
-  const headUnchanged = git(["rev-parse", "HEAD"], worktree) === target.head;
-  const treeClean = git(["status", "--porcelain"], worktree) === "";
-  const remoteHeadUnchanged = remoteHead(target, options.pr);
-  const passed =
-    lanes.every((lane) => lane.status !== "failed") &&
-    headUnchanged &&
-    treeClean &&
-    remoteHeadUnchanged !== false;
-  const receipt = {
-    schema: 1,
-    repository: capture("git", ["remote", "get-url", target.remote], root),
-    pr: options.pr ?? null,
-    head: target.head,
-    base: { ref: target.base, sha: baseSha },
-    mergeBase,
-    worktree,
-    changedFiles: files,
-    selection,
-    host: { platform: platform(), arch: arch(), release: release() },
-    tools: {
-      node: capture("bin/node", ["--version"], worktree, env),
-      pnpm: capture("bin/pnpm", ["--version"], worktree, env),
-      rustc: capture("bin/rustc", ["--version"], worktree, env),
-      // pnpm may print install chatter first; the version is the last line.
-      playwright: capture(
-        "bin/pnpm",
-        ["exec", "playwright", "--version"],
-        worktree,
-        env,
-      )
-        ?.split("\n")
-        .at(-1),
-    },
-    lanes,
-    final: { headUnchanged, remoteHeadUnchanged, treeClean },
-    notProven: notProven(platform(), chosen, {
-      rustChanged: touchesRust(files),
-      tooling: touchesReviewTooling(files),
-      remote: remoteHeadUnchanged,
-    }),
-    result: passed ? "passed" : "failed",
-    finishedAt: new Date().toISOString(),
-  };
-  writeFileSync(
-    join(out, "receipt.json"),
-    `${JSON.stringify(receipt, null, 2)}\n`,
-  );
-  writeFileSync(join(out, "summary.md"), renderSummary(receipt));
+  const receipt = record({
+    headUnchanged: git(["rev-parse", "HEAD"], worktree) === target.head,
+    remoteHeadUnchanged: remoteHead(target, options.pr),
+    treeClean: git(["status", "--porcelain"], worktree) === "",
+  });
   console.log(`review-head: ${receipt.result}; evidence in ${out}`);
-  process.exitCode = passed ? 0 : 1;
+  process.exitCode = receipt.result === "passed" ? 0 : 1;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

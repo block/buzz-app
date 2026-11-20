@@ -202,6 +202,42 @@ it("renders a summary that a review body can quote", () => {
   ).toContain("remote ⚠ unchecked");
 });
 
+it("renders an interrupted run without claiming the head held", () => {
+  const summary = renderSummary({
+    pr: 7,
+    head: "a".repeat(40),
+    base: { ref: "main", sha: "b".repeat(40) },
+    mergeBase: "c".repeat(40),
+    host: { platform: "linux", arch: "x64" },
+    changedFiles: [],
+    selection: { vitest: [], browser: [] },
+    lanes: [
+      {
+        name: "static",
+        status: "passed",
+        reason: "",
+        seconds: 20,
+        commands: [{ display: "bin/pnpm check", exit: 0 }],
+      },
+      {
+        name: "tests",
+        status: "running",
+        reason: "",
+        seconds: 0,
+        commands: [],
+      },
+    ],
+    final: null,
+    notProven: [],
+    result: "incomplete",
+  });
+  expect(summary).toContain("**Result:** incomplete");
+  expect(summary).toContain("| static | ✅ passed |");
+  expect(summary).toContain("| tests | ⏳ running |");
+  expect(summary).toContain("**Exact head not checked:**");
+  expect(summary).not.toContain("Exact head held");
+});
+
 it("names the host fix instead of blaming the change", () => {
   expect(
     hostHint("x\nHost system is missing dependencies to run browsers."),

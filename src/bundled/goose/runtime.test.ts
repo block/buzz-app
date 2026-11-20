@@ -50,6 +50,7 @@ describe("sessionTitle", () => {
 
 const self = "c".repeat(64);
 const alice = "a".repeat(64);
+const bob = "b".repeat(64);
 const channel = "chan-1";
 const message = (
   id: string,
@@ -185,11 +186,13 @@ function setup(
   };
   // A reconnect is a new session to the same community.
   let connected = session;
-  const state = { status: "ready" };
+  // `retained`: a reconnecting relay keeps its session, not yet ready.
+  const state: { status: string; retained?: boolean } = { status: "ready" };
   const relay = {
     snapshot: () => ({
       status: state.status,
-      session: state.status === "ready" ? connected : undefined,
+      session:
+        state.status === "ready" || state.retained ? connected : undefined,
       viewer: alice,
       origin: "https://goose.example",
       scope: `https://goose.example:${alice}`,
@@ -804,6 +807,39 @@ describe("GooseRuntime", () => {
     });
     expect(published.at(-1)?.content).toBe("From a file");
   });
+
+  it.each([
+    ["connecting", true],
+    ["error", true],
+    ["ready", false],
+  ])(
+    "checks archives in a name search while the relay is %s",
+    async (status, warns) => {
+      const f = setup({ hold: true });
+      Object.assign(f.agent, {
+        searchProfiles: vi.fn(async () => [
+          {
+            ...message("p", JSON.stringify({ name: "Bob" })),
+            kind: 0,
+            pubkey: bob,
+          },
+        ]),
+      });
+      await f.deliver(message("1", "@Gander who is Bob?"));
+      await flush(100);
+      Object.assign(f.state, { status, retained: true });
+      const process = f.goose();
+      const reply = await process?.mcp(
+        process.turns[0]?.sessionId ?? "",
+        "tools/call",
+        { name: "users", arguments: { q: "bob" } },
+      );
+      const text = JSON.stringify(reply?.result);
+      expect(text).toContain(bob);
+      // Unknown until ready; a ready relay with no key archives no one.
+      expect(text.includes("archive list could not be read")).toBe(warns);
+    },
+  );
 
   it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
     const earlier = message("1", "Earlier in the chat", {

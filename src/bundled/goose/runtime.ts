@@ -29,7 +29,7 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
-import { appClient, readFile } from "../../buzz-mcp/app-client";
+import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
   type AddedTool,
   addedKey,
@@ -1172,9 +1172,9 @@ export class GooseRuntime {
             return JSON.parse(data);
           },
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
-          signingAuthority:
-            this.relay(agent) &&
-            (this.relay(agent)?.snapshot().session.workflowAuthority ?? null),
+          signingAuthority: relayKeyOf(
+            ownerReads(this.relay(agent), pubkeyOf(agent)),
+          ),
           read: (path) =>
             handle.protection
               ? readFile(

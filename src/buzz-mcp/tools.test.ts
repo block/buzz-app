@@ -4512,6 +4512,34 @@ it.each(["fails", "stalls"])(
   },
 );
 
+it("stops a scheduled archive retry at the limit", async () => {
+  vi.useFakeTimers();
+  // Full backoff: retries at 1, 3 and 7 seconds, the last past the limit.
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  try {
+    const client = archivedPeople();
+    const query = client.query;
+    client.query = vi.fn((filters: readonly Filter[]) =>
+      (filters[0]?.kinds as number[] | undefined)?.includes(13535)
+        ? Promise.reject(new TypeError("network unreachable"))
+        : query(filters),
+    );
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await sent).toMatch(/\nwarning: the relay's archive list/);
+    expect(archiveReads(client)).toBe(3);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(archiveReads(client)).toBe(3);
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
 it("sends to an archived identity, with a warning, when the archive list can't be read", async () => {
   const client = archivedPeople(true);
   expect(

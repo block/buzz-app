@@ -25,6 +25,7 @@ import type {
   Membership,
 } from "../../features/communities/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
+import { PaneShownScope } from "../../features/panels/pane-shown";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
 // Agents, teams, and marketplace, with creation and import from their menus.
@@ -974,24 +975,26 @@ export function AgentsPage({
           >
             {split.handle}
             <Panel aria-label="Agent profile">
-              <PanelWorkspace
-                focusOnMount={false}
-                adoptSelection={selected.pubkey}
-                value={selected.pubkey}
-                select={() => {}}
-                items={[
-                  {
-                    id: selected.pubkey,
-                    label: selected.name,
-                    content: (
-                      <AgentSaveState value={reportUnsaved}>
-                        {panel}
-                      </AgentSaveState>
-                    ),
-                    close: closePanel,
-                  },
-                ]}
-              />
+              <PaneShownScope shown={tab === "yours"}>
+                <PanelWorkspace
+                  focusOnMount={false}
+                  adoptSelection={selected.pubkey}
+                  value={selected.pubkey}
+                  select={() => {}}
+                  items={[
+                    {
+                      id: selected.pubkey,
+                      label: selected.name,
+                      content: (
+                        <AgentSaveState value={reportUnsaved}>
+                          {panel}
+                        </AgentSaveState>
+                      ),
+                      close: closePanel,
+                    },
+                  ]}
+                />
+              </PaneShownScope>
             </Panel>
           </aside>
         )}

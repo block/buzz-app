@@ -22,12 +22,7 @@ import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayData } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
-import {
-  keypair,
-  type Key,
-  profile,
-  signed,
-} from "../../features/relay/testing";
+import { keypair, profile, signed } from "../../features/relay/testing";
 import { ProfilePanel } from "./ProfilePanel";
 
 const relayKey = keypair();
@@ -39,34 +34,37 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-function snapshot(keys: string[], created_at?: number) {
+/** The relay's archive list: a bare key, or a key and its replacement. */
+function snapshot(entries: (string | string[])[], created_at?: number) {
   return signed(relayKey, {
     kind: 13535,
     content: "",
-    tags: [["-"], ...keys.map((key) => ["p", key])],
+    tags: [
+      ["-"],
+      ...entries.map((entry) => [
+        "p",
+        ...(Array.isArray(entry) ? entry : [entry]),
+      ]),
+    ],
     ...(created_at && { created_at }),
   });
 }
-function delta(
-  target: string,
-  tags: string[][],
-  {
-    by = relayKey,
-    kind = 8002,
-    created_at,
-    base = [["-"], ["p", target], ["consent", "self", target]],
-  }: { by?: Key; kind?: number; created_at?: number; base?: string[][] } = {},
-) {
-  return signed(by, {
-    kind,
+/** A relay archive delta that names a replacement. */
+function delta(target: string, next: string) {
+  return signed(relayKey, {
+    kind: 8002,
     content: "",
-    tags: [...base, ["reason", "rotated"], ...tags],
-    ...(created_at && { created_at }),
+    tags: [
+      ["-"],
+      ["p", target],
+      ["consent", "self", target],
+      ["replaced-by", next],
+    ],
   });
 }
 /** `extra` events answer every filter of their kind, whatever its authors:
- * a relay that ignores the authors filter. While `failing.deltas` or
- * `failing.snapshots` is set, those reads fail. While `held.snapshots` is
+ * a relay that ignores the authors filter. While `failing.snapshots` is
+ * set, snapshot reads fail. While `held.snapshots` is
  * set, snapshot reads wait for it. `tabbed` shows the profile as a retained
  * channel tab beside a thread tab, as Channels and Inbox do; `docked` puts
  * those tabs in a collapsible side dock, as Channels does. */
@@ -83,7 +81,7 @@ function mount(
     docked?: boolean;
   } = {},
 ) {
-  const failing = { deltas: false, snapshots: false };
+  const failing = { snapshots: false };
   const held: { snapshots?: Promise<void> } = {};
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
     const snapshots = filters.some((filter) => filter.kinds?.includes(13535));
@@ -92,8 +90,6 @@ function mount(
     if (snapshots && held.snapshots) await held.snapshots;
     if (fails) throw new Error("relay unavailable");
     return filters.flatMap((filter) => {
-      if (failing.deltas && filter.kinds?.includes(8002))
-        throw new Error("relay unavailable");
       const matches = events
         .filter(
           (event) =>
@@ -176,11 +172,6 @@ function mount(
       live?.state({ status: "connected", routes: [] });
       live?.established();
     });
-  /** The live connection drops and comes back. */
-  const reconnect = () => {
-    drop();
-    restore();
-  };
   return {
     query,
     open,
@@ -190,7 +181,6 @@ function mount(
     archives: owner.session.archives,
     drop,
     restore,
-    reconnect,
     reopen,
   };
 }
@@ -232,11 +222,15 @@ const people = [
   profile(successor, { name: "New Key" }),
 ];
 
-it("links an archived key's replacement from the relay's archive delta", async () => {
-  const { open } = mount([
+const snapshotReads = (query: ReturnType<typeof mount>["query"]) =>
+  query.mock.calls
+    .flatMap(([filters]) => filters)
+    .filter((filter) => filter.kinds?.includes(13535)).length;
+
+it("links an archived key's replacement from the relay's archive snapshot", async () => {
+  const { open, query } = mount([
     ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    snapshot([[old.pubkey, successor.pubkey]]),
   ]);
   const link = await screen.findByRole("button", {
     name: "Open new key profile: New Key",
@@ -246,18 +240,23 @@ it("links an archived key's replacement from the relay's archive delta", async (
   );
   await userEvent.setup().click(link);
   expect(open).toHaveBeenCalledWith(profileTarget(successor.pubkey));
+  // The snapshot is the only archive read.
+  expect(
+    query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) =>
+        filter.kinds?.some((kind) => kind === 8002 || kind === 8003),
+      ),
+  ).toEqual([]);
 });
 
-it("says archived without a link when no trusted delta names a replacement", async () => {
-  // Only the relay identity's deltas count, even if the relay returns others.
-  mount(
-    [...people, snapshot([old.pubkey])],
-    [
-      delta(old.pubkey, [["replaced-by", successor.pubkey]], {
-        by: keypair(),
-      }),
-    ],
-  );
+it("names no replacement when the snapshot names none, even if a delta does", async () => {
+  // An older relay lists bare keys; its deltas can be late or obsolete.
+  mount([
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, successor.pubkey),
+  ]);
   await waitFor(() =>
     expect(screen.getByTestId("profile-archived")).toHaveTextContent(
       "This key is archived in this community.",
@@ -266,230 +265,92 @@ it("says archived without a link when no trusted delta names a replacement", asy
   expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
 });
 
-it("shows nothing for a key that is not archived, even with an old delta", async () => {
-  const { query } = mount([
-    ...people,
-    snapshot([]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ]);
+it("shows nothing for a key that is not archived", async () => {
+  const { query } = mount([...people, snapshot([])]);
   await screen.findByRole("heading", { name: "Old Key" });
+  await waitFor(() => expect(snapshotReads(query)).toBeGreaterThan(0));
   await waitFor(() =>
-    expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ kinds: [13535] })]),
-    ),
-  );
-  expect(screen.queryByTestId("profile-archived")).toBeNull();
-  expect(query.mock.calls.flatMap(([filters]) => filters)).not.toEqual(
-    expect.arrayContaining([expect.objectContaining({ kinds: [8002] })]),
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
   );
 });
 
-describe("ignores a relay delta NIP-IA says to ignore", () => {
-  const replaced = [["replaced-by", successor.pubkey]];
+describe("names no replacement for a snapshot entry NIP-IA says to ignore", () => {
+  const other = keypair().pubkey;
   it.each([
+    ["a replacement that is not a key", [[old.pubkey, "NEW"]]],
+    ["the archived key as its own replacement", [[old.pubkey, old.pubkey]]],
     [
-      "no protected marker",
-      {
-        base: [
-          ["p", old.pubkey],
-          ["consent", "self", old.pubkey],
-        ],
-      },
-    ],
-    ["no consent", { base: [["-"], ["p", old.pubkey]] }],
-    [
-      "an unknown consent path",
-      { base: [["-"], ["p", old.pubkey], ["consent", "friend", old.pubkey]] },
+      "two entries that disagree",
+      [
+        [old.pubkey, successor.pubkey],
+        [old.pubkey, other],
+      ],
     ],
     [
-      "two targets",
-      {
-        base: [
-          ["-"],
-          ["p", old.pubkey],
-          ["p", successor.pubkey],
-          ["consent", "self", old.pubkey],
-        ],
-      },
+      "an entry with and one without a replacement",
+      [[old.pubkey, successor.pubkey], old.pubkey],
     ],
-    [
-      "two consent tags",
-      {
-        base: [
-          ["-"],
-          ["p", old.pubkey],
-          ["consent", "self", old.pubkey],
-          ["consent", "admin", relayKey.pubkey],
-        ],
-      },
-    ],
-    ["two replacements", { tags: [...replaced, ...replaced] }],
-    ["a replacement that is not a key", { tags: [["replaced-by", "NEW"]] }],
-    [
-      "the archived key as its own replacement",
-      { tags: [["replaced-by", old.pubkey]] },
-    ],
-    ["a replacement on an unarchive delta", { kind: 8003 }],
-  ] as [string, Parameters<typeof delta>[2] & { tags?: string[][] }][])(
-    "%s",
-    async (_, { tags = replaced, ...options }) => {
-      const { archives } = mount([
-        ...people,
-        snapshot([old.pubkey]),
-        delta(old.pubkey, tags, options),
-      ]);
-      await waitFor(() =>
-        expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-          "This key is archived in this community.",
-        ),
-      );
-      // The notice says the same before its lookup answers, so ask directly.
-      await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
-      expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-        "This key is archived in this community.",
-      );
-    },
-  );
-  it("a newer unarchive delta", async () => {
-    mount([
-      ...people,
-      snapshot([old.pubkey]),
-      delta(old.pubkey, replaced),
-      delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_010 }),
-    ]);
-    await waitFor(() =>
-      expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-        "This key is archived in this community.",
-      ),
+  ] as [string, (string | string[])[]][])("%s", async (_, entries) => {
+    const { archives } = mount([...people, snapshot(entries)]);
+    await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+    expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+      "This key is archived in this community.",
     );
-    expect(
-      screen.queryByRole("button", { name: /new key profile/ }),
-    ).toBeNull();
   });
 });
 
-it("drops a replacement the next archive snapshot has not confirmed", async () => {
-  const events = [
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ];
-  const { failing, archives } = mount(events);
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-
-  // The archive was corrected, and the reread of its delta fails.
-  events.push(
-    snapshot([old.pubkey], 1_700_000_020),
-    delta(old.pubkey, [], { created_at: 1_700_000_020 }),
-  );
-  failing.deltas = true;
-  await act(() => archives.refresh());
+it("follows the archive's next snapshot", async () => {
+  const events = [...people, snapshot([old.pubkey])];
+  const { archives } = mount(events);
   await waitFor(() =>
     expect(screen.getByTestId("profile-archived")).toHaveTextContent(
       "This key is archived in this community.",
     ),
   );
-  expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
-});
-
-it("drops a replacement when a reread of the same snapshot fails", async () => {
-  const { failing, archives } = mount([
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ]);
+  // A replacement is added to the archived key.
+  events.push(snapshot([[old.pubkey, successor.pubkey]], 1_700_000_020));
+  await act(() => archives.refresh());
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  // The snapshot reads the same, but its delta read fails.
-  failing.deltas = true;
+  // It is unarchived and archived again with no replacement.
+  events.push(snapshot([old.pubkey], 1_700_000_030));
   await act(() => archives.refresh());
   await waitFor(() =>
     expect(
       screen.queryByRole("button", { name: /new key profile/ }),
     ).toBeNull(),
   );
-  // The delta reads again, then the snapshot read itself fails.
-  failing.deltas = false;
-  await act(() => archives.refresh());
+  expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+    "This key is archived in this community.",
+  );
+});
+
+it("keeps the last known notice, with its link, while a reread fails", async () => {
+  // As every archive surface does: the entry and its replacement are one state.
+  const { archives, failing } = mount([
+    ...people,
+    snapshot([[old.pubkey, successor.pubkey]]),
+  ]);
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
   failing.snapshots = true;
   await act(() => archives.refresh());
   await waitFor(() => expect(archives.snapshot().status).toBe("error"));
-  expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-    "This key is archived in this community.",
-  );
-});
-
-it("withholds the replacement when deltas at the newest second disagree", async () => {
-  // Relays before strictly later delta stamps break a same-second tie by id,
-  // so either delta may be the current one.
-  const replaced = delta(old.pubkey, [["replaced-by", successor.pubkey]], {
-    created_at: 1_700_000_030,
-  });
-  // The plain delta loses the NIP-01 id tie-break, so without the tie check
-  // the replacement would show.
-  let plain = delta(old.pubkey, [], { created_at: 1_700_000_030 });
-  for (let n = 0; plain.id < replaced.id; n++)
-    plain = delta(old.pubkey, [["n", String(n)]], {
-      created_at: 1_700_000_030,
-    });
-  const { archives } = mount([
-    ...people,
-    snapshot([old.pubkey]),
-    replaced,
-    plain,
-  ]);
-  // The owner's own answer: the tie policy names no replacement.
-  await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
-  await waitFor(() =>
-    expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-      "This key is archived in this community.",
-    ),
-  );
-  expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
-});
-
-it("retries a failed lookup after a reconnect, with an unchanged archive", async () => {
-  const events = [
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ];
-  const { failing, archives, query, reconnect } = mount(events);
-  failing.deltas = true;
-  await waitFor(() =>
-    expect(query.mock.calls.flatMap(([filters]) => filters)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kinds: [8002, 8003] }),
-      ]),
-    ),
-  );
-  expect(screen.getByTestId("profile-archived")).toHaveTextContent(
-    "This key is archived in this community.",
-  );
-  const { eventId } = archives.snapshot();
-  failing.deltas = false;
-  reconnect();
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  expect(archives.snapshot().eventId).toBe(eventId);
+  expect(
+    screen.getByRole("button", { name: "Open new key profile: New Key" }),
+  ).toBeVisible();
 });
 
 it("reads the archive again once the connection is back, after reads failed while it was down", async () => {
   const events: RelayEvent[] = [
     ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    snapshot([[old.pubkey, successor.pubkey]]),
   ];
   const { archives, failing, drop, restore, query } = mount(events);
-  const snapshots = () =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(13535)).length;
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
   // The first establishment settles access, as at startup, which starts a
   // new archive read; only a later reconnect is under test.
-  const before = snapshots();
+  const before = snapshotReads(query);
   restore();
-  await waitFor(() => expect(snapshots()).toBe(before + 1));
+  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
   // The drop leaves the snapshot stale, so the open profile reads it again
   // while the connection is down, and that read fails.
@@ -497,10 +358,7 @@ it("reads the archive again once the connection is back, after reads failed whil
   drop();
   await waitFor(() => expect(archives.snapshot().status).toBe("error"));
   // Meanwhile the key is unarchived.
-  events.push(
-    snapshot([], 1_700_000_050),
-    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
-  );
+  events.push(snapshot([], 1_700_000_050));
   failing.snapshots = false;
   restore();
   await waitFor(() =>
@@ -508,87 +366,42 @@ it("reads the archive again once the connection is back, after reads failed whil
   );
 });
 
-it("reads a retained profile tab's archive when it is selected again, and nothing while it is hidden", async () => {
+it("reads the archive again once the connection is back, after a read while it was down succeeded", async () => {
   const events: RelayEvent[] = [
     ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    snapshot([[old.pubkey, successor.pubkey]]),
   ];
-  const { query, archives } = mount(events, [], { tabbed: true });
-  const reads = (kind: number) =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(kind)).length;
-  const user = userEvent.setup();
+  const { archives, drop, restore, query } = mount(events);
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  await user.click(screen.getByRole("tab", { name: "Thread" }));
-  const snapshots = reads(13535);
-  const deltas = reads(8002);
-  // A reread of the shared snapshot, as another profile's opening makes,
-  // reads no deltas for the hidden one.
-  await act(() => archives.refresh());
-  await act(async () => {});
-  expect(reads(8002)).toBe(deltas);
-  // Another device unarchives the key, then the link returns to the tab.
-  events.push(
-    snapshot([], 1_700_000_050),
-    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
-  );
-  // The profile names its own tab.
-  await user.click(screen.getByRole("tab", { name: "Old Key" }));
+  // Settle startup access, as in the test above.
+  const before = snapshotReads(query);
+  restore();
+  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  // Reads go over a separate path, so one can succeed while the live
+  // connection is down; a change after it was missed.
+  const during = snapshotReads(query);
+  drop();
+  await waitFor(() => expect(snapshotReads(query)).toBe(during + 1));
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  events.push(snapshot([], 1_700_000_050));
+  restore();
   await waitFor(() =>
     expect(screen.queryByTestId("profile-archived")).toBeNull(),
   );
-  expect(reads(13535)).toBe(snapshots + 2);
-});
-
-it("reads a collapsed dock's profile tab again when the dock opens, and nothing while it is collapsed", async () => {
-  const events: RelayEvent[] = [
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ];
-  const { query, archives } = mount(events, [], { docked: true });
-  const reads = (kind: number) =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(kind)).length;
-  const user = userEvent.setup();
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  await user.click(screen.getByRole("button", { name: "Collapse" }));
-  const snapshots = reads(13535);
-  const deltas = reads(8002);
-  await act(() => archives.refresh());
-  await act(async () => {});
-  expect(reads(8002)).toBe(deltas);
-  // Another device unarchives the key, then the dock opens on the same tab.
-  events.push(
-    snapshot([], 1_700_000_050),
-    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
-  );
-  await user.click(screen.getByRole("button", { name: "Expand" }));
-  await waitFor(() =>
-    expect(screen.queryByTestId("profile-archived")).toBeNull(),
-  );
-  expect(reads(13535)).toBe(snapshots + 2);
 });
 
 it("reads the archive again once the connection is back, while a read from the drop is still in flight", async () => {
   const events: RelayEvent[] = [
     ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+    snapshot([[old.pubkey, successor.pubkey]]),
   ];
   const { archives, failing, held, drop, restore, query } = mount(events);
-  const snapshots = () =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(13535)).length;
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  // Settle startup access, as in the test above.
-  const before = snapshots();
+  // Settle startup access, as in the tests above.
+  const before = snapshotReads(query);
   restore();
-  await waitFor(() => expect(snapshots()).toBe(before + 1));
+  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
   // The open profile reads again while the connection is down; that read
   // will fail, but it is still in flight when the connection comes back.
@@ -597,14 +410,11 @@ it("reads the archive again once the connection is back, while a read from the d
     release = resolve;
   });
   failing.snapshots = true;
-  const during = snapshots();
+  const during = snapshotReads(query);
   drop();
-  await waitFor(() => expect(snapshots()).toBe(during + 1));
+  await waitFor(() => expect(snapshotReads(query)).toBe(during + 1));
   failing.snapshots = false;
-  events.push(
-    snapshot([], 1_700_000_050),
-    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
-  );
+  events.push(snapshot([], 1_700_000_050));
   restore();
   // The session acts on the reconnect in a timer; let it run first.
   await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -618,31 +428,68 @@ it("reads the archive again once the connection is back, while a read from the d
   expect(archives.snapshot().status).toBe("ready");
 });
 
-it("shares one delta read among the profiles that show a key under one snapshot read", async () => {
-  const { query, archives } = mount([
+it("reads a retained profile tab's archive when it is selected again, and nothing while it is hidden", async () => {
+  const events: RelayEvent[] = [
     ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ]);
-  const reads = () =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(8002)).length;
+    snapshot([[old.pubkey, successor.pubkey]]),
+  ];
+  const { query, archives } = mount(events, [], { tabbed: true });
+  const user = userEvent.setup();
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  await waitFor(() => expect(reads()).toBe(1));
-  const answers = await act(() =>
-    Promise.all([
-      archives.replacement(old.pubkey),
-      archives.replacement(old.pubkey),
-    ]),
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  await user.click(screen.getByRole("tab", { name: "Thread" }));
+  const hidden = snapshotReads(query);
+  // Another device unarchives the key, then the profile's tab is selected.
+  events.push(snapshot([], 1_700_000_050));
+  await act(async () => {});
+  expect(snapshotReads(query)).toBe(hidden);
+  // The profile names its own tab.
+  await user.click(screen.getByRole("tab", { name: "Old Key" }));
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
   );
-  expect(answers).toEqual([successor.pubkey, successor.pubkey]);
-  expect(reads()).toBe(1);
-  // A later snapshot read asks again, once.
-  await act(() => archives.refresh());
-  await waitFor(() => expect(reads()).toBe(2));
-  await act(() => archives.replacement(old.pubkey));
-  expect(reads()).toBe(2);
+  expect(snapshotReads(query)).toBe(hidden + 1);
+});
+
+it("reads a collapsed dock's profile tab again when the dock opens, and nothing while it is collapsed", async () => {
+  const events: RelayEvent[] = [
+    ...people,
+    snapshot([[old.pubkey, successor.pubkey]]),
+  ];
+  const { query, archives } = mount(events, [], { docked: true });
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+  await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
+  await user.click(screen.getByRole("button", { name: "Collapse" }));
+  const hidden = snapshotReads(query);
+  // Another device unarchives the key, then the dock opens on the same tab.
+  events.push(snapshot([], 1_700_000_050));
+  await act(async () => {});
+  expect(snapshotReads(query)).toBe(hidden);
+  await user.click(screen.getByRole("button", { name: "Expand" }));
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
+  expect(snapshotReads(query)).toBe(hidden + 1);
+});
+
+it("reads the archive again when a profile opens, in both directions", async () => {
+  const events: RelayEvent[] = [...people, snapshot([])];
+  const { reopen } = mount(events);
+  await screen.findByRole("heading", { name: "Old Key" });
+  expect(screen.queryByTestId("profile-archived")).toBeNull();
+
+  // Another device archives the key with a replacement.
+  events.push(snapshot([[old.pubkey, successor.pubkey]], 1_700_000_040));
+  reopen();
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+
+  // And then unarchives it.
+  events.push(snapshot([], 1_700_000_050));
+  reopen();
+  await waitFor(() =>
+    expect(screen.queryByTestId("profile-archived")).toBeNull(),
+  );
 });
 
 const ownedType = {
@@ -694,11 +541,7 @@ function ownedBy(viewer: string) {
 
 it("shows an owned agent's replacement and asks before leaving unsaved edits", async () => {
   const { open, push } = mount(
-    [
-      ...people,
-      snapshot([old.pubkey]),
-      delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-    ],
+    [...people, snapshot([[old.pubkey, successor.pubkey]])],
     [],
     { ownedBy },
   );
@@ -738,15 +581,9 @@ it("shows an owned agent's replacement and asks before leaving unsaved edits", a
 });
 
 it("hides an owned agent's notice while its name is edited", async () => {
-  mount(
-    [
-      ...people,
-      snapshot([old.pubkey]),
-      delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-    ],
-    [],
-    { ownedBy },
-  );
+  mount([...people, snapshot([[old.pubkey, successor.pubkey]])], [], {
+    ownedBy,
+  });
   const user = userEvent.setup();
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
   await user.click(
@@ -772,88 +609,4 @@ it("adds nothing to an owned agent's profile when its key is not archived", asyn
   // An empty element would still take a gap in the hero's flex column.
   expect(name.parentElement?.nextElementSibling).not.toBeEmptyDOMElement();
   expect(screen.queryByTestId("profile-archived")).toBeNull();
-});
-
-it("reads an archived key's deltas once per opening", async () => {
-  const { query, reopen, held } = mount([
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
-  ]);
-  const reads = (kind: number) =>
-    query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.includes(kind)).length;
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  await waitFor(() => expect(reads(8002)).toBe(1));
-  const snapshots = reads(13535);
-  let release!: () => void;
-  held.snapshots = new Promise((resolve) => {
-    release = resolve;
-  });
-  try {
-    reopen();
-    await waitFor(() => expect(reads(13535)).toBe(snapshots + 1));
-    // The reread is in flight, so the opening waits to read deltas.
-    await act(async () => {});
-    expect(reads(8002)).toBe(1);
-  } finally {
-    await act(async () => release());
-  }
-  await waitFor(() => expect(reads(8002)).toBe(2));
-  expect(
-    screen.getByRole("button", { name: "Open new key profile: New Key" }),
-  ).toBeVisible();
-});
-
-it("reads the archive again when a profile opens, in both directions", async () => {
-  const events: RelayEvent[] = [...people, snapshot([])];
-  const { reopen } = mount(events);
-  await screen.findByRole("heading", { name: "Old Key" });
-  expect(screen.queryByTestId("profile-archived")).toBeNull();
-
-  // Another device archives the key with a replacement.
-  events.push(
-    snapshot([old.pubkey], 1_700_000_040),
-    delta(old.pubkey, [["replaced-by", successor.pubkey]], {
-      created_at: 1_700_000_040,
-    }),
-  );
-  reopen();
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-
-  // And then unarchives it.
-  events.push(
-    snapshot([], 1_700_000_050),
-    delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_050 }),
-  );
-  reopen();
-  await waitFor(() =>
-    expect(screen.queryByTestId("profile-archived")).toBeNull(),
-  );
-});
-
-it("links the replacement when deltas at the newest second agree", async () => {
-  // Concurrent publishers can sign the same state at the same second.
-  const tags = [["replaced-by", successor.pubkey]];
-  mount([
-    ...people,
-    snapshot([old.pubkey]),
-    delta(old.pubkey, tags, { created_at: 1_700_000_060 }),
-    delta(old.pubkey, [...tags, ["n", "1"]], { created_at: 1_700_000_060 }),
-  ]);
-  await screen.findByRole("button", { name: "Open new key profile: New Key" });
-});
-
-it("names no replacement when a full page of deltas shares the newest second", async () => {
-  const tags = [["replaced-by", successor.pubkey]];
-  const { archives } = mount([
-    ...people,
-    snapshot([old.pubkey]),
-    ...["1", "2", "3"].map((n) =>
-      delta(old.pubkey, [...tags, ["n", n]], { created_at: 1_700_000_070 }),
-    ),
-  ]);
-  // A fourth delta at that second could disagree, unseen past the limit.
-  await expect(archives.replacement(old.pubkey)).resolves.toBeUndefined();
 });

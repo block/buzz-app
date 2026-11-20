@@ -15,6 +15,8 @@ import type { RelayWriter } from "./transport";
 export type IdentityArchiveSnapshot = Readonly<{
   status: "unavailable" | "idle" | "loading" | "ready" | "error";
   archived: readonly string[];
+  /** The replacement key each archived key's snapshot entry names, if any. */
+  replacements?: Readonly<Record<string, string>>;
   eventId?: string;
   createdAt?: number;
   readAt?: number;
@@ -61,29 +63,31 @@ export function archiveHides(
 const archivedSets = new WeakMap<readonly string[], ReadonlySet<string>>();
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
-const CONSENT_PATHS = new Set(["self", "owner", "admin", "relay"]);
 const MAX_BYTES = 2 * 1024 * 1024;
+const noReplacements: Readonly<Record<string, string>> = Object.freeze({});
 
-/** The replacement a relay archive delta for `pubkey` names, when it is a
- * well-formed NIP-IA archive delta naming exactly one other valid key. */
-function successor(delta: RelayEvent, pubkey: string): string | undefined {
-  if (delta.kind !== 8002) return undefined;
-  const tags = (name: string) => delta.tags.filter(([key]) => key === name);
-  const [target, ...targets] = tags("p");
-  const [consent, ...consents] = tags("consent");
-  const [tag, ...extra] = tags("replaced-by");
-  const next = tag?.[1];
-  return tags("-").length === 1 &&
-    !targets.length &&
-    target?.[1] === pubkey &&
-    !consents.length &&
-    CONSENT_PATHS.has(consent?.[1] ?? "") &&
-    !extra.length &&
-    next &&
-    HEX.test(next) &&
-    next !== pubkey
-    ? next
-    : undefined;
+/** NIP-IA: an archived key's snapshot entry may name its replacement as a
+ * third element. One that is not another valid key names none, and so does a
+ * key whose entries disagree. */
+function replacements(event: RelayEvent): Readonly<Record<string, string>> {
+  const named = new Map<string, string | undefined>();
+  for (const [name, key, next] of event.tags) {
+    if (name !== "p" || !key || !HEX.test(key)) continue;
+    const replacement =
+      next && HEX.test(next) && next !== key ? next : undefined;
+    named.set(
+      key,
+      named.has(key) && named.get(key) !== replacement
+        ? undefined
+        : replacement,
+    );
+  }
+  const found = [...named].filter(
+    (entry): entry is [string, string] => !!entry[1],
+  );
+  return found.length
+    ? Object.freeze(Object.fromEntries(found))
+    : noReplacements;
 }
 
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
@@ -117,17 +121,7 @@ export function createIdentityArchives(
     status: available ? "idle" : "unavailable",
     archived: empty,
   });
-  // Replacement lookups for the current snapshot read, shared by every
-  // profile that shows the same key; a stop cancels them. A new snapshot read
-  // only forgets them: one still in flight finishes unused, at most one per
-  // key per snapshot read.
-  let lookups = new Map<
-    string,
-    { readAt: number | undefined; answer: Promise<string | undefined> }
-  >();
-  let lookupsController = new AbortController();
   function publish(next: IdentityArchiveSnapshot) {
-    if (next.readAt !== snapshot.readAt) lookups = new Map();
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
@@ -213,6 +207,7 @@ export function createIdentityArchives(
         settle({
           status: "ready",
           archived: Object.freeze(archived),
+          replacements: replacements(event),
           eventId: event.id,
           createdAt: event.created_at,
           readAt: Date.now(),
@@ -371,53 +366,6 @@ export function createIdentityArchives(
         uncertain ?? new Error("The relay did not confirm the change. Retry.")
       );
   }
-  /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
-   * when that delta is a well-formed archive delta. Callers show it only while
-   * the current snapshot lists `pubkey`. Presentation only, never access.
-   * One read per key for each snapshot read: callers asking under the same
-   * read share it, and a later snapshot read asks again.
-   * Older relays stamp deltas to the second, and concurrent publishers can
-   * share one, so deltas tied at the newest second count only when they all
-   * give the same answer, and a full page of them names no replacement. */
-  function replacement(pubkey: string): Promise<string | undefined> {
-    if (closed || !available || !authority || !HEX.test(pubkey))
-      return Promise.resolve(undefined);
-    const { readAt } = snapshot;
-    const known = lookups.get(pubkey);
-    if (known && known.readAt === readAt) return known.answer;
-    const current = lookups;
-    const answer = lookup(authority, pubkey, lookupsController.signal);
-    current.set(pubkey, { readAt, answer });
-    // A failed lookup is asked again by the next caller, not remembered.
-    answer.catch(() => {
-      if (current.get(pubkey)?.answer === answer) current.delete(pubkey);
-    });
-    return answer;
-  }
-  async function lookup(
-    authority: string,
-    pubkey: string,
-    signal: AbortSignal,
-  ): Promise<string | undefined> {
-    const limit = 3;
-    const events = await reader.read(
-      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit }],
-      { signal, priority: "background", fresh: true },
-    );
-    const deltas = events.filter(
-      (event) =>
-        (event.kind === 8002 || event.kind === 8003) &&
-        event.pubkey === authority,
-    );
-    const newest = deltas.reduce<RelayEvent | undefined>(newer, undefined);
-    if (!newest) return undefined;
-    const tied = deltas.filter(
-      (event) => event.created_at === newest.created_at,
-    );
-    if (tied.length >= limit) return undefined;
-    const answers = new Set(tied.map((event) => successor(event, pubkey)));
-    return answers.size === 1 ? [...answers][0] : undefined;
-  }
   /** From the latest successful read only, so deletion and confirmation never
    * act on retained evidence. */
   function state(pubkey: string): "unknown" | "archived" | "not-archived" {
@@ -427,9 +375,6 @@ export function createIdentityArchives(
   function stop() {
     for (const owned of requests) owned.abort();
     stopRead();
-    lookupsController.abort();
-    lookupsController = new AbortController();
-    lookups = new Map();
     return closed || !available ? "unavailable" : "idle";
   }
   function stopRead() {
@@ -454,11 +399,13 @@ export function createIdentityArchives(
     if (!snapshot.transient) publish(retired(snapshot));
   }
   /** Once a dropped connection is back: a snapshot that a view subscribes to
-   * is read again when the drop left it stale, its read failed during the
-   * drop, or a read is still retrying from the drop, since nothing else would
-   * ask before that view's next opening. */
+   * is read again, since a change during the drop would otherwise wait for
+   * that view's next opening. A read still retrying from the drop starts
+   * over. At most one snapshot read per session with a subscribed view,
+   * beside the session's other reconnect repairs; the drop already left most
+   * snapshots stale, so only one read during the drop adds a read. */
   function reconnect() {
-    if (closed || !listeners.size || snapshot.status === "ready") return;
+    if (closed || !listeners.size) return;
     if (snapshot.status === "loading") {
       controller?.abort();
       controller = undefined;
@@ -477,7 +424,6 @@ export function createIdentityArchives(
         };
       },
       state,
-      replacement,
       ensure: ({ background = false }: { background?: boolean } = {}) => {
         if (!background) backgroundRead = false;
         if (pending) return pending;

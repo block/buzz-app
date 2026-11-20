@@ -142,6 +142,7 @@ import {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
+import { PaneShownScope } from "../../features/panels/pane-shown";
 import { COMPANION_SPLIT, PanelFrame } from "../../features/panels/PanelFrame";
 import { diagnosticsAvailable } from "../../features/developer/mode";
 import { OutboxStatus } from "./OutboxStatus";
@@ -3159,152 +3160,162 @@ function ChannelWorkspace({
                 body
               ) : (
                 <div className={styles.mainWorkspace}>
-                  <PanelWorkspace
-                    main
-                    tabMenu={tabMenu}
-                    drag={secondary.drag.main}
-                    label="Channel tabs"
-                    identity={
-                      current && (
-                        <ChannelHeaderIdentity
-                          session={queries}
-                          channelId={current.id}
-                          name={current.name}
-                          access={memberAccess(current)}
-                          ref={membersHeaderTrigger}
-                          aria-expanded={membersOpen}
-                          onClick={(event) => openMembers(event.currentTarget)}
-                        />
-                      )
-                    }
-                    focusOnMount={false}
-                    adoptSelection={preservedVisit}
-                    value={secondary.selectedMain}
-                    select={(id) =>
-                      tabState.selectMain(
-                        id === "conversation" ? undefined : id,
-                      )
-                    }
-                    actions={
-                      <>
-                        {drawer.launchers}
-                        <ChannelHeaderMenu
-                          startChat={
-                            navigator &&
-                            current &&
-                            canStartLinkedChat(queries) ? (
-                              <StartLinkedChat
-                                session={queries}
-                                navigation={navigator}
-                                channelId={current.id}
-                              />
-                            ) : undefined
-                          }
-                          key={`channel-actions:${currentId ?? "empty"}`}
-                          channel={current}
-                          session={queries}
-                          origin={navigation?.signal}
-                          trigger={settingsTrigger}
-                          finishConversion={
-                            current && conversions.has(current.id)
-                              ? () =>
-                                  setConversion({
-                                    channelId: current.id,
-                                    navigation,
-                                    trigger: settingsTrigger.current,
-                                  })
-                              : undefined
-                          }
-                          openDetails={() => {
-                            drawer.close();
-                            requestSettingsFocus((value) => value + 1);
-                            setSettings({ channelId: currentId });
-                          }}
-                          menuPanels={
-                            current && !cached
-                              ? available.filter((panel) =>
-                                  panel.channelMenu?.eligible(current, queries),
-                                )
-                              : []
-                          }
-                          openMenuPanel={(panel) => {
-                            const connection = relay.snapshot();
-                            const channel = queries.channels
-                              .list()
-                              .channels.find((item) => item.id === currentId);
-                            if (
-                              connection.status !== "ready" ||
-                              connection.cached ||
-                              connection.session !== queries ||
-                              !drawerContext ||
-                              drawerContext.channelId !== channel?.id ||
-                              !channel ||
-                              channel.cached ||
-                              (channel.readOnly &&
-                                channel.viewerRole !== "guest") ||
-                              !viewerMember(channel, queries.viewer) ||
-                              !panels.snapshot().includes(panel) ||
-                              !panel.channelMenu?.eligible(channel, queries)
-                            )
-                              return;
-                            drawer.close();
-                            panelTrigger.current = settingsTrigger.current;
-                            open(
-                              {
-                                panel,
-                                channelId: channel.id,
-                                target: channel.id,
-                                channelContext: drawerContext,
-                              },
-                              true,
-                            );
-                          }}
-                        />
-                        {current && hasChannelPanel && !showingChannelPanel && (
-                          <span className={panelStyles.paneToggle}>
-                            <IconButton
-                              hint="familiar"
-                              ref={splitTrigger}
-                              data-tab-pane-toggle=""
-                              size="toolbar"
-                              aria-label="Toggle tab pane"
-                              title={
-                                showingChannelPanel
-                                  ? "Close tab pane"
-                                  : "Open tab pane"
-                              }
-                              aria-expanded={!!showingChannelPanel}
-                              onClick={() =>
-                                tabState.setPaneOpen(!showingChannelPanel)
-                              }
-                              icon={
-                                <SidebarRightIcon
-                                  size="1rem"
-                                  aria-hidden="true"
+                  {/* A floating dock covers these tabs without hiding them. */}
+                  <PaneShownScope shown={!covered}>
+                    <PanelWorkspace
+                      main
+                      tabMenu={tabMenu}
+                      drag={secondary.drag.main}
+                      label="Channel tabs"
+                      identity={
+                        current && (
+                          <ChannelHeaderIdentity
+                            session={queries}
+                            channelId={current.id}
+                            name={current.name}
+                            access={memberAccess(current)}
+                            ref={membersHeaderTrigger}
+                            aria-expanded={membersOpen}
+                            onClick={(event) =>
+                              openMembers(event.currentTarget)
+                            }
+                          />
+                        )
+                      }
+                      focusOnMount={false}
+                      adoptSelection={preservedVisit}
+                      value={secondary.selectedMain}
+                      select={(id) =>
+                        tabState.selectMain(
+                          id === "conversation" ? undefined : id,
+                        )
+                      }
+                      actions={
+                        <>
+                          {drawer.launchers}
+                          <ChannelHeaderMenu
+                            startChat={
+                              navigator &&
+                              current &&
+                              canStartLinkedChat(queries) ? (
+                                <StartLinkedChat
+                                  session={queries}
+                                  navigation={navigator}
+                                  channelId={current.id}
                                 />
-                              }
-                            />
-                          </span>
-                        )}
-                      </>
-                    }
-                    items={[
-                      {
-                        id: "conversation",
-                        label: current?.name ?? "Channels",
-                        icon: <CurrentChannelIcon size="1rem" />,
-                        content: (
-                          <div
-                            ref={channelConversation}
-                            className={styles.conversation}
-                          >
-                            {body}
-                          </div>
-                        ),
-                      },
-                      ...secondary.mainItems,
-                    ]}
-                  />
+                              ) : undefined
+                            }
+                            key={`channel-actions:${currentId ?? "empty"}`}
+                            channel={current}
+                            session={queries}
+                            origin={navigation?.signal}
+                            trigger={settingsTrigger}
+                            finishConversion={
+                              current && conversions.has(current.id)
+                                ? () =>
+                                    setConversion({
+                                      channelId: current.id,
+                                      navigation,
+                                      trigger: settingsTrigger.current,
+                                    })
+                                : undefined
+                            }
+                            openDetails={() => {
+                              drawer.close();
+                              requestSettingsFocus((value) => value + 1);
+                              setSettings({ channelId: currentId });
+                            }}
+                            menuPanels={
+                              current && !cached
+                                ? available.filter((panel) =>
+                                    panel.channelMenu?.eligible(
+                                      current,
+                                      queries,
+                                    ),
+                                  )
+                                : []
+                            }
+                            openMenuPanel={(panel) => {
+                              const connection = relay.snapshot();
+                              const channel = queries.channels
+                                .list()
+                                .channels.find((item) => item.id === currentId);
+                              if (
+                                connection.status !== "ready" ||
+                                connection.cached ||
+                                connection.session !== queries ||
+                                !drawerContext ||
+                                drawerContext.channelId !== channel?.id ||
+                                !channel ||
+                                channel.cached ||
+                                (channel.readOnly &&
+                                  channel.viewerRole !== "guest") ||
+                                !viewerMember(channel, queries.viewer) ||
+                                !panels.snapshot().includes(panel) ||
+                                !panel.channelMenu?.eligible(channel, queries)
+                              )
+                                return;
+                              drawer.close();
+                              panelTrigger.current = settingsTrigger.current;
+                              open(
+                                {
+                                  panel,
+                                  channelId: channel.id,
+                                  target: channel.id,
+                                  channelContext: drawerContext,
+                                },
+                                true,
+                              );
+                            }}
+                          />
+                          {current &&
+                            hasChannelPanel &&
+                            !showingChannelPanel && (
+                              <span className={panelStyles.paneToggle}>
+                                <IconButton
+                                  hint="familiar"
+                                  ref={splitTrigger}
+                                  data-tab-pane-toggle=""
+                                  size="toolbar"
+                                  aria-label="Toggle tab pane"
+                                  title={
+                                    showingChannelPanel
+                                      ? "Close tab pane"
+                                      : "Open tab pane"
+                                  }
+                                  aria-expanded={!!showingChannelPanel}
+                                  onClick={() =>
+                                    tabState.setPaneOpen(!showingChannelPanel)
+                                  }
+                                  icon={
+                                    <SidebarRightIcon
+                                      size="1rem"
+                                      aria-hidden="true"
+                                    />
+                                  }
+                                />
+                              </span>
+                            )}
+                        </>
+                      }
+                      items={[
+                        {
+                          id: "conversation",
+                          label: current?.name ?? "Channels",
+                          icon: <CurrentChannelIcon size="1rem" />,
+                          content: (
+                            <div
+                              ref={channelConversation}
+                              className={styles.conversation}
+                            >
+                              {body}
+                            </div>
+                          ),
+                        },
+                        ...secondary.mainItems,
+                      ]}
+                    />
+                  </PaneShownScope>
                 </div>
               )}
               {drawer.content}
@@ -3354,44 +3365,48 @@ function ChannelWorkspace({
                 className={styles.retainedPanel}
                 hidden={!!companion && !showingChannelPanel}
               >
-                <PanelWorkspace
-                  key={currentId}
-                  actions={
-                    <IconButton
-                      hint="familiar"
-                      data-tab-pane-toggle=""
-                      data-highlight-expanded="false"
-                      variant="subtle"
-                      size="toolbar"
-                      aria-label="Toggle tab pane"
-                      title="Close tab pane"
-                      aria-expanded={true}
-                      onClick={secondary.closePane}
-                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
-                    />
-                  }
-                  tabMenu={tabMenu}
-                  drag={secondary.drag.side}
-                  value={selectedTab}
-                  focusOnMount={
-                    !membersOpen && (continuingVisit || !!routedThread)
-                  }
-                  select={selectPanelTab}
-                  items={[
-                    ...(settings
-                      ? [
-                          {
-                            id: "settings",
-                            label: "Channel settings",
-                            icon: <GearIcon size="1rem" />,
-                            close: closeSettings,
-                            content: settingsContent,
-                          },
-                        ]
-                      : []),
-                    ...secondary.items,
-                  ]}
-                />
+                <PaneShownScope shown={!companion || !!showingChannelPanel}>
+                  <PanelWorkspace
+                    key={currentId}
+                    actions={
+                      <IconButton
+                        hint="familiar"
+                        data-tab-pane-toggle=""
+                        data-highlight-expanded="false"
+                        variant="subtle"
+                        size="toolbar"
+                        aria-label="Toggle tab pane"
+                        title="Close tab pane"
+                        aria-expanded={true}
+                        onClick={secondary.closePane}
+                        icon={
+                          <SidebarRightIcon size="1rem" aria-hidden="true" />
+                        }
+                      />
+                    }
+                    tabMenu={tabMenu}
+                    drag={secondary.drag.side}
+                    value={selectedTab}
+                    focusOnMount={
+                      !membersOpen && (continuingVisit || !!routedThread)
+                    }
+                    select={selectPanelTab}
+                    items={[
+                      ...(settings
+                        ? [
+                            {
+                              id: "settings",
+                              label: "Channel settings",
+                              icon: <GearIcon size="1rem" />,
+                              close: closeSettings,
+                              content: settingsContent,
+                            },
+                          ]
+                        : []),
+                      ...secondary.items,
+                    ]}
+                  />
+                </PaneShownScope>
               </div>
             )}
             {hasChannelPanel && drawer.side && (

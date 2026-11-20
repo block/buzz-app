@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { usePanelShown } from "../../features/panels/pane-shown";
 import { profileTarget } from "../../features/profiles/target";
 import type { RelaySession } from "../../features/relay/session";
@@ -6,7 +6,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { useProfileName } from "./useProfileName";
 
 /** Says that this identity is archived in this community and, when the
- * relay's archive delta names one, links its replacement key. Presentation
+ * relay's archive snapshot names one, links its replacement key. Presentation
  * only: archival hides a key from choosers, it is not a ban. */
 export function ProfileArchiveNotice({
   session,
@@ -33,8 +33,8 @@ export function ProfileArchiveNotice({
   );
   // Archive reads are finite snapshots, so each opening reads the current
   // one, and so does selecting a retained tab again, or a stale (idle)
-  // snapshot, as after a new access. A hidden tab reads nothing. A read that
-  // fails while the connection is down is repaired by the store on reconnect.
+  // snapshot, as after a new access. A hidden tab reads nothing. After a
+  // reconnect the store reads again for every view it serves.
   const shown = usePanelShown();
   useEffect(() => {
     void pubkey;
@@ -44,43 +44,9 @@ export function ProfileArchiveNotice({
   useEffect(() => {
     if (shown && idle) void archives.ensure();
   }, [archives, idle, shown]);
-  const archived = snapshot.archived.includes(pubkey);
-  // A result counts only for the snapshot read it answered, so a reread that
-  // fails, or whose lookup fails, shows no earlier replacement.
-  const [replacement, setReplacement] = useState<{
-    of: string;
-    readAt: number | undefined;
-    key: string | undefined;
-  }>();
-  // Each snapshot read, also one that keeps its event, retries a lookup that
-  // an interruption or a failure left unanswered.
-  const readAt = snapshot.readAt;
-  // A reread in progress answers again when it lands, so a lookup now would
-  // be read twice. The live status counts: the opening's refresh, in the same
-  // commit, has already started one.
-  const loading = snapshot.status === "loading";
-  useEffect(() => {
-    void readAt;
-    void loading;
-    if (!shown || !archived || archives.snapshot().status === "loading") return;
-    let current = true;
-    void archives.replacement(pubkey).then(
-      (key) => {
-        if (current) setReplacement({ of: pubkey, readAt, key });
-      },
-      () => {},
-    );
-    return () => {
-      current = false;
-    };
-  }, [archives, archived, loading, pubkey, readAt, shown]);
-  if (!archived) return null;
-  const successor =
-    replacement?.of === pubkey &&
-    replacement.readAt === readAt &&
-    snapshot.status !== "error"
-      ? replacement.key
-      : undefined;
+  if (!snapshot.archived.includes(pubkey)) return null;
+  // From the same snapshot entry as "archived", so the two always agree.
+  const successor = snapshot.replacements?.[pubkey];
   return (
     <p
       className="text-body-sm text-secondary"

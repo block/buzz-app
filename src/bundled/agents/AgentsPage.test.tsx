@@ -4672,41 +4672,23 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-/** A relay session whose archive lists `archived`, replaced by `replacement`. */
+/** A relay session whose archive lists `archived`, replaced by `replacement`.
+ * `unarchive` makes the relay's next snapshot list no one. */
 function archiveRelay(archived: string, replacement: string) {
   const relayKey = keypair();
-  const events = [
-    signed(relayKey, {
-      kind: 13535,
-      content: "",
-      tags: [["-"], ["p", archived]],
-    }),
-    signed(relayKey, {
-      kind: 8002,
-      content: "",
-      tags: [
-        ["-"],
-        ["p", archived],
-        ["consent", "self", archived],
-        ["replaced-by", replacement],
-      ],
-    }),
-  ];
+  const listed = signed(relayKey, {
+    kind: 13535,
+    content: "",
+    tags: [["-"], ["p", archived, replacement]],
+  });
+  let events = [listed];
   const owner = createRelaySession({
     viewer: "f".repeat(64),
     relayAuthor: relayKey.pubkey,
     archiveAuthority: relayKey.pubkey,
     query: async (filters) =>
       events.filter((event) =>
-        filters.some(
-          (filter) =>
-            filter.kinds?.includes(event.kind) &&
-            (!filter["#p"] ||
-              event.tags.some(
-                ([name, key]) =>
-                  name === "p" && filter["#p"]?.includes(key ?? ""),
-              )),
-        ),
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
       ),
     media: () => undefined,
   });
@@ -4720,7 +4702,17 @@ function archiveRelay(archived: string, replacement: string) {
     snapshot: () => connection,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  return { relay, dispose: () => owner.dispose() };
+  const unarchive = () => {
+    events = [
+      signed(relayKey, {
+        kind: 13535,
+        content: "",
+        tags: [["-"]],
+        created_at: listed.created_at + 1,
+      }),
+    ];
+  };
+  return { relay, unarchive, dispose: () => owner.dispose() };
 }
 
 it("shows an archived agent's replacement and asks before leaving unsaved edits", async () => {
@@ -4772,7 +4764,6 @@ it("names an archived agent's replacement without a link when it is not one of y
     await user.click(
       within(screen.getByRole("grid", { name: "Agents" })).getByText("Ada"),
     );
-    // The plain notice shows first; wait for the looked-up replacement.
     await waitFor(() =>
       expect(screen.getByTestId("profile-archived")).toHaveTextContent(
         /^This key was replaced by .+\.$/,
@@ -7873,5 +7864,28 @@ it("shows Automatic as a read-only detail on a recommended agent card", async ()
     expect(agents.save).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllEnvs();
+  }
+});
+
+it("reads the archive again when Your agents shows its retained profile again", async () => {
+  const user = userEvent.setup();
+  const view = setup([agent("Ada", 1), agent("Bo", 2)]);
+  const archive = archiveRelay(agent("Ada", 1).pubkey, agent("Bo", 2).pubkey);
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={archive.relay} />);
+    await user.click(
+      within(screen.getByRole("grid", { name: "Agents" })).getByText("Ada"),
+    );
+    await screen.findByRole("button", { name: /^Open new key profile: / });
+    // Teams hides the profile, which stays selected in its own tabs.
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    archive.unarchive();
+    await user.click(screen.getByRole("tab", { name: "Your agents" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("profile-archived")).toBeNull(),
+    );
+  } finally {
+    view.unmount();
+    archive.dispose();
   }
 });

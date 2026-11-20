@@ -3192,7 +3192,6 @@ it("keeps installed rows and fresh authorization through rename, removal, arriva
       writable: false,
       supported: true,
       consent: vi.fn(),
-      replacement: async () => undefined,
       request: vi.fn(),
     },
   } as RelaySession;
@@ -3290,7 +3289,6 @@ it("retains button rows while disabling an archived member, then hides it on reo
       writable: false,
       supported: true,
       consent: vi.fn(),
-      replacement: async () => undefined,
       request: vi.fn(),
     },
   } as RelaySession;

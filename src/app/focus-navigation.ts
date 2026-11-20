@@ -42,6 +42,18 @@ export function composerFocusTarget() {
   );
 }
 
+/** The focused composer's Attach files button. Focus outside every composer,
+ * or a disabled button, as while editing, is none. */
+export function attachFilesTrigger() {
+  return (
+    document.activeElement
+      ?.closest("form[data-composer-surface]")
+      ?.querySelector<HTMLButtonElement>(
+        "button[data-attach-files]:not(:disabled)",
+      ) ?? undefined
+  );
+}
+
 function composerIn(root: HTMLElement | null | undefined) {
   return Array.from(
     root?.querySelectorAll<HTMLElement>(

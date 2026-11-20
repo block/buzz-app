@@ -674,3 +674,24 @@ body:has(.shell-header[data-integrated-window-controls]) .buzz-toast-viewport {
     var(--space-2)
   );
 }
+
+/* A file drag resting on a navigation target reads as hover, then blinks twice
+   before the target opens. Unlayered so it holds on every row and button the
+   target may be; spring-loaded-drag.ts owns the timing and skips the blink
+   under reduced motion. */
+[data-spring-loaded] {
+  background-color: var(--interaction-row-hover);
+}
+[data-spring-loaded="blink"] {
+  animation: spring-loaded-blink var(--spring-loaded-blink) step-end;
+}
+@keyframes spring-loaded-blink {
+  0%,
+  50% {
+    background-color: transparent;
+  }
+  25%,
+  75% {
+    background-color: var(--interaction-row-hover);
+  }
+}

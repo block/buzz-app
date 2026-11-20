@@ -4,6 +4,7 @@ import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
@@ -314,6 +315,10 @@ function MessageRowContent({
   const openLink = useCallback(
     (url: string) => onOpenLink(url, { rootId }),
     [onOpenLink, rootId],
+  );
+  const springLoadedThread = useSpringLoaded(
+    () => onOpenThread?.(row.id, rootId),
+    threadOpen,
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -1353,6 +1358,7 @@ function MessageRowContent({
               event.currentTarget.focus();
               onOpenThread(row.id, row.threadRootId ?? row.id);
             }}
+            {...springLoadedThread}
           >
             <ReplySummary
               hideEmptyLabel={!!activity}

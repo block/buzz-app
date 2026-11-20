@@ -39,7 +39,7 @@ function Composer({
 }
 function drag(
   target: HTMLElement,
-  kind: "dragEnter" | "dragOver" | "drop",
+  kind: "dragEnter" | "dragOver" | "dragLeave" | "drop",
   type = "Files",
 ) {
   const transfer = {
@@ -180,4 +180,37 @@ it("availability changes clear the drag hint and disabling rejects attachment", 
   );
   expect(attach).not.toHaveBeenCalled();
   view.unmount();
+});
+
+it("a pane that mounts under a drag in progress claims it from the first dragover", () => {
+  const attach = vi.fn();
+  render(<Composer enabled attach={attach} />);
+  const form = screen.getByRole("form", { name: "Main composer" });
+  const input = screen.getByRole("textbox");
+  // The drag was already inside when the pane mounted, so it never entered.
+  drag(form, "dragOver");
+  expect(screen.getByText("Drop files")).toBeInTheDocument();
+  // Crossing into a child reports the child entered, then its parent left.
+  drag(input, "dragEnter");
+  drag(form, "dragLeave");
+  expect(screen.getByText("Drop files")).toBeInTheDocument();
+  drag(input, "dragLeave");
+  expect(screen.queryByText("Drop files")).not.toBeInTheDocument();
+  drag(input, "dragOver");
+  drag(input, "drop");
+  expect(attach).toHaveBeenCalledTimes(1);
+});
+
+it("a drag crossing into a nested pane leaves the outer pane's hint", () => {
+  render(
+    <Composer enabled attach={vi.fn()}>
+      <aside data-attachment-drop-zone="" aria-label="Thread" />
+    </Composer>,
+  );
+  const input = screen.getByRole("textbox");
+  drag(input, "dragEnter");
+  expect(screen.getByText("Drop files")).toBeInTheDocument();
+  drag(screen.getByRole("complementary"), "dragEnter");
+  drag(input, "dragLeave");
+  expect(screen.queryByText("Drop files")).not.toBeInTheDocument();
 });

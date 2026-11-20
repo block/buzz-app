@@ -5,12 +5,14 @@ type Outcome = "loaded" | "failed";
 // WebKit re-requests cached custom-scheme images on lazy remounts. Remember a
 // bounded set of source outcomes: successful sources mount eagerly, and failed
 // ones show their fallback at once instead of blank until the error returns.
-// These are hints; the real image still decides whether it is ready.
+// These are hints; the real image still decides whether it is ready. Avatars
+// and emoji share the bound, so an emoji-heavy screen must not evict avatars;
+// an entry is only a URL and a flag.
 const outcomes = new Map<string, Outcome>();
 function remember(src: string, outcome: Outcome) {
   outcomes.delete(src);
   outcomes.set(src, outcome);
-  if (outcomes.size > 128) {
+  if (outcomes.size > 1024) {
     const oldest = outcomes.keys().next().value;
     if (oldest !== undefined) outcomes.delete(oldest);
   }

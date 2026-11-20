@@ -108,11 +108,11 @@ it("bounds remembered sources and retains recently used artwork", () => {
     return image;
   };
   fireEvent.load(mount(0));
-  for (let index = 1; index < 128; index++) fireEvent.load(mount(index));
+  for (let index = 1; index < 1024; index++) fireEvent.load(mount(index));
   // Refresh the oldest entry before adding another distinct source.
   expect(mount(0)).toHaveAttribute("loading", "eager");
   fireEvent.load(mount(0));
-  fireEvent.load(mount(128));
+  fireEvent.load(mount(1024));
   expect(mount(1)).toHaveAttribute("loading", "lazy");
   expect(mount(0)).toHaveAttribute("loading", "eager");
 });

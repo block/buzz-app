@@ -250,7 +250,8 @@ export function clearViewScope(scope: string) {
   const keyPrefix = `${JSON.stringify([scope]).slice(0, -1)},`;
   clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
   changed(scope);
-  clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);
+  if (typeof sessionStorage !== "undefined")
+    clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);
 }
 
 /** Forgets one key in every scope where it holds `value`, as when the thing it

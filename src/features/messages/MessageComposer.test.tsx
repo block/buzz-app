@@ -2546,6 +2546,7 @@ it.each(["cleanup", "restore"] as const)(
     const h = await mountUploadComposer();
     attachByPaste(h.input(), attachmentFile("retained.txt"));
     await userEvent.type(h.input(), "recover this caption");
+    act(() => h.input().blur());
     const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
     const original = Storage.prototype.setItem;
     let failWrites = phase === "cleanup";
@@ -2743,6 +2744,7 @@ it("reconciles failed-cleanup recovery after remount before stale cleanup can ov
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("retained.txt"));
   await userEvent.type(h.input(), "recover this caption");
+  act(() => h.input().blur());
   const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
   const original = Storage.prototype.setItem;
   let failCleanup = true;
@@ -2786,6 +2788,7 @@ it("reconciles failed-cleanup recovery after remount before stale cleanup can ov
     ).toBeNull();
     await userEvent.type(replacement, " again");
     expect(replacement).toHaveValue(" againrecover this caption");
+    act(() => replacement.blur());
     expect(readView(h.scope, "draft:channel", null)).toMatchObject({
       text: " againrecover this caption",
     });
@@ -2822,7 +2825,7 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
   expect(replacement).toHaveValue("later edit");
   expect(within(again.container).queryByText("original.txt")).toBeNull();
   await userEvent.clear(replacement);
-  expect(readView(h.scope, "draft:channel", null)).toMatchObject({ text: "" });
+  // Retrying must respect the clear even if its save is still pending.
   await userEvent.click(retry);
   await waitFor(() => expect(replacement).toHaveValue("original caption"));
   expect(replacement).toHaveAttribute("contenteditable", "true");
@@ -12249,6 +12252,7 @@ it.each([undefined, "root"])(
       onDraftSaved: retired,
     });
     h.fill("Accepted once");
+    act(() => h.input().blur());
     const key = threadRootId
       ? `draft:channel:thread:${threadRootId}`
       : "draft:channel";
@@ -12669,6 +12673,7 @@ it("keeps the original draft after synchronous outbox rejection without a persis
 it("does not restore accepted cleanup over a replacement made while the composer was closed", async () => {
   const h = mount();
   h.fill("Already accepted");
+  act(() => h.input().blur());
   const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw Error("full");
   });
@@ -12809,6 +12814,8 @@ it("locks the composer until the sent draft's cleanup succeeds, keeping the reme
     new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
   );
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  h.present(false);
+  h.present(true);
   const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw Error("full");
   });

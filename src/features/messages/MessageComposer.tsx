@@ -207,6 +207,32 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
 const noSubscription = () => () => {};
 const noAgents: readonly string[] = [];
 
+type DraftSaveResult = "saved" | "changed" | "failed";
+type FlushDraft = () => DraftSaveResult | undefined;
+const pendingDraftSaves = new Map<string, Set<FlushDraft>>();
+
+function registerDraftSave(key: string, flush: FlushDraft) {
+  let pending = pendingDraftSaves.get(key);
+  if (!pending) {
+    pending = new Set();
+    pendingDraftSaves.set(key, pending);
+  }
+  pending.add(flush);
+  return () => {
+    pending.delete(flush);
+    if (!pending.size) pendingDraftSaves.delete(key);
+  };
+}
+
+/** Operations that retire or replace a saved draft must see pending edits. */
+export function flushPendingDraft(scope: string, key: string) {
+  for (const flush of pendingDraftSaves.get(`${scope}:${key}`) ?? []) {
+    const result = flush();
+    if (result === "changed" || result === "failed") return false;
+  }
+  return true;
+}
+
 type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
@@ -1126,7 +1152,7 @@ function Composer({
   const pendingDraftSave = useRef<{
     timer: ReturnType<typeof setTimeout>;
     draft: MentionDraft;
-    save(): ReturnType<typeof persist>;
+    save(): DraftSaveResult;
   }>(null);
   const cancelDraftSave = useCallback(() => {
     const pending = pendingDraftSave.current;
@@ -1143,6 +1169,7 @@ function Composer({
     if (!presented) flushDraft();
   }, [presented, flushDraft]);
   useLayoutEffect(() => {
+    const unregister = registerDraftSave(recoveryKey, flushDraft);
     const hide = () => {
       if (document.visibilityState === "hidden") flushDraft();
     };
@@ -1152,9 +1179,10 @@ function Composer({
     return () => {
       document.removeEventListener("visibilitychange", hide);
       window.removeEventListener("pagehide", unload);
+      unregister();
       flushDraft();
     };
-  }, [flushDraft]);
+  }, [flushDraft, recoveryKey]);
 
   const saveDraft = (
     next: MentionDraft,
@@ -3302,6 +3330,7 @@ function Composer({
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
             // restored. A later edit belongs to its author, not this job.
+            if (!flushPendingDraft(scope, draftKey)) return "conflict";
             const current = viewRevision(scope, draftKey);
             const capturedRevision = JSON.stringify(captured);
             const cleared = (raw: string | null | undefined) => {
@@ -3832,6 +3861,12 @@ function Composer({
                 pasteTooLong ? `${inputId}-paste-error` : undefined
               }
               onDraftChange={(next) => {
+                // Remounting the editor can replay our own prefill as a change.
+                if (
+                  automaticTag.current !== undefined &&
+                  automaticTag.current === JSON.stringify(next)
+                )
+                  return;
                 setPasteTooLong(false);
                 const textChanged = next.text !== valueRef.current.text;
                 // The default tag's prefill shows without being saved.

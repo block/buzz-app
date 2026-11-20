@@ -152,9 +152,9 @@ export async function saveOwnerSections(
   };
   pending.count += 1;
   saving.set(store, pending);
-  const write = store.set(PROMPT_SECTIONS_KEY, value);
-  pending.write = write;
   try {
+    const write = store.set(PROMPT_SECTIONS_KEY, value);
+    pending.write = write;
     await write;
     // Writes are saved in order, so this is now the saved value.
     pending.saved = value;

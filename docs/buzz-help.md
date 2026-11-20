@@ -1672,32 +1672,36 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   skips the archive. **Forget** drops an agent that can't reach its community
   from this device only; it may stay in that community's channels.
 - **Settings → Agent setup → Base instructions** shows what Buzz tells every
-  agent on this device before the agent's own instructions, one section per
-  topic. For Publishing, Progress, Etiquette, Agent Memory, Engineering
-  Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
-  **Custom** with your own text of up to 4 KiB, then **Save**. Default shows
-  the section's text to read and copy; choose Custom to edit it. The other
-  sections are always on, or Buzz sets them for the conversation; **All
-  sections** shows the default text of each. A plugin that is on can declare
-  sections that it replaces in the chats it manages: its install review lists
-  them. For example, such a plugin can set where an agent's work happens in a
-  chat it manages, except for an agent that runs on another computer. Each section that such a plugin declared names the plugin.
-  When such a plugin first manages a Codex conversation that an earlier Buzz
-  version started, that conversation starts over once, without its earlier
-  context; on another computer, it asks for a new session. The install review
-  says so.
-  When you choose Off or Custom for one of them, your own choice also applies
+  agent on this device before the agent's own instructions. Expand any section
+  to read it. Editable sections use a formatted editor or show Markdown
+  source when that is needed to preserve the text.
+  **Save** applies that section's text of up to 4 KiB and **Cancel** discards
+  the edit and collapses the section. Long text scrolls above the actions.
+  Open **Options** below the instruction to **Disable** the
+  instruction or **Enable** its default text. Both actions apply immediately.
+  The default text stays visible while disabled. When the instruction is
+  customized, **Set to default instruction** puts the current default in the
+  editor for you to review and save. Hover over the option to see **Already set**
+  when the default is saved.
+  Some wording varies by conversation. The install review and the relevant
+  instruction section name plugins that can replace a section in chats they
+  manage. For example, such a plugin can set where an agent's work happens, except for
+  an agent that runs on another computer.
+  When such a plugin first manages an older Codex conversation, that
+  conversation starts over once on this device. On another computer,
+  it asks for a new session. The plugin's install review explains this.
+  When you disable or customize one of them, your choice also applies
   in those chats. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it
-  from its next turn. After the first choice that is not Default, older Codex
-  conversations on this device start over once; older Codex conversations on
-  another computer keep their instructions until you start a new session.
+  from its next turn. Before your first change to the defaults, Buzz
+  asks you to confirm. Older Codex conversations on this device start over once.
+  Older ones on another computer keep their instructions until you start a new session.
   Agents that run outside the app, in the standalone agent host, get a change
   when that host next starts. Mesh agents do not get the base instructions.
   When a later
   Buzz version changes the default of a section you turned off or replaced,
   your choice stays, and the section says **Default changed** until you choose
-  **Keep mine** or **Reset to default**.
+  **Keep mine** in the actions menu or restore the default.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

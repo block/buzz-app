@@ -119,17 +119,25 @@ export type DocumentEditorProps = {
   children?: ReactNode;
   onChange(value: string): void;
   disabled?: boolean;
+  variant?: "field";
+  "aria-describedby"?: string | undefined;
+  "aria-invalid"?: boolean;
   destinations?: readonly { label: string; href: string }[];
   label?: string;
   placeholder?: string;
   maxLength: number;
-  linkOpen: boolean;
-  onLinkOpenChange(open: boolean): void;
-  onSave(): void;
+  linkOpen?: boolean;
+  onLinkOpenChange?(open: boolean): void;
+  onSave?(): void;
   toolbarTarget?: HTMLElement | null;
-  source: boolean;
-  onSourceChange(source: boolean): void;
+  source?: boolean;
+  onSourceChange?(source: boolean): void;
 };
+
+function documentContent(value: string, field: boolean) {
+  const draft = documentEditorDraft(value);
+  return { draft, literal: field && documentEditorMarkdown(draft) !== value };
+}
 
 /** A document body using the composer's editing engine, without chat behavior. */
 export function DocumentEditor({
@@ -139,17 +147,27 @@ export function DocumentEditor({
   children,
   onChange,
   disabled = false,
+  variant,
+  "aria-describedby": describedBy,
+  "aria-invalid": invalid,
   destinations,
   label = "Document body",
   placeholder = "Write…",
   maxLength,
-  linkOpen,
-  onLinkOpenChange,
+  linkOpen: controlledLinkOpen,
+  onLinkOpenChange: setControlledLinkOpen,
   onSave,
   toolbarTarget = null,
-  source,
+  source: sourceMode = false,
   onSourceChange,
 }: DocumentEditorProps) {
+  const field = variant === "field";
+  const [content, setContent] = useState(() => documentContent(value, field));
+  const { draft, literal } = content;
+  const source = sourceMode || literal;
+  const [localLinkOpen, setLocalLinkOpen] = useState(false);
+  const linkOpen = controlledLinkOpen ?? localLinkOpen;
+  const onLinkOpenChange = setControlledLinkOpen ?? setLocalLinkOpen;
   const stack = useRef<HTMLDivElement>(null);
   const updateEditorScroller = useRef<() => HTMLElement | null>(null);
   const toolbarSurface = useRef<HTMLFieldSetElement>(null);
@@ -180,7 +198,6 @@ export function DocumentEditor({
     }),
     [editing, disabled, source],
   );
-  const [draft, setDraft] = useState(() => documentEditorDraft(value));
   const [formats, setFormats] = useState<readonly ComposerFormat[]>([]);
   const [link, setLink] = useState<ComposerLinkEdit>();
   const emitted = useRef(value);
@@ -206,7 +223,7 @@ export function DocumentEditor({
   // committed render so only accepted content survives, before the next paint.
   useLayoutEffect(() => {
     syncing.current = false;
-    if (source) return;
+    if (sourceMode) return;
     if (value === emitted.current) {
       rememberAccepted();
       return;
@@ -218,8 +235,8 @@ export function DocumentEditor({
       // Restore the accepted document, selection and undo state without an edit
       // transaction that could normalize Markdown or notify the plugin again.
       previous.restore();
-      setDraft(previous.draft);
-    } else setDraft(documentEditorDraft(value));
+      setContent({ draft: previous.draft, literal: false });
+    } else setContent(documentContent(value, field));
   });
   useLayoutEffect(() => {
     // The engine emits native select events even when formatting is unchanged.
@@ -232,16 +249,16 @@ export function DocumentEditor({
       setLink(undefined);
       return;
     }
-    if (source) onSourceChange(false);
+    if (sourceMode) onSourceChange?.(false);
     setLink((old) => old ?? input.current?.editLink() ?? undefined);
-  }, [linkOpen, source, onSourceChange]);
+  }, [linkOpen, sourceMode, onSourceChange]);
   const editLink = (edit?: ComposerLinkEdit) => {
     const next = edit ?? input.current?.editLink();
     if (!next) return;
     setLink(next);
     onLinkOpenChange(true);
   };
-  const showFormatting = editing && !source;
+  const showFormatting = editing && !source && !field;
   useLayoutEffect(() => {
     const editor = stack.current;
     if (!showFormatting || !editor) return;
@@ -303,33 +320,48 @@ export function DocumentEditor({
   return (
     <div
       ref={stack}
-      className={`${styles.stack} ${editing && source ? styles.sourceEditor : ""}`}
+      className={`${styles.stack} ${field ? styles.field : ""} ${editing && source ? styles.sourceEditor : ""}`}
       data-formatting={showFormatting || undefined}
+      data-disabled={(field && disabled) || undefined}
     >
       <section className={styles.editorBody} aria-label="Document content">
         <div hidden={!editing}>
           {source ? (
             <Textarea
               ref={sourceInput}
-              aria-label="Markdown"
+              aria-label={field ? label : "Markdown"}
+              aria-describedby={describedBy}
+              aria-invalid={invalid || undefined}
               value={value}
               rows={4}
               maxLength={maxLength}
-              variant="code"
+              variant={field ? "text" : "code"}
+              appearance={field ? "outlined" : "field"}
               disabled={disabled || !editing}
               onKeyDown={(event) => {
                 if (disabled || !editing) return;
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                if (
+                  onSave &&
+                  (event.metaKey || event.ctrlKey) &&
+                  event.key === "Enter"
+                ) {
                   event.preventDefault();
                   onSave();
                 }
               }}
               onChange={(event) => {
+                if (literal) emitted.current = event.target.value;
                 onChange(event.target.value);
               }}
             />
           ) : (
-            <div className={`text-body ${markdownStyles.documentScale}`}>
+            <div
+              className={
+                field
+                  ? "text-message"
+                  : `text-body ${markdownStyles.documentScale}`
+              }
+            >
               <EditableInput
                 ref={input}
                 draft={draft}
@@ -337,12 +369,14 @@ export function DocumentEditor({
                 disabled={disabled || !editing}
                 placeholder={placeholder}
                 aria-label={label}
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
                 maxLength={Math.min(maxLength, MAX_MARKDOWN_LENGTH)}
                 markdownMode="document"
                 decorationsFor={noDecorations}
                 onDraftChange={(next) => {
                   if (syncing.current) return;
-                  setDraft(next);
+                  setContent({ draft: next, literal: false });
                   const markdown = documentEditorMarkdown(next);
                   if (markdown !== value) {
                     emitted.current = markdown;
@@ -396,7 +430,7 @@ export function DocumentEditor({
 
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    if (event.metaKey || event.ctrlKey) onSave();
+                    if (event.metaKey || event.ctrlKey) onSave?.();
                     else
                       input.current?.insertLineBreak(
                         event.shiftKey ? "hard" : "paragraph",

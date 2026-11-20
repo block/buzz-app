@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -88,9 +95,18 @@ it("shows the base instructions, kept in the agents' storage", async () => {
     />,
     { wrapper: ToastProvider },
   );
-  await user.click(screen.getByRole("combobox", { name: "Progress" }));
-  await user.click(await screen.findByRole("option", { name: "Off" }));
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: /^Show all \(\d+\)$/ }));
+  await user.click(screen.getByRole("button", { name: "Progress" }));
+  await user.click(
+    screen.getByRole("button", { name: "Options for Progress" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Disable" }));
+  const confirmation = screen.getByRole("alertdialog", {
+    name: "Save instruction change?",
+  });
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Disable" }),
+  );
   await waitFor(() =>
     expect(ownerChoices(storage)).toEqual({ progress: { mode: "off" } }),
   );

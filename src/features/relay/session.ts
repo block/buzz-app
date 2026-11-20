@@ -401,7 +401,8 @@ export function createRelaySession(
               }
             },
             needsReceipt: isWorkflowOperation,
-            onReceipt: (event, message) => workflows.receipt(event, message),
+            onReceipt: (event, message, refusal) =>
+              workflows.receipt(event, message, refusal),
             // A chat this device is starting takes its events once the relay
             // has its create; its local agents hear its owner's messages now.
             // The start's own create and member adds never wait.

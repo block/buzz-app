@@ -268,7 +268,13 @@ export function createOutbox(
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
-    onReceipt?: (event: EventData, message: string | undefined) => void;
+    /** `refusal` is the relay's display text for a refused command. The journal
+     * keeps fixed copy, because relay text can quote event content. */
+    onReceipt?: (
+      event: EventData,
+      message: string | undefined,
+      refusal?: string,
+    ) => void;
     /** `acknowledged` is false when the publisher was entered but delivery is `unknown`. */
     onAccepted?: (event: RelayEvent, acknowledged: boolean) => void;
     profiling?: RelayProfiler;
@@ -831,7 +837,13 @@ export function createOutbox(
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
       if (latest && awaitsReceipt(latest.event))
-        onReceipt(latest.signed ?? latest.event, undefined);
+        onReceipt(
+          latest.signed ?? latest.event,
+          undefined,
+          error instanceof PublishRejected && !(error instanceof PublishNotSent)
+            ? clip(error.message)
+            : undefined,
+        );
       if (
         latest &&
         !latest.recovery &&

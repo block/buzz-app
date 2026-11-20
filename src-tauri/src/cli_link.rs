@@ -59,15 +59,13 @@ mod tests {
     use std::path::Path;
 
     /// A packaged debug bundle keeps the release identifier and isn't
-    /// `tauri dev`; this debug test build stands in for it by profile.
+    /// `tauri dev`, so the profile decides; the tests run in either.
     #[test]
     fn only_the_installed_release_owns_the_link() {
-        assert!(
-            cfg!(debug_assertions) && development(false),
-            "a debug build is development"
-        );
+        assert_eq!(development(false), cfg!(debug_assertions));
+        assert!(development(true), "tauri dev is development");
         let cli = Path::new("/Applications/Buzz.app/Contents/Resources/bin/buzz");
-        assert!(!owns(development(false), CURRENT, false, cli));
+        assert!(!owns(true, CURRENT, false, cli));
         assert!(owns(false, CURRENT, false, cli));
         assert!(!owns(false, CURRENT, true, cli));
         assert!(!owns(false, "xyz.block.buzz.desktop.dev", false, cli));

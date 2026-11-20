@@ -84,15 +84,18 @@ const saving = new WeakMap<
 >();
 
 /** The conversation's saved record; undefined when it has none or it cannot
- * be read. A turn must not take a record whose save then fails. */
+ * be read. A turn must not take a record whose save then fails. With
+ * `latest`, the record of the latest save, also while it is being written:
+ * the plugin that started it claims the conversation from then on. */
 export function conversationSections(
   store: Pick<AgentStore, "get">,
   scope: string,
   agent: AgentKey,
   conversation: string,
+  latest = false,
 ): ConversationSections | undefined {
   const key = storageKey(scope, agent, conversation);
-  const pending = saving.get(store)?.get(key);
+  const pending = latest ? undefined : saving.get(store)?.get(key);
   const saved = pending ? pending.saved : store.get(key);
   if (!saved) return undefined;
   try {

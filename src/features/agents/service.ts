@@ -5968,7 +5968,14 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A community session has one prompt for every conversation, so it takes no conversation sections",
       );
-    const manager = storedSections(this.storage, scope, key, conversation);
+    // A save that is still being written claims the conversation too.
+    const manager = storedSections(
+      this.storage,
+      scope,
+      key,
+      conversation,
+      true,
+    );
     if (
       manager &&
       manager.plugin !== owner.id &&

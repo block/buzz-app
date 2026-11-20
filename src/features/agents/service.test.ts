@@ -2519,6 +2519,43 @@ describe("a conversation's sections", () => {
     });
   });
 
+  it("are claimed by the plugin whose first save is still being written", async () => {
+    const f = await ready();
+    const other = another(f);
+    // The first save shows at once and is held while it is written.
+    const set = f.storage.set.bind(f.storage);
+    let release = () => {};
+    const written = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(f.storage, "set").mockImplementationOnce(async (key, value) => {
+      const done = set(key, value);
+      await written;
+      return done;
+    });
+    const first = f.plugin.agents.setConversationSections(f.agent.key, thread, {
+      progress: "Report to the task.",
+    });
+    await vi.waitFor(() => expect(saved(f)).toHaveLength(1));
+    try {
+      for (const sections of [{ progress: "Mine." }, {}])
+        await expect(
+          other.setConversationSections(f.agent.key, thread, sections),
+        ).rejects.toThrow("Another plugin manages this conversation");
+      // A turn still takes no text that is not saved yet.
+      const agent = await handle(f);
+      expect(agent.promptSections?.(channel, root)?.plugin).toBeUndefined();
+    } finally {
+      release();
+    }
+    await first;
+    const agent = await handle(f);
+    expect(agent.promptSections?.(channel, root)?.plugin).toEqual({
+      id: "example",
+      sections: { progress: "Report to the task." },
+    });
+  });
+
   it("use only the sections the plugin's manifest declares now", async () => {
     const f = await ready();
     await f.plugin.agents.setConversationSections(f.agent.key, thread, {

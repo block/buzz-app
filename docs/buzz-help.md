@@ -154,6 +154,10 @@ if that desktop app is up and running.
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
   Types are `bar`, `line` and `scatter`.
 
+- **Video speed.** The speed control opens a menu of playback speeds.
+  Option-click (Alt-click) it to switch straight to 2x from normal speed,
+  or back to 1x from any other speed.
+
 ## Agents
 
 - **Create one** from **Agents → New agent**: pick a harness, a model and

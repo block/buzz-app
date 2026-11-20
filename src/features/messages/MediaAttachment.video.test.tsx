@@ -260,6 +260,58 @@ it("shares the saved playback speed with mounted previews and later videos", () 
   ).toBeInTheDocument();
 });
 
+it.each([
+  [undefined, "1", 2],
+  ["2", "2", 1],
+  ["1.5", "1.5", 1],
+  ["0.5", "0.5", 1],
+])(
+  "Option-click switches a saved speed of %s to normal or double speed",
+  (saved, shown, next) => {
+    if (saved) localStorage.setItem("buzz.video.playback-speed", saved);
+    const { container } = render(
+      <>
+        <MediaAttachment attachment={videoAttachment} media={media} />
+        <MediaAttachment
+          attachment={{
+            ...videoAttachment,
+            url: "https://fixture.test/second.mp4",
+          }}
+          media={media}
+        />
+      </>,
+    );
+    const control = screen.getAllByRole("button", {
+      name: `Playback speed: ${shown}x`,
+    })[0];
+    if (!control) throw new Error("Missing speed control");
+    fireEvent.mouseDown(control, { altKey: true });
+    fireEvent.click(control, { altKey: true });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(
+      [...container.querySelectorAll("video")].map(
+        (video) => video.playbackRate,
+      ),
+    ).toEqual([next, next]);
+    expect(
+      screen.getAllByRole("button", { name: `Playback speed: ${next}x` }),
+    ).toHaveLength(2);
+    expect(localStorage.getItem("buzz.video.playback-speed")).toBe(
+      String(next),
+    );
+  },
+);
+
+it("opens the speed menu without changing speed on a plain click", () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(container.querySelector("video")?.playbackRate).toBe(1);
+  expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
+});
+
 it("uses normal speed when a saved preference is invalid", () => {
   localStorage.setItem("buzz.video.playback-speed", "NaN");
   const { container } = render(

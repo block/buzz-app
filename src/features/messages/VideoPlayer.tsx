@@ -177,6 +177,16 @@ export function VideoControls({
         video.removeEventListener(event, listener);
     };
   }, [videoRef]);
+  const changeSpeed = (speed: number) => {
+    if (videoRef.current) videoRef.current.playbackRate = speed;
+    setRate(speed);
+    try {
+      localStorage.setItem(speedKey, String(speed));
+    } catch {
+      /* Playback works without storage. */
+    }
+    window.dispatchEvent(new CustomEvent(speedEvent, { detail: speed }));
+  };
   const toggle = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -391,6 +401,15 @@ export function VideoControls({
                 </Button>
               }
               aria-label={`Playback speed: ${rate}x`}
+              // Option-click switches between normal and double speed instead of opening the menu.
+              onMouseDown={(event) => {
+                if (event.altKey) event.preventBaseUIHandler();
+              }}
+              onClick={(event) => {
+                if (!event.altKey) return;
+                event.preventBaseUIHandler();
+                changeSpeed(rate === 1 ? 2 : 1);
+              }}
             >
               {rate}x
             </MenuTrigger>
@@ -408,19 +427,7 @@ export function VideoControls({
             >
               <MenuRadioGroup
                 value={String(rate)}
-                onValueChange={(value) => {
-                  const speed = Number(value);
-                  if (videoRef.current) videoRef.current.playbackRate = speed;
-                  setRate(speed);
-                  try {
-                    localStorage.setItem(speedKey, String(speed));
-                  } catch {
-                    /* Playback works without storage. */
-                  }
-                  window.dispatchEvent(
-                    new CustomEvent(speedEvent, { detail: speed }),
-                  );
-                }}
+                onValueChange={(value) => changeSpeed(Number(value))}
               >
                 {speeds.map((speed) => (
                   <MenuRadioItem key={speed} value={String(speed)} closeOnClick>

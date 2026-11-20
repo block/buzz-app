@@ -382,6 +382,16 @@ Inject `panels` to use these host members:
   from other windows; undefined scope keeps it in memory. Double-click resets
   the preferred width. `primary`, when supplied, is `{ defaultWidth, maxRatio }`.
 
+Inject `agents` to render `ctx.agents.ui?.Transcript` inside an agent type's
+Activity tab. Feature-detect `ctx.agents.ui?.Transcript` and keep a fallback on
+older hosts where `ui` is absent. It renders the same transcript view bundled
+harnesses use: the Refresh header, live refreshes while `working` is true
+(including on `Delivery.step` calls), **View activity** turn focus, Markdown,
+file diffs, prompt sections and context use. The plugin still owns its
+conversation list and marks its own sent-message items with `posted: true` and
+`messageId`. Derive its props from `@buzz/author` with
+`ComponentProps<NonNullable<Agents["ui"]>["Transcript"]>`.
+
 ```js
 export const inject = ["react", "conversation", "panels", "pages"];
 export function apply(ctx) {

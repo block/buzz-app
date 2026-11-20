@@ -874,6 +874,141 @@ it("frees the composer when a send is cancelled under a transform that ignores i
   expect(h.messages.send).toHaveBeenCalledWith("channel", "plain", [], []);
 });
 
+it("times out a transform that never settles, keeping the draft and freeing Send", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    let signal: AbortSignal | undefined;
+    sendTransforms = [
+      sendTransform(
+        (_draft, context) =>
+          new Promise<never>(() => {
+            signal = context.signal;
+          }),
+      ),
+    ];
+    const h = mount();
+    h.fill("/md stuck");
+    h.submit();
+    await act(async () => {});
+    const send = screen.getByRole("button", { name: "Send message" });
+    expect(send).toBeDisabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(screen.getByRole("alert")).toHaveTextContent("test: timed out");
+    expect(h.input()).toHaveValue("/md stuck");
+    expect(send).toBeEnabled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("restores the typed draft, not the rewrite, when a rewritten send fails to publish", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(async () => ({
+    text: "REWRITTEN",
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform)];
+  const h = mount();
+  h.fill("/md typed");
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent("outbox full");
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "REWRITTEN", [], []);
+  expect(h.input()).toHaveValue("/md typed");
+  expect(transform).toHaveBeenCalledOnce();
+});
+
+it("retries a queued rewritten send with the rewrite and without running the transform again", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const transform = vi.fn<SendTransform["transform"]>(async ({ mentions }) => ({
+    text: "REWRITTEN",
+    mentions,
+  }));
+  sendTransforms = [sendTransform(transform, { matches: () => true })];
+  const h = mount();
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const listeners = new Set<() => void>();
+  let activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("typed");
+  });
+  await choicesLoaded();
+  h.submit();
+  await screen.findByRole("region", { name: "Queued follow-ups" });
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  activity = {
+    ...activity,
+    local: activity.local.map((row) => ({ ...row, state: "done" })),
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(await screen.findByText("outbox full")).toBeVisible();
+  await h.user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  for (const call of h.messages.send.mock.calls)
+    expect(call.slice(0, 3)).toEqual(["channel", "REWRITTEN", [first.pubkey]]);
+  expect(transform).toHaveBeenCalledOnce();
+});
+
 it("refuses more than 32 returned recipients before any membership change", async () => {
   const many = Array.from({ length: 33 }, (_, index) => ({
     pubkey: (index + 1).toString(16).padStart(64, "0"),

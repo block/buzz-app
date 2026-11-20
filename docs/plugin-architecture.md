@@ -3396,9 +3396,9 @@ export function apply(ctx) {
   typed recipients by accident. `mentions` become exactly the message's `p`
   tags and need not appear in `text`, so a plugin can drop recipients or, outside
   Solo chats, add silent ones. `session` is the host session, so a transform can
-  react to or edit messages. `signal` aborts when the person cancels or leaves;
-  the host stops waiting then even if the plugin ignores `signal`, re-enables
-  Send and discards any late result.
+  react to or edit messages. `signal` aborts when the person cancels or leaves,
+  or when the transform has run for 10 seconds; the host stops waiting then even
+  if the plugin ignores `signal`, re-enables Send and discards any late result.
 - Returning empty text with no mentions consumes the message: nothing is
   published, no prompt opens and the draft clears, as for a composer command
   such as `/leave`. Anything that is not `{ text: string, mentions: { pubkey, name }[] }`
@@ -3435,8 +3435,9 @@ export function apply(ctx) {
   replies and when the draft has mentions. Signed chips stay on the message only
   if the transform leaves the text unchanged.
 - There is no preview or undo; both are left open for later. A transform that
-  never settles and ignores `signal` holds Send until the person cancels (switches
-  the reply target or leaves); there is no timeout.
+  never settles holds Send for 10 seconds: then the host aborts `signal`, discards
+  any late result and fails the send with `<plugin id>: timed out`, keeping the
+  draft.
 
 The jsdom suites cover the composer and the registration through the real
 runtime. Behavior in the desktop app is exercised by hand with a local plugin.

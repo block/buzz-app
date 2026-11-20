@@ -2477,6 +2477,9 @@ export function createChannelStore(
       )
     )
       throw new Error("Channel discovery exceeded its read budget");
+    // Capture access immediately before applying the response. A preview can
+    // become readable again through new metadata as well as a CLOSED recovery.
+    const unreadable = ids.filter((id) => !authorized(id));
     // Successful verified lookup may restore the same public version after CLOSED.
     // Missing/failed evidence leaves a suspension recoverable rather than granting access.
     const resumed: string[] = [];
@@ -2546,7 +2549,7 @@ export function createChannelStore(
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
-    if (resumed.some(authorized)) transport.previewAccessRestored?.();
+    if (unreadable.some(authorized)) transport.previewAccessRestored?.();
     if (settings?.viewerLookup) transport.resolved?.(ids);
     if (settings?.consistency === "strong")
       await readCreations(

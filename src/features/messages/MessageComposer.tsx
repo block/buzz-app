@@ -673,9 +673,18 @@ function Composer({
       ? draftKey
       : undefined,
   );
+  // `dirty`: an edit that is not in storage. `edited`: typed in since the
+  // draft was last loaded, saved or not.
   const dirty = useRef(false);
+  const edited = useRef(false);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
+  // A shown conflict protects the text until the user resolves it, whatever
+  // the draft's saved state was when it was raised.
+  const raiseConflict = () => {
+    dirty.current = true;
+    setConflict(true);
+  };
   const [storageFailed, setStorageFailed] = useState(false);
   // A composer with nothing saved starts with the agents the viewer's latest
   // message in its conversation notified, in memory only: a draft is saved
@@ -1155,6 +1164,7 @@ function Composer({
         submission.onDraftChange?.(next);
       } else {
         dirty.current = true;
+        edited.current = true;
         if (!conflict && !accepted) persist(next);
       }
     }
@@ -1175,7 +1185,12 @@ function Composer({
     const saved = viewRevision(scope, draftKey);
     const nextRevision = JSON.stringify(next);
     diagnose(result, expected, saved, nextRevision);
-    if (result === "saved") revision.current = nextRevision;
+    if (result === "saved") {
+      revision.current = nextRevision;
+      // Saved text has no unsaved edits left to protect: a later change made
+      // elsewhere is loaded unless the user is in this composer.
+      dirty.current = false;
+    }
     setConflict(result === "changed");
     setStorageFailed(result === "failed");
     return result;
@@ -1539,6 +1554,7 @@ function Composer({
     }
     revision.current = raw;
     dirty.current = false;
+    edited.current = false;
     valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
@@ -1552,7 +1568,12 @@ function Composer({
   // Message-local picks return with their recovered draft. Solo preferences
   // remain the chat's current choices, including edits made during an upload.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
+    (
+      restored?: MentionDraft,
+      recoveredPicks?: DraftPicks,
+      // The draft was hidden until now, behind a message edit.
+      hidden = false,
+    ) => {
       traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
       if (accepted) {
@@ -1579,20 +1600,31 @@ function Composer({
           setPicks(recoveredPicks ?? {});
         return;
       }
+      const empty =
+        !valueRef.current.text.trim() &&
+        !valueRef.current.recipients.length &&
+        !composerMarkdown(valueRef.current).trim();
       // An explicit successful recovery may replace only the cleared follow-up,
       // never a meaningful unsaved edit. Ordinary external revisions keep their
       // conflict behavior.
-      if (
-        recovering &&
-        !valueRef.current.text.trim() &&
-        !valueRef.current.recipients.length &&
-        !composerMarkdown(valueRef.current).trim() &&
-        !sendAttempt.current
-      )
-        loadSaved(current);
-      else if (dirty.current || sendAttempt.current) {
+      if (recovering && empty && !sendAttempt.current) loadSaved(current);
+      else if (
+        dirty.current ||
+        sendAttempt.current ||
+        // Loading closes an open link dialog and discards what it holds.
+        linkEdit ||
+        // Text typed here is never replaced under the user: storage can lose
+        // a save that read back, and another window can write mid-typing. The
+        // user is here while focus is in this composer, its controls included.
+        // A composer holding nothing has nothing to offer back.
+        (edited.current &&
+          !(empty && !valueRef.current.forward) &&
+          !hidden &&
+          form.current?.contains(document.activeElement) &&
+          document.hasFocus())
+      ) {
         diagnose("changed", revision.current, current);
-        setConflict(true);
+        raiseConflict();
         return;
       } else loadSaved(current);
       if (!stickyPicks && recovering) setPicks(recoveredPicks ?? {});
@@ -1600,14 +1632,19 @@ function Composer({
   );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
+  const wasEditing = useRef(false);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(scope, () => reconcileDraft());
     // Reconcile changes while message-edit mode or mounting paused this listener.
+    // The draft restored on leaving an edit was hidden throughout it, so a
+    // fully saved one follows wherever focus lands afterwards.
     reconcileDraft(
       deferredRecovery.current?.draft,
       deferredRecovery.current?.picks,
+      wasEditing.current && !editingDraft,
     );
+    wasEditing.current = editingDraft;
     if (!editingDraft && deferredRecovery.current) {
       takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
@@ -1672,6 +1709,7 @@ function Composer({
       return;
     }
     dirty.current = false;
+    edited.current = false;
     onDraftSaved?.();
   }
   useEffect(() => {
@@ -2784,7 +2822,7 @@ function Composer({
       diagnose("send-start", revision.current, current);
       if (current !== revision.current) {
         diagnose("send-start-conflict", revision.current, current);
-        setConflict(true);
+        raiseConflict();
         return;
       }
     }
@@ -2864,7 +2902,7 @@ function Composer({
             const current = viewRevision(scope, draftKey);
             if (current !== savedRevision) {
               diagnose("send-upload-conflict", savedRevision, current);
-              setConflict(true);
+              raiseConflict();
               return;
             }
             const next = mentionDraft("");
@@ -3023,7 +3061,7 @@ function Composer({
       const preparedRevision = viewRevision(scope, draftKey);
       if (preparedRevision !== savedRevision) {
         diagnose("send-prepare-conflict", savedRevision, preparedRevision);
-        setConflict(true);
+        raiseConflict();
         return;
       }
       const content =
@@ -3060,7 +3098,7 @@ function Composer({
         const publishRevision = viewRevision(scope, draftKey);
         if (publishRevision !== savedRevision) {
           diagnose("send-publish-conflict", savedRevision, publishRevision);
-          setConflict(true);
+          raiseConflict();
           return;
         }
         if (!current()) return;
@@ -3388,6 +3426,9 @@ function Composer({
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
+        // A change saved elsewhere during an attempt that did not send is a
+        // conflict even if its notification arrives after the attempt ends.
+        reconcileDraft();
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);

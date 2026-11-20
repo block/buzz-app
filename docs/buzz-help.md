@@ -1243,6 +1243,18 @@ again. Remove is unavailable once delivery owns the message; use its delivery
 recovery controls instead. A save or recovery error keeps the draft or queued row
 available rather than silently discarding it.
 
+A conversation's draft is shared by every message box open on it, including
+other windows. A message box you are not working in follows a draft that was
+edited, sent or cleared elsewhere. **This draft changed elsewhere** appears
+instead when replacing the draft could lose work: you have typed in that
+message box and focus is still in it or its controls, its **Add link** or
+**Edit link** dialog is open, your latest edit could not be saved, or the draft
+changed while a send was under way. **Keep my draft** saves the draft you see;
+**Load saved draft** replaces it. A message box you typed in and then emptied
+follows even while focus is in it, unless it still holds a forwarded message or
+one of the other three cases applies. A draft set aside while you edit a
+message follows changes made during the edit unless it had unsaved text.
+
 ## Choosing and customizing agents
 
 Agents can use `agent_update` to propose harness settings for your local agents in the same community, including the Auto-compact threshold on supported harnesses. **Proposed settings** compares the saved and proposed values. Review or edit the draft and select **Save** to apply it, or close the review to discard it. A Codex agent using an execution adapter can only propose the

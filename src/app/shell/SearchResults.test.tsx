@@ -8820,6 +8820,12 @@ it("finds channels, direct messages and people by typed words in any order", asy
       ["private", ""],
     ]),
     roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    // Open and not joined: only the store's public lookup finds it.
+    metadata(relay, "open", "buzz-open-community", 1700000003, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "open", [carol.pubkey]),
     profile(alice, { display_name: "Alice Fixture" }),
     profile(carol, { display_name: "Alice Q. Fixture" }),
   ];
@@ -8857,10 +8863,12 @@ it("finds channels, direct messages and people by typed words in any order", asy
     await act(async () =>
       owner.session.profiles.ensure([alice.pubkey, carol.pubkey]),
     );
-    // Both words, each underlined; "community" alone holds no "buzz".
+    // Both words, each underlined; "community" alone holds no "buzz". The
+    // open channel follows: Command-K asks the public lookup for words apart.
     await waitFor(async () =>
       expect(await rows("Channels")).toEqual([
         ["buzz-community", ["buzz", "community"]],
+        ["buzz-open-community", ["buzz", "community"]],
       ]),
     );
     view.rerender(<SearchResults {...props} query="fixture alice" />);

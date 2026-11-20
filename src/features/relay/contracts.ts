@@ -312,12 +312,16 @@ export interface ChannelQueries {
   ): Promise<void>;
   /** Name lookup for active public channels the viewer has not joined. Matches
    * become readable through `get`; they never enter list(). `progress`
-   * receives the matches so far each time another metadata page lands. */
+   * receives the matches so far each time another metadata page lands. With
+   * `terms`, text of several words that matches no name whole also finds a
+   * name that holds every word, in any order; without it no such name is
+   * resolved. */
   searchPublic?(
     query: string,
     options?: ReadOptions & {
       limit?: number;
       exact?: boolean;
+      terms?: boolean;
       progress?: ((found: PublicChannelSearch) => void) | undefined;
     },
   ): Promise<PublicChannelSearch>;
@@ -330,11 +334,11 @@ export interface ChannelQueries {
   ): Promise<readonly ChannelSummary[]>;
   /** Synchronous: the last `searchPublic` answer's channels, or its latest
    * `progress` rows while its read goes on, that still match `query` and are
-   * still open previews. Keeps rows while the next search runs, even across
-   * a remount. */
+   * still open previews, by the rule `searchPublic` takes. Keeps rows while
+   * the next search runs, even across a remount. */
   matchPublic?(
     query: string,
-    options?: { exact?: boolean },
+    options?: { exact?: boolean; terms?: boolean },
   ): readonly ChannelSummary[];
   /** Every open channel the last completed public directory read named, for
    * display-only name references (`#name` in prose) until a later read or a

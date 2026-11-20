@@ -21,7 +21,7 @@ import {
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
-  CaretUpIcon,
+  CaretRightIcon,
   DotsThreeIcon,
   LightningIcon,
   RobotIcon,
@@ -2260,12 +2260,10 @@ function RelayedMessageRow(props: MessageRowProps) {
               <span className={styles.relayedTime} aria-hidden="true">
                 <MessageTimestamp createdAt={row.createdAt} />
               </span>
-              {open && (
-                <CaretUpIcon
-                  className={styles.relayedCaret}
-                  aria-hidden="true"
-                />
-              )}
+              <CaretRightIcon
+                className={styles.relayedCaret}
+                aria-hidden="true"
+              />
             </div>
             <Collapsible.Panel
               className={styles.relayedPanel}

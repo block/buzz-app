@@ -10,7 +10,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { Badge } from "../../shared/design-system/ui/Badge";
 import { formatTime } from "../../shared/datetime";
-import { CaretDownIcon, CaretUpIcon } from "../../shared/design-system/icons";
+import { CaretRightIcon } from "../../shared/design-system/icons";
 import type { RelayedRun } from "./activity-groups";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -150,11 +150,7 @@ export function RelayedRunPreview({
         <span className={styles.relayedTime} aria-hidden="true">
           <MessageTimestamp createdAt={last.createdAt} />
         </span>
-        {expanded ? (
-          <CaretUpIcon className={styles.relayedCaret} aria-hidden="true" />
-        ) : (
-          <CaretDownIcon className={styles.relayedCaret} aria-hidden="true" />
-        )}
+        <CaretRightIcon className={styles.relayedCaret} aria-hidden="true" />
       </div>
       {expanded && (
         // One chat for all of them is named once, on this line.

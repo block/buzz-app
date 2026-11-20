@@ -4180,6 +4180,7 @@ html[data-keyboard-navigation] .activityExpansion {
   padding: var(--space-1) var(--space-2) var(--space-1)
     var(--relayed-text-start);
   border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
   color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -4188,10 +4189,9 @@ html[data-keyboard-navigation] .activityExpansion {
 .relayedHeader:hover {
   background: var(--affordance-subtle-hover);
 }
-.relayedHeader[data-open]:not(:hover),
-.relayedEntry:where([data-thread-open]):not(.messageHighlight)
-  > .relayedHeader:not(:hover) {
-  background: var(--affordance-subtle);
+/* A jump to the line shows its highlight through it. */
+.relayedEntry.messageHighlight > .relayedHeader:not(:hover) {
+  background: none;
 }
 /* The line's button covers it; the source chat link stays above it. */
 .relayedTrigger {
@@ -4255,10 +4255,19 @@ html[data-keyboard-navigation] .activityExpansion {
 .relayedRun > .relayedHeader > .relayedTime {
   margin-inline-start: auto;
 }
+/* Points right while closed and down while open, as other disclosures do. */
 .relayedCaret {
   flex: none;
   inline-size: var(--space-3);
   block-size: var(--space-3);
+}
+.relayedHeader[data-open] > .relayedCaret {
+  rotate: 90deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .relayedCaret {
+    transition: rotate var(--duration-fast) var(--easing-enter);
+  }
 }
 /* Base UI measures the opened text. */
 .relayedPanel {

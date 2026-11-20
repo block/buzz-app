@@ -10,6 +10,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { UPLOAD_FAILURES, UploadError } from "../../features/relay/attachments";
 import { PublishRejected } from "../../features/relay/outbox";
 import { keypair, signed } from "../../features/relay/testing";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CustomEmojiSettings } from "./CustomEmojiSettings";
 
@@ -325,17 +326,22 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
   store.connect(vi.fn(async (file: File) => uploaded(file)));
   await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
   await screen.findByRole("img", { name: "Selected custom emoji preview" });
+  // The relay's timeout refusal ends in unix seconds; the alert shows them as
+  // a local date and time.
+  const until = 1794000000;
   store.rejectNext(
     new PublishRejected(
-      "You are timed out until 12:00",
-      "restricted: you are timed out until 12:00",
+      `You are timed out until ${until}`,
+      `restricted: you are timed out until ${until}`,
     ),
   );
   const save = screen.getByRole("button", { name: "Save emoji" });
   await user.click(save);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    /^Failed to add emoji\. You are timed out until 12:00$/,
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    `Failed to add emoji. You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
   );
+  expect(alert).not.toHaveTextContent(String(until));
   expect(save).toBeEnabled();
   expect(screen.getByRole("textbox")).toHaveValue("wave");
   expect(store.stored).toEqual([]);

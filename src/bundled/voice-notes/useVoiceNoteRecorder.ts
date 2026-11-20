@@ -117,6 +117,7 @@ export function useVoiceNoteRecorder() {
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.72;
       context.createMediaStreamSource(stream).connect(analyser);
+      session.startedAt = performance.now();
       setElapsedSeconds(0);
       setLevels([]);
 
@@ -223,7 +224,6 @@ export function useVoiceNoteRecorder() {
           if (samples.every((sample) => sample === 0) && --waitTicks > 0)
             return;
           waitTicks = 0;
-          session.startedAt = performance.now();
           if (mountedRef.current) setStatus("recording");
         }
         let sumSquares = 0;

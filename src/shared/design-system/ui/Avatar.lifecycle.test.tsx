@@ -42,14 +42,32 @@ it("reveals completed cached artwork on mount without waiting for a load event",
   );
 });
 
-it("uses the fallback for an already completed broken image", () => {
+it("lets the browser decide a completed image without a width", () => {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
   vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
     0,
   );
-  render(
+  // A dimensionless SVG can report no width once complete; it is not broken.
+  const svg = render(
+    <Avatar
+      src="https://example.test/sized-by-css.svg"
+      alt="Agent"
+      fallback="A"
+    />,
+  );
+  const image = svg.container.querySelector("img");
+  if (!image) throw new Error("Expected pending artwork");
+  expect(image).not.toHaveAttribute("data-loaded");
+  fireEvent.load(image);
+  expect(image).toHaveAttribute("data-loaded", "true");
+  svg.unmount();
+
+  const broken = render(
     <Avatar src="https://example.test/broken.png" alt="Agent" fallback="A" />,
   );
+  const pending = broken.container.querySelector("img");
+  if (!pending) throw new Error("Expected pending artwork");
+  fireEvent.error(pending);
   expect(document.querySelector("img")).toBeNull();
   expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("A");
 });

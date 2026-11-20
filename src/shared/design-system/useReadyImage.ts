@@ -40,16 +40,13 @@ export function useReadyImage(src: string, loading?: "eager" | "lazy") {
   const ref = useRef<HTMLImageElement>(null);
   useLayoutEffect(() => {
     // A cached image is ready at mount; settle it before the first paint
-    // instead of waiting for another asynchronous load event.
-    if (ref.current?.complete) {
-      if (ref.current.naturalWidth > 0) {
-        remember(src, "loaded");
-        setReadyAtMount(true);
-        setStatus("loaded");
-      } else {
-        remember(src, "failed");
-        setStatus("failed");
-      }
+    // instead of waiting for another asynchronous load event. A complete image
+    // without a width may be a dimensionless SVG, not a broken one, so its load
+    // or error event decides.
+    if (ref.current?.complete && ref.current.naturalWidth > 0) {
+      remember(src, "loaded");
+      setReadyAtMount(true);
+      setStatus("loaded");
     }
   }, [src]);
   useEffect(() => {

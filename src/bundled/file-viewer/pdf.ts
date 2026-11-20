@@ -14,15 +14,15 @@ const MAX_CANVAS_PIXELS = 16_000_000;
 const DATA = {
   cMapUrl: import.meta.glob<string>(
     "../../../node_modules/pdfjs-dist/cmaps/*.bcmap",
-    { query: "?url", import: "default" },
+    { query: "?url&no-inline", import: "default" },
   ),
   standardFontDataUrl: import.meta.glob<string>(
     "../../../node_modules/pdfjs-dist/standard_fonts/*.{pfb,ttf}",
-    { query: "?url", import: "default" },
+    { query: "?url&no-inline", import: "default" },
   ),
   wasmUrl: import.meta.glob<string>(
     "../../../node_modules/pdfjs-dist/wasm/*.wasm",
-    { query: "?url", import: "default" },
+    { query: "?url&no-inline", import: "default" },
   ),
 };
 

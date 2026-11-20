@@ -18,8 +18,10 @@ export async function readBytes(
   });
   if (!response.ok) throw new LoadError("unavailable");
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > limit)
+  if (Number.isFinite(declared) && declared > limit) {
+    void response.body?.cancel().catch(() => {});
     throw new LoadError("too-large");
+  }
   if (!response.body) {
     const whole = new Uint8Array(await response.arrayBuffer());
     if (whole.byteLength > limit) throw new LoadError("too-large");

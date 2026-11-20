@@ -177,6 +177,53 @@ it("renders a shared Markdown file through the host's safe Markdown", async () =
   expect(context.open).not.toHaveBeenCalled();
 });
 
+it("saves Markdown images with their channel, and draws none without one", async () => {
+  const photo = `${ORIGIN}/media/${"c".repeat(64)}.png`;
+  const markdown = fileTarget({ url: MEDIA, name: "pictures.md" });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(`# Pictures\n\n![Team photo](${photo})\n`)),
+  );
+  const { panel, snapshot } = setup();
+  const context = { channelId: "general", canOpen: () => true, open: vi.fn() };
+  renderPanel(panel, markdown, context);
+  expect(await screen.findByRole("img", { name: "Team photo" })).toBeVisible();
+  expect(snapshot.session.media).toHaveBeenCalledWith(
+    photo,
+    undefined,
+    "general",
+  );
+  expect(snapshot.session.media).toHaveBeenCalledWith(
+    MEDIA,
+    undefined,
+    "general",
+  );
+  cleanup();
+
+  renderPanel(panel, markdown);
+  expect(
+    await screen.findByRole("heading", { name: "Pictures", level: 1 }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Team photo" })).toBeNull();
+  expect(screen.getByText("Team photo")).toBeInTheDocument();
+});
+
+it("opens a link beside the file, keeping the file's tab", async () => {
+  const link = "https://github.com/block/buzz-app/pull/1";
+  vi.stubGlobal("fetch", async () => new Response(`[The PR](${link})\n`));
+  const { panel } = setup();
+  const context = {
+    channelId: "general",
+    canOpen: () => true,
+    open: vi.fn(() => true),
+    push: vi.fn(() => true),
+  };
+  renderPanel(panel, fileTarget({ url: MEDIA, name: "notes.md" }), context);
+  await userEvent.click(await screen.findByRole("link", { name: "The PR" }));
+  expect(context.push).toHaveBeenCalledWith(link);
+  expect(context.open).not.toHaveBeenCalled();
+});
+
 it("refuses files from outside the community without fetching", () => {
   const { panel } = setup();
   const fetcher = vi.fn();

@@ -64,6 +64,12 @@ const EXTRA: Record<string, Attachment> = {
     name: "japanese.pdf",
     mime: "application/pdf",
   },
+  vertical: {
+    url: media("g"),
+    kind: "file",
+    name: "vertical.pdf",
+    mime: "application/pdf",
+  },
   long: { url: media("1"), kind: "file", name: "long.md" },
   pictures: { url: media("2"), kind: "file", name: "pictures.md" },
   blank: { url: media("3"), kind: "file", name: "blank.pdf" },
@@ -74,6 +80,12 @@ for (const name of params.getAll("extra")) {
 }
 
 const HostFileCard = (props: FileCardProps) => <FileAttachment {...props} />;
+
+const PANEL_CONTEXT = {
+  channelId: "general",
+  canOpen: () => true,
+  open: () => false,
+};
 
 let opened: (target: string) => void = () => {};
 function Fixture() {
@@ -110,6 +122,7 @@ function Fixture() {
             key={target}
             target={target}
             close={() => setTarget(undefined)}
+            context={PANEL_CONTEXT}
           />
         </aside>
       )}

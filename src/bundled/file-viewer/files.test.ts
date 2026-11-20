@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { fileFormat } from "./formats";
 import { decodeText, LoadError, readBytes } from "./load";
 import { MAX_CELLS, MAX_COLUMNS, MAX_ROWS, parseTable } from "./table";
@@ -120,4 +120,17 @@ it("reads bytes within the limit", async () => {
     reason: "unavailable",
   });
   expect(() => decodeText(new Uint8Array([104, 0, 105]))).toThrow(LoadError);
+});
+
+it("cancels a response it rejects by its declared size", async () => {
+  const cancel = vi.fn();
+  const body = new ReadableStream({ cancel });
+  const fetcher = (async () =>
+    new Response(body, {
+      headers: { "content-length": "99" },
+    })) as typeof fetch;
+  await expect(
+    readBytes("/x", 4, new AbortController().signal, fetcher),
+  ).rejects.toMatchObject({ reason: "too-large" });
+  expect(cancel).toHaveBeenCalled();
 });

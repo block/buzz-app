@@ -15,12 +15,15 @@ let url;
 /** A small valid PDF with one line of Latin text per page, and optionally a
  * page of Japanese in a non-embedded font that needs a predefined CMap, or a
  * page with a drawn line and no text. */
-function pdf(lines, { japanese = false, blank = false } = {}) {
+function pdf(
+  lines,
+  { japanese = false, vertical = false, blank = false } = {},
+) {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Type /Font /Subtype /Type0 /BaseFont /KozMinPr6N-Regular /Encoding /UniJIS-UCS2-H /DescendantFonts [5 0 R] >>",
+    `<< /Type /Font /Subtype /Type0 /BaseFont /KozMinPr6N-Regular /Encoding /UniJIS-UCS2-${vertical ? "V" : "H"} /DescendantFonts [5 0 R] >>`,
     "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /KozMinPr6N-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> /FontDescriptor 6 0 R >>",
     "<< /Type /FontDescriptor /FontName /KozMinPr6N-Regular /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>",
   ];
@@ -72,6 +75,7 @@ const FILES = {
   c: ["text/plain", 'fn main() {\n    println!("hi");\n}\n'],
   d: ["application/pdf", pdf(["First page", "Second page"])],
   f: ["application/pdf", pdf([], { japanese: true })],
+  g: ["application/pdf", pdf([], { japanese: true, vertical: true })],
   1: ["text/markdown", LONG],
   2: [
     "text/markdown",
@@ -101,7 +105,14 @@ test.beforeAll(async () => {
   await build(config);
   server = await preview({
     ...config,
-    preview: { host: "127.0.0.1", port: 0, strictPort: true },
+    preview: {
+      host: "127.0.0.1",
+      port: 0,
+      strictPort: true,
+      // The packaged app's connect-src has no data:, so bundled PDF data
+      // must be fetched as files, never inlined.
+      headers: { "Content-Security-Policy": "connect-src 'self'" },
+    },
   });
   url = `http://127.0.0.1:${server.httpServer.address().port}/tests/browser/file-viewer.html`;
 });
@@ -252,6 +263,31 @@ test("draws a PDF that needs a bundled CMap, without leaving the app", async ({
   await expect(viewer.getByText("Page 1 of 1")).toBeVisible();
   await expect
     .poll(() => assets.find(([name]) => name.startsWith("UniJIS-UCS2-H")))
+    .toEqual([expect.stringMatching(/\.bcmap$/), 200]);
+  expect(unexplained()).toEqual([]);
+});
+
+test("fetches a small CMap as a file under the app's connect-src", async ({
+  page,
+}) => {
+  const { unexplained } = watchPageErrors(page);
+  await serveMedia(page);
+  const assets = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.endsWith(".bcmap"))
+      assets.push([path.split("/").pop(), response.status()]);
+  });
+  await page.goto(`${url}?extra=vertical`);
+  await page
+    .getByRole("main", { name: "Message" })
+    .getByRole("button", { name: /vertical\.pdf/ })
+    .first()
+    .click();
+  const viewer = page.getByRole("complementary", { name: "File viewer" });
+  await expect(viewer.getByText("Page 1 of 1")).toBeVisible();
+  await expect
+    .poll(() => assets.find(([name]) => name.startsWith("UniJIS-UCS2-V")))
     .toEqual([expect.stringMatching(/\.bcmap$/), 200]);
   expect(unexplained()).toEqual([]);
 });

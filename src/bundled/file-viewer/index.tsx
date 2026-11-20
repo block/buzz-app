@@ -24,9 +24,10 @@ function readableSource(
   url: string,
   origin: string | undefined,
   session: RelaySession,
+  channel: string | undefined,
 ): string | undefined {
   if (!isCommunityMedia(url, origin)) return undefined;
-  const source = session.media(url);
+  const source = session.media(url, undefined, channel);
   return source && (isProxySource(source) || isNativeMediaSource(source))
     ? source
     : undefined;
@@ -48,12 +49,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const file = useMemo(() => parseFileTarget(target), [target]);
       usePanelTabTitle(file?.name ?? "File viewer");
       const { origin, session } = connection;
+      const channel = context?.channelId;
+      // The native host saves images with the channel that shows them, so
+      // without one an image would outlive its channel's cached messages.
       const media = useCallback(
-        (url: string) => readableSource(url, origin, session),
-        [origin, session],
+        (url: string) =>
+          channel ? readableSource(url, origin, session, channel) : undefined,
+        [origin, session, channel],
       );
       const openLink = useCallback(
-        (url: string) => context?.open(url) ?? false,
+        (url: string) =>
+          (context?.push ? context.push(url) : context?.open(url)) ?? false,
         [context],
       );
       if (!file) return null;
@@ -68,7 +74,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <Viewer
           key={target}
           file={file}
-          source={readableSource(file.url, origin, session)}
+          source={readableSource(file.url, origin, session, channel)}
           session={session}
           openLink={openLink}
           media={media}

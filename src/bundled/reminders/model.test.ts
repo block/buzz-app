@@ -13,7 +13,7 @@ import {
   nextDelay,
   nowSeconds,
   parseCustomDateTime,
-  pendingMessageIds,
+  pendingMessageDue,
   presetHint,
   shiftedFrom,
   todayDateString,
@@ -137,18 +137,24 @@ describe("reminder targets", () => {
     ).toBeUndefined();
   });
 
-  it("marks a message only while its reminder is pending, once per snapshot", () => {
+  it("marks a message only while a reminder is pending, at its earliest due time, once per snapshot", () => {
     const state = {
       status: "ready" as const,
       hydrated: true,
       reminders: [
-        reminder({ id: "a", target: target("m") }),
+        reminder({ id: "a", target: target("m"), notBefore: 300 }),
         reminder({ id: "b", target: target("d"), status: "done" }),
         reminder({ id: "c" }),
+        reminder({ id: "d", target: target("m"), notBefore: 200 }),
+        reminder({ id: "e", target: target("m") }),
+        reminder({ id: "f", target: target("n") }),
       ],
     };
-    expect([...pendingMessageIds(state)]).toEqual(["m"]);
-    expect(pendingMessageIds(state)).toBe(pendingMessageIds(state));
+    expect([...pendingMessageDue(state)]).toEqual([
+      ["m", 200],
+      ["n", undefined],
+    ]);
+    expect(pendingMessageDue(state)).toBe(pendingMessageDue(state));
   });
 });
 

@@ -200,6 +200,7 @@ function harness(initial: Client, pending: string[] = []) {
     },
     accepted: vi.fn(),
     authorize: vi.fn(),
+    authorizeIdentity: vi.fn(),
   };
   const stop = bindDeepLinks(
     host,
@@ -258,6 +259,26 @@ it("holds external authorization through startup without adding handshake data t
     expect(JSON.stringify(t.controller.navigation.snapshot())).not.toContain(
       "code_challenge",
     );
+  } finally {
+    t.stop();
+  }
+});
+it("holds a website's identity request until an identity is ready, binding no community or visit", async () => {
+  const link = `buzz://authorize-identity?${new URLSearchParams({ version: "1", pubkey: "cd".repeat(32), callback: "https://app.example.org/buzz/callback", state: "A".repeat(43) })}`;
+  const t = harness(loading, [link]);
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalled());
+    expect(t.host.authorizeIdentity).not.toHaveBeenCalled();
+    t.become({ status: "ready", viewer, selected: null });
+    await vi.waitFor(() =>
+      expect(t.host.authorizeIdentity).toHaveBeenCalledOnce(),
+    );
+    expect(t.host.authorizeIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "https://app.example.org" }),
+      viewer,
+    );
+    expect(t.host.rejected).not.toHaveBeenCalled();
+    expect(t.host.navigation.open).not.toHaveBeenCalled();
   } finally {
     t.stop();
   }

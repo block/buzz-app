@@ -16,6 +16,10 @@ import {
   type ExternalAuthorization,
 } from "../agents/external-connection";
 import { isSignInLink, requestSignIn } from "../identity/sign-in-requests";
+import {
+  parseIdentityRequest,
+  type IdentityRequest,
+} from "../identity/identity-requests";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -41,6 +45,8 @@ export type DeepLinkHost = Readonly<{
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
   authorize?: (request: ExternalAuthorization, viewer: string) => void;
+  /** A website asking the owner to authorize its key; binds no community. */
+  authorizeIdentity?: (request: IdentityRequest, viewer: string) => void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -153,6 +159,7 @@ export function bindDeepLinks(
         url: string;
         invite: InviteLink | null;
         authorization: ExternalAuthorization | null;
+        identity: IdentityRequest | null;
         plugin: boolean;
         /** Names no destination, so no account or community binds it. */
         invalid: boolean;
@@ -212,6 +219,7 @@ export function bindDeepLinks(
       ((incoming.viewer && incoming.viewer !== client.viewer) ||
         (!incoming.invite &&
           !incoming.authorization &&
+          !incoming.identity &&
           incoming.selected &&
           incoming.selected !== client.selected))
     ) {
@@ -227,6 +235,13 @@ export function bindDeepLinks(
         return Promise.resolve({ status: "failed", reason: "unavailable" });
       held = undefined;
       host.authorize?.(incoming.authorization, client.viewer);
+      return Promise.resolve({ status: "cancelled" });
+    }
+    if (incoming.identity) {
+      if (!client.viewer || client.status !== "ready")
+        return Promise.resolve({ status: "failed", reason: "unavailable" });
+      held = undefined;
+      host.authorizeIdentity?.(incoming.identity, client.viewer);
       return Promise.resolve({ status: "cancelled" });
     }
     if (invite && (!client.viewer || client.status !== "ready")) {
@@ -320,12 +335,14 @@ export function bindDeepLinks(
         const client = communities.snapshot();
         const invite = parseInviteLink(url);
         const authorization = parseExternalAuthorization(url);
+        const identity = parseIdentityRequest(url);
         held = {
           url,
           invite,
           authorization,
+          identity,
           plugin,
-          invalid: !invite && !authorization && !buzzLink(url),
+          invalid: !invite && !authorization && !identity && !buzzLink(url),
           launch,
           viewer: client.viewer,
           selected: client.selected,
@@ -347,7 +364,8 @@ export function bindDeepLinks(
       (client.selected &&
         client.selected !== next.selected &&
         !held?.invite &&
-        !held?.authorization)
+        !held?.authorization &&
+        !held?.identity)
     )
       clientEpoch++;
     client = next;

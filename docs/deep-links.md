@@ -19,6 +19,7 @@ The OS ingress accepts the Buzz link forms, plus two OS-only links described
 after this list:
 
 - `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
+- `buzz://authorize-identity?version=1&pubkey=<64-hex key>&callback=<https-url>&state=<state>`
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
 - `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
 - `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-artifact-url>&sha256=<64-hex>`
@@ -46,7 +47,7 @@ again (`identity/sign-in-requests.ts`). Unlike bare `buzz://`, it wins like any
 other latest link: when links arrive together and it is the last, it is the one
 acted on and the others do not open.
 
-External authorization links show owner consent. They never grant access on arrival. The [external app protocol](agents.md#external-app-authorization) defines the callback, S256 exchange, scopes, and expiry. Handshake values stay outside navigation history.
+External authorization links show owner consent. They never grant access on arrival. [Website identity requests](identity.md#website-identity-requests) bind no community; they wait until an identity is ready. The [external app protocol](agents.md#external-app-authorization) defines the callback, S256 exchange, scopes, and expiry. Handshake values stay outside navigation history.
 
 Plugin install links open **Settings > Plugins > Manage plugins** and fetch a
 preview from the Git repository and optional branch or tag. The repository accepts

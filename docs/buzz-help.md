@@ -148,6 +148,11 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   This lets the key direct your Buzz coding agents to run commands as you.
   Authorize only keys you recognize: the proof has no time or event-kind limits. Your private key stays
   in Buzz. This does not join the agent to a community or sign it in to an organization.
+- A website can ask for the same proof with a link instead of copy and paste.
+  Buzz then shows **Authorize {site}?** with the site's address and the key's
+  npub. **Authorize this key** signs the proof and opens the site again with
+  it; **Deny** opens the site with a refusal. Nothing is signed until you
+  choose, and the same caution applies: authorize only sites you trust.
 - The back of your Identity badge shows known backup and recovery details below
   the private-key strip and scrolls when its details run long. Buzz starts checking
   when the Identity page opens. The back always explains that the key is stored

@@ -30,6 +30,7 @@ import { UpdateAction } from "../features/updates/UpdateAction";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
+import { IdentityRequestDialog } from "./IdentityRequestDialog";
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
@@ -101,6 +102,8 @@ export function App({ services }: { services: AppServices }) {
         value={isTauri() ? modalWindowDragHandlers : undefined}
       >
         <LaunchWindowControls />
+        {/* Identity-only: it shows before any community is joined too. */}
+        <IdentityRequestDialog requests={services.identityRequests} />
         {services.identity ? (
           <Welcome
             identity={services.identity}

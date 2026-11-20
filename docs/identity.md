@@ -621,6 +621,30 @@ only the selected old Buzz service/account and copy the selected agent key into
 this app's separate agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
+## Website identity requests
+
+A website can request the same proof without copy and paste:
+
+    buzz://authorize-identity?version=1&pubkey=<64 lowercase hex>&callback=<https URL>&state=<state>
+
+Each parameter appears once and no others are accepted. `callback` is an
+`https` URL without credentials or a fragment (not even an empty `#`); its origin is the site the owner
+is shown and answers to. `state` is 32 random bytes as unpadded base64url, the
+external app protocol's form. The link binds no community: it waits until an
+identity is ready and shows even before any community is joined, outside
+first-run setup. It never becomes a navigation visit.
+
+Nothing is signed on arrival. **Authorize {host}?** names the callback's origin
+and shows the key's npub with the same warning as the settings form. A request
+for the owner's own key is refused in place. **Authorize this key** signs
+through the same `prepareRemoteAgentAuthorization` path, checks the returned
+owner, and opens the callback in the default browser with the answer in its
+fragment, so it never reaches a server log:
+`#state=<state>&proof=<URL-encoded JSON auth tag>`. **Deny**, Escape and Close
+open it with `#state=<state>&error=access_denied`. Once approval starts it cannot be denied or dismissed, since its answer may
+already be on its way. A newer request replaces one still waiting. The site must check `state` and that the proof's agent key is
+its own; the owner in the proof is the Buzz identity that approved.
+
 ## Local credential helper on macOS
 
 Keychain approvals belong to the program that asks, and a debug build is a

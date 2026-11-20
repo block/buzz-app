@@ -9,8 +9,10 @@ export const SPRING_LOAD_GRACE_MS = 80;
  * phases of 75 ms, as in Finder. Reduced motion skips it. */
 export const SPRING_LOAD_BLINK_MS = 300;
 const BLINK_PHASES = ["off", "on", "off", "on"] as const;
-/** A target whose delay is over opens on its next dragover. With none for
- * this long, the drag was cancelled without a leave and the highlight goes. */
+/** A webview repeats dragover while a drag rests on a target. With none for
+ * this long, the drag ended without a leave. A target whose delay is over
+ * loses its highlight, and a quiet one treats the next drag event as a new
+ * drag. */
 export const SPRING_LOAD_STALE_MS = 1000;
 
 /** Set on the hovered target once the grace period is over: "on" while it is
@@ -26,6 +28,8 @@ type Hover = {
   /** Where the drag was last reported over the target. */
   x: number;
   y: number;
+  /** When the drag was last reported over the target. */
+  seen: number;
   /** Counting down, then waiting for the next dragover, then quiet once opened. */
   phase: "armed" | "due" | "quiet";
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -173,24 +177,40 @@ export function useSpringLoaded(open: () => void, active = false) {
   const over = (event: DragEvent<HTMLElement>) => {
     if (!carriesFiles(event)) return;
     const { clientX: x, clientY: y } = event;
-    if (hover?.owner !== owner || hover.element !== event.currentTarget) {
+    const seen = Date.now();
+    let current =
+      hover?.owner === owner && hover.element === event.currentTarget
+        ? hover
+        : undefined;
+    // A quiet hover has no timer to end it. One left behind by a drag that
+    // ended without a leave must not keep the next drag shut. The guard is
+    // kept, so a drag still resting where the target opened stays shut.
+    if (
+      current?.phase === "quiet" &&
+      seen - current.seen > SPRING_LOAD_STALE_MS
+    ) {
+      cancel();
+      current = undefined;
+    }
+    if (!current) {
       if (sprungAt) return;
       cancel();
-      hover = {
+      current = hover = {
         owner,
         element: event.currentTarget,
         under: event.target,
         open,
         x,
         y,
+        seen,
         phase: "quiet",
         timer: undefined,
       };
       listen();
-      if (!active) arm(hover);
+      if (!active) arm(current);
     }
-    Object.assign(hover, { under: event.target, open, x, y });
-    if (hover.phase === "due") spring(hover);
+    Object.assign(current, { under: event.target, open, x, y, seen });
+    if (current.phase === "due") spring(current);
   };
   return {
     onDragEnter: over,

@@ -473,3 +473,71 @@ it.each(["drop", "dragEnd"] as const)(
     expect(open).toHaveBeenCalledTimes(2);
   },
 );
+
+// The reviewer's sequence: the drag ends with no leave, drop or dragend, and
+// a later drag comes over the same row.
+it("a new drag arms a row whose active-row hover was left behind", () => {
+  const open = vi.fn();
+  const { rerender } = render(<Targets open={open} active="General" />);
+  drag(row("General"), "dragEnter");
+  hold(row("General"), SPRING_LOAD_DELAY_MS);
+  expect(open).not.toHaveBeenCalled();
+  // The drag is cancelled unreported, and a click opens another row.
+  rerender(<Targets open={open} active="Random" />);
+  rest(5000);
+  nudge();
+  drag(row("General"), "dragEnter");
+  rest(SPRING_LOAD_GRACE_MS);
+  expect(state("General")).toBe("on");
+  hold(row("General"), SPRING_LOAD_DELAY_MS - SPRING_LOAD_GRACE_MS);
+  expect(open).toHaveBeenCalledExactlyOnceWith("General");
+});
+
+it("a new drag arms a row whose already-opened hover was left behind", () => {
+  const open = vi.fn();
+  render(<Targets open={open} />);
+  drag(row("General"), "dragEnter");
+  hold(row("General"), SPRING_LOAD_DELAY_MS);
+  expect(open).toHaveBeenCalledExactlyOnceWith("General");
+  rest(5000);
+  // Where the row opened, the guard still holds: the drag may only be resting.
+  drag(row("General"), "dragEnter");
+  hold(row("General"), SPRING_LOAD_DELAY_MS * 2);
+  expect(state("General")).toBeNull();
+  expect(open).toHaveBeenCalledTimes(1);
+  rest(5000);
+  nudge();
+  drag(row("General"), "dragOver");
+  rest(SPRING_LOAD_GRACE_MS);
+  expect(state("General")).toBe("on");
+  hold(row("General"), SPRING_LOAD_DELAY_MS - SPRING_LOAD_GRACE_MS);
+  expect(open).toHaveBeenCalledTimes(2);
+});
+
+it("a drag resting on an opened row stays shut however slowly dragover repeats", () => {
+  const open = vi.fn();
+  render(<Targets open={open} />);
+  drag(row("General"), "dragEnter");
+  hold(row("General"), SPRING_LOAD_DELAY_MS);
+  expect(open).toHaveBeenCalledExactlyOnceWith("General");
+  for (let repeat = 0; repeat < 4; repeat++) {
+    rest(SPRING_LOAD_STALE_MS * 2);
+    drag(row("General"), "dragOver");
+    expect(state("General")).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  }
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+it("a drag that moves along an opened row stays shut", () => {
+  const open = vi.fn();
+  render(<Targets open={open} />);
+  drag(row("General"), "dragEnter");
+  hold(row("General"), SPRING_LOAD_DELAY_MS);
+  expect(open).toHaveBeenCalledExactlyOnceWith("General");
+  hold(row("General"), SPRING_LOAD_STALE_MS * 2);
+  nudge();
+  hold(row("General"), SPRING_LOAD_DELAY_MS * 2);
+  expect(state("General")).toBeNull();
+  expect(open).toHaveBeenCalledTimes(1);
+});

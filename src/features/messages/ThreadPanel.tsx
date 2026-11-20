@@ -1547,10 +1547,10 @@ function ThreadMessages({
       targetAnchor.current = undefined;
       follow.current = !row;
       if (row && anchor)
-        element.scrollTop += readingDrift(element, {
-          element: row,
-          top: anchor.top,
-        });
+        element.scrollTop += readingDrift(
+          element,
+          shownAnchor({ element: row, top: anchor.top }),
+        );
     } else if (
       !olderAnchor.current &&
       targetAnchor.current === undefined &&
@@ -1790,7 +1790,10 @@ function ThreadMessages({
       if (follow.current) {
         element.scrollTop = element.scrollHeight;
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
-        correctScrollTop(element, readingDrift(element, previous.anchor));
+        correctScrollTop(
+          element,
+          readingDrift(element, shownAnchor(previous.anchor)),
+        );
         if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
       }
       // Exact-history restoration must start from this corrected geometry,
@@ -2596,9 +2599,10 @@ function readingDrift(
 
 // A saved row that has since shrunk, as a reply does when it becomes a group's
 // line, keeps its offset only while part of it stays shown. Otherwise its top
-// meets the viewport's.
+// meets the viewport's. A row without a laid-out box keeps its offset.
 function shownAnchor(anchor: { element: HTMLElement; top: number }) {
-  return anchor.top + anchor.element.getBoundingClientRect().height > 0
+  const { height } = anchor.element.getBoundingClientRect();
+  return !height || anchor.top + height > 0
     ? anchor
     : { element: anchor.element, top: 0 };
 }

@@ -3133,6 +3133,51 @@ it("Back keeps a restored reply's place when its group opens around it later", (
   expect(h.element.scrollTop).toBe(500);
 });
 
+it("Back shows a reply saved as a tall row that is a group's line by now", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...threadReply(id, row.id),
+    authorId: viewer,
+    threadRootId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  const [place, next, last] = relayed;
+  if (!place || !next || !last) throw new Error("Missing relayed fixture");
+  // Saved with its top 100 px above the viewport, when it was a tall row.
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  const rows = new Map([
+    [row.id, { top: -1000, height: 500 }],
+    [place.id, { top: 0, height: 28 }],
+    [next.id, { top: 28, height: 28 }],
+    [last.id, { top: 56, height: 28 }],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const geometry = rows.get(this.dataset.messageId ?? "");
+      return geometry === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            geometry.top -
+              (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            geometry.height,
+          );
+    },
+  );
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(h.element.scrollTop).toBe(0);
+});
+
 it("Back keeps a restored reply shown when its group shrinks it to a line", () => {
   const { places, visit } = visitPlaces();
   const relayed = (verified: boolean) =>

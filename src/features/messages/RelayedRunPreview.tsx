@@ -139,7 +139,7 @@ export function RelayedRunPreview({
         )}
         {!chat && !sameSource && (
           <span className={styles.relayedSubtle} aria-hidden="true">
-            {/* Its own line start drops the space the text keeps. */}
+            {/* The space reads in the text; the span's line start drops it. */}
             {" other chats"}
           </span>
         )}

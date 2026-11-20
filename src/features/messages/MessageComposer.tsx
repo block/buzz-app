@@ -1649,11 +1649,13 @@ function Composer({
               ).opensWithTag
             )
               setAside();
-            else if (
-              routed.length > 1 &&
-              routed.some((person) => person.pubkey === pubkey)
-            )
-              choose(routed.filter((person) => person.pubkey !== pubkey));
+            else if (routed.some((person) => person.pubkey === pubkey)) {
+              // The tags left still open the text, but the pill must lose
+              // the agent too, or a word typed before them brings it back.
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (stillNamed.length) setAside();
+            }
             return;
           }
           if (!routed.some((person) => person.pubkey === pubkey)) {

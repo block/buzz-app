@@ -15220,6 +15220,48 @@ it("removing an agent from opening tags that still open the draft takes it out o
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
 });
 
+it("removing the pill's only agent from opening tags that still open the draft keeps it out once a word comes first", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea @Cam hi",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 5, end: 9 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  const { h, bea, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.input()).toHaveValue("@Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  // A word before the tag must not bring Bea back from the pill.
+  act(() => {
+    h.input().focus();
+    h.input().setSelectionRange(0, 0);
+    h.commands().insertText("Ask ");
+  });
+  expect(h.input()).toHaveValue("Ask @Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([third]);
+});
+
 it("a person who joins before Send stops the pill's agents from going along with a later tag", async () => {
   const person = "e".repeat(64);
   writeView("scope", "draft:channel", {

@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { SPRING_LOAD_DELAY_MS } from "../../features/messages/spring-loaded-drag";
@@ -94,7 +100,25 @@ it("opens its conversation when a file drag rests on it, unless already open", (
   vi.useFakeTimers();
   try {
     const onSelect = vi.fn();
-    const files = { dataTransfer: { types: ["Files"] } };
+    // jsdom drag events carry no pointer position, and each drag here comes
+    // in at its own point.
+    let clientX = 1;
+    const drag = (
+      kind: "dragEnter" | "dragOver" | "dragLeave",
+      target: HTMLElement,
+    ) => {
+      const event = createEvent[kind](target, {
+        dataTransfer: { types: ["Files"] },
+      });
+      Object.defineProperty(event, "clientX", { value: clientX });
+      fireEvent(target, event);
+    };
+    // The webview repeats dragover under a resting drag.
+    const rest = () => {
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS - 50);
+      drag("dragOver", row);
+      vi.advanceTimersByTime(50);
+    };
     const view = render(
       <ChannelSidebarRow
         channel={{ id: "general", name: "General", channelType: "stream" }}
@@ -107,11 +131,12 @@ it("opens its conversation when a file drag rests on it, unless already open", (
     fireEvent.dragEnter(row, { dataTransfer: { types: ["text/plain"] } });
     vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
     expect(onSelect).not.toHaveBeenCalled();
-    fireEvent.dragEnter(row, files);
+    drag("dragEnter", row);
     expect(row).toHaveAttribute("data-spring-loaded", "hover");
-    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    rest();
     expect(onSelect).toHaveBeenCalledExactlyOnceWith("general");
-    fireEvent.dragLeave(row, files);
+    drag("dragLeave", row);
+    clientX = 2;
     view.rerender(
       <ChannelSidebarRow
         channel={{ id: "general", name: "General", channelType: "stream" }}
@@ -121,9 +146,9 @@ it("opens its conversation when a file drag rests on it, unless already open", (
         onPrepare={() => {}}
       />,
     );
-    fireEvent.dragEnter(row, files);
+    drag("dragEnter", row);
     expect(row).not.toHaveAttribute("data-spring-loaded");
-    vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+    rest();
     expect(onSelect).toHaveBeenCalledTimes(1);
   } finally {
     vi.useRealTimers();

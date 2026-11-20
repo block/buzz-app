@@ -91,7 +91,8 @@
 .row[data-selected]::before {
   background: var(--surface-sidebar-selected);
 }
-.row .select [data-buzz-ui][data-variant="row"] {
+/* The row paints its own fill, except under a spring-loaded file drag. */
+.row .select [data-buzz-ui][data-variant="row"]:not([data-spring-loaded]) {
   background: transparent;
 }
 .row .select {

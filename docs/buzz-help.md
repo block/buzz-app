@@ -947,6 +947,13 @@ Quitting Buzz also turns it off.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
+- **Dragging files in**: while files are dragged over a conversation, a dashed
+  frame marks where they will attach and the messages stay visible. Rest the
+  drag for half a second on a channel, DM or chat in the sidebar, or on a
+  message's thread summary, and it opens, so the same drag can continue into
+  that conversation or thread. The row highlights and blinks twice first; with
+  reduced motion it only highlights. Releasing the files on a sidebar row
+  attaches nothing. An image dragged from a message works the same way.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed

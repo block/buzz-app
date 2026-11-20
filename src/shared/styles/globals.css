@@ -676,9 +676,11 @@ body:has(.shell-header[data-integrated-window-controls]) .buzz-toast-viewport {
 }
 
 /* A file drag resting on a navigation target reads as hover, then blinks twice
-   before the target opens. Unlayered so it holds on every row and button the
-   target may be; spring-loaded-drag.ts owns the timing and skips the blink
-   under reduced motion. */
+   before the target opens: off, on, off, on in equal steps. Unlayered so it
+   beats the layered row and button fills; an unlayered rule that clears a
+   target's background must exclude this attribute, as the channel sidebar row
+   does. spring-loaded-drag.ts owns the timing and skips the blink under
+   reduced motion. */
 [data-spring-loaded] {
   background-color: var(--interaction-row-hover);
 }

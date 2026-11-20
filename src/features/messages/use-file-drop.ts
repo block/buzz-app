@@ -71,6 +71,8 @@ export function useFileDrop(
     const leave = (event: DragEvent) => {
       if (!files(event) || !owns(event)) return;
       // Entering a child reports the child first, then this leave of its parent.
+      // No node here means the drag has just entered a nested zone, which
+      // cleared it: this leave of our own node hands the drag to that zone.
       if (!under || under === event.target) reset();
     };
     const over = (event: DragEvent) => {

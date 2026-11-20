@@ -11,6 +11,7 @@ import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { ThreadPanel } from "./ThreadPanel";
+import { SPRING_LOAD_ATTRIBUTE, useSpringLoaded } from "./spring-loaded-drag";
 import { useFileDrop, useRejectUnclaimedDrops } from "./use-file-drop";
 
 afterEach(cleanup);
@@ -213,4 +214,31 @@ it("a drag crossing into a nested pane leaves the outer pane's hint", () => {
   drag(screen.getByRole("complementary"), "dragEnter");
   drag(input, "dragLeave");
   expect(screen.queryByText("Drop files")).not.toBeInTheDocument();
+});
+
+function ThreadSummary({ open }: { open(): void }) {
+  return (
+    <button type="button" {...useSpringLoaded(open)}>
+      3 replies
+    </button>
+  );
+}
+it("a drop on a spring-loaded target inside a pane still attaches to that pane", () => {
+  const attach = vi.fn();
+  const open = vi.fn();
+  render(
+    <Composer enabled attach={attach}>
+      <ThreadSummary open={open} />
+    </Composer>,
+  );
+  const summary = screen.getByRole("button", { name: "3 replies" });
+  drag(summary, "dragEnter");
+  expect(drag(summary, "dragOver").transfer.dropEffect).toBe("copy");
+  expect(summary).toHaveAttribute(SPRING_LOAD_ATTRIBUTE, "hover");
+  expect(screen.getByText("Drop files")).toBeVisible();
+  expect(drag(summary, "drop").event.defaultPrevented).toBe(true);
+  expect(attach).toHaveBeenCalledOnce();
+  expect(summary).not.toHaveAttribute(SPRING_LOAD_ATTRIBUTE);
+  expect(screen.queryByText("Drop files")).toBeNull();
+  expect(open).not.toHaveBeenCalled();
 });

@@ -3743,26 +3743,34 @@ html[data-keyboard-navigation] .message:focus-visible::after {
 [data-attachment-drop-zone] {
   position: relative;
 }
+/* A tint and a border mark the pane as the drop target without hiding it:
+   the drag can still rest on a thread summary to open it. The label sits in a
+   badge at the bottom edge, over the composer rather than the messages. */
 .fileDropOverlay {
   position: absolute;
   inset: var(--space-2);
   z-index: 5;
   display: grid;
-  place-items: center;
-  align-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4);
+  place-items: end center;
+  padding: var(--space-3);
   border: 2px dashed var(--border-focus);
   border-radius: var(--radius-panel);
-  background: var(--surface-panel);
+  background: var(--affordance-backdrop-hover);
+  pointer-events: none;
+}
+.fileDropBadge {
+  @apply glass-secondary;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-capsule);
   color: var(--text-standard);
   font-size: var(--text-label);
   font-weight: var(--text-label--font-weight);
   line-height: var(--text-label--line-height);
   letter-spacing: var(--text-label--letter-spacing);
-  text-align: center;
-  opacity: 0.95;
-  pointer-events: none;
 }
 
 .draftMediaSlide {

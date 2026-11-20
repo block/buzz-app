@@ -1506,7 +1506,11 @@ export function createChannelStore(
         // Evidence subscribers can synchronously revoke access or clear caches too.
         if (disposed || generation !== epoch || !authorized(record.channelId))
           return;
-        heads.set(record.channelId, head);
+        // Records arrive newest first, so each is less recent than every head
+        // already held. Stopping at the first that does not fit keeps the
+        // newest, and skips verifying records that would be evicted.
+        if (record.channelId === intent) heads.set(record.channelId, head);
+        else if (!heads.setOldest(record.channelId, head)) break;
         const state = windows.get(record.channelId);
         if (
           state &&

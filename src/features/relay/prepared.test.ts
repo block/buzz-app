@@ -287,6 +287,53 @@ it("byte LRU enforces both budgets and rejects a single oversize object", () => 
   expect(cache.stats().bytes).toBe(9);
   cache.set("e", "E", 1);
   expect(cache.keys()).toEqual(["c", "e"]);
+  // An entry added as the oldest is the next to go, so it never displaces one.
+  expect(cache.setOldest("f", "F", 6)).toBe(false);
+  expect(cache.keys()).toEqual(["c", "e"]);
+  cache.delete("c");
+  expect(cache.setOldest("f", "F", 6)).toBe(true);
+  expect(cache.keys()).toEqual(["f", "e"]);
+});
+it("restores the newest saved heads that fit and evicts the oldest first", async () => {
+  const saved = (id: string, age: number): SavedHead => ({
+    channelId: id,
+    savedAt: Date.now() - age,
+    events: head(id, `cached ${id}`),
+    profiles: [],
+  });
+  const ids = ["new", "mid", "old", "oldest"];
+  // Newest first, as the disk returns them.
+  const disk = memoryDisk(ids.map((id, index) => saved(id, index * 1000)));
+  const { queries, next, store, pending } = setup({
+    persistence: disk,
+    maxHeads: 3,
+  });
+  try {
+    queries.ensureList();
+    next().respond(discovery([...ids, "d"]));
+    await vi.waitFor(() => expect(store.diagnostics().heads.entries).toBe(3));
+    await flush();
+    expect(store.diagnostics().heads.entries).toBe(3);
+    // A channel read later evicts the oldest restored head, not a newer one.
+    queries.prepare?.("d");
+    next().respond(empty("d"));
+    await flush();
+    expect(pending).toHaveLength(0);
+    // Opening a channel paints its held head at once; a missing one waits on its read.
+    for (const id of ["new", "mid"]) {
+      queries.ensure(id);
+      expect(queries.window(id)).toMatchObject({
+        freshness: "cached",
+        rows: [{ content: `cached ${id}` }],
+      });
+    }
+    for (const id of ["old", "oldest"]) {
+      queries.ensure(id);
+      expect(queries.window(id)).toMatchObject({ status: "loading", rows: [] });
+    }
+  } finally {
+    store.dispose();
+  }
 });
 it("storage failure does not block foreground reads", async () => {
   const disk = memoryDisk();

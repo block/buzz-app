@@ -115,15 +115,16 @@ export function ActivityAccessory(props: ActivityProps) {
     </>
   );
 }
+type MessageActivityProps = ActivityProps & {
+  stoppedAgent?: string;
+  threadScoped?: boolean;
+};
 /** With `stoppedAgent`, only that agent's outcome for `message`. */
-function MessageActivity(
-  props: ActivityProps & { stoppedAgent?: string; threadScoped?: boolean },
-) {
-  const { session, channelId, message, canOpen, stoppedAgent } = props;
+function MessageActivity(props: MessageActivityProps) {
+  const { session, channelId, message } = props;
   const messageId = message?.id;
-  const recorded = useRecordedActivityAgents(session, channelId, messageId);
-  // Every row mounts this; only rows with work subscribe to each activity
-  // step, profile and choice change. Others read once and wait for work.
+  // Every row mounts this; only rows with work mount the part that holds the
+  // activity snapshot and subscribes to each step, profile and choice change.
   const subscribe = useChannelActivitySubscription(
     session.agentActivity,
     channelId,
@@ -137,7 +138,31 @@ function MessageActivity(
     );
     return work.live.length > 0 || work.stopped.length > 0;
   });
-  // An idle row holds no snapshot, so it cannot pin superseded turn arrays.
+  const [mounted, setMounted] = useState(hasWork);
+  if (hasWork && !mounted) setMounted(true);
+  const release = useCallback(() => setMounted(false), []);
+  return mounted ? (
+    <MessageWork
+      {...props}
+      hasWork={hasWork}
+      subscribe={subscribe}
+      onIdle={release}
+    />
+  ) : null;
+}
+/** Unmounted once idle and its leave presentation ends, so no fiber of an
+ * idle row keeps a superseded activity snapshot alive. */
+function MessageWork(
+  props: MessageActivityProps & {
+    hasWork: boolean;
+    subscribe: (listener: () => void) => () => void;
+    onIdle: () => void;
+  },
+) {
+  const { session, channelId, message, canOpen, stoppedAgent } = props;
+  const { hasWork, subscribe, onIdle } = props;
+  const messageId = message?.id;
+  const recorded = useRecordedActivityAgents(session, channelId, messageId);
   const snapshot = useSyncExternalStore(
     hasWork ? subscribe : noSubscribe,
     hasWork ? () => session.agentActivity.snapshot(channelId) : noSnapshot,
@@ -306,6 +331,10 @@ function MessageActivity(
   const bubble = (
     shown.length ? shown : (leaving ?? (ended ? retained.current : []))
   ).filter((entry) => !recorded.has(entry.agent));
+  const idle = !hasWork && !bubble.length;
+  useEffect(() => {
+    if (idle) onIdle();
+  }, [idle, onIdle]);
   if (!bubble.length) return null;
   const primary = bubble[0];
   if (!primary) return null;

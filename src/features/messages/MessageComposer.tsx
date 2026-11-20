@@ -138,6 +138,7 @@ import {
   readView,
   writeView,
   viewRevision,
+  viewScopePurgeToken,
   replaceView,
   replaceViewRevision,
   subscribeView,
@@ -676,6 +677,7 @@ function Composer({
     return pending;
   });
   const [initialRevision] = useState(() => viewRevision(scope, draftKey));
+  const [purgeToken] = useState(() => viewScopePurgeToken(scope));
   const revision = useRef(initialRevision);
   // A losing edit belongs to this window until the user resolves it.
   const conflictKey = useMemo(
@@ -683,12 +685,16 @@ function Composer({
     [scope, draftKey],
   );
   const [conflictOnOpen] = useState(() => {
-    if (submission || accepted) return;
+    if (submission || accepted || purgeToken === undefined) return;
     try {
       const raw = sessionStorage.getItem(conflictKey);
       if (!raw) return;
-      if (raw === initialRevision) return { matched: raw };
-      const saved = parseDraftView(raw);
+      const split = raw.indexOf("\n");
+      if (split < 0 || raw.slice(0, split) !== (purgeToken ?? ""))
+        return { stale: raw };
+      const savedRevision = raw.slice(split + 1);
+      if (savedRevision === initialRevision) return { stale: raw };
+      const saved = parseDraftView(savedRevision);
       if (saved && saved !== "oversized")
         return { draft: mentionDraft(saved.value) };
     } catch {
@@ -696,16 +702,16 @@ function Composer({
     }
   });
   const reopenedConflict = conflictOnOpen?.draft;
-  const matchedConflict = conflictOnOpen?.matched;
+  const staleConflict = conflictOnOpen?.stale;
   useLayoutEffect(() => {
-    if (!matchedConflict) return;
+    if (!staleConflict) return;
     try {
-      if (sessionStorage.getItem(conflictKey) === matchedConflict)
+      if (sessionStorage.getItem(conflictKey) === staleConflict)
         sessionStorage.removeItem(conflictKey);
     } catch {
-      // The matching canonical draft is already usable.
+      // The discarded backup cannot be recovered.
     }
-  }, [conflictKey, matchedConflict]);
+  }, [conflictKey, staleConflict]);
   const conflictDraft = useRef<
     { draft: MentionDraft; saved: MentionDraft | undefined } | undefined
   >(
@@ -716,15 +722,18 @@ function Composer({
   const flushConflict = useCallback(() => {
     const pending = conflictDraft.current;
     if (!pending || pending.draft === pending.saved) return;
+    if (purgeToken === undefined || viewScopePurgeToken(scope) !== purgeToken)
+      return;
     try {
-      // Leaving the community can erase the backup before this view unmounts.
-      if (pending.saved && sessionStorage.getItem(conflictKey) === null) return;
-      sessionStorage.setItem(conflictKey, JSON.stringify(pending.draft));
+      sessionStorage.setItem(
+        conflictKey,
+        `${purgeToken ?? ""}\n${JSON.stringify(pending.draft)}`,
+      );
       pending.saved = pending.draft;
     } catch {
       // Keep the edit available in the mounted editor if storage fails.
     }
-  }, [conflictKey]);
+  }, [conflictKey, purgeToken, scope]);
   function forgetConflict() {
     if (!conflictDraft.current) return;
     conflictDraft.current = undefined;
@@ -764,8 +773,8 @@ function Composer({
   const dirty = useRef(!!reopenedConflict);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(!!reopenedConflict);
-  function reportConflict(draft?: MentionDraft) {
-    if (draft && !conflictDraft.current) {
+  function reportConflict(draft = valueRef.current) {
+    if (!conflictDraft.current) {
       conflictDraft.current = { draft, saved: undefined };
       flushConflict();
     }
@@ -1302,6 +1311,9 @@ function Composer({
     else persist(next);
   };
   function persist(next: MentionDraft, expected = revision.current) {
+    const currentPurgeToken = viewScopePurgeToken(scope);
+    if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
+      return "changed";
     const serialized = JSON.stringify(next);
     writing.current = true;
     const current = viewRevision(scope, draftKey);
@@ -1327,7 +1339,10 @@ function Composer({
     }
     if (result === "changed" && next === valueRef.current && dirty.current)
       reportConflict(next);
-    else setConflict(result === "changed" || !!conflictDraft.current);
+    else
+      setConflict((alreadyConflicted) =>
+        result === "saved" ? false : alreadyConflicted || result === "changed",
+      );
     setStorageFailed(result === "failed");
     return result;
   }
@@ -1712,6 +1727,12 @@ function Composer({
     (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
       traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
+      const currentPurgeToken = viewScopePurgeToken(scope);
+      if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken) {
+        setAccepted(undefined);
+        loadSaved(null);
+        return;
+      }
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
         // recovery notification below reconciles the mounted owner afterward.
@@ -1756,7 +1777,7 @@ function Composer({
           setStorageFailed(false);
         } else {
           diagnose("changed", revision.current, current);
-          reportConflict(pending?.draft);
+          reportConflict();
         }
         return;
       } else loadSaved(current);
@@ -4343,9 +4364,9 @@ function Composer({
               <p role="alert">
                 {accepted
                   ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
-                  : conflict
-                    ? "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."
-                    : "Could not save this draft on this device. Your edits are kept here."}
+                  : storageFailed
+                    ? "Could not save this draft on this device. Your edits are kept here."
+                    : "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."}
               </p>
               {accepted ? (
                 <Button type="button" onClick={() => finishDraft(accepted)}>

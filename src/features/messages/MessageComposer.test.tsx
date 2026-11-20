@@ -87,6 +87,8 @@ import type {
   Profile,
 } from "../relay/contracts";
 import {
+  clearViewScope,
+  conflictDraftKey,
   readView,
   subscribeView,
   viewRevision,
@@ -12592,6 +12594,58 @@ it("retires a conflict backup once the same version becomes canonical", () => {
   h.remount();
   expect(h.input()).toHaveValue("Newer saved work");
   expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+});
+
+it("reopens an already saved local version when another window replaces it", () => {
+  const h = mount();
+  h.fill("Local work");
+  act(() => h.input().blur());
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+
+  h.remount();
+  expect(h.input()).toHaveValue("Local work");
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
+});
+
+it("does not recover another window's conflict after leaving the community", () => {
+  const h = mount();
+  h.fill("Local work");
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  const key = conflictDraftKey("scope", "draft:channel");
+  const backup = sessionStorage.getItem(key);
+  if (backup === null) throw new Error("Expected a conflict backup");
+
+  h.unmount();
+  clearViewScope("scope");
+  // Leaving in another window cannot access this window's session storage.
+  sessionStorage.setItem(key, backup);
+  const reopened = mount();
+  expect(reopened.input()).toHaveValue("");
+  expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+});
+
+it("reports a failed Keep my draft save and leaves both choices available", () => {
+  const h = mount();
+  h.fill("Local work");
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/could not save/i);
+    expect(h.input()).toHaveValue("Local work");
+    fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+    expect(h.input()).toHaveValue("Saved elsewhere");
+    expect(screen.queryByText(/could not save/i)).toBeNull();
+  } finally {
+    write.mockRestore();
+  }
 });
 
 it("accepts another window's identical draft without an extra write or a conflict", () => {

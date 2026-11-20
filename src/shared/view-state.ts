@@ -46,6 +46,10 @@ export function subscribeView(
         notify();
         return;
       }
+      if (event.key === viewScopePurgeKey(scope)) {
+        notify();
+        return;
+      }
       if (!event.key.startsWith("buzz-view.v1:")) return;
       const pair: unknown = JSON.parse(event.key.slice("buzz-view.v1:".length));
       if (Array.isArray(pair) && pair[0] === scope) {
@@ -231,6 +235,17 @@ export function listDraftViews(
 }
 
 const conflictDraftPrefix = "buzz-draft-conflict.v1:";
+const viewScopePurgeKey = (scope: string) =>
+  `buzz-view-purge.v1:${JSON.stringify(scope)}`;
+
+/** A leave invalidates window-local recovery even when its editor is closed. */
+export function viewScopePurgeToken(scope: string) {
+  try {
+    return localStorage.getItem(viewScopePurgeKey(scope));
+  } catch {
+    return undefined;
+  }
+}
 
 export function conflictDraftKey(scope: string, key: string) {
   return `${conflictDraftPrefix}${JSON.stringify([scope, key])}`;
@@ -248,10 +263,16 @@ function clearScopedStorage(storage: Storage, prefix: string) {
 /** Forgets every key saved under one scope, for a community the viewer has left. */
 export function clearViewScope(scope: string) {
   const keyPrefix = `${JSON.stringify([scope]).slice(0, -1)},`;
-  clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
-  changed(scope);
-  if (typeof sessionStorage !== "undefined")
-    clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);
+  const purgeKey = viewScopePurgeKey(scope);
+  const token = crypto.randomUUID();
+  try {
+    localStorage.setItem(purgeKey, token);
+  } finally {
+    clearScopedStorage(localStorage, `buzz-view.v1:${keyPrefix}`);
+    changed(scope);
+    if (typeof sessionStorage !== "undefined")
+      clearScopedStorage(sessionStorage, `${conflictDraftPrefix}${keyPrefix}`);
+  }
 }
 
 /** Forgets one key in every scope where it holds `value`, as when the thing it

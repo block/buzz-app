@@ -4,7 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { useWorkflowAgentMentions } from "./useWorkflowAgentMentions";
 import type { RelayData } from "../../features/relay/service";
@@ -52,12 +54,16 @@ type WorkflowsNavigation = {
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 };
-/** The visit whose workflow opened or was not found, kept by the page: the
- * community below is rebuilt on every reconnect and must not open that
- * workflow, or report it missing, again. */
+/** The visit told its workflow is missing, and whether that notice is still
+ * shown or the reader dismissed it. */
+type MissingNotice = { entryId: string; shown: boolean };
+/** The visit whose workflow opened or was not found, and the one notice a
+ * visit gets, kept by the page: the community below is rebuilt on every
+ * reconnect and must not open that workflow, or report it missing, again. */
 type AnsweredRoute = {
   revealed?: string | undefined;
   onRevealed?: ((entryId: string) => void) | undefined;
+  onNotFound?: Dispatch<SetStateAction<MissingNotice | undefined>> | undefined;
 };
 const withoutRoute = (target: Extract<OpenTarget, { kind: "page" }>) => {
   const { route: _route, ...page } = target;
@@ -71,33 +77,53 @@ export function WorkflowsPage({
 }: { relay: RelayData } & WorkflowsNavigation) {
   const connection = useRelayConnection(relay);
   const [revealed, setRevealed] = useState<string>();
-  return connection.status === "ready" ? (
-    <WorkflowCommunity
-      key={`${connection.scope}:${connection.generation}`}
-      session={connection.session}
-      viewer={connection.viewer ?? ""}
-      navigation={navigation}
-      navigator={navigator}
-      revealed={revealed}
-      onRevealed={setRevealed}
-    />
-  ) : (
-    <WorkflowsPanel>
-      <WorkflowPageHeader />
-      <div className="workflow-page-state">
-        <p>
-          {connection.status === "connecting"
-            ? "Connecting to your community…"
-            : "Connect to a community to browse workflows."}
-        </p>
-        {connection.status === "error" && (
-          <>
-            <p role="alert">{connection.error}</p>
-            <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
-          </>
-        )}
-      </div>
-    </WorkflowsPanel>
+  // One notice per visit, whichever of the page and the landing reports the
+  // workflow missing: it stays through later channel lists and reconnects,
+  // and is not raised again once dismissed. Only the workflow opening
+  // removes it.
+  const [notFound, setNotFound] = useState<MissingNotice>();
+  return (
+    <>
+      {connection.status === "ready" ? (
+        <WorkflowCommunity
+          key={`${connection.scope}:${connection.generation}`}
+          session={connection.session}
+          viewer={connection.viewer ?? ""}
+          navigation={navigation}
+          navigator={navigator}
+          revealed={revealed}
+          onRevealed={setRevealed}
+          onNotFound={setNotFound}
+        />
+      ) : (
+        <WorkflowsPanel>
+          <WorkflowPageHeader />
+          <div className="workflow-page-state">
+            <p>
+              {connection.status === "connecting"
+                ? "Connecting to your community…"
+                : "Connect to a community to browse workflows."}
+            </p>
+            {connection.status === "error" && (
+              <>
+                <p role="alert">{connection.error}</p>
+                <Button onClick={() => relay.tryAgain()}>
+                  Retry connection
+                </Button>
+              </>
+            )}
+          </div>
+        </WorkflowsPanel>
+      )}
+      {notFound?.shown && (
+        <ToastNotice
+          title={WORKFLOW_NOT_FOUND}
+          onDismiss={() =>
+            setNotFound((current) => current && { ...current, shown: false })
+          }
+        />
+      )}
+    </>
   );
 }
 
@@ -115,6 +141,7 @@ export function WorkflowCommunity({
   navigator,
   revealed,
   onRevealed,
+  onNotFound,
 }: {
   session: RelaySession;
   viewer: string;
@@ -177,26 +204,21 @@ export function WorkflowCommunity({
   // The landing answers a linked visit, but never mounts without a channel:
   // a settled list with none answers it here.
   const unlisted = settled && !eligible.length ? pending?.entryId : undefined;
-  // One notice per visit, held here whichever of the page and the landing
-  // reports the workflow missing: it stays through later channel lists, and
-  // is not raised again once dismissed. Only the workflow opening removes it.
-  const [notFound, setNotFound] = useState<{
-    entryId: string;
-    shown: boolean;
-  }>();
+  // A visit already told, by this content or the one a reconnect replaced,
+  // keeps the notice it has, shown or dismissed.
   const reportMissing = useCallback(
     (entryId: string) =>
-      setNotFound((current) =>
+      onNotFound?.((current) =>
         current?.entryId === entryId ? current : { entryId, shown: true },
       ),
-    [],
+    [onNotFound],
   );
   const answer = useCallback(
     (entryId: string, opened: boolean) => {
-      if (opened) setNotFound(undefined);
+      if (opened) onNotFound?.(undefined);
       onRevealed?.(entryId);
     },
-    [onRevealed],
+    [onRevealed, onNotFound],
   );
   useEffect(() => {
     if (!unlisted) return;
@@ -453,14 +475,6 @@ export function WorkflowCommunity({
           </aside>
         )}
       </div>
-      {notFound?.shown && (
-        <ToastNotice
-          title={WORKFLOW_NOT_FOUND}
-          onDismiss={() =>
-            setNotFound((current) => current && { ...current, shown: false })
-          }
-        />
-      )}
       {deleteError && (
         <ToastNotice
           title="Couldn't start deletion"

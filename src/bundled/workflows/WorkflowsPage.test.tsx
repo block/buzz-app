@@ -2296,17 +2296,19 @@ it("does not report a linked workflow missing again when a reconnect remounts th
   const visit = linkedVisit([]);
   try {
     visit.open(fixtureDefinition);
-    expect(await screen.findByText(notFound)).toBeVisible();
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
     const read = visit.fixture.definitions.created();
     visit.reconnect();
-    // The notice went with the landing that showed it. The new connection
-    // reads again and still finds nothing, but this visit was already told.
+    // The new connection reads again and still finds nothing, but this visit
+    // was already told: the page keeps the notice it has.
     expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
     await nothingListed();
-    // A withdrawn notice leaves the screen a moment later; one raised again
-    // would have been drawn before the barrier and would stay.
+    // The same notice, not one withdrawn and raised again: that would be a
+    // second element, drawn before the barrier.
     await visit.settled();
-    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
     expect(detailShown()).toBeNull();
   } finally {
     cleanup();
@@ -2449,7 +2451,8 @@ it("reports a linked workflow missing once when a partial channel list completes
   });
   try {
     visit.open(fixtureDefinition);
-    expect(await screen.findByText(notFound)).toBeVisible();
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
     // The list completes without the channel: that answers the visit, and
     // the reader is not told a second time.
     visit.setChannels({ status: "ready", channels: [emptyChannel] });
@@ -2472,7 +2475,9 @@ it("reports a linked workflow missing once when a partial channel list completes
     );
     await visit.settled();
     expect(detailShown()).toBeNull();
-    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    // The reconnect neither withdrew the visit's notice nor raised another.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
   } finally {
     cleanup();
     visit.dispose();
@@ -2675,6 +2680,61 @@ it("does not report a linked workflow missing again when a dismissed partial cha
     );
     await visit.settled();
     expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again when a reconnect follows the reader dismissing that notice", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    // The visit is unanswered, so the rebuilt content finds the workflow
+    // missing again, from the same partial list with no channel.
+    visit.reconnect();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    // The visit is still open: the page that lists its channel opens it.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("keeps the one missing-workflow notice through a reconnect while the linked visit is unanswered", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    visit.reconnect();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    await visit.settled();
+    // The same notice, not one withdrawn and raised again: that would be a
+    // second element, drawn before the barrier.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
+    // Still only the workflow opening removes it.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
   } finally {
     cleanup();
     visit.dispose();

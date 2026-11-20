@@ -4226,6 +4226,13 @@ it("leaves archived identities out of a name search unless asked", async () => {
   ).toBe(`${alice} "Alice Smith"\n${bob} "Bob" archived`);
 });
 
+it("finds yourself in a name search though archived", async () => {
+  const client = { ...archivedPeople(), key: bob, pubkey: bob };
+  expect(await callTool(client, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob" archived`,
+  );
+});
+
 it("marks an archived identity read by id", async () => {
   const client = archivedPeople();
   expect(await callTool(client, {}, "users", { ids: [bob, alice] })).toBe(

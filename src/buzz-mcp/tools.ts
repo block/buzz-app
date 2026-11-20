@@ -1285,8 +1285,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       // The standalone lookup serves both the search and the archive list.
       tools.archivedIdentities(client.relayAuthorLookup && relay),
     ]);
+    // As the app's archiveHides: you always find yourself.
     const hidden = (key: string) =>
-      !ids.length && args.include_archived !== true && !!archived?.has(key);
+      !ids.length &&
+      args.include_archived !== true &&
+      key !== client.pubkey &&
+      !!archived?.has(key);
     const profiles = people?.profiles ?? byId ?? [];
     const verified = people?.verified ?? new Map<string, VerifiedProfile>();
     const shown = (pubkey: string, name: string) => {

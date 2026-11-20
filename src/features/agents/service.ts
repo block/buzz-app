@@ -5402,8 +5402,13 @@ export class AgentsService extends Service implements Agents {
           });
           return (message) => {
             check();
-            return respondExternal(client, message, connected, scopes, () =>
-              this.addedTools.snapshot(),
+            return respondExternal(
+              client,
+              message,
+              connected,
+              scopes,
+              () => this.addedTools.snapshot(),
+              () => this.agent(key)?.config,
             );
           };
         },

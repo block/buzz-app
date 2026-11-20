@@ -5,6 +5,7 @@ import {
 import { compactAt } from "../../features/agents/compact-at";
 import { launchModel } from "../../features/agents/model-routes";
 import { PRESET } from "../../features/agents/recommended";
+import { pickToolConfig } from "../../features/agents/tool-access";
 
 export type Config = {
   /** Empty follows Codex's voice default. Applies when the next seat starts. */
@@ -23,6 +24,10 @@ export type Config = {
   compactAt?: string;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
+  /** Device-local tool policy fields; absent preserves full access. */
+  toolPreset?: string;
+  toolAllow?: string;
+  toolDeny?: string;
 };
 export type Model = {
   model: string;
@@ -82,6 +87,7 @@ export function config(raw: unknown): Config {
       ? { compactAt: value.compactAt as string }
       : {}),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
+    ...pickToolConfig(value),
   };
 }
 export const effortName = (effort: string) =>

@@ -200,6 +200,14 @@ if that desktop app is up and running.
   gives agents on this device. Open a section to read it. For editable
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
+- **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
+  **Tools** tab with Full access, Coordinator, Coding, Research and Chat only
+  roles, advanced per-tool overrides, and an effective-access summary. Existing
+  agents default to Full access. The runtime filters both the advertised tools
+  and calls, including later denials in older sessions and external-app calls;
+  native subagents inherit the policy. Goose's read-only roles omit its combined
+  read/write editor. Tool access is not a process sandbox: an allowed Shell can
+  still use files and credentials available to the agent process.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
 - **Auto models.** Some builds add choices such as **Auto Balanced** to the
@@ -311,7 +319,7 @@ mentions still work.
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks
   you to **Allow** it, and then it can read and post as you.
 - **External apps** connect from the app's side: you approve them in Buzz, for
-  one community and agent, and they get that agent's full access. Approve only
+  one community and agent, and they get its configured tool access. Approve only
   setups you started.
 - **Settings → Security** and **Settings → External apps** list connections and
   revoke them.

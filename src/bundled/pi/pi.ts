@@ -51,7 +51,7 @@ export type PiEvent = Readonly<
 export type PiHookCall = Readonly<{
   agent: string;
   conversation: number;
-  event: "beforeTool" | "afterTool";
+  event: "beforeTool" | "afterTool" | "policy";
   input: unknown;
 }>;
 /** The host asks for a gateway mode run's binding and Buzz context before it

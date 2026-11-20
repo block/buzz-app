@@ -1,4 +1,8 @@
 import { nativeHookOutput } from "../hook-output";
+import {
+  hookedToolName,
+  nativeToolDenial,
+} from "../../features/agents/tool-access";
 import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
@@ -132,6 +136,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     async (agent, session, event, input) => {
+      const configured = agents
+        .snapshot()
+        .running.find((item) => item.key === agent);
+      const denied = nativeToolDenial(
+        "claude",
+        event,
+        hookedToolName(input) ?? "",
+        configured?.config,
+      );
+      if (denied) return denied;
       return ((await agents.dispatchHook(
         typeKey,
         event,

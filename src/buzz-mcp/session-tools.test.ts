@@ -288,3 +288,62 @@ it("never hands a plugin's tool or operation the owner's workspaces", async () =
   expect(seen).toHaveLength(2);
   for (const plugin of seen) expect(plugin).not.toHaveProperty("workspaces");
 });
+
+it("filters the session catalog and refuses denied calls before dispatch", async () => {
+  const names = sessionTools([tool("notes_add")], { toolPreset: "chat" }).map(
+    (tool) => tool.name,
+  );
+  expect(names).toEqual([
+    "send",
+    "reply_in_subthread",
+    "read",
+    "search",
+    "channel_list",
+    "channel_get",
+  ]);
+  expect(
+    sessionTools([], { toolPreset: "chat", toolAllow: "mem_get" }).some(
+      (tool) => tool.name === "mem_get",
+    ),
+  ).toBe(true);
+
+  const call = vi.fn(async () => "must not run");
+  await expect(
+    callSessionTool(
+      undefined,
+      {},
+      "notes_add",
+      {},
+      [{ ...tool("notes_add"), call }],
+      { toolPreset: "chat" },
+    ),
+  ).rejects.toThrow("disabled by this agent's Tools setting");
+  expect(call).not.toHaveBeenCalled();
+});
+
+it("applies the same policy to MCP listing and calls", async () => {
+  const listed = await respond(
+    undefined,
+    {},
+    { id: 1, method: "tools/list" },
+    [],
+    {},
+    { toolPreset: "chat" },
+  );
+  expect(
+    (listed as { result: { tools: { name: string }[] } }).result.tools.some(
+      (tool) => tool.name === "watch_add",
+    ),
+  ).toBe(false);
+  const called = await respond(
+    undefined,
+    {},
+    { id: 2, method: "tools/call", params: { name: "mem_set", arguments: {} } },
+    [],
+    {},
+    { toolPreset: "chat" },
+  );
+  expect((called as { result: { isError: boolean } }).result.isError).toBe(
+    true,
+  );
+});

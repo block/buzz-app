@@ -15,7 +15,7 @@ const note: AddedTool = {
   call: vi.fn(async (_client, _context, args) => `note ${String(args.slug)}`),
 };
 
-function fixture(events: BuzzEvent[] = [], settings = false) {
+function fixture(events: BuzzEvent[] = [], settings = false, access?: unknown) {
   const query = vi.fn(async (_filters: readonly Filter[]) => events);
   const publish = vi.fn(async (event: Template) => ({
     ...event,
@@ -47,6 +47,7 @@ function fixture(events: BuzzEvent[] = [], settings = false) {
       () => {},
       scopes,
       () => added,
+      () => access,
     );
   const call = (
     name: string,
@@ -147,6 +148,35 @@ it("follows plugin tools as they are added and removed", async () => {
     "result.isError",
     true,
   );
+});
+
+it("uses the selected agent's tool policy for both listing and dispatch", async () => {
+  const { call, list, publish } = fixture([], false, { toolPreset: "chat" });
+  expect((await list()).result.tools.map((tool) => tool.name)).toEqual([
+    "send",
+    "reply_in_subthread",
+    "read",
+    "search",
+    "channel_list",
+    "channel_get",
+  ]);
+  expect(
+    await call("channel_create", {
+      name: "Triage",
+      visibility: "private",
+      solo: true,
+      members: [],
+    }),
+  ).toHaveProperty("result.isError", true);
+  expect(publish).not.toHaveBeenCalled();
+  expect(
+    await call("send", {
+      channel: "chan",
+      text: "Allowed",
+      audience: "agents",
+    }),
+  ).toHaveProperty("result.content.0.text", `sent ${"d".repeat(64)}`);
+  expect(publish).toHaveBeenCalledOnce();
 });
 
 it("passes full arguments to the native handler", async () => {

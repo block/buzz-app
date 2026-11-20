@@ -1,4 +1,8 @@
 import { nativeHookOutput } from "../hook-output";
+import {
+  hookedToolName,
+  nativeToolDenial,
+} from "../../features/agents/tool-access";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { communityDestination } from "../../features/communities/destination";
@@ -65,6 +69,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? {
           serve: ctx.host.serveMcp.bind(ctx.host),
           run: async (agent, session, event, input) => {
+            const configured = ctx.agents
+              .snapshot()
+              .running.find((item) => item.key === agent);
+            const denied = nativeToolDenial(
+              "codex",
+              event,
+              hookedToolName(input) ?? "",
+              configured?.config,
+            );
+            if (denied) return denied;
             return ((await ctx.agents.dispatchHook(
               typeKey,
               event,

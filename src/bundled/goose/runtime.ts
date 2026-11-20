@@ -141,6 +141,11 @@ import {
   AgentSessions,
   localSessions,
 } from "./sessions";
+import {
+  goosePlatform,
+  pickToolConfig,
+  toolPolicyKey,
+} from "../../features/agents/tool-access";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -158,6 +163,10 @@ export type Config = Readonly<{
   /** The context size, in tokens, its sessions compact at, when below
    * goose's own; unset is goose's default. This device's only. */
   compactAt?: string;
+  /** Device-local tool policy fields; absent preserves full access. */
+  toolPreset?: string;
+  toolAllow?: string;
+  toolDeny?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -170,6 +179,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  ...pickToolConfig(value),
   scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 /** What an agent runs on: its config, with `candidate`'s provider, model and
@@ -1809,7 +1819,7 @@ export class GooseRuntime {
           remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message, this.added());
+      return respond(client, context, message, this.added(), {}, entry.config);
     };
     entry.tools = tools;
     const get = (
@@ -1882,6 +1892,7 @@ export class GooseRuntime {
           entry.config.workspace,
           entry.config.scope,
           addedKey(this.added()),
+          toolPolicyKey(entry.config),
         ]),
       launch: (conversation) => this.launch(agent, entry, conversation),
     });
@@ -1911,8 +1922,12 @@ export class GooseRuntime {
     const cwd = assigned
       ? await existingFolder(resolveDirectory, assigned)
       : workspace;
+    const platform = goosePlatform(entry.config);
     return {
       workspace: cwd,
+      ...(platform !== undefined
+        ? { platform: platform ? [platform] : [] }
+        : {}),
       systemPrompt: systemPrompt({
         scope,
         cwd,

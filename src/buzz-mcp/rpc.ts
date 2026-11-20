@@ -13,6 +13,7 @@ import {
 import { isBestieTool } from "./bestie";
 import { isSettingsTool } from "./settings";
 import type { Reply } from "./tools";
+import type { ToolConfig, ToolPolicy } from "../features/agents/tool-access";
 
 type Message = Readonly<{
   id?: string | number | null;
@@ -35,6 +36,7 @@ export async function respond(
   input: unknown,
   added: readonly AddedTool[] = [],
   listing: Listing = {},
+  access?: ToolConfig | ToolPolicy | unknown,
 ) {
   const { id, method, params = {} } = (input ?? {}) as Message;
   // A notification needs no answer, but the pipe expects one.
@@ -59,7 +61,7 @@ export async function respond(
         // A connection keeps its client, so its list stays the same. One
         // whose client can't change settings or the Bestie, such as a
         // plugin's, lacks their tools.
-        tools: sessionTools(added)
+        tools: sessionTools(added, access)
           .filter(
             ({ name }) =>
               !client ||
@@ -82,6 +84,7 @@ export async function respond(
           name,
           args as Record<string, unknown>,
           added,
+          access,
         );
         return result({ content: content(reply) });
       } catch (error) {

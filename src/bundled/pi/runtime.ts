@@ -108,6 +108,7 @@ import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
 import { answerGateway, gatewayRoute, type GatewaySeam } from "./gateway";
+import { pickToolConfig } from "../../features/agents/tool-access";
 
 export type Config = Readonly<{
   /** A Pi provider; empty uses the one Pi's settings name. */
@@ -124,6 +125,10 @@ export type Config = Readonly<{
   /** The context size, in tokens, its conversations compact at; unset is
    * Pi's own. This device's only. */
   compactAt?: string;
+  /** Device-local tool policy fields; absent preserves full access. */
+  toolPreset?: string;
+  toolAllow?: string;
+  toolDeny?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   provider: "",
@@ -136,6 +141,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  ...pickToolConfig(value),
   scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 
@@ -1355,6 +1361,7 @@ export class PiRuntime {
         call.name,
         call.arguments,
         this.added(),
+        entry?.config,
       );
       const final = isFinalMessage(call.name, call.arguments);
       // A run spanning destinations ends once each has its final reply.
@@ -1693,7 +1700,7 @@ export class PiRuntime {
       ...(tokens && { compactAt: tokens }),
       // Whichever host runs the agent fills in its tools' credential.
       ...(handle && { as: { pubkey: handle.pubkey, relay: handle.relay } }),
-      tools: sessionTools(this.added()),
+      tools: sessionTools(this.added(), entry?.config),
       hint: sessionHint(this.added()),
     });
   }

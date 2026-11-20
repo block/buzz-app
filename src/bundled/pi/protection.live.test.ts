@@ -23,7 +23,7 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});retur
 const until=async test=>{const end=Date.now()+5000;while(!await test()){if(Date.now()>end)throw new Error('Missing lifecycle boundary');await new Promise(r=>setTimeout(r,5));}};
 const exists=path=>stat(path).then(()=>true,()=>false);
 function start(check,protectedAgent=agent) {
- const input=new PassThrough(),output=new PassThrough(),pending=new Map(),checks=new Map(),transfers=new Map(),actions=[],nativeHooks=[];let id=0;
+ const input=new PassThrough(),output=new PassThrough(),pending=new Map(),checks=new Map(),transfers=new Map(),actions=[],nativeHooks=[],policyHooks=[];let id=0;
  createInterface({input:output}).on('line',line=>{
   const m=JSON.parse(line);
   if(m.method?.startsWith('buzz/security/evidence/')) {
@@ -37,7 +37,13 @@ function start(check,protectedAgent=agent) {
     const stop=new AbortController();checks.set(m.id,stop);actions.push(params);
     Promise.resolve().then(()=>check(params,stop.signal)).then(allowed=>reply({allowed:allowed===true}),()=>reply({allowed:false})).finally(()=>checks.delete(m.id));
    } else if(operation==='cancel'){transfers.delete(p.id);reply({allowed:false});}
-  } else if(m.method==='hook'){nativeHooks.push(m.params);input.write(JSON.stringify({id:m.id,result:undefined})+'\n');}
+  } else if(m.method==='hook'){
+   if(m.params.event==='policy') {
+    policyHooks.push(m.params);
+    const block=denyNative&&m.params.input.name==='write'?'write is disabled by test policy':undefined;
+    input.write(JSON.stringify({id:m.id,result:block?{block}:undefined})+'\n');
+   } else {nativeHooks.push(m.params);input.write(JSON.stringify({id:m.id,result:undefined})+'\n');}
+  }
   else if(m.method==='security_cancel')checks.get(m.params.id)?.abort();
   else if(m.method==='tool')input.write(JSON.stringify({id:m.id,result:{content:[{type:'text',text:'sent'}]}})+'\n');
   else if(m.id!==undefined){const p=pending.get(m.id);pending.delete(m.id);m.error?p?.reject(new Error(m.error)):p?.resolve(m.result);}
@@ -47,7 +53,7 @@ function start(check,protectedAgent=agent) {
  return {rpc,actions,stop:async()=>{await server.stop();assert.deepEqual(nativeHooks,[]);}};
 }
 const turn=(request,text='Do the task',key='chan/root')=>({agent,key,at:100,context:{channel:'chan',root:'root'},text,steer:text,request,provider:'faux',model:'faux-1',instructions:'Test.',cwd:data});
-let inspect=async()=>true;
+let inspect=async()=>true,denyNative=false;
 let pi=start((...args)=>inspect(...args));
 try {
  await pi.rpc('open',{agent,tools:[]});
@@ -61,6 +67,11 @@ try {
  const denied=join(data,'denied.txt');inspect=async({action})=>action.kind!=='tool';
  faux.setResponses([fauxAssistantMessage(fauxToolCall('write',{path:denied,content:'denied'}),{stopReason:'toolUse'}),fauxAssistantMessage('stopped')]);
  submission=await pi.rpc('deliver',turn('deny'));await pi.rpc('wait',{agent,submission:submission.submission});assert.equal(await exists(denied),false);result.deniedWrite=true;
+ // Owner policy denies protected native tools before review or execution.
+ const policyDenied=join(data,'policy-denied.txt'),beforePolicy=pi.actions.length;denyNative=true;inspect=async()=>true;
+ faux.setResponses([fauxAssistantMessage(fauxToolCall('write',{path:policyDenied,content:'denied'}),{stopReason:'toolUse'}),(context)=>{assert.ok(JSON.stringify(context).includes('write is disabled by test policy'));return fauxAssistantMessage('policy denied');}]);
+ submission=await pi.rpc('deliver',turn('owner-policy','write'));await pi.rpc('wait',{agent,submission:submission.submission});assert.equal(await exists(policyDenied),false);
+ assert.ok(pi.actions.slice(beforePolicy).every(row=>row.action.kind!=='tool'||row.action.content.title!=='write'));denyNative=false;result.policyDenied=true;
  // Both successful and nonzero shell output survive buffering when allowed.
  const secret=join(data,'source.txt'),marker='RAW_RESULT_ONLY_7301';await writeFile(secret,marker);
  for(const suffix of ['','; exit 3']) {
@@ -192,6 +203,7 @@ it.skipIf(!deps)(
           [
             "exactWrite",
             "deniedWrite",
+            "policyDenied",
             "shellOutput",
             "withheldOutput",
             "deniedContext",

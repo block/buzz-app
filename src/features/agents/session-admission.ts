@@ -235,6 +235,11 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
       pinNativePlacement?: () => Promise<void> | undefined,
     ) {
       check(input.signal);
+      const finishNativePlacement = async () => {
+        await pinNativePlacement?.();
+        check(input.signal);
+        return undefined;
+      };
       const marked = hasInvocationIntent(input);
       if (marked && !input.communityOrigin)
         throw new Error(
@@ -285,7 +290,7 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
           );
         return savedRoute;
       }
-      if (ordinary) return;
+      if (ordinary) return finishNativePlacement();
       // A request already admitted under the old placement stays there.
       const legacy = await storage.read(
         SESSION_ADMISSION_PREFIX +
@@ -319,11 +324,8 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
         (savedRoute.root !== route?.root || savedRoute.parent !== route.parent)
       )
         throw new Error("The invocation subthread cannot change");
-      if (!placement && !marked) {
-        await pinNativePlacement?.();
-        check(input.signal);
-        return;
-      }
+      if (!placement && !marked) return finishNativePlacement();
+      // Retain a marked router's ordinary decision if pinning fails.
       const receipt = parse<InvocationSubthread | null>(
         await storage.add(key, JSON.stringify(placement ?? null)),
       );
@@ -334,12 +336,14 @@ export function createSessionAdmissions(root: Context, storage: AgentStore) {
           placement?.parent !== accepted?.parent)
       )
         throw new Error("The invocation subthread cannot change");
-      if (accepted)
-        await storage.add(
-          conversationKey(accepted.parent),
-          JSON.stringify(accepted),
-        );
-      return accepted && turnContext ? { ...accepted, turnContext } : accepted;
+      if (!accepted) return finishNativePlacement();
+      await storage.add(
+        conversationKey(accepted.parent),
+        JSON.stringify(accepted),
+      );
+      return turnContext
+        ? { ...accepted, turnContext: unframed(turnContext) }
+        : accepted;
     },
     async prepare(input: AdmissionRequest) {
       check(input.signal);

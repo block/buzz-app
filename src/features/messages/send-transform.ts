@@ -5,9 +5,13 @@ import type {
   SendTransformContext,
 } from "../conversation/contracts";
 
+/** How long a plugin may take to transform a send before it fails. */
+const SEND_TRANSFORM_TIMEOUT_MS = 10_000;
+
 /** The message `winner` sends instead, or `null` when it consumed the draft.
  * Throws, naming the plugin, to block the send. Settles when the send is
- * aborted even if the plugin ignores `signal`; a late result is discarded. */
+ * aborted or the plugin takes longer than 10 seconds, even if it ignores
+ * `signal`; a late result is discarded. */
 export async function transformSend(
   winner: Contribution<SendTransform>,
   draft: SendDraft,
@@ -15,14 +19,26 @@ export async function transformSend(
 ): Promise<SendDraft | null> {
   const { signal } = context;
   signal.throwIfAborted();
+  // The plugin's signal also aborts when it times out.
+  const attempt = new AbortController();
   let stop = () => {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const aborted = new Promise<never>((_, reject) => {
-    stop = () => reject(signal.reason);
+    stop = () => {
+      attempt.abort(signal.reason);
+      reject(signal.reason);
+    };
     signal.addEventListener("abort", stop, { once: true });
+    timer = setTimeout(() => {
+      const timedOut = new Error("timed out");
+      attempt.abort(timedOut);
+      reject(timedOut);
+    }, SEND_TRANSFORM_TIMEOUT_MS);
   });
   try {
     const result: unknown = await Promise.race([
-      (async () => winner.transform(draft, context))(),
+      (async () =>
+        winner.transform(draft, { ...context, signal: attempt.signal }))(),
       aborted,
     ]);
     signal.throwIfAborted();
@@ -35,6 +51,7 @@ export async function transformSend(
       `${winner.pluginId}: ${reason instanceof Error ? reason.message : String(reason)}`,
     );
   } finally {
+    clearTimeout(timer);
     signal.removeEventListener("abort", stop);
   }
 }

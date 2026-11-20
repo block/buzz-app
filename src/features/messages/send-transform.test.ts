@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   SendDraft,
@@ -6,6 +6,10 @@ import type {
   SendTransformContext,
 } from "../conversation/contracts";
 import { transformRecipients, transformSend } from "./send-transform";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const alice = { pubkey: "a".repeat(64), name: "alice" };
 const bob = { pubkey: "b".repeat(64), name: "bob" };
@@ -40,7 +44,10 @@ it("hands the winner the draft and context, awaiting an async result", async () 
   await expect(
     transformSend(transform("one", { transform: run }), draft, ctx),
   ).resolves.toEqual({ text: "later", mentions: [bob] });
-  expect(run).toHaveBeenCalledWith(draft, ctx);
+  expect(run).toHaveBeenCalledWith(
+    draft,
+    expect.objectContaining({ session: ctx.session, channelId: "channel" }),
+  );
 });
 
 it("treats empty text without recipients as consumed", async () => {
@@ -170,6 +177,38 @@ it("settles on abort for a transform that ignores the signal, and drops its late
   await expect(pending).rejects.toThrow();
   finish({ text: "late", mentions: [] });
   await Promise.resolve();
+});
+
+it("times out a transform that never settles, aborting its signal and dropping its late result", async () => {
+  vi.useFakeTimers();
+  let seen!: AbortSignal;
+  let finish!: (value: SendDraft) => void;
+  const pending = transformSend(
+    transform("one", {
+      transform: (_value, { signal }) => {
+        seen = signal;
+        return new Promise<SendDraft>((resolve) => {
+          finish = resolve;
+        });
+      },
+    }),
+    draft,
+    context(),
+  );
+  const failure = expect(pending).rejects.toThrow("test.plugin: timed out");
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(seen.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await failure;
+  expect(seen.aborted).toBe(true);
+  finish({ text: "late", mentions: [] });
+  await Promise.resolve();
+});
+
+it("clears the timeout once the transform settles", async () => {
+  vi.useFakeTimers();
+  await transformSend(transform("one"), draft, context());
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("does not run a transform for an attempt already aborted", async () => {

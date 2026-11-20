@@ -1,6 +1,9 @@
 import { FadingLabel } from "./FadingLabel";
 import { activeChannelRows } from "../../features/channel-navigation/active-channel-rows";
-import { recoverSidebarFocus } from "../../features/channel-navigation/sidebar-focus-recovery";
+import {
+  captureSidebarDeparture,
+  recoverSidebarFocus,
+} from "../../features/channel-navigation/sidebar-focus-recovery";
 import { useSoloRowActivation } from "../../features/channel-navigation/useSoloRowActivation";
 import { useSpringLoaded } from "../../features/messages/spring-loaded-drag";
 import type { Navigation } from "../../features/navigation/controller";
@@ -87,7 +90,7 @@ export function ChannelSidebarRow({
       ].map((row) => row.dataset.channelId ?? "");
       // A plugin wrapper can remount this row and its neighbors. Resolve them
       // after the commit, excluding retained exits and focus moved elsewhere.
-      recoverSidebarFocus(button, (sidebar) => {
+      recoverSidebarFocus(captureSidebarDeparture(button), (sidebar) => {
         if (
           (document.activeElement !== document.body &&
             document.activeElement !== button) ||

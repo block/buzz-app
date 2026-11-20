@@ -124,7 +124,7 @@ test.describe("passive channel removal", () => {
 
   // Only a browser can show whether recovering focus after a relay update
   // reveals the keyboard focus or displaces the content the user scrolled to.
-  for (const { title, keepViewport, removeSolo = false } of [
+  for (const { title, keepViewport, soloRemoval } of [
     {
       title:
         "keeps a contributed Solo row in view when a focused channel is archived above it",
@@ -134,7 +134,13 @@ test.describe("passive channel removal", () => {
       title:
         "keeps the viewport steady when a focused contributed Solo row disappears above it",
       keepViewport: true,
-      removeSolo: true,
+      soloRemoval: "source",
+    },
+    {
+      title:
+        "keeps the viewport steady when a mounted Solo conversation leaves the roster above it",
+      keepViewport: true,
+      soloRemoval: "roster",
     },
     {
       title: "reveals replacement focus when an in-view channel is archived",
@@ -143,7 +149,7 @@ test.describe("passive channel removal", () => {
   ])
     test(title, async ({ page, app }) => {
       await page.setViewportSize({ width: 1100, height: 430 });
-      const fixture = removeSolo
+      const fixture = soloRemoval
         ? "?solo-region-fixture&compose-workspaces"
         : "?solo-region-fixture";
       await page.goto(keepViewport ? `${app.origin}/${fixture}` : app.origin);
@@ -175,15 +181,22 @@ test.describe("passive channel removal", () => {
       const anchor = sidebar
         .locator(`[data-solo-destination-root="${soloIds[8]}"]`)
         .locator(`button[data-solo-destination-id="${soloIds[8]}"]`);
-      const departing = removeSolo
+      const departing = soloRemoval
         ? sidebar
             .getByRole("navigation", { name: "Solo conversations" })
             .locator(`button[data-solo-destination-id="${soloIds[0]}"]`)
         : beta;
       if (keepViewport) await expect(anchor).toBeVisible();
-      if (!removeSolo)
+      if (soloRemoval === "roster")
+        await page.evaluate(
+          (id) => window.fixtureSoloRegion.present([], [], id),
+          soloIds[0],
+        );
+      if (soloRemoval !== "source")
         await expect
-          .poll(() => app.relay.hasRoute("primary", "beta"))
+          .poll(() =>
+            app.relay.hasRoute("primary", soloRemoval ? soloIds[0] : "beta"),
+          )
           .toBe(true);
       await departing.focus();
       // Leave room for an offscreen row to exit while keeping the target in view.
@@ -222,11 +235,27 @@ test.describe("passive channel removal", () => {
           .closest('nav[aria-label="Subscribed channels"]')
           .getBoundingClientRect().top;
       const before = keepViewport ? await anchor.evaluate(offset) : 0;
-      if (removeSolo) {
+      const pluginRow =
+        soloRemoval === "roster"
+          ? await departing.evaluateHandle(
+              (row) =>
+                row.closest("[data-solo-destination-root]").parentElement,
+            )
+          : undefined;
+      if (soloRemoval === "source") {
         await page.evaluate(
           (id) => window.fixtureSoloRegion.present([id], []),
           soloIds[0],
         );
+      } else if (soloRemoval === "roster") {
+        app.setChannelMetadata(soloIds[0], [
+          ["name", soloIds[0]],
+          ["t", "stream"],
+          ["t", "buzz.solo"],
+          ["private"],
+          ["P", app.viewer],
+          ["archived", "true"],
+        ]);
       } else {
         app.setChannelMetadata("beta", [
           ["name", "Beta"],
@@ -236,6 +265,10 @@ test.describe("passive channel removal", () => {
         ]);
       }
       await expect(departing).toHaveCount(0);
+      if (pluginRow) {
+        expect(await pluginRow.evaluate((row) => row.isConnected)).toBe(true);
+        await pluginRow.dispose();
+      }
       if (keepViewport) {
         await expect(
           sidebar.locator("button[data-solo-destination-id]:focus"),

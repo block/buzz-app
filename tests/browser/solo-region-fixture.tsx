@@ -211,7 +211,8 @@ export const soloRegionFixture: BundledPlugin = {
                 <ChannelGroup ui={ui} id="gamma" />
               </>
             )}
-            {(first && live.has(first)
+            {/* A source can retain a keyed conversation across roster changes. */}
+            {(first
               ? [first, ...[...live].filter((id) => id !== first)]
               : [...live]
             )

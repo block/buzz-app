@@ -474,6 +474,8 @@ export type SidebarPreferences = SidebarGroups &
     activeWindowSeconds?: Readonly<Record<string, number>>;
     /** A first write still needs both verified legacy workspace records. */
     workspaceMigrationPending?: true;
+    /** Workspace IDs from the old Solo sidebar, read from its legacy record. */
+    soloWorkspaces?: readonly string[];
   }>;
 export type SidebarSectionDraft = Readonly<{
   id: string;

@@ -13,6 +13,18 @@ const limitsKey = "sidebar:section-limits";
 /** Solo's per-workspace Show more steps from before sections were unified. */
 const legacySoloKey = "solo:expanded-projects";
 
+function legacySoloSteps(scope: string): Readonly<Record<string, unknown>> {
+  const legacy = readView<unknown>(scope, legacySoloKey, {});
+  return legacy && typeof legacy === "object" && !Array.isArray(legacy)
+    ? (legacy as Record<string, unknown>)
+    : {};
+}
+
+const legacyStep = (steps: Readonly<Record<string, unknown>>, id: string) => {
+  const step = Object.hasOwn(steps, id) ? steps[id] : undefined;
+  return typeof step === "number" && step > 0 ? step : 0;
+};
+
 /** Solo starts capped, as its chats were before sections were unified, and
  * keeps the steps it had shown. Every other section starts expanded. */
 export function readSectionLimits(
@@ -26,12 +38,29 @@ export function readSectionLimits(
           entry[1] === "all" || (typeof entry[1] === "number" && entry[1] >= 0),
       ),
     );
-  const legacy = readView<unknown>(scope, legacySoloKey, {});
-  const steps =
-    legacy && typeof legacy === "object" && !Array.isArray(legacy)
-      ? (legacy as Record<string, unknown>)[""]
-      : undefined;
-  return { solo: typeof steps === "number" && steps > 0 ? steps : 0 };
+  return { solo: legacyStep(legacySoloSteps(scope), "") };
+}
+
+/** Workspaces from the old Solo sidebar start capped like Solo, with the
+ * steps they had shown. Their limits are saved so they keep that start after
+ * the legacy record is gone. Other workspaces, including new ones, start
+ * expanded. */
+export function seedSoloWorkspaceLimits(
+  scope: string,
+  limits: Readonly<Record<string, SectionLimit>>,
+  soloWorkspaces: readonly string[],
+): Readonly<Record<string, SectionLimit>> {
+  const missing = soloWorkspaces.filter(
+    (id) => !Object.hasOwn(limits, `group:${id}`),
+  );
+  if (!missing.length) return limits;
+  const steps = legacySoloSteps(scope);
+  return {
+    ...limits,
+    ...Object.fromEntries(
+      missing.map((id) => [`group:${id}`, legacyStep(steps, id)]),
+    ),
+  };
 }
 
 export const sectionLimit = (
@@ -106,8 +135,20 @@ export function capSections<T extends Section>(
 }
 
 /** Each section's Show more and Show fewer, remembered per sidebar scope. */
-export function useSectionLimits(scope: string) {
+export function useSectionLimits(
+  scope: string,
+  soloWorkspaces: readonly string[] = [],
+) {
   const [limits, setLimits] = useState(() => readSectionLimits(scope));
+  const solo = soloWorkspaces.join(" ");
+  useEffect(() => {
+    if (!solo) return;
+    setLimits((current) => {
+      const next = seedSoloWorkspaceLimits(scope, current, solo.split(" "));
+      if (next !== current) writeView(scope, limitsKey, next);
+      return next;
+    });
+  }, [scope, solo]);
   const [held, setHeld] = useState<ReadonlySet<string>>(() => new Set());
   const hold = useCallback((ids: readonly string[]) => {
     setHeld((current) =>

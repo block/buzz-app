@@ -954,7 +954,10 @@ export function ChannelInventory({
   );
   // A capped section never hides the open chat, one being renamed, or one
   // that needs the viewer; filters choose the rows, the cap only shortens them.
-  const sectionLimits = useSectionLimits(scope);
+  const sectionLimits = useSectionLimits(
+    scope,
+    preferences.data?.soloWorkspaces,
+  );
   const unreadOverflow = useUnreadChannelIds(
     queries.unread,
     JSON.stringify(

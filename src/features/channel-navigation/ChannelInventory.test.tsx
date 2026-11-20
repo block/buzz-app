@@ -4461,6 +4461,91 @@ it("starts other workspaces expanded and lets them show fewer", async () => {
   expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP + 2);
 });
 
+it("starts old Solo workspaces capped with their saved steps and Team ones expanded, after a reload", async () => {
+  const rows = (section: string, channelType: "solo" | "stream") =>
+    Array.from({ length: 12 }, (_, index) => ({
+      id: `${section}-${index}`,
+      name: `${section} ${index}`,
+      channelType,
+      lastActivityAt: 12 - index,
+    }));
+  const channels = [
+    ...rows("buzz", "solo"),
+    ...rows("reviews", "solo"),
+    ...rows("uptop", "stream"),
+    ...rows("fresh", "stream"),
+  ];
+  const sections = [
+    { id: "buzz", name: "Buzz", order: 0 },
+    { id: "reviews", name: "Reviews", order: 1 },
+    { id: "uptop", name: "Uptop", order: 2 },
+    { id: "fresh", name: "Fresh", order: 3 },
+  ];
+  // A saved unified record; the legacy Solo record lists Buzz and Reviews.
+  const data: SidebarPreferences = {
+    sections,
+    assignments: Object.fromEntries(
+      channels.map(({ id }) => [id, id.split("-")[0] ?? ""]),
+    ),
+    sectionOrder: [
+      "group:buzz",
+      "group:reviews",
+      "solo",
+      "starred",
+      "group:uptop",
+      "group:fresh",
+    ],
+    starred: [],
+    muted: [],
+    soloWorkspaces: ["buzz", "reviews"],
+  };
+  const store = (read: SidebarPreferences) =>
+    createSidebarPreferencesStore({
+      read: async () => read,
+      available: true,
+      write: async () => read,
+      writeStar: async () => [],
+    });
+  const first = store(data);
+  await first.queries.ensure();
+  const h = fixture(first.queries, "ready", channels);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  writeView(scope, "solo:expanded-projects", { reviews: SECTION_ROW_STEP });
+  const expectLayout = async () => {
+    await waitFor(() =>
+      expect(sectionRows("group:buzz")).toHaveLength(SECTION_ROW_CAP),
+    );
+    expect(
+      screen.getByRole("button", { name: "Show more in Buzz" }),
+    ).toBeVisible();
+    expect(sectionRows("group:reviews")).toHaveLength(12);
+    expect(
+      screen.getByRole("button", { name: "Show fewer in Reviews" }),
+    ).toBeVisible();
+    // Team and new workspaces list everything.
+    expect(sectionRows("group:uptop")).toHaveLength(12);
+    expect(sectionRows("group:fresh")).toHaveLength(12);
+    expect(
+      screen.queryByRole("button", { name: "Show more in Uptop" }),
+    ).not.toBeInTheDocument();
+  };
+  const { unmount } = render(h.view("uptop-0"));
+  await expectLayout();
+  unmount();
+  first.dispose();
+  // A later launch whose legacy Solo read failed keeps the same starts.
+  const { soloWorkspaces: _solo, ...withoutLegacy } = data;
+  const second = store(withoutLegacy);
+  await second.queries.ensure();
+  try {
+    render(fixture(second.queries, "ready", channels).view("uptop-0"));
+    await expectLayout();
+  } finally {
+    second.dispose();
+  }
+});
+
 it("keeps a chat whose menu is open listed when a newer chat passes it", async () => {
   const chats = soloChats(SECTION_ROW_CAP);
   const last = `chat-${SECTION_ROW_CAP - 1}`;

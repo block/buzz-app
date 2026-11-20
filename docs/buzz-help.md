@@ -931,14 +931,19 @@ Quitting Buzz also turns it off.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If some of the files you pick, paste or drop can't be attached, such
-  as an empty file or any past 10 per message, the rest still attach and a
-  notice says how many were left out and why, naming the first few.
+  as an empty file, a dropped folder or any past 10 per message, the rest still
+  attach and a notice says how many were left out and why, naming the first few.
   If an upload fails, its attachment shows the reason, **Retry**, and
   **Remove**. Follow the error's guidance before retrying, or remove the attachment
-  to unblock Send; your typed message stays in the composer. In the main window,
-  files still uploading when you press **Send** finish in the background: the
-  upload bar names the conversation they are going to, and **Cancel** stops the
-  send it names. If a background send fails, its notice names that conversation
+  to unblock Send; your typed message stays in the composer. The relay decides
+  which file types it accepts when a file uploads. If it refuses a file's type,
+  a notice names the file, and its attachment offers only **Remove**, because
+  retrying the same file cannot succeed. For a conversation in a tab you are
+  not looking at, the notice waits until you return to it. If the relay refuses
+  the type after you press **Send**, the failed send's notice names the file
+  instead. In the main window, files still uploading when you press **Send**
+  finish in the background: the upload bar names the conversation they are
+  going to, and **Cancel** stops the send it names. If a background send fails, its notice names that conversation
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size. Some plugins supply temporary

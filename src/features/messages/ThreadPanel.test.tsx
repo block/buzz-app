@@ -108,6 +108,7 @@ vi.mock("./MessageComposer", () => ({
     placeholder,
     focusRequest,
     threadSeed,
+    shown,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -119,6 +120,7 @@ vi.mock("./MessageComposer", () => ({
       data-disabled={disabled}
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
+      data-shown={shown}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -1666,6 +1668,29 @@ it("routes media in replies through the resolved root review workspace", () => {
     undefined,
   );
 });
+
+it.each([false, true])(
+  "tells its composer whether its tab shows it, apart from whether it reads (retained=%s)",
+  (retainThread) => {
+    const h = messagesHarness();
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread });
+    h.render();
+    const composer = () => screen.getByRole("region", { name: "Composer" });
+    // Hosts that retain nothing leave it to the composer's default, shown.
+    expect(composer()).not.toHaveAttribute("data-shown");
+    // A preview does not read, but its composer is on screen.
+    Object.assign(props, { active: false });
+    h.rerenderProps();
+    expect(composer()).not.toHaveAttribute("data-shown");
+    Object.assign(props, { active: true, shown: false });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "false");
+    Object.assign(props, { shown: true });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "true");
+  },
+);
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();

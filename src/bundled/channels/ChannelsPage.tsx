@@ -2448,6 +2448,8 @@ function ChannelWorkspace({
           <ConversationComposer
             key={`composer:${current.id}`}
             onFocusedRemoval={focusArchivedHistory}
+            // Another main tab covers it while it stays mounted.
+            shown={secondary.selectedMain === "conversation"}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.
               !(continuingVisit && committedVisit.current?.archived) &&

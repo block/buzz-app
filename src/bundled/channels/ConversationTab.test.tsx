@@ -22,12 +22,14 @@ import type { ConversationTab as Tab } from "./useChannelTabState";
 vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
+    shown,
     replyRequest,
     focusRequest,
     revealSelected,
     revealRequest,
   }: {
     active: boolean;
+    shown?: boolean;
     replyRequest?: number;
     focusRequest?: number;
     revealSelected?: boolean;
@@ -35,6 +37,7 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   }) => (
     <aside
       data-active={active}
+      data-shown={shown}
       data-reply-request={replyRequest}
       data-focus-request={focusRequest}
       data-reveal-selected={revealSelected}
@@ -237,21 +240,32 @@ it.each(["thread", "conversation"] as const)(
     const mounted = render(<ConversationTab {...props} active={false} />);
     const content = screen.getByLabelText("Conversation in Beta");
     expect(enterChannel).not.toHaveBeenCalled();
-    if (kind === "thread")
+    // A thread's composer follows the tab, as a conversation's does.
+    if (kind === "thread") {
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "false",
       );
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-shown",
+        "false",
+      );
+    }
     mounted.rerender(<ConversationTab {...props} active />);
     expect(enterChannel).toHaveBeenCalledExactlyOnceWith(
       "beta",
       document.hasFocus(),
     );
-    if (kind === "thread")
+    if (kind === "thread") {
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "true",
       );
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-shown",
+        "true",
+      );
+    }
     mounted.rerender(<ConversationTab {...props} active={false} />);
     expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("beta");
     expect(screen.getByLabelText("Conversation in Beta")).toBe(content);

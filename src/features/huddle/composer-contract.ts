@@ -1,7 +1,7 @@
 import type { ComposerSession } from "../messages/composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
+import type { UploadCode, UploadedAttachment } from "../relay/attachments";
 
 export type ComposerSnapshot = {
   modelRevision: number;
@@ -96,6 +96,8 @@ export type ComposerResponse =
       id: number;
       value?: unknown;
       error?: string;
+      /** The failure's upload code, so the editor can tell a refused type. */
+      code?: UploadCode;
     }
   | { kind: "closed"; client: string };
 export type ComposerReader = Pick<

@@ -111,6 +111,9 @@ export type ThreadPanelProps = {
   /** The hosting preview may track delivery of this exact outgoing message. */
   onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;
+  /** Whether a retained tab shows this thread, apart from `active`, its read
+   * policy: a preview is shown without reading. Its composer follows this. */
+  shown?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
@@ -441,6 +444,7 @@ function OwnedThreadPanel({
   focusRequest,
   autoFocus,
   active = true,
+  shown,
   revealSelected,
   revealFocus,
   unreadRequest,
@@ -518,6 +522,7 @@ function OwnedThreadPanel({
       focusRequest={focusRequest}
       autoFocus={autoFocus}
       active={active}
+      shown={shown}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
       unreadRequest={unreadRequest}
@@ -551,6 +556,7 @@ function ThreadMessages({
   focusRequest,
   autoFocus,
   active,
+  shown: composerShown,
   revealSelected,
   revealFocus,
   revealRequest,
@@ -585,6 +591,7 @@ function ThreadMessages({
   focusRequest?: number | undefined;
   autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
+  shown?: ThreadPanelProps["shown"];
   revealSelected?: boolean | undefined;
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
@@ -2383,6 +2390,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          shown={composerShown}
           threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={

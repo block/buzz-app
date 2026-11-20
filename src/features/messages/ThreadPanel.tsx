@@ -1959,6 +1959,9 @@ function ThreadMessages({
                   media={session.media}
                   expanded={expandedActivity.has(group.ids[0] ?? "")}
                   onToggle={toggleGroup}
+                  extensions={extensions}
+                  scope={scope}
+                  onOpenLink={onOpenLink}
                   layout="thread"
                 />
               ) : (

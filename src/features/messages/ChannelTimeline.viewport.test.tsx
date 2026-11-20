@@ -1491,7 +1491,7 @@ it("folds a run of relayed messages into one line that opens to each message", (
       screen.queryByRole("button", { name: "Retain activity-0" }),
     ).toBeNull();
     const toggle = screen.getByRole("button", {
-      name: /^Show 3 messages from other chats: zerk/,
+      name: /^Show 3 messages by zerk\. Latest, zerk: /,
     });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");

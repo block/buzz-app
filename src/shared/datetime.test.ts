@@ -6,8 +6,6 @@ import {
   formatItemTimestamp,
   formatFullTimestamp,
   formatCompactTime,
-  formatTimeRange,
-  formatTime,
 } from "./datetime";
 
 const assert = {
@@ -52,14 +50,6 @@ test("shares one settings lookup across timestamp styles and rechecks after yiel
   } finally {
     settings.mockRestore();
   }
-});
-
-test("a time range shares its day period and collapses to one time", () => {
-  const start = at(2026, 6, 30, 9, 30);
-  expect(formatTimeRange(start, at(2026, 6, 30, 9, 41))).toMatch(
-    /^9:30\s–\s9:41\sAM$/,
-  );
-  expect(formatTimeRange(start, start)).toBe(formatTime(start));
 });
 
 test("the same calendar day reads Today", () => {

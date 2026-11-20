@@ -1,18 +1,25 @@
 import { useRef, type ReactNode } from "react";
+import { MessageLink } from "../conversation/MessageLink";
+import { messagePreviewText } from "../conversation/message-preview-text";
+import type { ConversationExtensions } from "../conversation/contracts";
 import { useChannelIdentityNames } from "../identity-names/react";
 import type { Profile } from "../relay/contracts";
+import { withoutRelayNotice } from "../relay/relayed-from";
 import type { RelaySession } from "../relay/session";
 import { avatarMedia } from "../../shared/avatar-source";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
-import { formatTimeRange } from "../../shared/datetime";
+import { Badge } from "../../shared/design-system/ui/Badge";
+import { formatTime } from "../../shared/datetime";
 import { CaretDownIcon, CaretUpIcon } from "../../shared/design-system/icons";
 import type { RelayedRun } from "./activity-groups";
+import { MessageTimestamp } from "./MessageTimestamp";
+import { useReferenceDirectory } from "./ReferenceText";
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import styles from "./Messages.module.css";
 
-/** One line for a run of messages relayed from other chats, in the shape of
- * each relayed line: who wrote them, how many and when. Opening it lists each
- * relayed line below it. */
+/** One line for a run of relayed messages, in the shape of each relayed line:
+ * the latest one, where they came from and how many more. Opening it lists
+ * each relayed line below it. */
 export function RelayedRunPreview({
   run,
   session,
@@ -22,6 +29,9 @@ export function RelayedRunPreview({
   expanded,
   onToggle,
   renderHistory,
+  extensions,
+  scope,
+  onOpenLink,
   layout = "timeline",
 }: {
   run: RelayedRun;
@@ -32,16 +42,23 @@ export function RelayedRunPreview({
   expanded: boolean;
   onToggle: () => void;
   renderHistory: (row: RelayedRun["relayed"][number]) => ReactNode;
+  extensions?: ConversationExtensions | undefined;
+  scope?: string | undefined;
+  onOpenLink: (url: string) => boolean;
   layout?: "timeline" | "thread";
 }) {
   const container = useRef<HTMLDivElement>(null);
   const first = run.relayed[0];
   const last = run.relayed.at(-1);
   const resolveName = useChannelIdentityNames(session, first?.channelId);
+  const directory = useReferenceDirectory(session);
   useActivityFocusHandoff(container);
   if (!first || !last) return null;
+  // The latest sender leads the stack, as it leads the line.
   const agents = [
-    ...new Set(run.relayed.flatMap((row) => row.relayedFrom?.agent ?? [])),
+    ...new Set(
+      [...run.relayed].reverse().flatMap((row) => row.relayedFrom?.agent ?? []),
+    ),
   ];
   const named = agents.map((id) => ({
     id,
@@ -52,11 +69,34 @@ export function RelayedRunPreview({
         ? ("squircle" as const)
         : ("circle" as const),
   }));
-  const count = `${run.relayed.length} messages`;
+  const latest = named[0];
+  const sources = new Set(run.relayed.map((row) => row.relayedFrom?.channelId));
+  const sameSource = sources.size === 1;
+  // Only the reader's own chats are named, as on each relayed line.
+  const chat = sameSource
+    ? directory.channels.find((item) => item.id === last.relayedFrom?.channelId)
+    : undefined;
+  const chatLabel =
+    chat && `${chat.channelType === "dm" ? "" : "#"}${chat.name}`;
+  const excerpt = Array.from(
+    messagePreviewText(
+      withoutRelayNotice(last.content, last.relayedFrom?.notice),
+    ).replace(/\s+/g, " "),
+  );
+  const preview =
+    excerpt.length > 280
+      ? `${excerpt.slice(0, 279).join("")}…`
+      : excerpt.join("");
+  const more = run.relayed.length - 1;
   const names = new Intl.ListFormat(undefined, { type: "conjunction" }).format(
     named.map((agent) => agent.name),
   );
-  const time = formatTimeRange(first.createdAt, last.createdAt);
+  const from = chatLabel
+    ? ` from ${chatLabel}`
+    : sameSource
+      ? ""
+      : " from other chats";
+  const label = `${expanded ? "Collapse" : "Show"} ${run.relayed.length} messages${from} by ${names}. Latest, ${latest?.name}: ${preview}, ${formatTime(last.createdAt)}`;
   return (
     <div ref={container} className={styles.relayedRun} data-layout={layout}>
       <div className={styles.relayedHeader} data-open={expanded || undefined}>
@@ -65,7 +105,7 @@ export function RelayedRunPreview({
           data-buzz-ui=""
           className={styles.relayedTrigger}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Show"} ${count} from other chats: ${names}, ${time}`}
+          aria-label={label}
           onClick={(event) => {
             event.currentTarget.focus({ preventScroll: true });
             onToggle();
@@ -75,16 +115,36 @@ export function RelayedRunPreview({
           <AvatarStack size="mini" items={named} />
         </span>
         <span className={styles.relayedName} aria-hidden="true">
-          {count}
+          {latest?.name}
         </span>
-        <span className={styles.relayedSubtle} aria-hidden="true">
-          from other chats
-        </span>
+        {(chat || !sameSource) && (
+          <span className={styles.relayedSubtle} aria-hidden="true">
+            {chat ? "from" : "from other chats"}
+          </span>
+        )}
+        {chat && (
+          <span className={styles.relayedChat}>
+            <MessageLink
+              url={`buzz://channel/${encodeURIComponent(chat.id)}`}
+              label={chatLabel}
+              registry={extensions?.links}
+              onOpenLink={onOpenLink}
+              session={session}
+              scope={scope}
+              channelPrivate={!!chat.private}
+            />
+          </span>
+        )}
         <span className={styles.relayedPreview} aria-hidden="true">
-          {names}
+          {!expanded && preview}
         </span>
+        {!expanded && (
+          <span aria-hidden="true">
+            <Badge>+{more}</Badge>
+          </span>
+        )}
         <span className={styles.relayedTime} aria-hidden="true">
-          {time}
+          <MessageTimestamp createdAt={last.createdAt} />
         </span>
         {expanded ? (
           <CaretUpIcon className={styles.relayedCaret} aria-hidden="true" />
@@ -93,7 +153,11 @@ export function RelayedRunPreview({
         )}
       </div>
       {expanded && (
-        <div className={styles.relayedRunItems}>
+        // One chat for all of them is named once, on this line.
+        <div
+          className={styles.relayedRunItems}
+          data-same-source={(sameSource && !!chat) || undefined}
+        >
           {run.relayed.map((row) => (
             <div key={row.id}>{renderHistory(row)}</div>
           ))}

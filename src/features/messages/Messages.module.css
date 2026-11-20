@@ -4164,6 +4164,10 @@ html[data-keyboard-navigation] .activityExpansion {
 .relayedRunItems .relayedRow {
   padding-block: 0;
 }
+/* Their line already names the one chat they all came from. */
+.relayedRunItems[data-same-source] [data-relayed-source] {
+  display: none;
+}
 .relayedEntry {
   border-radius: var(--radius-chip);
 }
@@ -4241,6 +4245,13 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 .relayedTime {
   flex: none;
+}
+/* A fold's count belongs to its preview, so the two stay together. */
+.relayedRun > .relayedHeader > .relayedPreview {
+  flex: 0 1 auto;
+}
+.relayedRun > .relayedHeader > .relayedTime {
+  margin-inline-start: auto;
 }
 .relayedCaret {
   flex: none;

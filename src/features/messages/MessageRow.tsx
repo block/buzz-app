@@ -2221,10 +2221,14 @@ function RelayedMessageRow(props: MessageRowProps) {
               </span>
               {chat && (
                 <>
-                  <span className={styles.relayedSubtle} aria-hidden="true">
+                  <span
+                    className={styles.relayedSubtle}
+                    data-relayed-source=""
+                    aria-hidden="true"
+                  >
                     from
                   </span>
-                  <span className={styles.relayedChat}>
+                  <span className={styles.relayedChat} data-relayed-source="">
                     <MessageLink
                       url={`buzz://channel/${encodeURIComponent(chat.id)}`}
                       label={chatLabel}

@@ -2365,6 +2365,9 @@ function Timeline({
                         media={queries.media}
                         expanded={disclosure.expanded}
                         onToggle={toggleDisclosure}
+                        extensions={extensions}
+                        scope={scope}
+                        onOpenLink={onOpenLink}
                       />
                     ) : (
                       <ActivityGroupPreview

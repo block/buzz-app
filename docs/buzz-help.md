@@ -482,9 +482,10 @@ Quitting Buzz also turns it off.
   message: the agent's avatar and name, the chat it came from if you are in that
   chat, a one-line preview and the time. Select the line to read the whole
   message and who it was sent as and to; select the chat name to open that
-  chat. Two or more in a row fold into one line with the count, the agents'
-  names and the time range; select it to list each one. A claim that cannot be
-  verified shows as the sender's ordinary message.
+  chat. Two or more in a row fold into one line showing the latest one and how
+  many more there are; it names their chat when they all came from the same
+  one, or says they came from other chats. Select it to list each one. A claim
+  that cannot be verified shows as the sender's ordinary message.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

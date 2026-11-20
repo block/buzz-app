@@ -75,14 +75,18 @@ export function ChannelMemberAvatars({
         ),
     [members, solo, agents, profiles],
   );
-  // Pick the shown members once per mount. A profile arriving later fills in
-  // its picture in place instead of sorting it ahead of those already shown;
-  // only a shown member who leaves or no longer qualifies is replaced.
-  const [picked, setPicked] = useState(() => preview.slice(0, shown));
-  const kept = picked.filter((id) => preview.includes(id));
+  // Shown members with a photo keep their slot for this mount, so a profile
+  // arriving later fills an unknown slot instead of re-sorting the preview.
+  // Only a held member who leaves or no longer qualifies is replaced.
+  const pictured = (id: string) => !!profiles.get(id)?.picture;
+  const [held, setHeld] = useState(() =>
+    preview.slice(0, shown).filter(pictured),
+  );
+  const kept = held.filter((id) => preview.includes(id) && pictured(id));
   const ordered = [...kept, ...preview.filter((id) => !kept.includes(id))];
   const front = ordered.slice(0, shown);
-  if (front.join(":") !== picked.join(":")) setPicked(front);
+  const nextHeld = front.filter(pictured);
+  if (nextHeld.join(":") !== held.join(":")) setHeld(nextHeld);
   if (!preview.length) {
     const Icon = solo ? RobotIcon : UsersIcon;
     return (

@@ -21,23 +21,32 @@ const titles = (container: HTMLElement) =>
     node.getAttribute("title"),
   );
 
-it("keeps the shown people in place as profiles arrive and replaces only departures", () => {
+const photo = (name: string) => ({
+  name,
+  picture: `https://example.test/${name.toLowerCase()}.png`,
+});
+
+it("holds shown people with photos in place and replaces only departures", () => {
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
   };
-  let members = ["alice", "bob", "carol", "dana", "agent", "remote-agent"];
+  const publish = () => {
+    for (const listener of listeners) listener();
+  };
+  let members = ["alice", "bob", "carol", "dana", "erin", "agent", "remote"];
   let list = { channels: [{ id: "channel", members }] };
   let profiles = new Map<
     string,
     { name: string; picture?: string; isAgent?: boolean }
   >([
-    ["alice", { name: "Alice" }],
+    ["alice", photo("Alice")],
     ["bob", { name: "Bob" }],
-    ["carol", { name: "Carol" }],
+    ["carol", photo("Carol")],
     ["dana", { name: "Dana" }],
-    ["remote-agent", { name: "Remote agent", isAgent: true }],
+    ["erin", { name: "Erin" }],
+    ["remote", { name: "Remote agent", isAgent: true }],
   ]);
   const choices = { identities: [{ pubkey: "agent" }] };
   const session = {
@@ -57,46 +66,50 @@ it("keeps the shown people in place as profiles arrive and replaces only departu
     members,
     "background",
   );
-  expect(screen.getByTitle("Alice")).toBeInTheDocument();
-  expect(screen.getByTitle("Bob")).toBeInTheDocument();
-  expect(screen.getByTitle("Carol")).toBeInTheDocument();
-  expect(screen.queryByTitle("Dana")).not.toBeInTheDocument();
-  expect(screen.getByText("+1")).toBeInTheDocument();
+  expect(titles(container)).toEqual(["Alice", "Carol", "Bob"]);
+  expect(screen.getByText("+2")).toBeInTheDocument();
 
+  // A photo fills the slot of a member not known to have one, after the
+  // members already shown with photos.
   act(() => {
-    profiles = new Map(profiles).set("dana", {
-      name: "Dana",
-      picture: "https://example.test/dana.png",
-    });
-    for (const listener of listeners) listener();
+    profiles = new Map(profiles).set("erin", photo("Erin"));
+    publish();
   });
-  // A picture arriving after the first render does not reorder the preview.
-  expect(titles(container)).toEqual(["Alice", "Bob", "Carol"]);
-  expect(screen.getByText("+1")).toBeInTheDocument();
-
-  // A shown member later found to be an agent is replaced at the end.
-  act(() => {
-    profiles = new Map(profiles).set("bob", { name: "Bob", isAgent: true });
-    for (const listener of listeners) listener();
-  });
-  expect(titles(container)).toEqual(["Alice", "Carol", "Dana"]);
-  expect(screen.getByTitle("Dana").querySelector("img")).toHaveAttribute(
+  expect(titles(container)).toEqual(["Alice", "Carol", "Erin"]);
+  expect(screen.getByTitle("Erin").querySelector("img")).toHaveAttribute(
     "src",
-    "https://example.test/dana.png",
+    "https://example.test/erin.png",
   );
-  expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
+
+  // Three shown photos hold the preview.
+  act(() => {
+    profiles = new Map(profiles).set("bob", photo("Bob"));
+    publish();
+  });
+  expect(titles(container)).toEqual(["Alice", "Carol", "Erin"]);
+  expect(screen.getByText("+2")).toBeInTheDocument();
+
+  // A held member later found to be an agent is replaced at the end.
+  act(() => {
+    profiles = new Map(profiles).set("carol", {
+      ...photo("Carol"),
+      isAgent: true,
+    });
+    publish();
+  });
+  expect(titles(container)).toEqual(["Alice", "Erin", "Bob"]);
+  expect(screen.getByText("+1")).toBeInTheDocument();
 
   act(() => {
-    members = ["carol"];
+    members = ["dana"];
     list = { channels: [{ id: "channel", members }] };
-    for (const listener of listeners) listener();
+    publish();
   });
   expect(session.profiles.ensure).toHaveBeenLastCalledWith(
-    ["carol"],
+    ["dana"],
     "background",
   );
-  expect(titles(container)).toEqual(["Carol"]);
-  expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
+  expect(titles(container)).toEqual(["Dana"]);
 });
 
 it("picks the preview again for each channel the header opens", () => {
@@ -113,10 +126,10 @@ it("picks the preview again for each channel the header opens", () => {
     ],
   };
   let profiles = new Map<string, { name: string; picture?: string }>([
-    ["alice", { name: "Alice" }],
+    ["alice", photo("Alice")],
     ["bob", { name: "Bob" }],
-    ["carol", { name: "Carol" }],
-    ["dana", { name: "Dana" }],
+    ["carol", photo("Carol")],
+    ["dana", photo("Dana")],
   ]);
   const choices = { identities: [] };
   const session = {
@@ -138,17 +151,18 @@ it("picks the preview again for each channel the header opens", () => {
   );
   const { rerender } = render(header("first"));
   act(() => {
-    profiles = new Map(profiles).set("dana", {
-      name: "Dana",
-      picture: "https://example.test/dana.png",
-    });
+    profiles = new Map(profiles).set("bob", photo("Bob"));
     for (const listener of listeners) listener();
   });
-  expect(titles(screen.getByRole("button"))).toEqual(["Alice", "Bob", "Carol"]);
+  expect(titles(screen.getByRole("button"))).toEqual([
+    "Alice",
+    "Carol",
+    "Dana",
+  ]);
 
   // Opening another channel starts from the profiles now known.
   rerender(header("second"));
-  expect(titles(screen.getByRole("button"))).toEqual(["Dana", "Alice", "Bob"]);
+  expect(titles(screen.getByRole("button"))).toEqual(["Alice", "Bob", "Carol"]);
 });
 
 it("rereads the names it shows after an access purge empties the directory", async () => {

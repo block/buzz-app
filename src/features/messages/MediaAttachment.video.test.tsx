@@ -271,6 +271,18 @@ function optionClick(target: Element) {
   mouseClick(target, { altKey: true });
 }
 
+/**
+ * Base UI opens a menu from a press inside an animation frame, so a menu that
+ * is absent right after the press proves nothing. Frames run in the order they
+ * were requested: once these have run, an open the press asked for has rendered.
+ */
+async function menuOpenSettled() {
+  await act(async () => {
+    for (let frame = 0; frame < 2; frame += 1)
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+}
+
 it.each([
   [undefined, "1", 2],
   ["2", "2", 1],
@@ -278,7 +290,7 @@ it.each([
   ["0.5", "0.5", 1],
 ])(
   "Option-click switches a saved speed of %s to normal or double speed",
-  (saved, shown, next) => {
+  async (saved, shown, next) => {
     if (saved) localStorage.setItem("buzz.video.playback-speed", saved);
     const { container } = render(
       <>
@@ -297,6 +309,7 @@ it.each([
     })[0];
     if (!control) throw new Error("Missing speed control");
     optionClick(control);
+    await menuOpenSettled();
     expect(screen.queryByRole("menu")).toBeNull();
     expect(
       [...container.querySelectorAll("video")].map(
@@ -312,12 +325,12 @@ it.each([
   },
 );
 
-it("opens the speed menu without changing speed on a plain click", () => {
+it("opens the speed menu without changing speed on a plain click", async () => {
   const { container } = render(
     <MediaAttachment attachment={videoAttachment} media={media} />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
-  expect(screen.getByRole("menu")).toBeInTheDocument();
+  mouseClick(screen.getByRole("button", { name: "Playback speed: 1x" }));
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
   expect(container.querySelector("video")?.playbackRate).toBe(1);
   expect(localStorage.getItem("buzz.video.playback-speed")).toBeNull();
 });
@@ -361,6 +374,7 @@ it.each([
       <MediaAttachment attachment={videoAttachment} media={media} />,
     );
     optionClick(screen.getByRole("button", { name: "Playback speed: 1x" }));
+    await menuOpenSettled();
     expect(screen.queryByRole("menu")).toBeNull();
     activate(screen.getByRole("button", { name: "Playback speed: 2x" }));
     expect(await screen.findByRole("menu")).toBeInTheDocument();

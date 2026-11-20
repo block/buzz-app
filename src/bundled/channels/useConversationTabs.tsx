@@ -65,8 +65,10 @@ const DID_NOT_LOAD = "This conversation didn’t load.";
 
 /** The body of a tab that has no usable channel: the thread placeholder while
  * the roster read is still expected to settle the channel, else the most
- * specific reason known. It reads the list and the roster read itself, so a
- * host that follows neither still shows the current state.
+ * specific reason known. It reads the list and the roster read itself, so
+ * the states of a missing channel stay current under a host that follows
+ * neither. The host still resolves `target`, and decides when the thread
+ * replaces this body, so a listed channel is only as current as its host.
  *
  * A channel the relay has confirmed states why a conversation tab cannot show
  * it; a thread tab shows such a channel with its notice and never gets here.
@@ -75,6 +77,9 @@ const DID_NOT_LOAD = "This conversation didn’t load.";
  * - Without a connection nothing is read, so absence proves nothing.
  * - Only a complete roster read proves a missing channel gone. A `ready` list
  *   may be restored from saved events or hold one page of a longer read.
+ * - `rosterAsOf` is set once this session has completed such a read, and
+ *   kept through later refreshes, whose pages, failures and retries revoke
+ *   nothing by omission. A missing channel stays gone throughout.
  * - A failed or interrupted read keeps the placeholder while recovery retries
  *   it, the recovery notice being the one report, as in the sidebar.
  * - A read that settled without deciding the channel (its cap was hit) is
@@ -114,12 +119,7 @@ function UnavailableChannel({
         ? "This conversation will appear once Buzz reconnects."
         : "This conversation may appear once Buzz reconnects.";
     if (list.status === "unavailable") return DID_NOT_LOAD;
-    if (
-      !target &&
-      list.status === "ready" &&
-      !list.coverage &&
-      list.rosterAsOf !== undefined
-    )
+    if (!target && list.rosterAsOf !== undefined)
       return "This conversation is no longer available.";
     if (list.status === "error" || roster === "error" || roster === "deferred")
       return retrying ? undefined : DID_NOT_LOAD;

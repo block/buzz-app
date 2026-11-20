@@ -2419,7 +2419,6 @@ it.each([
     name: "a channel missing from one page of a roster still being read",
     kind: "thread",
     coverage: "partial",
-    rosterAsOf: 1,
     loading: "Loading thread…",
   },
   {
@@ -2485,6 +2484,57 @@ it.each([
   {
     name: "a conversation missing from a complete list",
     kind: "conversation",
+    rosterAsOf: 1,
+    roster: rosterRead("verified"),
+    text: "This conversation is no longer available.",
+  },
+  // Once a roster read has completed, a later refresh revokes nothing by
+  // omission, so the channel stays gone whatever the refresh is doing.
+  {
+    name: "a channel missing from one page of a refresh after a complete read",
+    kind: "thread",
+    coverage: "partial",
+    rosterAsOf: 1,
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing after a complete read while recovery retries a refresh",
+    kind: "thread",
+    list: "error",
+    coverage: "partial",
+    rosterAsOf: 1,
+    roster: rosterRead("error", true),
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing after a complete read while a failed refresh is read again",
+    kind: "conversation",
+    list: "loading",
+    coverage: "partial",
+    rosterAsOf: 1,
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing after a complete read whose refresh failed",
+    kind: "thread",
+    list: "error",
+    coverage: "partial",
+    rosterAsOf: 1,
+    roster: rosterRead("error"),
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing after a complete read whose refresh was interrupted",
+    kind: "thread",
+    coverage: "partial",
+    rosterAsOf: 1,
+    roster: rosterRead("deferred"),
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel missing after a complete read whose refresh hit its cap",
+    kind: "thread",
+    coverage: "partial",
     rosterAsOf: 1,
     roster: rosterRead("verified"),
     text: "This conversation is no longer available.",
@@ -2696,9 +2746,29 @@ it("a tab body follows the list and the roster read without its host", () => {
     roster = { state: "verified" };
     for (const listener of listeners) listener();
   });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "This conversation is no longer available.",
-  );
+  const gone = () =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "This conversation is no longer available.",
+    );
+  gone();
+
+  // A later refresh republishes the list as partial: on each page, on a live
+  // event mid-pass, and when it fails and is read again. None revokes by
+  // omission, so the tab neither waits again nor says it didn't load.
+  const publish = (status: string, state: string) =>
+    act(() => {
+      list = { status, channels: [], coverage: "partial", rosterAsOf: 1 };
+      roster = { state };
+      for (const listener of listeners) listener();
+    });
+  publish("ready", "pending");
+  gone();
+  publish("error", "error");
+  gone();
+  publish("loading", "pending");
+  gone();
+  publish("ready", "pending");
+  gone();
 });
 
 // The thread panel replaces the composer with the channel's own notice, so a

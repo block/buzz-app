@@ -2175,8 +2175,17 @@ export function createChannelStore(
       return;
     }
     coverage = "partial";
+    // A retry after a failed read keeps the last complete read's stamp: the
+    // channels are kept too, and nothing since has revoked by omission.
     if (list.status !== "ready")
-      setList({ status: "loading", channels: list.channels, coverage });
+      setList({
+        status: "loading",
+        channels: list.channels,
+        coverage,
+        ...(list.rosterAsOf !== undefined
+          ? { rosterAsOf: list.rosterAsOf }
+          : {}),
+      });
     if (disposed) {
       listBusy = false;
       return;

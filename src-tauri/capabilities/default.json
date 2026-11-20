@@ -100,6 +100,8 @@
     "allow-relay-upload",
     "allow-relay-upload-cancel",
     "allow-media-download",
+    "allow-media-download-status",
+    "allow-media-download-open",
     "allow-file-download",
     "allow-media-copy-image",
     "allow-media-lift-subject",

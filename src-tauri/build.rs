@@ -154,6 +154,8 @@ fn main() {
             "relay_upload",
             "relay_upload_cancel",
             "media_download",
+            "media_download_status",
+            "media_download_open",
             "file_download",
             "media_copy_image",
             "media_lift_subject",

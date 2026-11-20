@@ -97,6 +97,7 @@ use repositories_folder::{repositories_folder_list, repositories_folder_validate
 mod relaunch;
 mod relay;
 mod relay_admin;
+mod saved_downloads;
 mod sign_out;
 mod system_clock;
 use identity::{
@@ -816,6 +817,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         file_download,
         media_download,
+        saved_downloads::media_download_status,
+        saved_downloads::media_download_open,
         media_copy_image,
         media_lift_subject,
         subject_lift::media_lift_subject_supported,
@@ -1277,6 +1280,7 @@ pub fn run() {
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())
+        .manage(saved_downloads::SavedDownloads::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

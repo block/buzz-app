@@ -955,6 +955,12 @@ Quitting Buzz also turns it off.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
+  In the desktop app, a file card
+  that downloads when chosen saves to Downloads once and then opens that copy;
+  right-click it to **Show in Finder** (or **Show in folder**) or **Download
+  again**. If the saved file is moved, deleted or edited, the card offers
+  **Download** again. A card that opens in the optional File viewer instead
+  has its own download button, which saves another copy each time.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed

@@ -126,12 +126,14 @@ export function createUserStatuses(
     if (closed) return;
     for (const event of events) {
       // Live traffic for offscreen people need not grow this session's cache;
-      // an idle author read without a status still takes its first one.
+      // an idle author read without a status still takes its first one, and
+      // one being prefetched takes a newer event than the read returns.
       if (
         !watched.has(event.pubkey) &&
         event.pubkey !== viewer &&
         !records.has(event.pubkey) &&
-        !loaded.has(event.pubkey)
+        !loaded.has(event.pubkey) &&
+        !prefetching.has(event.pubkey)
       )
         continue;
       const status = parse(event);
@@ -436,17 +438,20 @@ export function createUserStatuses(
           const fresh = new Set(
             missing.filter((id) => prefetching.get(id) === owner),
           );
-          for (const id of fresh) prefetching.delete(id);
-          if (!events) {
-            schedule();
-            return;
-          }
           for (const id of fresh) {
-            loaded.add(id);
-            // Unwatched authors are held like any idle author.
-            if (!watched.has(id) && id !== viewer) idle.add(id);
+            prefetching.delete(id);
+            if (events) loaded.add(id);
+            // Unwatched authors are held like any idle author, also one only a
+            // live event during a failed read showed.
+            if (
+              !watched.has(id) &&
+              id !== viewer &&
+              (events || records.has(id))
+            )
+              idle.add(id);
           }
-          accept(events.filter((event) => fresh.has(event.pubkey)));
+          if (events) answer([...fresh], events);
+          else schedule();
           settleIdle();
         },
       };

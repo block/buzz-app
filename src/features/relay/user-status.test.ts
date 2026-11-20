@@ -874,3 +874,125 @@ it("reads statuses with the profiles of bylines, so their rows read nothing more
     owner.dispose();
   }
 });
+
+it("hands a failed prefetch's statuses to rows that mounted while it was out", async () => {
+  const read = vi.fn<RelayReader["read"]>(async () => []);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const prefetch = owner.prefetch([bob.pubkey]);
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).not.toHaveBeenCalled();
+  prefetch?.settle();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  expect(read.mock.calls[0]?.[0][0]?.authors).toEqual([bob.pubkey]);
+});
+
+it("lets rows read their statuses when a reconnect drops a prefetch's claim", async () => {
+  const read = vi.fn<RelayReader["read"]>(async () => [
+    signed(bob, {
+      kind: 30315,
+      created_at: now + 1,
+      content: "Current",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const prefetch = owner.prefetch([bob.pubkey]);
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).not.toHaveBeenCalled();
+  owner.reconnect();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  // The retired read's late answer changes nothing.
+  prefetch?.settle([
+    signed(bob, {
+      kind: 30315,
+      created_at: now,
+      content: "Stale",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Current");
+});
+
+it("keeps a live status or clear that lands while a prefetch is out, and drops saved ones it no longer finds", async () => {
+  const carol = keypair();
+  const read = vi.fn<RelayReader["read"]>(async () => []);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  owner.live(true);
+  const event = (key: typeof bob, content: string, time: number) =>
+    signed(key, {
+      kind: 30315,
+      created_at: time,
+      content,
+      tags: [["d", "general"]],
+    });
+  const dave = keypair();
+  owner.restore([event(carol, "Saved", now), event(dave, "Removed", now)]);
+  const prefetch = owner.prefetch([bob.pubkey, carol.pubkey, dave.pubkey]);
+  owner.accept([event(bob, "New", now + 1), event(carol, "", now + 1)]);
+  prefetch?.settle([event(bob, "Old", now), event(carol, "Saved", now)]);
+  owner.queries.watch([bob.pubkey, carol.pubkey, dave.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("New");
+  expect(owner.queries.snapshot().has(carol.pubkey)).toBe(false);
+  // The relay no longer has Dave's saved status.
+  expect(owner.queries.snapshot().has(dave.pubkey)).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("loads names when the relay refuses a combined read, and rows read their own statuses", async () => {
+  const relay = keypair();
+  const queries: (readonly { kinds?: readonly number[] }[])[] = [];
+  const owner = createRelaySession(
+    {
+      viewer: alice.pubkey,
+      relayAuthor: relay.pubkey,
+      media: (url) => url,
+      async query(filters) {
+        queries.push(filters);
+        if (filters.length > 1) throw new Error("kind 30315 refused");
+        if (filters[0]?.kinds?.includes(0))
+          return [
+            signed(bob, { kind: 0, content: '{"name":"Bob"}', tags: [] }),
+          ];
+        return [
+          signed(bob, {
+            kind: 30315,
+            created_at: now,
+            content: "Alone",
+            tags: [["d", "general"]],
+          }),
+        ];
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  try {
+    const { profiles, statuses } = owner.session;
+    const read = profiles.ensure([bob.pubkey], "background", {
+      withStatuses: true,
+    });
+    statuses.watch([bob.pubkey]);
+    // The names' one retry waits out the first recovery delay.
+    await vi.advanceTimersByTimeAsync(1000);
+    await read;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(profiles.snapshot().get(bob.pubkey)?.name).toBe("Bob");
+    expect(statuses.snapshot().get(bob.pubkey)?.text).toBe("Alone");
+    expect(
+      queries
+        .filter((filters) =>
+          filters.some((f) => f.kinds?.includes(0) || f.kinds?.includes(30315)),
+        )
+        .map((filters) => filters.map((f) => f.kinds)),
+    ).toEqual([[[0], [30315]], [[30315]], [[0]]]);
+  } finally {
+    owner.dispose();
+  }
+});

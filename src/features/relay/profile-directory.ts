@@ -11,7 +11,8 @@ import {
   type VerifiedProfileFilter,
   type VerifiedProfileSink,
 } from "./verified-profile";
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
+import { readErrorKind } from "./errors";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { Outbox } from "./outbox";
@@ -489,6 +490,8 @@ export function createProfileDirectory(
       const authors = missing.slice(offset, offset + PROFILE_PAGE);
       const status = withStatuses ? statuses?.prefetch(authors) : undefined;
       let answered = false;
+      // Set once a combined read fails, for one more attempt with names alone.
+      let namesAlone = false;
       const batch = {
         authors,
         filters: [
@@ -514,13 +517,29 @@ export function createProfileDirectory(
             });
             answered = true;
             return result;
+          } catch (error) {
+            // Names never wait on statuses: a relay refusing the status
+            // query still answers names, and rows read their own statuses.
+            if (batch.filters.length > 1) {
+              batch.filters = batch.filters.slice(0, 1);
+              namesAlone = true;
+              status?.settle();
+            }
+            throw error;
           } finally {
             batch.reading = false;
           }
         },
         AbortSignal.any([signal, batch.cancel.signal]),
+        (error) => {
+          const retry = namesAlone && readErrorKind(error) !== "cancelled";
+          namesAlone = false;
+          return retry || isRetryableRead(error);
+        },
       )
         .then((result) => {
+          // Statuses stay valid when a shrink drops these names.
+          status?.settle(result);
           if (signal.aborted || batch.cancel.signal.aborted) return;
           // A foreground reader that joined this read gets its names at once.
           const fold = batch.priority === "background";
@@ -528,7 +547,6 @@ export function createProfileDirectory(
             (event) => event.kind === 0 && authors.includes(event.pubkey),
           );
           take(profiles, fold);
-          status?.settle(result);
           // A page at the limit may have left out authors who do have one.
           if (result.filter((event) => event.kind === 0).length < PROFILE_PAGE)
             missed(
@@ -545,8 +563,6 @@ export function createProfileDirectory(
           if (!signal.aborted || !answered) throw error;
         })
         .finally(() => {
-          // A failed or cancelled read leaves its statuses to their rows.
-          status?.settle();
           for (const id of authors)
             if (pending.get(id) === batch) pending.delete(id);
           // A failed page ends its ensure early; publish the rest once idle.

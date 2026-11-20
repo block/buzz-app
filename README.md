@@ -43,8 +43,8 @@ community's address, such as `https://feedback.communities.buzz.xyz`. Add more
 communities later from the community button in the top-right corner →
 **Join a community**.
 
-**No invite?** Paste the Buzz feedback community's invite,
-`https://feedback.communities.buzz.xyz/invite/v2.25_y9TSEwLpbhuk22iYuq_xW6AELuvyN-jTmnFHwdJ0`,
+**No invite?** Paste the Buzz community's invite,
+`https://buzz.communities.buzz.xyz/invite/v2.EeLHaUAe23P7qK0NuWnsdfnH-6L0wJLDnnzpFzrG7rQ`,
 create one with **Create a community** (or at [buzz.xyz](https://buzz.xyz)), or
 [run your own relay](https://github.com/block/buzz#i-want-my-own-hosted-relay)
 from block/buzz.
@@ -144,7 +144,7 @@ to build plugins.
 - [Plugin architecture and the `buzzodz` CLI](docs/plugin-architecture.md)
 - [Contextual identity names: cross-client spec and fixtures](src/bundled/identity-naming/README.md)
 - [Mention rules: cross-client spec and fixtures](src/bundled/mentions/README.md)
-- [Buzz feedback community invite](https://feedback.communities.buzz.xyz/invite/v2.25_y9TSEwLpbhuk22iYuq_xW6AELuvyN-jTmnFHwdJ0)
+- [Buzz community invite](https://buzz.communities.buzz.xyz/invite/v2.EeLHaUAe23P7qK0NuWnsdfnH-6L0wJLDnnzpFzrG7rQ)
 - [@buzzdotxyz on X](https://x.com/buzzdotxyz)
 - [Project leads](CODEOWNERS)
 - [Governance](GOVERNANCE.md)

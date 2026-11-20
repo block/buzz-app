@@ -571,6 +571,48 @@ it("stamps rosterAsOf only when a complete roster read commits", async () => {
     test.store.dispose();
   }
 });
+it("keeps rosterAsOf through a failed refresh and its retry", async () => {
+  const test = setup();
+  const { queries, next, pending } = test;
+  try {
+    await discovered(test);
+    const complete = queries.list().rosterAsOf;
+    expect(complete).toBeDefined();
+    queries.refreshList?.();
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    next().fail(new Error("offline"));
+    await vi.waitFor(() => expect(queries.list().status).toBe("error"));
+    expect(queries.list()).toMatchObject({
+      coverage: "partial",
+      rosterAsOf: complete,
+    });
+    // The retry republishes the kept channels as loading, then page by page.
+    const seen: unknown[] = [];
+    const stop = queries.subscribeList(() => seen.push(queries.list()));
+    queries.refreshList?.();
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    expect(queries.list()).toMatchObject({
+      status: "loading",
+      rosterAsOf: complete,
+    });
+    next().respond([
+      roster(relay, "a", [viewer.pubkey]),
+      metadata(relay, "a", "Alpha"),
+      roster(relay, "b", [viewer.pubkey]),
+      metadata(relay, "b", "Beta"),
+    ]);
+    await vi.waitFor(() =>
+      expect(test.store.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    stop();
+    expect(seen.length).toBeGreaterThan(0);
+    for (const list of seen) expect(list).toHaveProperty("rosterAsOf");
+    expect(queries.list().status).toBe("ready");
+    expect(queries.list().coverage).toBeUndefined();
+  } finally {
+    test.store.dispose();
+  }
+});
 it("reports no fresh roster evidence when an exact read omits the cached channel", async () => {
   const test = setup();
   try {

@@ -565,7 +565,13 @@ export class DiscoveryState {
     });
   }
   /** Every roster channel get() serves, system channels included. Membership,
-   * not listing, decides what the device may keep. */
+   * not listing, decides what the device may keep.
+   *
+   * Invariant: every entry is a channel whose roster names the viewer, or one
+   * the viewer is starting. An open channel the viewer has not joined is
+   * served by get() alone and never enters this list or channels(). Thread
+   * tabs read any confirmed (not `cached`) listed channel on that basis, a
+   * Solo chat included, without checking its members again. */
   readable(): readonly ChannelSummary[] {
     if (this.lastReadable?.changes === this.changes)
       return this.lastReadable.channels;

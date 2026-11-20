@@ -35,11 +35,17 @@ handlers; both actions retain the original URL, including query and fragment.
 Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;
-another channel's thread uses the side pane. When that channel isn't readable
-there, it opens as a click would. When the linked channel is withheld from the
-reader, the link, its preview card and **Open link** don't open anything, while
-**Copy link** and selection copy keep the URL; the link opens again once a recheck
-admits the reader. Other internal `buzz://` links and links outside
+another channel's thread uses the side pane. A thread tab needs only a joined
+channel whose membership the relay has confirmed: an archived channel's thread
+opens with its archive notice and a Guest's with the read-only notice, as in the
+channel itself. When the channel isn't joined or its saved membership is still
+unconfirmed, the link opens as a click would. A whole-conversation tab also
+needs a channel the viewer can post in; a tab left open for one that was since
+archived, or where the viewer became a Guest, says so in place of the
+conversation. When the linked channel is withheld from the reader, the link, its
+preview card and **Open link** don't open anything, while **Copy link** and
+selection copy keep the URL; the link opens again once a recheck admits the
+reader. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 

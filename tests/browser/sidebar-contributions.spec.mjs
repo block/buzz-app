@@ -914,6 +914,51 @@ appTest.describe("Solo header accessories", () => {
       },
     );
   });
+
+  appTest.describe("workspace move focus", () => {
+    appTest.use({
+      soloChannels: ["beta", "gamma"],
+      ownSoloChannels: ["beta", "gamma"],
+    });
+
+    appTest(
+      "shows the focused disclosure after a pointer move into a closed workspace",
+      async ({ page, app }) => {
+        await page.goto(
+          `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&leading-header`,
+        );
+        await openPage(page, "Messages");
+        const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+        const workspace = sidebar.locator('[data-solo-workspace="work"]');
+        const disclosure = workspace.getByRole("button", {
+          name: /tasks and chats in Work/,
+        });
+        const chat = sidebar.getByRole("button", {
+          name: "Gamma",
+          exact: true,
+        });
+        await expect(
+          workspace.getByRole("button", { name: /open work summary/i }),
+        ).toHaveCount(1);
+        await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+        await disclosure.click();
+        await chat.click({ button: "right" });
+        await page
+          .getByRole("menuitem", { name: "Move to", exact: true })
+          .hover();
+        await page.getByRole("menuitem", { name: "Work", exact: true }).click();
+        await page.mouse.move(0, 0);
+        await expect(disclosure).toBeFocused();
+        await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+        await expect(disclosure).toHaveCSS("opacity", "1");
+        await expect(chat).toBeHidden();
+        await page.keyboard.press("Enter");
+        await expect(
+          workspace.getByRole("button", { name: "Gamma", exact: true }),
+        ).toBeVisible();
+      },
+    );
+  });
 });
 
 appTest.describe("Focus", () => {

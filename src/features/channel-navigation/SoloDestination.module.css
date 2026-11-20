@@ -91,8 +91,8 @@
   block-size: var(--space-6);
 }
 
-/* The pointer reaches the caret as it appears. Both buttons stay in the tab
-   order and show their own artwork on keyboard focus. */
+/* The pointer reaches the caret as it appears. Keep the caret visible when a
+   move restores focus to it with the pointer outside the heading. */
 @media (hover: hover) and (pointer: fine) {
   .leading > button {
     grid-area: 1 / 1;
@@ -115,6 +115,7 @@
     }
   }
 
+  .leading:has(> [data-solo-disclosure]:focus),
   [class~="navigation-section-heading"]:is(:hover, :has(:focus-visible))
     .leading:not(:has(> [data-solo-leading-action]:focus-visible)) {
     > [data-solo-leading-action] {

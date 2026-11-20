@@ -5,6 +5,7 @@ import { createAgentActivity } from "../agents/activity";
 import type { ChannelMessage } from "../relay/contracts";
 import {
   activityPresentation,
+  useActivityPresentation,
   useStableRowActivity,
   type ActivityRowPresentation,
 } from "./activity-presentation";
@@ -100,6 +101,53 @@ it("re-renders a live-agents host only when its working agents change", () => {
   expect(renders).toBe(idle);
   live.update([entry()]);
   expect(result.current).toEqual([agent]);
+});
+
+it("keeps message history stable while an agent starts and stops typing", () => {
+  const live = fixture();
+  const rows: ChannelMessage[] = [
+    {
+      id: root,
+      channelId: "channel",
+      authorId: agent,
+      createdAt: 1,
+      content: "Update",
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+      participants: [],
+      audience: "agents",
+    },
+  ];
+  const agents = new Set([agent]);
+  let renders = 0;
+  renderHook(() => {
+    renders++;
+    return useActivityPresentation(rows, live.session.agentActivity, agents);
+  });
+  const initial = renders;
+  live.update([], {
+    local: [],
+    turnsTrimmed: false,
+    typing: [
+      {
+        agent,
+        channelId: "channel",
+        threadRootId: root,
+        startedAt: 1,
+        working: true,
+      },
+    ],
+  });
+  live.update([], { typing: [] });
+  expect(renders).toBe(initial);
+
+  live.update([], { trimmed: 1 });
+  expect(renders).toBeGreaterThan(initial);
+  const afterTrim = renders;
+  live.update([], { turnsTrimmed: true });
+  expect(renders).toBeGreaterThan(afterTrim);
 });
 
 it("only updates mounted activity rows in the channel that received a tool step", () => {

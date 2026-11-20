@@ -21,8 +21,10 @@ import {
 } from "../profiles/target";
 import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
-import type { ActivityPresentation } from "./activity-presentation";
-import { useChannelActivitySnapshot } from "../agents/use-channel-agent-activity";
+import {
+  useActivityHistorySnapshot,
+  type ActivityPresentation,
+} from "./activity-presentation";
 
 const noSubscribe = () => () => {};
 
@@ -71,7 +73,7 @@ export function ActivityGroupActions({
   const stopping = useRef(false);
   const tracking = active || stopping.current;
   const channelId = group.latest.channelId;
-  const snapshot = useChannelActivitySnapshot(
+  const snapshot = useActivityHistorySnapshot(
     tracking ? session.agentActivity : undefined,
     channelId,
   );

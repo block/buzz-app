@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
-import { useChannelActivitySnapshot } from "../agents/use-channel-agent-activity";
+import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import type { RelaySession } from "../relay/session";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
@@ -360,13 +360,43 @@ export function activityPresentation(
     bubbleAnchors,
   };
 }
+/** Live typing belongs to the indicators. History groups only use request evidence. */
+export function useActivityHistorySnapshot(
+  activity: Activity | undefined,
+  channelId: string | undefined,
+) {
+  const subscribe = useChannelActivitySubscription(activity, channelId);
+  const read = useMemo(() => {
+    let previous: Snapshot | undefined;
+    return () => {
+      const next =
+        channelId === undefined ? undefined : activity?.snapshot(channelId);
+      if (
+        next !== previous &&
+        (!next ||
+          !previous ||
+          previous.records !== next.records ||
+          previous.turns !== next.turns ||
+          (previous.local !== next.local &&
+            (previous.local?.length || next.local?.length)) ||
+          previous.status !== next.status ||
+          previous.trimmed !== next.trimmed ||
+          !!previous.turnsTrimmed !== !!next.turnsTrimmed)
+      )
+        previous = next;
+      return previous;
+    };
+  }, [activity, channelId]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
   activity: Activity | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  const snapshot = useChannelActivitySnapshot(activity, rows[0]?.channelId);
+  const snapshot = useActivityHistorySnapshot(activity, rows[0]?.channelId);
   return useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],

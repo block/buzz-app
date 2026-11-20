@@ -159,7 +159,10 @@ export function appClient(
     key: agent.key,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
-    signingAuthority: options.signingAuthority,
+    // Absent, not undefined, when the host can't learn the relay's key.
+    ...("signingAuthority" in options
+      ? { signingAuthority: options.signingAuthority }
+      : {}),
     attention: agent.attention && {
       enabled: () => {
         check();

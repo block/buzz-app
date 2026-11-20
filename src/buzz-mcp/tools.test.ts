@@ -88,6 +88,8 @@ function fake(
     });
   };
   const client: BuzzClient = {
+    // A host that knows the relay has no self key.
+    signingAuthority: undefined,
     key: me,
     pubkey: me,
     effectiveEdit: vi.fn(async (id: string) => {
@@ -4172,7 +4174,11 @@ function archivedPeople(forge = false, extra: readonly BuzzEvent[] = []) {
 it("reads no archive list signed by a contact key alone", async () => {
   const { signingAuthority, ...client } = archivedPeople();
   // The app's contact key, never an archive authority.
-  const contact = { ...client, relayAuthor: signingAuthority };
+  const contact = {
+    ...client,
+    signingAuthority: undefined,
+    relayAuthor: signingAuthority,
+  };
   expect(await callTool(contact, {}, "users", { q: "b" })).toBe(
     `${alice} "Alice Smith"\n${bob} "Bob"`,
   );
@@ -4300,6 +4306,87 @@ it("opens an existing DM with an archived identity past the first page", async (
   expect(await callTool(client, {}, "dm", { to: [bob] })).toBe("dm-0");
   expect(publish).not.toHaveBeenCalled();
 });
+
+it("refuses an archived mention before uploading its files", async () => {
+  const client = archivedPeople();
+  await expect(
+    callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      files: ["shot.png"],
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(`Bob (${bob}) is archived. Nothing was posted.`);
+  expect(client.upload).not.toHaveBeenCalled();
+  expect(client.publish).not.toHaveBeenCalled();
+});
+
+it("warns, not clears, when the host gives no way to learn the relay's key", async () => {
+  // As in Mesh Agent mode: no signing authority, no lookup.
+  const { signingAuthority: _, ...client } = archivedPeople();
+  expect(
+    await callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    }),
+  ).toMatch(
+    /\nwarning: the relay's archive list could not be read, so archived identities were not checked\.$/,
+  );
+});
+
+it("bounds the relay key's discovery by the archive check's limit", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority: _, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(() => new Promise<never>(() => {})),
+    };
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await sent).toMatch(
+      /\nwarning: the relay's archive list could not be read/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["fails", "stalls"])(
+  "refuses an archived mention by key when the profile read %s",
+  async (how) => {
+    vi.useFakeTimers();
+    try {
+      const client = archivedPeople();
+      const query = client.query;
+      client.query = vi.fn((filters: readonly Filter[]) =>
+        (filters[0]?.kinds as number[] | undefined)?.includes(0)
+          ? how === "fails"
+            ? Promise.reject(new Error("offline"))
+            : new Promise<never>(() => {})
+          : query(filters),
+      );
+      const sent = callTool(client, { channel: "chan", root }, "send", {
+        text: "see this",
+        mentions: [bob],
+        audience: "everyone",
+      });
+      const refused = expect(sent).rejects.toThrow(
+        `${bob} (${bob}) is archived. Nothing was posted.`,
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+      await refused;
+      expect(client.publish).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("sends to an archived identity, with a warning, when the archive list can't be read", async () => {
   const client = archivedPeople(true);
@@ -5609,7 +5696,7 @@ it.each(["send", "reply_in_subthread"])(
         files: ["shot.png"],
       }),
     ).rejects.toThrow("self_handoff");
-    expect(client.upload).toHaveBeenCalledOnce();
+    expect(client.upload).not.toHaveBeenCalled();
     expect(client.publish).not.toHaveBeenCalled();
   },
 );

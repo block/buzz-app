@@ -1903,9 +1903,10 @@ async function post(
   thread: readonly string[][],
   extra: readonly string[][] = [],
 ) {
-  const files = await tools.attach(list(args.files));
-  const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-  const mentions = await tools.mentions(channel, content, list(args.mentions));
+  const paths = list(args.files);
+  const body = (await tools.body(args, !paths.length)) ?? "";
+  // Uploads come after every refusal; their links name no one.
+  const mentions = await tools.mentions(channel, body, list(args.mentions));
   // The runner suppresses every relay event authored by this agent. A post
   // receipt must not suggest that a self-mention scheduled another session.
   if (mentions.includes(tools.client.pubkey))
@@ -1913,6 +1914,8 @@ async function post(
       "Self-mentions do not wake your other sessions. Nothing was posted. Use self_handoff with channel, text, and thread outside a Solo chat.",
     );
   const warning = await tools.unarchived(mentions, "Nothing was posted.");
+  const files = await tools.attach(paths);
+  const content = `${body}${files.links}`;
   const template: Template = {
     kind: 9,
     content,
@@ -2446,60 +2449,62 @@ class Tools {
     return this.client.relayAuthor ?? this.client.relayAuthorLookup?.();
   }
 
-  /** The relay's signed NIP-IA archive list, read fresh within ARCHIVE_READ_MS; undefined when it
-   * can't be read, so callers fail open. Only the relay's NIP-11
-   * self key signs it: the standalone lookup, or the app's signing authority,
-   * never its contact key. A relay with no self key archives no one. */
+  /** The relay's signed NIP-IA archive list, its key learned and the list
+   * read fresh within ARCHIVE_READ_MS; undefined when it can't be, so callers
+   * fail open. Only the relay's NIP-11 self key signs it: the standalone
+   * lookup, or the app's signing authority, never its contact key. A host that
+   * gives neither can't tell; a relay with no self key archives no one. */
   async archivedIdentities(
     lookup = this.client.relayAuthorLookup?.(),
   ): Promise<ReadonlySet<string> | undefined> {
-    let authority: string | undefined;
-    try {
-      authority = lookup ? await lookup : this.client.signingAuthority;
-    } catch {
-      return undefined;
-    }
-    if (!authority) return new Set();
     const client = this.client;
-    const archives = createIdentityArchives(
-      {
-        async read(filters, options) {
-          const signal = options?.signal;
-          const events = await new Promise<readonly BuzzEvent[]>(
-            (resolve, reject) => {
-              const stop = () => reject(signal?.reason);
-              signal?.addEventListener("abort", stop, { once: true });
-              client.query(filters as readonly Filter[]).then(resolve, reject);
-            },
-          );
-          // The connection admits signed events; anything else is no evidence.
-          if (
-            !events.every((event) =>
-              hasEventProof(event as unknown as RelayEvent),
+    if (!lookup && !("signingAuthority" in client)) return undefined;
+    let late = false;
+    let archives: ReturnType<typeof createIdentityArchives> | undefined;
+    const read = async () => {
+      const authority = lookup ? await lookup : client.signingAuthority;
+      if (!authority) return new Set<string>();
+      if (late) return undefined;
+      archives = createIdentityArchives(
+        {
+          async read(filters, options) {
+            const signal = options?.signal;
+            const events = await new Promise<readonly BuzzEvent[]>(
+              (resolve, reject) => {
+                const stop = () => reject(signal?.reason);
+                signal?.addEventListener("abort", stop, { once: true });
+                client
+                  .query(filters as readonly Filter[])
+                  .then(resolve, reject);
+              },
+            );
+            // The connection admits signed events; anything else is no evidence.
+            if (
+              !events.every((event) =>
+                hasEventProof(event as unknown as RelayEvent),
+              )
             )
-          )
-            throw new Error("Unsigned archive snapshot");
-          return events as unknown as readonly RelayEvent[];
-        },
-      } as RelayReader,
-      authority,
-    );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        archives.queries.refresh(),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, ARCHIVE_READ_MS);
-        }),
-      ]);
+              throw new Error("Unsigned archive snapshot");
+            return events as unknown as readonly RelayEvent[];
+          },
+        } as RelayReader,
+        authority,
+      );
+      await archives.queries.refresh();
       const snapshot = archives.queries.snapshot();
       return snapshot.status === "ready"
         ? new Set(snapshot.archived)
         : undefined;
+    };
+    try {
+      return await within(
+        read().catch(() => undefined),
+        undefined,
+      );
     } finally {
-      clearTimeout(timer);
+      late = true;
       // Aborts a read still held open.
-      archives.dispose();
+      archives?.dispose();
     }
   }
 
@@ -2512,9 +2517,13 @@ class Tools {
       return `\n${ARCHIVE_UNREAD}, so archived identities were not checked.`;
     const gone = people.filter((key) => archived.has(key));
     if (!gone.length) return "";
-    const names = await this.names(gone);
+    // The list alone decides; a name only helps say who.
+    const names = await within(
+      this.names(gone).catch(() => undefined),
+      undefined,
+    );
     throw new Error(
-      `${gone.map((key) => `${names.get(key) ?? key} (${key})`).join(", ")} ${gone.length > 1 ? "are" : "is"} archived. ${outcome}`,
+      `${gone.map((key) => `${names?.get(key) ?? key} (${key})`).join(", ")} ${gone.length > 1 ? "are" : "is"} archived. ${outcome}`,
     );
   }
 
@@ -3114,6 +3123,20 @@ const NAME_WEIGHT = {
 const HEX_KEY = /^[0-9a-f]{64}$/;
 /** How long a users lookup waits for the archive list before going on without it. */
 const ARCHIVE_READ_MS = 5000;
+/** `work`, or `fallback` once ARCHIVE_READ_MS passes. */
+async function within<T>(work: Promise<T>, fallback: T) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ARCHIVE_READ_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const ARCHIVE_UNREAD = "warning: the relay's archive list could not be read";
 
 const relayAuthorityOf = (relay: string | undefined) =>

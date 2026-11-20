@@ -1,3 +1,4 @@
+mod app_navigation;
 mod archive;
 #[cfg(test)]
 mod build_resources;
@@ -1029,6 +1030,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(app_navigation::init())
         .manage(federated_identity.clone())
         .manage(federated_identity::access::Registrations::default())
         .manage(federated_identity::socket::Sockets::default())

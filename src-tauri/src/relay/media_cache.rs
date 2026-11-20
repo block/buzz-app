@@ -59,8 +59,12 @@ struct State {
     generation: u64,
     /// Bytes on disk as of the last scan, plus writes since.
     bytes: u64,
+    /// Bytes ever written, so a scan can add the writes it may have missed.
+    written: u64,
     measured: bool,
     evicting: bool,
+    /// Purges still deleting their folders, which a scan must not sweep.
+    purging: usize,
 }
 
 impl MediaCache {
@@ -158,6 +162,7 @@ impl MediaCache {
             }
             file.persist(&path).map_err(|error| error.error)?;
             state.bytes += size;
+            state.written += size;
             let evict = (!state.measured || state.bytes > self.0.budget) && !state.evicting;
             state.evicting |= evict;
             evict
@@ -171,6 +176,14 @@ impl MediaCache {
     /// Measures the cache and, over budget, deletes the least recently used
     /// entries.
     fn evict(&self, root: &Path) {
+        let start = self.lock().written;
+        let total = self.trim(root);
+        self.settle(start, total);
+    }
+
+    /// The bytes left on disk after deleting the least recently used entries
+    /// over budget. Runs without the lock, so writes may land meanwhile.
+    fn trim(&self, root: &Path) -> u64 {
         let entry = |meta: &fs::Metadata, path| {
             let at = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             (at, meta.len(), path)
@@ -180,9 +193,12 @@ impl MediaCache {
             if !dir.file_type().is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
-            // A purge's leftovers, if it was interrupted.
+            // A purge's leftovers, if it was interrupted. Swept under the lock
+            // while no purge runs, so a running purge's folder is never taken.
             if dir.file_name().to_string_lossy().starts_with(CLEARED) {
-                let _ = fs::remove_dir_all(dir.path());
+                if self.lock().purging == 0 {
+                    let _ = fs::remove_dir_all(dir.path());
+                }
                 continue;
             }
             for file in fs::read_dir(dir.path()).into_iter().flatten().flatten() {
@@ -212,8 +228,14 @@ impl MediaCache {
                 }
             }
         }
+        total
+    }
+
+    /// Records a scan that began when `written` was `start`. A write the scan
+    /// also saw counts twice, which only brings the next scan sooner.
+    fn settle(&self, start: u64, total: u64) {
         let mut state = self.lock();
-        state.bytes = total;
+        state.bytes = total + (state.written - start);
         state.measured = true;
         state.evicting = false;
     }
@@ -248,7 +270,7 @@ impl MediaCache {
         let Some(partition) = self.partition(origin) else {
             return Ok(());
         };
-        let trash = {
+        let (trash, moved) = {
             let mut state = self.lock();
             state.generation += 1;
             state.measured = false;
@@ -262,12 +284,16 @@ impl MediaCache {
             // Moved aside under the lock, so no write lands in them; deleting
             // many small files then runs without blocking media requests.
             let trash = tempfile::Builder::new().prefix(CLEARED).tempdir_in(root)?;
-            for (index, dir) in dirs.iter().enumerate() {
-                fs::rename(dir, trash.path().join(index.to_string()))?;
-            }
-            trash
+            let moved = dirs
+                .iter()
+                .enumerate()
+                .try_for_each(|(index, dir)| fs::rename(dir, trash.path().join(index.to_string())));
+            state.purging += 1;
+            (trash, moved)
         };
-        trash.close()
+        let closed = trash.close();
+        self.lock().purging -= 1;
+        moved.and(closed)
     }
 }
 
@@ -370,6 +396,38 @@ mod tests {
         for name in ["a", "c", "d"] {
             assert!(cache.get(&url(name), None).is_some(), "{name}");
         }
+    }
+
+    #[test]
+    fn a_write_during_an_eviction_scan_still_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = MediaCache::with_budget(Some(dir.path().into()), 1000);
+        cache
+            .put(&url("a"), None, cache.ticket(), "image/webp", &[0; 30])
+            .unwrap();
+        // A scan that sees only `a`, while `b` is written before it settles.
+        cache.lock().evicting = true;
+        let start = cache.lock().written;
+        let total = cache.trim(dir.path());
+        cache
+            .put(&url("b"), None, cache.ticket(), "image/webp", &[0; 30])
+            .unwrap();
+        cache.settle(start, total);
+        assert_eq!(cache.lock().bytes, 82);
+    }
+
+    #[test]
+    fn a_scan_sweeps_an_interrupted_purge_but_not_a_running_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = MediaCache::new(Some(dir.path().into()));
+        let trash = dir.path().join(format!("{CLEARED}-a"));
+        fs::create_dir(&trash).unwrap();
+        cache.lock().purging = 1;
+        cache.evict(dir.path());
+        assert!(trash.exists());
+        cache.lock().purging = 0;
+        cache.evict(dir.path());
+        assert!(!trash.exists());
     }
 
     #[test]

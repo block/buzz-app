@@ -1,0 +1,10 @@
+{
+  "id": "buzz.catch-up",
+  "name": "Catch up",
+  "apiVersion": 1,
+  "description": "Triage unread conversations one at a time without reading them until you choose.",
+  "discovery": {
+    "category": "communication",
+    "tags": ["tasks"]
+  }
+}

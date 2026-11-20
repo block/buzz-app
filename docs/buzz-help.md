@@ -625,6 +625,15 @@ Quitting Buzz also turns it off.
   does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
+- **Catch up** is an optional plugin. Enable it in **Settings → Plugins**, then open
+  **Catch up** to review unread conversations one at a time. Previews leave messages
+  unread. Swipe right to mark as read, or left to keep unread, using touch,
+  horizontal trackpad gestures, or dragging the card header with a mouse. Vertical
+  scrolling and selecting preview text do not swipe a card. Buttons remain available.
+  **Mark as read** reads the conversation including replies, **Keep unread**
+  skips it for this review, and **Open conversation** opens the normal reader.
+  **Check again** includes skipped conversations. Counts reflect observed recent
+  activity and may be incomplete.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by

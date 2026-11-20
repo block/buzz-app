@@ -1095,7 +1095,7 @@ dependencies = [
 [[package]]
 name = "buzz-audio-client"
 version = "0.1.0"
-source = "git+https://github.com/block/buzz.git?rev=8d4b30176b14a651bbedbebe3dc3743e958e592e#8d4b30176b14a651bbedbebe3dc3743e958e592e"
+source = "git+https://github.com/block/buzz.git?rev=e21606bf968b561106d6ca7272d1c6be4031366d#e21606bf968b561106d6ca7272d1c6be4031366d"
 dependencies = [
  "futures-util",
  "neteq",

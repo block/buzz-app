@@ -5519,11 +5519,10 @@ it("opens the thread when a file drag rests on its summary, unless already open"
       Object.defineProperty(event, "clientX", { value: clientX });
       fireEvent(target, event);
     };
-    // The webview repeats dragover under a resting drag.
+    // The delay ends, and the target opens on the drag's next dragover.
     const rest = (summary: HTMLElement) => {
-      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS - 50);
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
       drag("dragOver", summary);
-      vi.advanceTimersByTime(50);
     };
     const props = {
       row,

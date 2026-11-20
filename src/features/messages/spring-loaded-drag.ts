@@ -9,10 +9,8 @@ export const SPRING_LOAD_GRACE_MS = 80;
  * phases of 75 ms, as in Finder. Reduced motion skips it. */
 export const SPRING_LOAD_BLINK_MS = 300;
 const BLINK_PHASES = ["off", "on", "off", "on"] as const;
-/** A drag is known to be live for this long after its last dragover. A drag
- * that was cancelled without a leave stops producing them. */
-export const SPRING_LOAD_LIVE_MS = 200;
-/** A target whose delay ended with no live drag waits this long for one. */
+/** A target whose delay is over opens on its next dragover. With none for
+ * this long, the drag was cancelled without a leave and the highlight goes. */
 export const SPRING_LOAD_STALE_MS = 1000;
 
 /** Set on the hovered target once the grace period is over: "on" while it is
@@ -25,11 +23,10 @@ type Hover = {
   /** The node under the drag, which tells a real leave from a child boundary. */
   under: EventTarget | null;
   open: () => void;
-  /** Where and when the drag was last reported over the target. */
+  /** Where the drag was last reported over the target. */
   x: number;
   y: number;
-  seen: number;
-  /** Counting down, then waiting for a live drag, then quiet once opened. */
+  /** Counting down, then waiting for the next dragover, then quiet once opened. */
   phase: "armed" | "due" | "quiet";
   timer: ReturnType<typeof setTimeout> | undefined;
 };
@@ -48,14 +45,51 @@ function paint(element: HTMLElement, state?: "on" | "off") {
   else element.removeAttribute(SPRING_LOAD_ATTRIBUTE);
 }
 
-/** A drop, the end of the drag, or its target's unmount ends the hover. */
+/** Leaving the target, a drag seen elsewhere, or its unmount ends the hover. */
 function cancel() {
-  if (!hover) return;
-  clearTimeout(hover.timer);
-  paint(hover.element);
-  hover = undefined;
-  window.removeEventListener("drop", cancel, true);
-  window.removeEventListener("dragend", cancel, true);
+  if (hover) {
+    clearTimeout(hover.timer);
+    paint(hover.element);
+    hover = undefined;
+  }
+  listen();
+}
+
+/** A drop or the end of the drag: the next drag starts with no guard. */
+function end() {
+  sprungAt = undefined;
+  cancel();
+}
+
+/** Every file drag event in the window, ahead of the targets' own handlers. */
+function watch(event: globalThis.DragEvent) {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  if (
+    sprungAt &&
+    (sprungAt.x !== event.clientX || sprungAt.y !== event.clientY)
+  ) {
+    sprungAt = undefined;
+    listen();
+  }
+  // A webview may skip the leave. A drag reported anywhere else has left.
+  const { target } = event;
+  if (hover && !(target instanceof Node && hover.element.contains(target)))
+    cancel();
+}
+
+/** Listen at the window for as long as there is a hover or a guard to clear.
+ * A drop is stopped by the zone that claims it, so listen ahead of it. */
+function listen() {
+  const wanted = !!hover || !!sprungAt;
+  for (const [type, listener] of [
+    ["dragenter", watch],
+    ["dragover", watch],
+    ["drop", end],
+    ["dragend", end],
+  ] as const) {
+    if (wanted) window.addEventListener(type, listener, true);
+    else window.removeEventListener(type, listener, true);
+  }
 }
 
 function spring(current: Hover) {
@@ -68,12 +102,10 @@ function spring(current: Hover) {
   if (current.element.isConnected) current.open();
 }
 
-/** The delay is over. Open only under a drag that is still reporting itself. */
+/** The delay is over. No drag event says a file drag was cancelled or where
+ * it went, so the timer opens nothing: the target's next dragover does, which
+ * proves the drag is still on it. Without one the highlight is dropped. */
 function due(current: Hover) {
-  if (Date.now() - current.seen <= SPRING_LOAD_LIVE_MS) return spring(current);
-  // No drag event says a file drag was cancelled, and a webview may skip the
-  // leave. The next dragover proves the drag is live and opens the target;
-  // without one the highlight is dropped.
   current.phase = "due";
   paint(current.element, "on");
   current.timer = setTimeout(cancel, SPRING_LOAD_STALE_MS);
@@ -125,6 +157,10 @@ function arm(current: Hover) {
  * from the OS, and also an image dragged from a message, which the webview
  * offers as a file. `active` marks the target already open. Spread the result
  * onto the element a click would activate.
+ *
+ * The target never claims the drag: a drop on it attaches nothing, so the
+ * cursor is left to whatever owns the drop there. The window's handler in
+ * `useRejectUnclaimedDrops` cancels each dragover, which keeps them coming.
  */
 export function useSpringLoaded(open: () => void, active = false) {
   const owner = useRef({}).current;
@@ -137,8 +173,6 @@ export function useSpringLoaded(open: () => void, active = false) {
   const over = (event: DragEvent<HTMLElement>) => {
     if (!carriesFiles(event)) return;
     const { clientX: x, clientY: y } = event;
-    if (sprungAt && (sprungAt.x !== x || sprungAt.y !== y))
-      sprungAt = undefined;
     if (hover?.owner !== owner || hover.element !== event.currentTarget) {
       if (sprungAt) return;
       cancel();
@@ -149,21 +183,13 @@ export function useSpringLoaded(open: () => void, active = false) {
         open,
         x,
         y,
-        seen: 0,
         phase: "quiet",
         timer: undefined,
       };
-      // A drop is stopped by the zone that claims it, so listen ahead of it.
-      window.addEventListener("drop", cancel, true);
-      window.addEventListener("dragend", cancel, true);
+      listen();
       if (!active) arm(hover);
     }
-    Object.assign(hover, { under: event.target, open, x, y, seen: Date.now() });
-    if (hover.phase === "quiet") return;
-    // Without this the app rejects the drag and the cursor says so, just as
-    // the target is about to open. A drop here still attaches nothing.
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    Object.assign(hover, { under: event.target, open, x, y });
     if (hover.phase === "due") spring(hover);
   };
   return {

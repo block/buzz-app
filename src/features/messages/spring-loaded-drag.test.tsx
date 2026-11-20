@@ -14,7 +14,6 @@ import {
   SPRING_LOAD_BLINK_MS,
   SPRING_LOAD_GRACE_MS,
   SPRING_LOAD_DELAY_MS,
-  SPRING_LOAD_LIVE_MS,
   SPRING_LOAD_STALE_MS,
   useSpringLoaded,
 } from "./spring-loaded-drag";
@@ -112,7 +111,7 @@ function hold(target: Element, ms: number) {
 }
 const beforeBlink = SPRING_LOAD_DELAY_MS - SPRING_LOAD_BLINK_MS;
 
-it("highlights after the grace period, blinks twice, then opens once after the delay", () => {
+it("highlights after the grace period, blinks twice, then opens once on the next dragover", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
   drag(row("General"), "dragEnter");
@@ -133,7 +132,11 @@ it("highlights after the grace period, blinks twice, then opens once after the d
     expect(open).not.toHaveBeenCalled();
     rest(1);
   }
+  // The delay is over. The timer opens nothing; the next dragover does.
   rest(1);
+  expect(open).not.toHaveBeenCalled();
+  expect(state("General")).toBe("on");
+  drag(row("General"), "dragOver");
   expect(open).toHaveBeenCalledExactlyOnceWith("General");
   expect(state("General")).toBeNull();
   // The drag keeps resting there without opening it again.
@@ -154,6 +157,7 @@ it("reduced motion keeps the highlight and skips the blink", () => {
   expect(state("General")).toBe("on");
   expect(open).not.toHaveBeenCalled();
   rest(1);
+  drag(row("General"), "dragOver");
   expect(open).toHaveBeenCalledExactlyOnceWith("General");
 });
 
@@ -229,6 +233,7 @@ it("moving to another target restarts the delay there", () => {
   hold(row("Random"), SPRING_LOAD_DELAY_MS - 1);
   expect(open).not.toHaveBeenCalled();
   rest(1);
+  drag(row("Random"), "dragOver");
   expect(open).toHaveBeenCalledExactlyOnceWith("Random");
 });
 
@@ -238,9 +243,7 @@ it.each(["drop", "dragEnd"] as const)(
     const open = vi.fn();
     render(<Targets open={open} />);
     drag(row("General"), "dragEnter");
-    const over = drag(row("General"), "dragOver");
-    expect(over.defaultPrevented).toBe(true);
-    expect(over.dataTransfer.dropEffect).toBe("copy");
+    drag(row("General"), "dragOver");
     const end = drag(kind === "drop" ? row("General") : window, kind);
     if (kind === "drop") expect(end.defaultPrevented).toBe(true);
     expect(state("General")).toBeNull();
@@ -356,27 +359,68 @@ it("a webview that repeats dragover slowly opens on its next one", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
   drag(row("General"), "dragEnter");
-  rest(SPRING_LOAD_DELAY_MS - SPRING_LOAD_LIVE_MS - 1);
-  drag(row("General"), "dragOver");
-  rest(SPRING_LOAD_LIVE_MS + 1);
+  rest(SPRING_LOAD_DELAY_MS + SPRING_LOAD_STALE_MS - 1);
   expect(open).not.toHaveBeenCalled();
-  rest(100);
-  const over = drag(row("General"), "dragOver");
-  expect(over.dataTransfer.dropEffect).toBe("copy");
+  drag(row("General"), "dragOver");
   expect(open).toHaveBeenCalledExactlyOnceWith("General");
   expect(state("General")).toBeNull();
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("shows no rejected cursor once the target has opened", () => {
+it("a drag cancelled just before the delay ends opens nothing", () => {
   const open = vi.fn();
   render(<Targets open={open} />);
   drag(row("General"), "dragEnter");
-  hold(row("General"), SPRING_LOAD_DELAY_MS);
+  // Escape right after a dragover, with no leave reported.
+  hold(row("General"), SPRING_LOAD_DELAY_MS - 50);
+  rest(50 + SPRING_LOAD_STALE_MS);
+  expect(open).not.toHaveBeenCalled();
+  expect(state("General")).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["dragEnter", "dragOver"] as const)(
+  "a %s elsewhere with no leave cancels, before or after the delay ends",
+  (kind) => {
+    const open = vi.fn();
+    render(<Targets open={open} />);
+    const elsewhere = screen.getByText("Elsewhere");
+    for (const held of [SPRING_LOAD_DELAY_MS - 50, SPRING_LOAD_DELAY_MS + 50]) {
+      drag(row("General"), "dragEnter");
+      hold(row("General"), SPRING_LOAD_DELAY_MS - 50);
+      rest(held - (SPRING_LOAD_DELAY_MS - 50));
+      nudge();
+      drag(elsewhere, kind);
+      expect(state("General")).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      rest(SPRING_LOAD_DELAY_MS + SPRING_LOAD_STALE_MS);
+    }
+    // A drag that carries no files says nothing about the file drag.
+    drag(row("General"), "dragEnter");
+    drag(elsewhere, "dragOver", "text/plain");
+    expect(vi.getTimerCount()).toBe(1);
+    drag(row("General"), "dragLeave");
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+it("never claims the drag, counting down, due or opened", () => {
+  const open = vi.fn();
+  render(<Targets open={open} />);
+  // Unclaimed, the window's handler rejects it: the row attaches nothing.
+  const unclaimed = (kind: "dragEnter" | "dragOver") => {
+    const event = drag(row("General"), kind);
+    expect(event.dataTransfer.dropEffect).toBe(
+      kind === "dragOver" ? "none" : "uninitialized",
+    );
+  };
+  unclaimed("dragEnter");
+  unclaimed("dragOver");
+  rest(SPRING_LOAD_DELAY_MS);
+  expect(open).not.toHaveBeenCalled();
+  unclaimed("dragOver");
   expect(open).toHaveBeenCalledOnce();
-  // Opened and quiet, the row is an unclaimed drop again.
-  const over = drag(row("General"), "dragOver");
-  expect(over.dataTransfer.dropEffect).toBe("none");
+  unclaimed("dragOver");
   const drop = drag(row("General"), "drop");
   expect(drop.defaultPrevented).toBe(true);
   expect(open).toHaveBeenCalledOnce();
@@ -403,3 +447,29 @@ it("a target that slides under a resting drag waits for the drag to move", () =>
   expect(open).toHaveBeenLastCalledWith("Random");
   expect(open).toHaveBeenCalledTimes(2);
 });
+
+it.each(["drop", "dragEnd"] as const)(
+  "after a %s, the next drag arms at the point where the last one opened",
+  (kind) => {
+    const open = vi.fn();
+    const remove = vi.spyOn(window, "removeEventListener");
+    render(<Targets open={open} />);
+    drag(row("General"), "dragEnter");
+    hold(row("General"), SPRING_LOAD_DELAY_MS);
+    expect(open).toHaveBeenCalledExactlyOnceWith("General");
+    // The drag leaves the row and ends elsewhere, reporting no other point.
+    drag(row("General"), "dragLeave");
+    remove.mockClear();
+    drag(kind === "drop" ? screen.getByText("Elsewhere") : window, kind);
+    expect(remove).toHaveBeenCalledWith(
+      kind.toLowerCase(),
+      expect.any(Function),
+      true,
+    );
+    remove.mockRestore();
+    drag(row("Random"), "dragEnter");
+    hold(row("Random"), SPRING_LOAD_DELAY_MS);
+    expect(open).toHaveBeenLastCalledWith("Random");
+    expect(open).toHaveBeenCalledTimes(2);
+  },
+);

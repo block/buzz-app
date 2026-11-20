@@ -116,11 +116,10 @@ it("opens its conversation when a file drag rests on it, unless already open", (
       Object.defineProperty(event, "clientX", { value: clientX });
       fireEvent(target, event);
     };
-    // The webview repeats dragover under a resting drag.
+    // The delay ends, and the target opens on the drag's next dragover.
     const rest = () => {
-      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS - 50);
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
       drag("dragOver", row);
-      vi.advanceTimersByTime(50);
     };
     const view = render(
       <ChannelSidebarRow

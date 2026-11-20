@@ -3640,13 +3640,10 @@ async fn read_state_unread_v2_codec_is_its_own_paired_shape() {
 #[tokio::test]
 async fn thread_follows_codec_is_a_separate_exact_shape() {
     let host = IdentityHost::fixture();
-    let clock = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    };
-    let now = clock();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let key = format!("room:{}", "1".repeat(64));
     let payload = serde_json::json!({"v":1,"client_id":"fixture","later":true,
         "threads":{key.clone():{"follow":true,"at":now,"x":1}}});
@@ -3687,18 +3684,14 @@ async fn thread_follows_codec_is_a_separate_exact_shape() {
         .sign_thread_follows("B".repeat(32), now, payload.clone())
         .await
         .is_err());
-    // The signer reads its own clock, so a second that turns over after `now`
-    // puts `now + 61` back inside the 60-second window. Only an attempt that
-    // starts and ends in one second pins the instant the signer compared with.
-    loop {
-        let now = clock();
-        let late = host
-            .sign_thread_follows("b".repeat(32), now + 61, payload.clone())
+    // The window's edge, against a held clock: the signer otherwise reads its
+    // own, and a second turning over after `now` would move the edge.
+    const AT: u64 = 1_700_000_000;
+    for (created_at, accepted) in [(AT + 60, true), (AT + 61, false)] {
+        let edge = host
+            .sign_thread_follows_at("b".repeat(32), created_at, payload.clone(), || Ok(AT))
             .await;
-        if clock() == now {
-            assert!(late.is_err());
-            break;
-        }
+        assert_eq!(edge.is_ok(), accepted, "{created_at}");
     }
     assert!(host
         .sign_thread_follows("b".repeat(32), now - 120, payload.clone())

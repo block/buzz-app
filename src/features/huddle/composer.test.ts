@@ -382,13 +382,14 @@ it("keeps a peer draft saved while a detached send prepares its files", async ()
   const h = harness();
   const { remote } = await h.connect();
   if (!remote.attachments) throw new Error("Missing attachments");
-  const upload =
-    Promise.withResolvers<
-      Awaited<ReturnType<typeof remote.attachments.upload>>
-    >();
+  type Upload = Awaited<ReturnType<typeof remote.attachments.upload>>;
+  let finishUpload!: (result: Upload) => void;
+  const upload = new Promise<Upload>((resolve) => {
+    finishUpload = resolve;
+  });
   const transfer = vi
     .spyOn(remote.attachments, "upload")
-    .mockReturnValue(upload.promise);
+    .mockReturnValue(upload);
   const publish = vi.spyOn(remote.messages, "send");
   const caption = { text: "Original caption", recipients: [] };
   writeView(h.scope, "draft:room", caption);
@@ -412,7 +413,7 @@ it("keeps a peer draft saved while a detached send prepares its files", async ()
   const newer = { text: "Peer caption", recipients: [] };
   act(() => writeView(h.scope, "draft:room", newer));
   await act(async () => {
-    upload.resolve({
+    finishUpload({
       name: "notes.txt",
       url: "https://example.test/notes.txt",
       sha256: "ab".repeat(32),

@@ -273,7 +273,7 @@ impl AgentEnv {
         let mut seen = std::collections::HashSet::new();
         for row in rows {
             let name = row.name.trim().to_owned();
-            check(&name)?;
+            check(&name, cfg!(windows))?;
             if !seen.insert(name.to_ascii_uppercase()) {
                 return Err(format!("{name} is listed twice"));
             }
@@ -306,7 +306,9 @@ impl AgentEnv {
     }
 }
 
-fn check(name: &str) -> Result<(), String> {
+/// `windows`: names there ignore case, so the Anthropic key has one
+/// spelling, the one Claude's sign-in check and the host override match.
+fn check(name: &str, windows: bool) -> Result<(), String> {
     let mut chars = name.chars();
     let valid = name.len() <= NAME_LIMIT
         && chars
@@ -321,6 +323,9 @@ fn check(name: &str) -> Result<(), String> {
         });
     }
     let upper = name.to_ascii_uppercase();
+    if windows && upper == crate::claude_key::ENV && name != crate::claude_key::ENV {
+        return Err(format!("Write {name} as {}", crate::claude_key::ENV));
+    }
     if upper.starts_with("BUZZ_") || upper.starts_with("NOSTR_") {
         return Err(format!("{name} is reserved by Buzz"));
     }

@@ -435,3 +435,13 @@ async fn a_spawn_gets_only_an_eligible_named_agents_list() {
             .is_empty()
     );
 }
+
+#[test]
+fn the_anthropic_key_has_one_spelling_where_names_ignore_case() {
+    // Claude's sign-in check and the host override match it exactly.
+    assert!(check("anthropic_api_key", true).is_err());
+    assert!(check("Anthropic_Api_Key", true).is_err());
+    assert!(check("ANTHROPIC_API_KEY", true).is_ok());
+    // Elsewhere it's another variable.
+    assert!(check("anthropic_api_key", false).is_ok());
+}

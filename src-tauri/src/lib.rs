@@ -362,15 +362,42 @@ async fn workspace_pick_folder<R: tauri::Runtime>(
     .map_err(|error| error.to_string())?
 }
 
+/// A path the owner typed in Add a plugin; like a picked folder, it is kept for
+/// update checks and reload. `prepare_folder` still refuses symbolic links.
+fn typed_plugin_folder(
+    value: &str,
+    home: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 8192 || value.chars().any(char::is_control) {
+        return Err("Enter a valid folder path.".into());
+    }
+    // Rebuilding from components drops a trailing `/` or `.`, which would make
+    // `prepare_folder`'s lstat follow a symbolic link it must refuse.
+    let path: std::path::PathBuf = workspace_folder::expand(value, home).components().collect();
+    if !path.is_absolute() {
+        return Err("Enter an absolute folder path or a path under ~/.".into());
+    }
+    if !path.is_dir() {
+        return Err(format!("No folder found at {value}."));
+    }
+    Ok(path)
+}
+
 #[tauri::command]
 async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
     upload: Option<FolderUpload>,
+    path: Option<String>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
         if let Some(upload) = upload {
             return prepare_upload(upload).map(Some);
+        }
+        if let Some(path) = path {
+            let home = app.path().home_dir().ok();
+            return prepare_folder(&typed_plugin_folder(&path, home.as_deref())?).map(Some);
         }
         app.dialog()
             .file()
@@ -1509,6 +1536,35 @@ mod tests {
         title_bar_double_click_action, title_bar_fill_target, TitleBarDoubleClickAction,
         TitleBarFillFrame, TitleBarFrame,
     };
+
+    #[test]
+    fn typed_plugin_folders_expand_home_and_refuse_unusable_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let plugin = home.path().join("my plugin");
+        std::fs::create_dir(&plugin).unwrap();
+        let typed = |value: &str| super::typed_plugin_folder(value, Some(home.path()));
+        assert_eq!(typed(" ~/my plugin/ ").unwrap(), plugin);
+        assert_eq!(typed(plugin.to_str().unwrap()).unwrap(), plugin);
+        assert_eq!(
+            typed("my plugin").unwrap_err(),
+            "Enter an absolute folder path or a path under ~/."
+        );
+        assert_eq!(typed("  ").unwrap_err(), "Enter a valid folder path.");
+        assert_eq!(typed("~/a\nb").unwrap_err(), "Enter a valid folder path.");
+        assert_eq!(
+            typed("~/missing").unwrap_err(),
+            "No folder found at ~/missing."
+        );
+        std::fs::write(plugin.join("manifest.json"), "{}").unwrap();
+        assert!(typed("~/my plugin/manifest.json").is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&plugin, home.path().join("link")).unwrap();
+            for value in ["~/link/", "~/link/."] {
+                assert!(super::prepare_folder(&typed(value).unwrap()).is_err());
+            }
+        }
+    }
 
     #[test]
     fn git_checks_never_acquire_or_replace_the_import_slot() {

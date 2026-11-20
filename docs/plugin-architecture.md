@@ -241,7 +241,7 @@ pnpm buzzodz --profile experiment plugin list
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
 Bundled pages work on web; their enabled settings are stored in that browser.
 Folder and Git/GitHub loading is available in **desktop Settings → Plugins → Manage plugins**.
-Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
+Choose or enter a folder path, or enter an HTTPS/SSH repository URL and optional branch/tag;
 then select a built plugin subfolder and install it. New installs are disabled;
 updates retain their enabled state and may run immediately. Repositories must
 include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
@@ -2706,8 +2706,8 @@ A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.
 
-Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker, or an
-HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
+Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker or a
+typed absolute or `~/` path, or an HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
 or tag and an optional folder are separate from the repository URL; GitHub `tree` URLs
 are rejected with guidance rather than ambiguously splitting branch names and
 subfolders. With a folder, only that folder is listed (candidate paths stay relative to
@@ -2719,7 +2719,7 @@ another source still requires deleting the plugin and adding it again. New plugi
 enable by default, with an opt-out in the review footer; successful installation closes the dialog. Updates match
 **manifest ID** and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
-not watch/pull the source. Plugins installed from a folder keep the selected folder
+not watch/pull the source. Plugins installed from a picked or typed folder keep that folder
 path for automatic checks in Settings → Plugins → Manage plugins. Changed packages
 offer Update, which opens access review before explicit confirmation, preserving
 the saved enabled state. Settings does not expose the immediate Reload shortcut.

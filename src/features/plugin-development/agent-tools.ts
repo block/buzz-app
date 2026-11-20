@@ -31,7 +31,7 @@ export const SETTLE_MS = 35_000;
 const IDLE_MS = 130_000;
 
 const LOAD_FROM_FOLDER =
-  "Ask your owner to open Settings → Plugins → Manage plugins, choose Add, then Browse under Add from folder (not drag and drop, which keeps no folder to reload), pick the folder with manifest.json and plugin.js, review it and choose Install plugin. Then call plugin_reload after each change.";
+  "Ask your owner to open Settings → Plugins → Manage plugins, choose Add, then enter the path of the folder with manifest.json and plugin.js in Folder path and choose Find, or Browse to pick it (not drag and drop, which keeps no folder to reload). Review it and choose Install plugin. Then call plugin_reload after each change.";
 const REVIEW_ACCESS =
   "The build's manifest.host differs from what your owner approved. Ask them to open Settings → Plugins, open this plugin and choose Update to review the new host access, or put manifest.host back.";
 

@@ -219,6 +219,8 @@ export function PluginImport({
       (savedSource && "reference" in savedSource ? savedSource.reference : ""),
   );
   const [folder, setFolder] = useState("");
+  const [localPath, setLocalPath] = useState("");
+  const typedPath = localPath.trim();
   // A link is newer than a plugin's request, so it replaces it rather than
   // inheriting the request's pinned commit and folder.
   const dropRequestForLink = useEffectEvent(() => {
@@ -1347,60 +1349,106 @@ export function PluginImport({
             {(!updateId || !savedSource) && (
               <div className={styles.columns}>
                 {!bound && (
-                  <section
-                    aria-label="Add from folder"
-                    className={styles.folder}
-                    data-dragging={dragging || undefined}
-                    onDragOver={(event) => {
-                      if (!event.dataTransfer.types.includes("Files")) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                      setDragging(!blocked);
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setDragging(false);
-                      const items = Array.from(event.dataTransfer.items);
-                      const entry =
-                        items.length === 1
-                          ? items[0]?.webkitGetAsEntry?.()
-                          : null;
-                      const current = lifetime.current;
-                      void load(async () => {
-                        if (!entry?.isDirectory)
-                          throw new Error("Drop one folder, or choose Browse.");
-                        const upload = await readPluginFolder(entry);
-                        if (!current.active) return null;
-                        const next = await imports.files(
-                          upload.source,
-                          upload.files,
-                        );
-                        return next
-                          ? {
-                              ...next,
-                              warnings: [...upload.warnings, ...next.warnings],
-                            }
-                          : null;
-                      });
-                    }}
-                  >
-                    <FolderOpenIcon size={32} aria-hidden="true" />
-                    <p className="m-0 text-body-sm">
-                      Drop a plugin folder here
-                    </p>
-                    <Button
-                      size="sm"
-                      ref={browse}
-                      aria-label="Browse plugin folder"
-                      disabled={blocked}
-                      onClick={() => void load(() => imports.folder())}
+                  <div className={styles.local}>
+                    <section
+                      aria-label="Add from folder"
+                      className={styles.folder}
+                      data-dragging={dragging || undefined}
+                      onDragOver={(event) => {
+                        if (!event.dataTransfer.types.includes("Files")) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.dataTransfer.dropEffect = blocked
+                          ? "none"
+                          : "copy";
+                        setDragging(!blocked);
+                      }}
+                      onDragLeave={() => setDragging(false)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setDragging(false);
+                        const items = Array.from(event.dataTransfer.items);
+                        const entry =
+                          items.length === 1
+                            ? items[0]?.webkitGetAsEntry?.()
+                            : null;
+                        const current = lifetime.current;
+                        void load(async () => {
+                          if (!entry?.isDirectory)
+                            throw new Error(
+                              "Drop one folder, or choose Browse.",
+                            );
+                          const upload = await readPluginFolder(entry);
+                          if (!current.active) return null;
+                          const next = await imports.files(
+                            upload.source,
+                            upload.files,
+                          );
+                          return next
+                            ? {
+                                ...next,
+                                warnings: [
+                                  ...upload.warnings,
+                                  ...next.warnings,
+                                ],
+                              }
+                            : null;
+                        });
+                      }}
                     >
-                      Browse
-                    </Button>
-                  </section>
+                      <FolderOpenIcon size={32} aria-hidden="true" />
+                      <p className="m-0 text-body-sm">
+                        Drop a plugin folder here
+                      </p>
+                      <Button
+                        size="sm"
+                        ref={browse}
+                        aria-label="Browse plugin folder"
+                        disabled={blocked}
+                        onClick={() => void load(() => imports.folder())}
+                      >
+                        Browse
+                      </Button>
+                    </section>
+                    <p className="m-0 text-center text-body-sm text-muted">
+                      or
+                    </p>
+                    <form
+                      aria-label="Add from folder path"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (typedPath)
+                          void load(() => imports.folder(typedPath));
+                      }}
+                    >
+                      <SettingsGroup layout="form">
+                        <Field label="Folder path">
+                          <Input
+                            value={localPath}
+                            disabled={blocked}
+                            placeholder="~/my-plugin/dist"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            onChange={(event) =>
+                              setLocalPath(event.target.value)
+                            }
+                          />
+                        </Field>
+                        <div className="justify-self-start">
+                          <Button
+                            type="submit"
+                            size="sm"
+                            aria-label="Find plugins in folder path"
+                            disabled={blocked || !typedPath}
+                          >
+                            Find
+                          </Button>
+                        </div>
+                      </SettingsGroup>
+                    </form>
+                  </div>
                 )}
                 <form
                   aria-label="Add from Git"

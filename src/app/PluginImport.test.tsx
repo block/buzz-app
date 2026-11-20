@@ -102,6 +102,46 @@ it("opens both sources inside Add without a duplicate safety warning, and restor
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
+it("reads a typed folder path and keeps it for recovery", async () => {
+  const user = userEvent.setup();
+  const folder = vi
+    .fn()
+    .mockRejectedValueOnce("No folder found at ~/missing.")
+    .mockResolvedValueOnce(requestedPreview(null));
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  const dialog = screen.getByRole("dialog", { name: "Add a plugin" });
+  const find = within(dialog).getByRole("button", {
+    name: "Find plugins in folder path",
+  });
+  expect(find).toBeDisabled();
+  const path = within(dialog).getByRole("textbox", { name: "Folder path" });
+  await user.type(path, "  ~/missing {Enter}");
+  expect(folder).toHaveBeenLastCalledWith("~/missing");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "No folder found at ~/missing.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  expect(path).toHaveValue("  ~/missing ");
+  expect(path).toHaveFocus();
+  await user.clear(path);
+  await user.type(path, "/Users/example/my-plugin/dist");
+  await user.click(find);
+  expect(folder).toHaveBeenLastCalledWith("/Users/example/my-plugin/dist");
+  expect(
+    await within(dialog).findByRole("button", { name: "Install plugin" }),
+  ).toBeVisible();
+});
+
 const gitOutputRecoveryHint =
   "Try another branch or tag. If the same output limit persists, ask the publisher for a ref or repository that Buzz can read.";
 const gitRepositoryRecoveryHint =

@@ -690,6 +690,10 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         // The stacked acquisition sources retain reachable controls in the modal.
         await folder.focus();
         await page.keyboard.press("Tab");
+        const path = dialog.getByRole("textbox", { name: "Folder path" });
+        await expect(path).toBeFocused();
+        await expect(path).toBeInViewport({ ratio: 1 });
+        await page.keyboard.press("Tab");
         await expect(repository).toBeFocused();
         await expect(repository).toBeInViewport({ ratio: 1 });
         await repository.fill("example/plugins");
@@ -764,6 +768,10 @@ test("manual Git release-ref guidance stays readable across scale and themes", a
   await enlargedReference.scrollIntoViewIfNeeded();
   await expect(enlargedReference).toBeInViewport({ ratio: 1 });
   await button(page, "Browse plugin folder").focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    enlargedDialog.getByRole("textbox", { name: "Folder path" }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
     enlargedDialog.getByRole("textbox", { name: "Git or GitHub repository" }),

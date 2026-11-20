@@ -1983,8 +1983,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person
-  installs a new plugin first: **Manage plugins → Add → Browse** under Add from
-  folder. After that the agent can reload it from that folder. A reload that
+  installs a new plugin first: in **Manage plugins → Add**, enter the folder in
+  **Folder path** and choose **Find**, or **Browse** to pick it. After that the
+  agent can reload it from that folder. A reload that
   fails to start restores the previous version. Changed host access still needs
   the person's review through the plugin's **Update**.
 - **Performance diagnostics** starts off and is unlisted in the Plugins catalog.

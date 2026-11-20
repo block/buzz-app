@@ -2927,8 +2927,10 @@ write service. Dispose owned views when their plugin or session scope ends.
 `session.ownerMentions` is an optional, read-only capability. On a host with
 `version === 1`, call `latest({ channelId, rootId })` to read the latest confirmed
 explicit mention in that source. Use `null` for the channel level, a message ID
-for the thread it starts, or the reply target ID for a nested branch. A nested
-reply updates only its branch. A top-level message also starts its own thread.
+for the thread it starts, or the reply target ID for an ordinary nested branch.
+For sends from an invocation composer, use the invocation anchor ID, including
+when the composer replies to a message inside it. Those sends update only that
+invocation. A top-level message also starts its own thread.
 The result has `eventId`, `createdAtMs`, and `recipientIds` in editor order.
 Pass up to 128 eligible recipient IDs as the second argument to find the
 latest retained mention of any of them. This also limits the returned

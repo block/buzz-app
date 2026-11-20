@@ -45,6 +45,18 @@ let time = 1700000000;
 const publications: RelayEvent[] = [];
 // Channel history the viewer wrote elsewhere, read like the relay's own.
 const history: RelayEvent[] = [];
+const invocation = (() => {
+  if (!new URLSearchParams(location.search).has("invocation")) return;
+  const root = message(first, "c", "Physical thread", ++time);
+  const anchor = message(first, "c", "Invocation", ++time, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const sibling = message(first, "c", "Sibling invocation", ++time, [
+    ["e", root.id, "", "reply"],
+  ]);
+  history.push(root, anchor, sibling);
+  return { rootId: root.id, anchorId: anchor.id, siblingId: sibling.id };
+})();
 let replaceRecipients = (
   _people: readonly { pubkey: string; name: string }[],
 ): boolean => false;
@@ -418,10 +430,11 @@ Object.assign(window, {
     outsider: outsider.pubkey,
     first: first.pubkey,
     second: second.pubkey,
+    invocation,
     publications,
     ownerMention: (rootId: string | null) =>
       owner.session.ownerMentions?.latest({ channelId: "c", rootId }),
-    confirmedOwnerSends: (rootId: string, eventIds: readonly string[]) =>
+    confirmedOwnerSends: (rootId: string | null, eventIds: readonly string[]) =>
       owner.session.ownerMentions?.confirmedOwnerSends(
         { channelId: "c", rootId },
         eventIds,
@@ -481,6 +494,7 @@ Object.assign(window, {
 function Fixture() {
   useKeyboardFocusVisibility();
   const [thread, setThread] = useState(false);
+  const [replyParent, setReplyParent] = useState(invocation?.anchorId);
   const [disabled, setDisabled] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   return (
@@ -497,6 +511,14 @@ function Fixture() {
             }
       }
     >
+      {invocation && (
+        <button
+          type="button"
+          onClick={() => setReplyParent(publications[0]?.id)}
+        >
+          Reply to first invocation message
+        </button>
+      )}
       {testControls && (
         <>
           <button type="button" onClick={() => setThread(!thread)}>
@@ -549,7 +571,15 @@ function Fixture() {
           channelId="c"
           channelName="General"
           {...(focusRequest ? { focusRequest } : {})}
-          {...(thread ? { threadRootId: "a".repeat(64) } : {})}
+          {...(invocation
+            ? {
+                threadRootId: invocation.anchorId,
+                sourceRootId: invocation.rootId,
+                replyParentId: replyParent,
+              }
+            : thread
+              ? { threadRootId: "a".repeat(64) }
+              : {})}
         />
       </div>
       {showSettings && <AgentSettings />}

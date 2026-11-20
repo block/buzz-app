@@ -3419,8 +3419,13 @@ function Composer({
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
         const publish = () =>
-          sendWithOwnerMentions(sender, explicitRecipientIds, () =>
-            publishMessage(uploaded, sender),
+          sendWithOwnerMentions(
+            sender,
+            explicitRecipientIds,
+            () => publishMessage(uploaded, sender),
+            sourceRootId && threadRootId
+              ? { anchorId: threadRootId, threadId: sourceRootId }
+              : undefined,
           );
         if (!tokens.length) return publish();
         // A detached window's relay connection would drop the chips.

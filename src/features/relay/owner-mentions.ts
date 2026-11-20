@@ -9,6 +9,7 @@ type Evidence = Readonly<{
   createdAtMs: number;
   recipientIds: readonly string[];
 }>;
+type Invocation = Readonly<{ anchorId: string; threadId: string }>;
 const MAX_CANDIDATES = 128;
 const MAX_RETAINED = 4096;
 const inOrder = (a: Evidence, b: Evidence) =>
@@ -19,7 +20,11 @@ const capture = new WeakMap<
   {
     outbox: Outbox;
     ownsMessages(messages: object): boolean;
-    record(event: EventData, recipients: readonly string[]): void;
+    record(
+      event: EventData,
+      recipients: readonly string[],
+      invocation?: Invocation,
+    ): void;
   }
 >();
 
@@ -28,6 +33,7 @@ export function sendWithOwnerMentions<T extends string | Promise<string>>(
   sender: { outbox?: Pick<Outbox, "snapshot"> | undefined; messages: object },
   recipients: readonly string[] | undefined,
   send: () => T,
+  invocation?: Invocation,
 ): T {
   const owner = sender.outbox && capture.get(sender.outbox);
   if (!owner?.ownsMessages(sender.messages) || recipients === undefined)
@@ -40,7 +46,7 @@ export function sendWithOwnerMentions<T extends string | Promise<string>>(
   try {
     const id = send();
     const event = events.find((event) => id === event.id);
-    if (event) owner.record(event, recipients);
+    if (event) owner.record(event, recipients, invocation);
     return id;
   } finally {
     stop();
@@ -49,7 +55,10 @@ export function sendWithOwnerMentions<T extends string | Promise<string>>(
 
 /** The relay service retains this device-local index across session replacement. */
 export function createOwnerMentionStore(viewer: string) {
-  const pending = new Map<string, Evidence>();
+  const pending = new Map<
+    string,
+    { evidence: Evidence; invocation: Invocation | undefined }
+  >();
   const latest = new Map<string, Evidence>();
   const confirmed = new Map<string, Source>();
   const listeners = new Set<() => void>();
@@ -86,7 +95,7 @@ export function createOwnerMentionStore(viewer: string) {
       capture.set(outbox, {
         outbox,
         ownsMessages,
-        record(event, recipients) {
+        record(event, recipients, invocation) {
           if (event.kind !== 9 || event.pubkey !== viewer) return;
           const tagged = new Set(
             event.tags.filter(([name]) => name === "p").map((tag) => tag[1]),
@@ -97,11 +106,14 @@ export function createOwnerMentionStore(viewer: string) {
           put(
             pending,
             event.id,
-            Object.freeze({
-              eventId: event.id,
-              createdAtMs: eventMs(event),
-              recipientIds: Object.freeze(recipientIds),
-            }),
+            {
+              evidence: Object.freeze({
+                eventId: event.id,
+                createdAtMs: eventMs(event),
+                recipientIds: Object.freeze(recipientIds),
+              }),
+              invocation,
+            },
             512,
           );
         },
@@ -173,12 +185,16 @@ export function createOwnerMentionStore(viewer: string) {
       });
     },
     confirm(event: EventData, canRead: (channelId: string) => boolean) {
-      const evidence = pending.get(event.id);
-      if (!evidence || event.kind !== 9 || event.pubkey !== viewer) return;
+      const proof = pending.get(event.id);
+      if (!proof || event.kind !== 9 || event.pubkey !== viewer) return;
       const channelId = event.tags.find(([name]) => name === "h")?.[1];
       if (!channelId || !canRead(channelId)) return;
       pending.delete(event.id);
-      const root = threadReference(event)?.parentId ?? null;
+      const { evidence, invocation } = proof;
+      const thread = threadReference(event);
+      // The wire keeps the physical thread and immediate reply target.
+      if (invocation && invocation.threadId !== thread?.rootId) return;
+      const root = invocation?.anchorId ?? thread?.parentId ?? null;
       put(confirmed, event.id, { channelId, rootId: root }, MAX_RETAINED);
       if (!evidence.recipientIds.length) {
         changed();

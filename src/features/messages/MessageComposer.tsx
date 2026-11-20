@@ -2655,14 +2655,9 @@ function Composer({
       }
       if (
         !valueRef.current.text.trim() &&
-        !valueRef.current.chatCards?.length
+        !valueRef.current.chatCards?.length &&
+        !editing.attachments.length
       ) {
-        if (editing.target.attachments.length) {
-          setError(
-            "Keep attachment links unchanged. To remove this message, use Delete message.",
-          );
-          return;
-        }
         if (requestDeletion && session.outbox?.supports(5)) {
           const checkpoint = beforeEdit.current;
           requestDeletion(editing.target, (focus) => {
@@ -3559,8 +3554,9 @@ function Composer({
           (active && !editing.target && !!trailingTool) || undefined
         }
         data-attachments={
-          (!editing.target && (hasAttachments || attachmentsExiting)) ||
-          undefined
+          (editing.target
+            ? editing.attachments.length > 0
+            : hasAttachments || attachmentsExiting) || undefined
         }
         onKeyDown={(event) => {
           if (
@@ -3693,6 +3689,34 @@ function Composer({
                 setError(undefined);
                 input.current?.focus();
               }}
+            />
+          )}
+          {editing.target && (
+            <ComposerAttachments
+              media={session.media}
+              items={[]}
+              gifs={editing.attachments.map(({ attachment }) => ({
+                markdown: attachment.url,
+                title: attachment.name ?? "Attachment",
+                hint: {
+                  image: "Image",
+                  video: "Video",
+                  audio: "Audio",
+                  file: "File",
+                }[attachment.kind],
+                mime: attachment.mime,
+                source:
+                  attachment.kind === "image" || attachment.previewUrl
+                    ? session.media(attachment.previewUrl ?? attachment.url)
+                    : undefined,
+              }))}
+              removeGif={(url) => {
+                editing.removeAttachment(url);
+                input.current?.focus();
+              }}
+              disabled={editingDisabled || editing.locked}
+              remove={() => {}}
+              retry={() => {}}
             />
           )}
           {!editing.target && (
@@ -4095,7 +4119,9 @@ function Composer({
                   !value.forward &&
                   !chatCards?.length &&
                   ((!!submission && !submission.allowAttachmentOnly) ||
-                    (!attachments.items.length && !gifs?.length)) &&
+                    (editing.target
+                      ? !editing.attachments.length
+                      : !attachments.items.length && !gifs?.length)) &&
                   !(
                     editing.target &&
                     requestDeletion &&

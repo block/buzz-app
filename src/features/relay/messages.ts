@@ -13,7 +13,7 @@ import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import { MEDIA_TARGET_TAG, type ChannelMessage } from "./contracts";
-import { messageAuthor } from "./fold";
+import { imetaAttachmentUrls, messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
 import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { safeMessageUrl } from "./message-content";
@@ -170,6 +170,7 @@ export function createMessages(
     content: string,
     attachmentSourceId: string,
     authorization?: AgentOwnerAuthorization,
+    keep?: readonly string[],
   ) => {
     const original = find(messageId);
     if (!original || ![9, 40002].includes(original.kind))
@@ -200,8 +201,7 @@ export function createMessages(
           ) ||
           attachmentSource.tags.some(
             ([name, id]) => name === "h" && id !== channelId,
-          ) ||
-          !attachmentSource.tags.some(([name]) => name === "imeta")))
+          )))
     )
       throw new Error("Reload the message before editing its attachments.");
     const sendEdit = (targetId: string) =>
@@ -211,7 +211,14 @@ export function createMessages(
         tags: [
           ["h", channelId],
           ["e", targetId],
-          ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
+          ...attachmentSource.tags.filter(
+            (tag) =>
+              tag[0] === "imeta" &&
+              (!keep ||
+                [...imetaAttachmentUrls({ tags: [tag] })].some((url) =>
+                  keep.includes(url),
+                )),
+          ),
           ...emojiTags(content),
         ],
       });
@@ -648,9 +655,14 @@ export function createMessages(
         ],
       });
     },
-    /** Supply the current folded attachmentSourceId, or the row ID for original media. */
-    edit: (messageId: string, content: string, attachmentSourceId: string) =>
-      edit(messageId, content, attachmentSourceId),
+    /** Supply the current folded attachmentSourceId, or the row ID for original
+     * media. `keep` lists the attachment URLs to retain; omitted keeps them all. */
+    edit: (
+      messageId: string,
+      content: string,
+      attachmentSourceId: string,
+      keep?: readonly string[],
+    ) => edit(messageId, content, attachmentSourceId, undefined, keep),
     /** Verified owner edit. Empty text removes the message, as in the composer.
      * As a guest it signs only once `profiles.owner` names the viewer; an
      * earlier call fails delivery as read-only, and `retry(id)` resends it. */

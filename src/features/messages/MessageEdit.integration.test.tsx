@@ -524,11 +524,11 @@ it.each(["thread", "exact"])(
         name: "Reply to thread",
       });
       fireEvent.keyDown(input, { key: "ArrowUp", metaKey: true });
-      expect(input).toHaveValue(edit.content);
+      expect(input).toHaveValue("Current caption");
       const content = `New caption\n\n![image](${url})`;
       act(() => {
-        input.value = content;
-        input.setSelectionRange(content.length, content.length);
+        input.value = "New caption";
+        input.setSelectionRange(11, 11);
       });
       fireEvent.input(input);
       fireEvent.keyDown(input, { key: "Enter" });

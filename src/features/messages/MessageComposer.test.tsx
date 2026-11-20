@@ -9959,6 +9959,7 @@ it.each([
       "c".repeat(64),
       markdown,
       "c".repeat(64),
+      [],
     );
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(readView("scope", "draft:channel", "")).toBe("");
@@ -9982,6 +9983,7 @@ it("continues a list while editing and saves through Save changes", async () => 
     "c".repeat(64),
     "- Revised\n- Added",
     "c".repeat(64),
+    [],
   );
 });
 
@@ -10017,6 +10019,7 @@ it("saves an edited fenced message on Enter instead of opening a block from its 
     "c".repeat(64),
     "```js\ncode!\n```",
     "c".repeat(64),
+    [],
   );
   expect(h.messages.send).not.toHaveBeenCalled();
 });
@@ -10035,6 +10038,7 @@ it("saves only once and restores the new-message composer without waiting for de
     row.id,
     "Revised message",
     row.id,
+    [],
   );
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveAttribute("contenteditable", "false");
@@ -10067,6 +10071,44 @@ it.each(["failed", "unknown"] as const)(
     await waitFor(() => expect(h.input()).toHaveValue(""));
   },
 );
+
+const photo = "https://example.org/photo.png";
+const attachedMessage = () =>
+  editableMessage({
+    content: "Caption",
+    sourceContent: `Caption\n\n![photo](<${photo}>)`,
+    attachments: [{ url: photo, kind: "image", name: "photo.png" }],
+  });
+
+it("saves an attachment-only edit without a delete handler", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([attachedMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("Caption");
+  h.fill("");
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    `![photo](<${photo}>)`,
+    "c".repeat(64),
+    [photo],
+  );
+});
+
+it("refuses to overwrite a target whose attachments changed elsewhere", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const row = attachedMessage();
+  h.setRows([row]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("My changes");
+  h.setRows([{ ...row, attachmentSourceId: "e".repeat(64) }]);
+  h.submit();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "changed while you were editing",
+  );
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
 
 it.each(["changed", "deleted"])(
   "preserves text and refuses to overwrite a %s target",
@@ -10284,6 +10326,7 @@ it.each([false, true])(
       "c".repeat(64),
       `${link} whats your name?`,
       "c".repeat(64),
+      [],
     );
     expect(h.messages.send).not.toHaveBeenCalled();
   },
@@ -10460,6 +10503,7 @@ it("keeps pasted identity links display-only during edits", () => {
     "c".repeat(64),
     `Original message ${link} `,
     "c".repeat(64),
+    [],
   );
 });
 

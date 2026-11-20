@@ -27,11 +27,15 @@ import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 
-/** A GIF staged with the draft. It sends as its Markdown, not as an upload. */
+/** A GIF staged with the draft, or an attachment an edit keeps. Neither is an
+ * upload; `markdown` identifies the tile. */
 export type ComposerGif = Readonly<{
   markdown: string;
   title: string;
   source?: string | undefined;
+  /** Defaults to a GIF. */
+  hint?: string;
+  mime?: string | undefined;
 }>;
 
 export function ComposerAttachments({
@@ -204,12 +208,15 @@ function GifItem({
         </span>
       ) : (
         <span className={fileIconStyles.slot}>
-          <FileTypeIcon name={`${gif.title}.gif`} mime="image/gif" />
+          <FileTypeIcon
+            name={gif.hint ? gif.title : `${gif.title}.gif`}
+            mime={gif.hint ? gif.mime : "image/gif"}
+          />
         </span>
       )}
       <div className={styles.details}>
         <span className={styles.name}>{gif.title}</span>
-        <span className={styles.hint}>GIF</span>
+        <span className={styles.hint}>{gif.hint ?? "GIF"}</span>
       </div>
       <div className={styles.actions} data-remove="">
         <IconButton

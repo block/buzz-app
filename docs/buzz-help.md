@@ -936,6 +936,10 @@ Quitting Buzz also turns it off.
   or thread composer is empty, instead of selecting messages. This device-local
   choice starts off. On macOS, Command+Up Arrow keeps editing directly from an
   empty composer with either choice.
+- While editing a message, its files and images appear as tiles above the text.
+  Select a tile's remove button to take it out of the message when you save.
+  Editing can't add files. Removing all text and files deletes the message
+  after you confirm.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If some of the files you pick, paste or drop can't be attached, such

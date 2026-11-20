@@ -1401,6 +1401,7 @@ it("retains latest raw edit source through attachment projection and row sharing
       tags: [
         ["h", channel],
         ["e", original.id],
+        ["imeta", `url ${url}`, "m application/pdf"],
       ],
     });
   const first = edit(`Caption [Report](${url} "Old title")`, 11);

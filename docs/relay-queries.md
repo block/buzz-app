@@ -189,10 +189,12 @@ explicitly retry `refresh()`. Unknown codes in a ready catalog remain literal.
 Retries retain the exact original event and URL even if the palette changes.
 Low-level `outbox.send` remains raw intent; callers supply its tags themselves.
 
-Text edits use `session.messages.edit(row.id, content, row.attachmentSourceId ?? row.id)`
-with the current folded row. Attachment provenance selects the latest surviving
-same-author edit carrying `imeta`, otherwise the original message. A missing
-source fails before enqueueing rather than restoring obsolete attachments.
+Text edits use `session.messages.edit(row.id, content, row.attachmentSourceId ?? row.id, keep?)`
+with the current folded row. Attachment provenance is the latest surviving
+same-author edit, otherwise the original message; that edit's `imeta` set is
+authoritative even when empty, as on the relay. `keep` lists the attachment URLs
+to retain and omitting it keeps them all. A missing source fails before
+enqueueing rather than restoring obsolete attachments.
 
 Plugins may await `session.messages.editOwnedAgent(row.id, content, row.attachmentSourceId ?? row.id)` for an agent owned by the signed-in viewer. This requires the current retained, signature-verified kind 0 profile and a valid owner attestation, then publishes the existing owner-signed kind 40003 protocol event. Empty text uses the existing owner-deletion path. Missing, replaced, or invalid evidence rejects before publication. As a channel guest, signing also requires `session.profiles.owner(agentId)` to name the viewer; the session sets it asynchronously after the profile arrives. An earlier call still resolves with an event ID, but its delivery fails as read-only; wait for the owner before calling, or retry that ID with `session.messages.retry(id)` once the owner appears. Channel and thread projections accept these edits only after verifying the same profile evidence, and refold if that evidence changes. Ordinary `edit` remains restricted to the viewer's own messages. Owner edits are a projection, not a redaction guarantee: the original signed message remains retained, and its original content can reappear when ownership evidence is missing, evicted or revoked. Sidebar, thread, Inbox and Codex history projections use the current verified ownership evidence.
 

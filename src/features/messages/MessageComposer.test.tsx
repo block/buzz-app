@@ -12650,18 +12650,36 @@ it.each([
   expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
 });
 
-it("reopens an already saved local version when another window replaces it", () => {
-  const h = mount();
-  h.fill("Local work");
-  act(() => h.input().blur());
-  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
-  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+it.each([false, true])(
+  "reopens an already saved local version after a peer save (cursor read fails: %s)",
+  (cursorReadFails) => {
+    const h = mount();
+    h.fill("Local work");
+    const getItem = Storage.prototype.getItem;
+    const read = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, key: string) {
+        if (cursorReadFails && key.startsWith("buzz-ret.v1:"))
+          throw new Error("Retirement history unavailable");
+        return getItem.call(this, key);
+      });
+    try {
+      act(() => h.input().blur());
+    } finally {
+      read.mockRestore();
+    }
+    expect(readView("scope", "draft:channel", null)).toMatchObject({
+      text: "Local work",
+    });
+    act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
 
-  h.remount();
-  expect(h.input()).toHaveValue("Local work");
-  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
-  expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
-});
+    h.remount();
+    expect(h.input()).toHaveValue("Local work");
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+    expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
+  },
+);
 
 it.each([false, true])(
   "retires a peer's sent draft while preserving a distinct pending edit (%s)",

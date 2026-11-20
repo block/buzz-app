@@ -479,7 +479,7 @@ it("keeps a peer draft saved while a detached send prepares its files", async ()
   const transfer = vi
     .spyOn(remote.attachments, "upload")
     .mockReturnValue(upload);
-  const publish = vi.spyOn(remote.messages, "send");
+  const publish = vi.spyOn(remote, "sendDraft");
   const caption = { text: "Original caption", recipients: [] };
   writeView(h.scope, "draft:room", caption);
   const files = attachmentDraft(remote, `${h.scope}:draft:room`, "room");

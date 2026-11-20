@@ -701,11 +701,11 @@ function Composer({
       const split = raw.indexOf("\n");
       if (split < 0) return { stale: raw };
       const savedRevision = raw.slice(split + 1);
-      const [savedPurgeToken, cursor] = JSON.parse(raw.slice(0, split));
+      const [savedPurgeToken, savedCursor] = JSON.parse(raw.slice(0, split));
+      const cursor = typeof savedCursor === "number" ? savedCursor : undefined;
       if (
         savedRevision === initialRevision ||
         savedPurgeToken !== purgeToken ||
-        typeof cursor !== "number" ||
         draftWasRetired(scope, draftKey, savedRevision, cursor)
       )
         return { stale: raw };
@@ -734,7 +734,11 @@ function Composer({
   const conflictDraft = useRef<
     | {
         draft: MentionDraft;
-        saved?: { draft: MentionDraft; revision: string; cursor: number };
+        saved?: {
+          draft: MentionDraft;
+          revision: string;
+          cursor: number | undefined;
+        };
       }
     | undefined
   >(
@@ -757,7 +761,6 @@ function Composer({
         saved == null
           ? draftRetirementCursor(scope, draftKey)
           : savedCursor.current;
-      if (cursor === undefined) return;
       sessionStorage.setItem(
         conflictKey,
         `${JSON.stringify([purgeToken, cursor])}\n${raw}`,

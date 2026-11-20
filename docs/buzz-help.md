@@ -508,8 +508,8 @@ Quitting Buzz also turns it off.
   use Bot. Existing members keep their saved roles.
   If admin setup is interrupted, **Retry** on the opening message attempts to
   finish it without restoring later demotions or removals. If setup is blocked,
-  choose **Abandon admin setup** in Outbox as soon as the chat exists. This keeps
-  the chat and current roles and stops unfinished setup in other windows. Then
+  choose **Abandon admin setup** in the notice above the chat's composer. This
+  keeps the chat and current roles and stops unfinished setup in other windows. Then
   retry the opening message, or send a new one if the original has expired.
   Solo conversations continue at the chat's top level
   rather than requiring a new thread for each reply. Where available, use
@@ -1093,12 +1093,12 @@ Quitting Buzz also turns it off.
   readable. View only retains Guest admission. Copying its link alone does not grant access. Check the intended people
   and destination before changing access. If an older saved invitation granted
   view-only access, remove that person in People and invite them again for
-  participation. For an older unresolved invitation, use **Retry** in Outbox
-  or add the person again if the receipt is already Seen. After its 15-minute
+  participation. For an older unresolved invitation, add the person again.
+  After its 15-minute
   delivery window, Buzz verifies the original command and current membership
   before allowing a fresh participation invitation; failed checks keep the original.
-  If the original invitation was applied and the person was later removed, Retry
-  clears the old row without re-adding them. Use **Add** in People to invite them again.
+  If the original invitation was applied and the person was later removed, use
+  **Add** in People to invite them again.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose

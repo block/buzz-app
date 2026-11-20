@@ -88,7 +88,9 @@ behavior on the label, so a rename touches copy only.
   admin targets across interruptions; retries reconstruct the same grants and
   confirm their recorded IDs before sending. A recorded grant stays complete
   after a later demotion or removal. Expired, unrecorded grants are never re-dated.
-  Outbox offers **Abandon admin setup** once the create is delivered. Confirming
+  Once the create is delivered and the opening message is not sent, the chat
+  shows a notice above its composer with **Abandon admin setup**; developer
+  builds also offer it in Outbox. Confirming
   retires its recovery receipt while keeping the chat and granted
   roles. Grant publication and retirement share the receipt’s durable ownership
   lock, so another window’s unfinished signature cannot publish after abandonment.
@@ -271,7 +273,7 @@ other labels, lifetime and workspace. An unfiled chat moves from Solo to Team.
 Share attempts retain in-process intent plus durable per-operation Outbox receipts,
 not a persisted composite transaction. Start over forgets settled choices, not
 submitted operations, confirmed access or workspace filing.
-An interrupted link can be retried by its exact ID in Outbox; confirmed delivery
+In developer builds, an interrupted link can be retried by its exact ID in Outbox; confirmed delivery
 can be removed there before sharing to the same destination again. Unknown
 receipts remain protected. Whole-share intent does not survive an app restart.
 

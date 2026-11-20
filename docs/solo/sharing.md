@@ -94,7 +94,7 @@ go in one kind 9000 per role, at most 100 each, and the roster is read once afte
 A relay without batch support adds only the first person an event names, so the
 roster decides who was added; anyone else, or anyone with an earlier addition
 still pending, gets the single addition, which reports their own failure. A batch
-is never resent, and stays in Outbox until everyone it names is in the roster or
+is never resent, and stays in Outbox (shown only in developer builds) until everyone it names is in the roster or
 has their own addition; its **Retry** checks each person again. See the
 relay's kind 9000 entry in block/buzz `NOSTR.md`.
 
@@ -108,7 +108,7 @@ replayed as a participation invitation. **Retry** keeps it protected during the
 relay's 15-minute intake window. After expiry, Retry fences local delivery and
 checks the original event ID with a fresh strong read. Verified absence can
 resolve it. If the command is recorded, a fresh signed roster reconciles its
-result. If that person has since been removed, Outbox **Retry** durably clears
+result. If that person has since been removed, Retry in Outbox (shown only in developer builds) durably clears
 the old row without re-inviting them. An explicit **Add** from People still
 re-invites them in one action, including when the old receipt remains. Add finishes its fresh
 membership check before atomically retiring the original and saving a new
@@ -117,8 +117,8 @@ or the replacement receipt. Failed reads or storage, active delivery, and an ech
 contradicting negative readback keep recovery. This uses the existing Outbox/member/share actions, with no
 background retry or new control. If signed roles confirm that the earlier invite
 admitted a Guest, remove that person in People and invite them again. Recovery
-never silently promotes an existing Guest. A definitively failed invitation can
-also be replaced after explicitly dismissing it in Outbox.
+never silently promotes an existing Guest. An expired failed invitation is
+replaced when the person is added again.
 
 ### General access
 

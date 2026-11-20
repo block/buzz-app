@@ -120,7 +120,7 @@ See the [capability contract](../src/features/workflows/types.ts).
 The outbox journals intent/signature before publication. A verified echo does
 not replace the result-bearing receipt. Restored commands never run automatically;
 result text stays ephemeral, outside the journal. Workflow intents cannot be replayed
-through generic Outbox Retry either; inspection and dismissal remain available.
+through generic Outbox Retry either; inspection and dismissal remain available in developer builds, the only builds that show Outbox.
 
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different

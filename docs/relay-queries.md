@@ -1290,7 +1290,8 @@ replay-completeness guarantee.
 ### User attention during recovery
 
 The warning banner is for failures needing attention. Routine setup and bounded
-automatic WebSocket quota recovery stay in Channel Settings → Diagnostics.
+automatic WebSocket quota recovery stay in Channel Settings → Diagnostics, which
+only developer and browser test builds show.
 A supported quota refusal remains recorded while waiting/retrying and is cleared
 only by fresh EOSE, not by sending another REQ or clicking Retry. Diagnostics
 labels the original rejection as historical text, not a live countdown.

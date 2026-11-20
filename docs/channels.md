@@ -234,7 +234,7 @@ Create event, with the same UUID and signature, so a delivered first attempt is
 not duplicated; changed details abandon that attempt and sign a new one. Closing
 the dialog forgets the attempt and dismisses its Outbox entry. Nothing restores
 after reopening, reload or session replacement, so a stale Create can never lock
-the form; an entry left behind by a reload stays unretried in the Outbox. Setup failures after admission produce a dismissible notice
+the form; an entry left behind by a reload stays unretried in the Outbox, which only developer builds show. Setup failures after admission produce a dismissible notice
 without navigating again; setup is never continued in the background. New-chat intent uses the Channels version-1
 page route `{ kind: "solo-draft", project?, agent? }` (see [Solo](solo/README.md));
 only that intent, never draft text, enters history.
@@ -1661,10 +1661,11 @@ lines themselves stay text in the composer and render as headings once sent. A s
 never strikes, and pasted or restored delimiters stay literal text that still renders once
 sent. Reply counts open a bounded thread view; attachments are
 links. Routine freshness labels are not shown; Channel Settings → Diagnostics
-exposes refresh, outbox inspection and timings. Packaged builds do not
+exposes refresh, outbox inspection and timings in developer and browser test
+builds only (`diagnosticsAvailable`). Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific
-reason under **Channel Settings → Diagnostics → Saved groups and stars**.
+reason under **Channel Settings → Diagnostics → Saved groups and stars** in those builds.
 `Preference query` includes reader queueing, transport and verification; use relay
 timings to separate those. `Preference decode` identifies the local decoder stage.
 The diagnostic does not trigger another request or change retry policy.
@@ -1746,7 +1747,8 @@ the emoji-only picker
 through its optional conversation tool `reactionComponent`; the shared message
 row owns publication. The picker opens outside the scrolling list, closes on
 selection or Escape, and returns focus to the plus button. Failed or unconfirmed
-reaction delivery offers Retry reaction through the same outbox. Read-only
+reaction delivery offers Retry reaction through the same outbox; past the relay's
+15-minute window it sends the update again as a new event. Read-only
 connections and archived channels do not expose the action.
 
 The composer shows its GIF tab as soon as relay support is confirmed. Unsupported

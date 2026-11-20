@@ -536,8 +536,9 @@ Channels opts into the reusable companion prop and owns both cards, including a
 companion-only view without a selected channel or relay. Settings and legacy
 pages use the host fallback frame; opening from those pages does not navigate away.
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh
-and freshness indicators are omitted. Channel Settings → Diagnostics keeps
-manual refresh, outbox inspection, and timing capture available on demand.
+and freshness indicators are omitted. In developer and browser test builds,
+Channel Settings → Diagnostics keeps manual refresh, outbox inspection, and
+timing capture available on demand.
 Background thread reads and sidebar enrichment/reconnection do not insert progress
 rows into populated views. Initial empty loads still explain the wait; failures
 and their retry controls remain visible.

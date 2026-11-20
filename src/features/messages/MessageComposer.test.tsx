@@ -8455,7 +8455,7 @@ it.each([false, true])(
         { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
       ],
     };
-    const operations = expired
+    const operations: unknown[] = expired
       ? [
           {
             delivery: "failed",
@@ -8493,6 +8493,9 @@ it.each([false, true])(
           consume?.();
         },
         acknowledge: async () => {},
+        dismiss: async () => {
+          operations.length = 0;
+        },
       },
     });
     Object.assign(h.session, {
@@ -8513,14 +8516,14 @@ it.each([false, true])(
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
     await act(async () => {});
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      expired ? "addition expired" : "Cannot add agent",
-    );
+    // An expired failed addition is replaced, so both reach the new send.
+    expect(screen.getByRole("alert")).toHaveTextContent("Cannot add agent");
     expect(
       (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement).value,
     ).toBe("@Honey ");
     expect(h.messages.send).not.toHaveBeenCalled();
-    if (expired) expect(add).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledOnce();
+    expect(operations).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => {});
     expect(h.input()).not.toHaveAttribute("aria-disabled", "true");

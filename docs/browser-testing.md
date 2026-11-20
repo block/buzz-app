@@ -79,6 +79,13 @@ signing keys, signed histories, relay state and browser context/storage. Evidenc
 the worker and its build time, plus history counts and signing time; worker
 restarts rebuild rather than reuse stale assets.
 
+Fixture builds opt in to Channel Settings → Diagnostics, which only developer
+builds render, unless a file sets `diagnostics: false`. Every other build except
+a `developmentReact` one is checked for the text only Diagnostics tools render,
+listed as `DIAGNOSTICS_LABELS` in `tests/browser/build.mjs`: a `diagnostics: false`
+bundle that carries any of it fails to build, and one with Diagnostics that lacks
+any of it fails too, which keeps the list current when a label is renamed.
+
 Declare `historyCounts` with `test.use` for built-app tests that do not need large
 histories, for example `{ alpha: 1, beta: 0 }`. Counts apply per community. Keep
 pagination, anchor and measurement datasets unchanged unless their behavior is

@@ -597,27 +597,34 @@ it.each(["rejected", "unknown", "unconfirmed"])(
   },
 );
 
-it("allows a new explicit addition after an expired failed request is dismissed", async () => {
+it("replaces an expired failed request on a new explicit addition", async () => {
   const t = setup();
   await t.ready();
   t.setFail("Rejected addition");
   await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
   const first = t.publish.mock.calls[0]?.[0].id;
   if (!first) throw new Error("Expected invitation");
-  const now = vi
-    .spyOn(Date, "now")
-    .mockReturnValue(Date.now() + 16 * 60 * 1000);
-  try {
-    await expect(t.managedAdd()).rejects.toThrow(/addition expired/);
-  } finally {
-    now.mockRestore();
-  }
-  await t.session.outbox?.dismiss(first);
-  expect(t.session.outbox?.snapshot()).toEqual([]);
   t.setFail("");
+  afterInvitationWindow(t);
   await t.managedAdd();
   expect(t.publish).toHaveBeenCalledTimes(2);
   expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
+  expect(t.records().find((item) => item.event.id === first)).toBeUndefined();
+});
+
+it("doesn't replace an expired failed request on Retry", async () => {
+  const t = setup();
+  await t.ready();
+  t.setFail("Rejected addition");
+  await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
+  const first = t.publish.mock.calls[0]?.[0].id;
+  t.setFail("");
+  afterInvitationWindow(t);
+  await expect(
+    t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true }),
+  ).rejects.toThrow(/addition expired/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()).toMatchObject([{ event: { id: first } }]);
 });
 
 it("keeps the exact failed request when durable dismissal fails", async () => {

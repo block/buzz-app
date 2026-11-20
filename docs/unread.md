@@ -357,7 +357,7 @@ shows "Preview updating…" instead of the text, or "Preview unavailable. Retry
 activity." if the check failed, as on the Activity page.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying observed count remains available.
-Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and
+In developer and browser test builds, Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and
 observed-zero both omit unread styling; the API preserves the distinction. There is
 no notification, feed, or exact-count service here.
 

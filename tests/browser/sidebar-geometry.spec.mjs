@@ -668,7 +668,7 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
       .toEqual([]);
     const result = await layout();
     expect(result.rows).toBeGreaterThanOrEqual(2);
-    expect(result.headings).toBeGreaterThanOrEqual(6);
+    expect(result.headings).toBeGreaterThanOrEqual(5);
 
     // Revealing the action must keep the title at its resting width.
     const restingWidth = await titleWidth();

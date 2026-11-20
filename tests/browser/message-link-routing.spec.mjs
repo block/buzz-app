@@ -1,3 +1,4 @@
+import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
   closeSettings,
@@ -67,6 +68,7 @@ async function links(page, app) {
     "alpha",
     urls.map((url) => `<${url}>`).join(" "),
   );
+  await expect(row(page, source.id)).toBeVisible();
   const activate = async (index) => {
     const link = row(page, source.id).locator(`a[href="${urls[index]}"]`);
     await expect(link).toBeVisible();
@@ -221,6 +223,7 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
   page,
   app,
 }) => {
+  await page.clock.install();
   await page.addInitScript(() =>
     localStorage.setItem("buzz-thread-placement.v1", "main"),
   );
@@ -228,14 +231,20 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
   await page.evaluate(() => {
     window.fixtureMessageLinks.mode = "hold";
   });
-  await activate(0);
   const conversation = page
     .locator("[data-main-workspace]")
     .getByRole("tab", { name: "Alpha", exact: true });
   try {
-    await expect
-      .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
-      .toBe(true);
+    // Let the relay deliver root proof before time can select ordinary reveal.
+    await pauseClock(page);
+    try {
+      await activate(0);
+      await expect
+        .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+        .toBe(true);
+    } finally {
+      await page.clock.resume();
+    }
     await conversation.click();
     await expect(conversation).toHaveAttribute("aria-selected", "true");
     await expect
@@ -346,24 +355,16 @@ withCompanion(
     await draft.focus();
     await page.evaluate(() => {
       void window.fixtureNavigation.open({ version: 1, kind: "settings" });
-      window.fixtureMessageLinks.mode = "hold";
     });
-    try {
-      const modal = page.getByRole("dialog", { name: "Settings", exact: true });
-      await expect(modal).toBeVisible();
-      await expect
-        .poll(() =>
-          modal.evaluate((element) => element.contains(document.activeElement)),
-        )
-        .toBe(true);
-      await page.keyboard.press("Escape");
-      await expect(modal).toHaveCount(0);
-      await expect
-        .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
-        .toBe(true);
-    } finally {
-      await page.evaluate(() => window.fixtureMessageLinks.release?.());
-    }
+    const modal = page.getByRole("dialog", { name: "Settings", exact: true });
+    await expect(modal).toBeVisible();
+    await expect
+      .poll(() =>
+        modal.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
     await expect(draft).toHaveValue("Keep this draft");
     await expect(draft).toBeFocused();
     expect(

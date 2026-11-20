@@ -52,6 +52,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
   afterEach,
+  assert,
   beforeAll,
   beforeEach,
   describe,
@@ -102,7 +103,12 @@ import {
 } from "../decisions/service";
 import { TypeSafeKey } from "../../bundled/typesafe/key";
 import { typesafeProvider } from "../../bundled/typesafe";
-import { CATCH_UP_PREFIX, MENTIONS, readCheckpoints } from "./catch-up";
+import {
+  CATCH_UP_PREFIX,
+  MENTIONS,
+  readCheckpoints,
+  streamKey,
+} from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
@@ -11019,6 +11025,83 @@ it("does not catch up after a restart on a message it already heard live", async
     await settle();
     expect(heard(second.run)).toEqual(["unheard"]);
   } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("saves each replay slice once and recovers without redelivering it", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  const start = nowSeconds();
+  const storage = memoryStorage();
+  const save = vi.spyOn(storage, "set");
+  const first = await setup({ storage, identities: [echo] });
+  try {
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/chat": { ...chat["watch/chat"], authors: [author.pubkey] },
+        "watch/channel": null,
+      },
+    });
+    const agent = first.service.find(bot);
+    assert.exists(agent);
+    const checkpoint = streamKey(agent.key, "watch/chat", channel);
+    await vi.waitFor(() =>
+      expect(readCheckpoints(storage)[checkpoint]?.through).toBe(start),
+    );
+    vi.setSystemTime((start + 1) * 1000);
+    const other = keypair();
+    const sent = Array.from({ length: 120 }, (_, index) =>
+      index < 5
+        ? posted(`matched ${index}`, start + 1)
+        : eventDto(message(other, channel, `other ${index}`, start + 1)),
+    );
+    for (let index = 0; index < sent.length; index += 12) {
+      save.mockClear();
+      first.emit({
+        replay: true,
+        channelId: channel,
+        events: sent.slice(index, index + 12),
+      });
+      await settle();
+      expect(
+        save.mock.calls.filter(([key]) => key.startsWith(CATCH_UP_PREFIX)),
+      ).toHaveLength(1);
+    }
+    expect(heard(first.run)).toEqual([
+      "matched 0",
+      "matched 1",
+      "matched 2",
+      "matched 3",
+      "matched 4",
+    ]);
+    expect(
+      readCheckpoints(storage)
+        [checkpoint]?.heard?.map(({ id }) => id)
+        .sort(),
+    ).toEqual(sent.map(({ id }) => id).sort());
+    save.mockClear();
+    first.emit({ replay: true, channelId: channel, events: sent.slice(0, 12) });
+    await settle();
+    expect(heard(first.run)).toHaveLength(5);
+    expect(
+      save.mock.calls.filter(([key]) => key.startsWith(CATCH_UP_PREFIX)),
+    ).toHaveLength(0);
+
+    first.connect(false);
+    vi.setSystemTime((start + 2) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...sent, posted("unheard", start + 1)],
+    });
+    try {
+      await vi.waitFor(() => expect(heard(second.run)).toEqual(["unheard"]));
+    } finally {
+      await second.ctx.fiber.dispose();
+    }
+  } finally {
+    await first.ctx.fiber.dispose();
     vi.useRealTimers();
   }
 });

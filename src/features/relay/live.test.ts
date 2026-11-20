@@ -179,9 +179,10 @@ describe("native live verification", () => {
     const host = gate();
     const h = setup(["a"], undefined, undefined, undefined, host.check);
     const delivered: string[] = [];
-    h.callbacks.receive.mockImplementation(([event], provenance) =>
-      delivered.push(`${event?.content}:${provenance?.phase}`),
-    );
+    h.callbacks.receive.mockImplementation((events, provenance) => {
+      for (const event of events)
+        delivered.push(`${event.content}:${provenance?.phase}`);
+    });
     h.callbacks.established.mockImplementation((channel) => {
       if (channel === "a") delivered.push("EOSE");
     });
@@ -217,6 +218,35 @@ describe("native live verification", () => {
         "restricted: not a channel member",
       );
       expect(verifyEvent).not.toHaveBeenCalled();
+    } finally {
+      host.release();
+      h.owner.dispose();
+    }
+  });
+
+  it("delivers a 120-event replay in at most 12 calls, in wire order", async () => {
+    const host = gate();
+    const h = setup(["a"], undefined, undefined, undefined, host.check);
+    try {
+      await h.first.auth();
+      const route = channelRequest(h.first);
+      const events = Array.from({ length: 120 }, (_, index) =>
+        message(h.key, "a", `replayed ${index}`, 1700000120 - index),
+      );
+      const frames = events.map((event) =>
+        h.first.receive(["EVENT", route[1], event]),
+      );
+      const eose = h.first.receive(["EOSE", route[1]]);
+      await vi.waitFor(() => expect(host.check).toHaveBeenCalledOnce());
+      host.release();
+      await Promise.all([...frames, eose]);
+
+      const calls = h.callbacks.receive.mock.calls;
+      expect(calls.length).toBeLessThanOrEqual(12);
+      expect(calls.flatMap(([batch]) => batch)).toEqual(events);
+      for (const [, provenance] of calls)
+        expect(provenance).toEqual({ phase: "replay", channelId: "a" });
+      expect(h.callbacks.established).toHaveBeenCalledWith("a");
     } finally {
       host.release();
       h.owner.dispose();

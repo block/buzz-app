@@ -196,6 +196,7 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
       registerChatIcon: () => {},
       registerChatMenu: () => {},
       registerLink: () => {},
+      registerLinkPreview: () => {},
     },
     relay,
     agents: {
@@ -247,6 +248,7 @@ it("lets github_link_pr link a Solo chat its agent started for the owner", async
       registerChatIcon: () => {},
       registerChatMenu: () => {},
       registerLink: () => {},
+      registerLinkPreview: () => {},
     },
     relay,
     agents: {

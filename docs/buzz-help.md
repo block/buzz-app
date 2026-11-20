@@ -157,6 +157,11 @@ if that desktop app is up and running.
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
   Types are `bar`, `line` and `scatter`.
+- **GitHub code links.** A link to a file on github.com gets a card;
+  **Open file** shows it highlighted. A line or range link (`#L42-L60`) shows
+  those lines in the card. A link to lines in a pull request's changes lets
+  you comment on them with **Post comment**, as your `gh` account (desktop
+  only). Without `gh`, public files still show.
 
 ## Agents
 

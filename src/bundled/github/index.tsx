@@ -28,6 +28,7 @@ import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import {
   gitHubCli,
+  gitHubComment,
   gitHubDiff,
   GitHubError,
   type GitHubCli,
@@ -70,6 +71,8 @@ import { createPanelMemory, type PanelMemory } from "./panel-memory";
 import { PullFiles } from "./PullFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
+import { CodePreview } from "./CodePreview";
+import { createCodeReader, parseCodeLink } from "./code";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
@@ -148,6 +151,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: -1,
     className: inlineStyles.link,
     component: ({ url }) => <GitHubLink url={url} states={states} />,
+  });
+  const code = createCodeReader(gh);
+  const comment = gitHubComment(ctx.host);
+  ctx.conversation.registerLinkPreview({
+    id: "code",
+    title: "Code viewer",
+    matches: (url) => !!parseCodeLink(url),
+    component: ({ url }) => (
+      <CodePreview url={url} reader={code} comment={comment} />
+    ),
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu

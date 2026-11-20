@@ -586,8 +586,8 @@ Quitting Buzz also turns it off.
   from someone with permission.
 - **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear
-  in **Solo**, **Team**, **Forums**, or **Direct messages**. Reorder any section,
-  including **Starred**, by dragging its heading or using **Move up** and
+  in **Solo**, **Team** (channels and forums), or **Direct messages**. Reorder
+  any section, including **Starred**, by dragging its heading or using **Move up** and
   **Move down** in its **…** menu. Escape cancels a drag.
   The arrow beside a workspace’s creation icon offers **New chat**, **New channel**
   and **New DM**. The last choice becomes that workspace’s icon and primary action.
@@ -1168,7 +1168,7 @@ Quitting Buzz also turns it off.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
 - **Sidebar sections** default to **Solo**, **Starred**, your workspaces,
-  **Team**, **Forums**, then **Direct messages**. After an upgrade from the
+  **Team**, then **Direct messages**. After an upgrade from the
   separate Solo and Team sidebars, Buzz keeps their order: workspaces from the
   previous Solo sidebar, **Solo**, **Starred**, workspaces from the previous
   Team sidebar, then **Team**. A saved section order takes precedence.
@@ -1186,8 +1186,8 @@ Quitting Buzz also turns it off.
   sidebar preferences.
 - **Moving conversations** works by dragging or choosing **Move to…** from the
   row’s menu. Workspaces and **Starred** accept any type. Unfiled conversations
-  return to the home for their type, **Solo**, **Team**, **Forums** or
-  **Direct messages**.
+  return to the home for their type: **Solo** for chats, **Team** for channels
+  and forums, or **Direct messages**.
 - Saved workspaces, stars, mutes, sorting and filters update while connected in
   hosts that support saved sidebar preferences. Moving a starred conversation
   to a workspace or home section from the sidebar clears its star.

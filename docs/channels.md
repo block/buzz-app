@@ -152,8 +152,8 @@ coordinates must satisfy the recipe contract.
 Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
 list. When the pinned rows run out of vertical space, scroll their area to see
 the rest. The conversation sections default to **Solo**, **Starred**,
-workspaces, **Team**, **Forums**, and **Direct messages**. After an upgrade from
-the separate Solo and Team sidebars, the previous Solo workspaces come first,
+workspaces, **Team** (channels and forums), and **Direct messages**. After an
+upgrade from the separate Solo and Team sidebars, the previous Solo workspaces come first,
 then **Solo**, **Starred**, the previous Team workspaces and **Team**.
 Reorder them by dragging their headings or using **Move up** and **Move down**.
 The saved order syncs with workspace placement.

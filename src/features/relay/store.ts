@@ -556,6 +556,8 @@ export function createChannelStore(
     state.cursor = cursor;
     state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
   }
+  /** Events the live stream delivered, as opposed to a read. */
+  const heard = new WeakSet<RelayEvent>();
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
@@ -563,8 +565,12 @@ export function createChannelStore(
       // viewer's own confirmed sends can carry rows from before the loaded
       // history. Showing one leaves a gap that a later page fills mid-list,
       // where the timeline can neither anchor the reader nor tell it from new
-      // arrivals. That page shows them instead.
+      // arrivals. That page shows them instead. Until a page sets the floor,
+      // history's extent is unknown, not unbounded: a row read beside the
+      // first page (a Huddle card, say) waits for it. The live stream's rows
+      // are newer than any page, so they show at once.
       const more = patch.hasMore ?? state.snapshot.hasMore;
+      const extent = !more || state.floor !== undefined;
       const shown =
         (floor: number | undefined) => (event: import("./events").EventData) =>
           !channelRowKind(event.kind) ||
@@ -575,6 +581,10 @@ export function createChannelStore(
       const combined = new Map(
         [...state.events, ...notices, ...state.traffic.values()]
           .filter(shown(more ? state.floor : undefined))
+          .filter(
+            (event) =>
+              extent || !channelRowKind(event.kind) || heard.has(event),
+          )
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
@@ -4222,8 +4232,9 @@ export function createChannelStore(
     }
   });
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
-  function accept(events: readonly RelayEvent[]) {
+  function accept(events: readonly RelayEvent[], live = false) {
     if (disposed || !transport) return;
+    if (live) for (const event of events) heard.add(event);
     const generation = epoch;
     const changedChannels = new Set(
       events.flatMap((event) =>

@@ -7,6 +7,7 @@ import react from "@vitejs/plugin-react";
 import { entityDecoderAlias } from "./scripts/entity-decoder-alias.mjs";
 import { diffHighlighterAliases } from "./scripts/diff-highlighter-aliases.mjs";
 import { worktreePort } from "./scripts/worktree-port.mjs";
+import { captureBuildIdentity } from "./scripts/build-identity.mjs";
 import {
   parseCommunityAliases,
   relayOrigin,
@@ -94,6 +95,12 @@ function federatedBuilderlabUrl(legacy: string | undefined, live: boolean) {
 
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
+  const frontendIdentity = captureBuildIdentity(
+    fileURLToPath(new URL(".", import.meta.url)),
+    {
+      mutable: command === "serve",
+    },
+  );
   // Native builds consume only process values and repository-root .env.local.
   // Keep this frontend value on the same source so Vite mode files cannot
   // select a different same-origin deployment path.
@@ -217,6 +224,12 @@ export default defineConfig(async ({ command, mode }) => {
     plugins,
     resolve: { alias: [entityDecoderAlias, ...diffHighlighterAliases] },
     define: {
+      "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_REVISION": JSON.stringify(
+        frontendIdentity.revision ?? "",
+      ),
+      "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_STATE": JSON.stringify(
+        frontendIdentity.state,
+      ),
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_AGENT_GATEWAY": JSON.stringify(
         gateway ? JSON.stringify(gateway) : "",

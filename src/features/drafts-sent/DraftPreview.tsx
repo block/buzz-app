@@ -24,6 +24,7 @@ import { mentionDraft } from "../messages/mention-draft";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelWindow } from "../relay/react";
+import { flushPendingDraft } from "../messages/MessageComposer";
 import { readView, viewRevision } from "../../shared/view-state";
 import { writeClipboardText } from "../../shared/clipboard";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -103,6 +104,7 @@ export function DraftPreview({
       sent &&
       received === sent &&
       attachmentCount === 0 &&
+      flushPendingDraft(session.scope, entry.id) &&
       viewRevision(session.scope, entry.id) === cleaned.revision
     )
       onSaved(

@@ -543,8 +543,10 @@ settles on the head commit, once per commit and result and again when a failure
 is run again, or when new feedback has been quiet for 90 seconds, and once more
 when the pull request merges or closes, so the agent can finish and retire its
 Interest. It also wakes for what nothing else would on the way to merging:
-merge conflicts; checks pending on one commit for 3 hours; an approved, green
-pull request that must catch up with its base; auto-merge turned off, or the
+merge conflicts; checks pending on one commit for 3 hours; losing its approval
+(GitHub wants a review again; it waits for running checks until they count as
+stuck, and changes requested come as that review's feedback instead); an
+approved, green pull request that must catch up with its base; auto-merge turned off, or the
 pull request leaving the merge queue, while it is open; and looking ready to
 merge (approved, checks that block merging passed, no conflicts or unresolved
 review threads, not a draft, auto-merge off). Recovering wakes nothing, a merge
@@ -722,9 +724,10 @@ conversation with
 `ctx.agents.setConversationInstructions(pubkey, { channelId, root? }, text)`.
 Every turn of that agent there then ends with an `<owner-instructions>`
 section naming the plugin, after any `<plugin-instructions>`; Mesh agents get
-none. The base prompt ranks the section with the agent's instructions: the
-owner's messages override it, and it overrides a Solo chat's Canvas. New text
-replaces the old; empty text clears it, and later turns there say no such
+none. The base prompt ranks the section below its own sections: the owner's
+messages, a Solo chat's Canvas that the owner wrote, the agent's instructions
+and the base instructions override it, and it overrides a Canvas that an agent
+wrote and any `<plugin-instructions>`. New text replaces the old; empty text clears it, and later turns there say no such
 instructions apply now. While the agent is not in the channel, its turns there
 say so too. Text is at most 8192 UTF-8 bytes after trimming and is sent with
 every turn. `place` names the conversation as session controls do: a root for
@@ -735,6 +738,44 @@ deleted; another program that does not share this device's agent state does
 not see it. `ctx.agents.conversationInstructions(pubkey, place)` resolves
 with the text, or undefined. Plugins feature-detect the methods.
 
+A plugin whose manifest declares `host.agentPromptSections` replaces sections
+of the base prompt for the owner's local agent in one conversation with
+`ctx.agents.setConversationSections(pubkey, { channelId, root? }, sections)`.
+`sections` maps a section ID to the plugin's text for it. The plugin that
+holds a conversation's set manages that conversation: the agent's next turn
+there gets each text in place of the section's default text, in a
+`<plugin-section>` wrapper that names the plugin, and the base prompt ranks it
+as the section it replaces. A running session gets a changed section at its
+next turn: Claude restarts its process and resumes the session, Codex sends
+the changed sections to the resumed thread, Goose gives the session the new
+prompt in place, and Pi sends the conversation its instructions with each
+turn. A message that steers a turn already running does not change that turn's
+prompt. A Codex thread saved by a Buzz version that did not keep its sections
+cannot be told which sections changed: a local one starts a new thread once,
+without its earlier context, and one on an execution target stops with an
+error that asks for a new session. Each call replaces the plugin's
+whole set, and an empty set clears it. Each ID must be one the manifest
+declares, each text has from 1 to 4096 UTF-8 bytes after trimming, and the set
+at most 12 KiB; a plugin cannot turn a section off. `place` follows the rules
+of conversation instructions. The call rejects while another plugin that is on
+manages the conversation, also while that plugin starts, updates or failed to
+start. The host uses a text only while the plugin is active, its manifest still
+declares the section and the agent's type supports the sections. An agent on an
+execution target uses no `working-location` text, as no plugin can give its
+conversations their own folders. An agent with one session for its whole
+community has one prompt for every conversation: the call rejects for it, and
+it uses no text kept from before. The owner's own choice for a section
+in **Settings → Agent setup → Base instructions** wins over the plugin's text,
+and a protected agent uses no plugin text.
+`ctx.agents.conversationSections(pubkey, place)` resolves with the plugin's
+set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`,
+`"protected"`, `"target"` or `"community"` when a prompt does not use the text, or with undefined when
+the plugin holds none there. When the plugin replaces `working-location` in a
+Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
+folder. The set is kept on this device, survives a restart, and is dropped
+when the agent is deleted. Claude, Codex, Goose and Pi (`conversationSections`
+on the type) support it; other harnesses reject. Plugins feature-detect the methods.
+
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
 or publishing a message. Pass the thread root for a thread conversation.
@@ -743,8 +784,12 @@ thread-scoped sessions take only notes addressed to their root. Notes are
 consumed once when the harness is ready to deliver the turn, and restored to
 the same conversation ahead of newer notes if delivery definitely never began.
 They remain in memory only, and the call returns false unless this copy runs
-the agent. Pi agents don't take notes yet: the call still returns true for one,
-but its turns never include the note.
+the agent. A turn whose outcome is unknown, such as one that fails after its
+prompt is built, does not get its notes back, so a note is never shown twice.
+Claude, Codex, Goose and Pi show notes and advertise it with `notes` on the
+type. Without the flag, support is unadvertised: a harness that builds its
+turns with `ctx.agents.harness.turnPrompt` still shows notes, and another one
+never does. The call returns true either way.
 
 A plugin with `host.files` gives one conversation of the owner's local agent
 its own working folder with
@@ -762,17 +807,27 @@ takes no folder. `path` is absolute or `~/…` and must be an existing
 directory; the call resolves with it as a real path. The folder is kept only on
 this device and is set once: the same folder again resolves, another rejects,
 because a session's history is found by the folder it ran in. For the same
-reason, a conversation that already has a session in the workspace rejects:
-the harness's `sessions` list names the conversations that do. If the folder
-later disappears, the conversation's next turn fails with an error naming it
+reason, a conversation that already started in the workspace rejects. A
+harness records that when it first starts the conversation's session, in the
+same record the folder is saved in, so a start and an assignment that race have
+one winner: the later one sees it. For a conversation that started before this
+record existed, the harness's `sessions` list names the conversations that
+have a session, and a harness whose list forgets old sessions (`sessions.history`;
+Goose keeps the latest 200) is also asked for the conversation's own history.
+A harness whose list can be behind (`sessions.ready`) is waited for first: Pi
+reads its sessions in the background, and Goose and Pi finish starting the
+conversation's first turn if one is under way.
+The call rejects when the sessions or history cannot be read, as for a Pi agent
+that is not running.
+If the folder later disappears, the conversation's next turn fails with an error naming it
 and never falls back to the workspace. The folder applies on the device that
 runs the agent, so messages from any of the owner's clients, such as mobile,
 start there. Another program that does not share this device's agent state,
 such as a development build with its own storage, an older build or another
 computer, does not see the folder and starts the conversation in the
 workspace. `ctx.agents.conversationFolder(pubkey,
-place)` returns the folder. Claude and Codex (`conversationFolders` on the
-type) support folders; other harnesses and agents on an execution target
+place)` returns the folder. Claude, Codex, Goose and Pi (`conversationFolders`
+on the type) support folders; other harnesses and agents on an execution target
 reject. Plugins feature-detect the method.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
@@ -1808,6 +1863,28 @@ Packaged GUI quit/relaunch, real-relay agent ownership admission and hosted
 cross-platform checks are separate gates; consult the pull request for results
 tied to its head.
 
+## Relayed messages
+
+A plugin that relays an agent's text into another conversation as the agent's
+owner tags the kind 9 message `["relayed-from", <agent pubkey>, <source channel id>]`.
+The source channel is optional, and the plugin sends it to every audience so
+every member sees the same row. Content up to and including the first blank
+line is the relaying sender's notice for clients that do not read the tag.
+
+The app honours the tag only while the agent's cryptographically verified owner
+(`profiles.queries.owner`) signed the message as its author, and only for one
+well-formed tag naming someone other than the signer. A relay-signed message
+attributed to the owner does not qualify. The row omits the signed original's
+notice only while the shown text, after any edit, still starts with it. `relayedFrom.verified`
+records that check in the fold, which refolds when the owner verdict changes.
+`rowProfileIds` includes the claimed agent so its profile, and with it the
+verdict, loads with the row. A verified row is drawn as the agent's collapsed
+line without the notice, never right-aligned as the viewer's own and never
+grouped with the author's messages. It names the source chat only when it is
+in the viewer's joined list. Unverified, conflicting or malformed claims leave
+an ordinary message with its notice. The content is unchanged for every other
+consumer, including unread counts and agent context.
+
 ## Shared identity names
 
 Distinct agent keys with the same displayed name receive a short npub suffix,
@@ -2040,8 +2117,8 @@ the subagent threads each one spawned. Codex records no cost. A standalone turn
 runs on an ephemeral thread, which Codex keeps no rollout for, so Usage does not
 count it.
 
-Goose lists the agent's sessions in its workspace through `goose-acp`, as its
-Activity tab does, and reads the usage goose saves on each reply, with goose's
+Goose lists the agent's sessions in its workspace, and in the folders its
+conversations were given, through `goose-acp`, as its Activity tab does, and reads the usage goose saves on each reply, with goose's
 own cost estimate where it has one. Both count a request's cached tokens in its
 input, which the readers subtract. Goose and Pi also count a standalone turn's
 session, which has no `channelId`; Pi finds it by the same kept record and

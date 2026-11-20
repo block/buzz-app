@@ -5,6 +5,7 @@ import {
   useEffectEvent,
   useId,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -87,6 +88,10 @@ export function ToastProvider({
   portalContainer?: HTMLElement | undefined;
 }) {
   const id = useId();
+  // WebKitGTK can crash while compositing an animated blur on a toast.
+  const skipBlur =
+    globalThis.navigator?.platform?.startsWith("Linux") &&
+    navigator.vendor === "Apple Computer, Inc.";
   useEffect(() => {
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
@@ -121,7 +126,11 @@ export function ToastProvider({
           visibleToasts={Infinity}
           hotkey={["F6"]}
           customAriaLabel="App notifications"
-          className="buzz-toast-viewport"
+          className={
+            skipBlur
+              ? "buzz-toast-viewport buzz-toast-no-blur"
+              : "buzz-toast-viewport"
+          }
         />,
         portalContainer ?? document.body,
       )}
@@ -269,6 +278,7 @@ export function ToastNotice({
   );
   const dismissed = useEffectEvent(() => onDismiss?.());
   const dismissible = timeout > 0 || !!onDismiss;
+  const closeNotice = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
     let active = true;
     let closed = false;
@@ -278,6 +288,7 @@ export function ToastNotice({
       source.update(null);
       dismissed();
     };
+    closeNotice.current = onClose;
     toast.custom(() => <NoticeContent source={source} />, {
       id,
       toasterId,
@@ -287,6 +298,7 @@ export function ToastNotice({
     });
     return () => {
       active = false;
+      closeNotice.current = undefined;
       source.update(null);
       toast.dismiss(id);
     };
@@ -311,6 +323,7 @@ export function ToastNotice({
       onClose: dismissible
         ? () => {
             toast.dismiss(id);
+            closeNotice.current?.();
           }
         : undefined,
     });

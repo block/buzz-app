@@ -217,12 +217,15 @@ export function useDrafts(session: Session | undefined) {
     const refresh = () => show(readDrafts(session));
     refresh();
     // Other view keys (scroll places, panels) never change the draft list, and
-    // a keystroke in a listed draft re-reads only that draft.
-    const stopViews = subscribeView(session.scope, (key) => {
-      if (key === undefined) refresh();
-      else if (draftCoordinates(key))
-        show(rereadDraft(session, current, key) ?? readDrafts(session));
-    });
+    // a save to a listed draft re-reads only that draft.
+    const stopViews = subscribeView(
+      session.scope,
+      (key) => {
+        if (key === undefined) refresh();
+        else show(rereadDraft(session, current, key) ?? readDrafts(session));
+      },
+      (key) => !!draftCoordinates(key),
+    );
     const stopFiles = subscribeAttachmentDraftCounts(
       session as Parameters<typeof subscribeAttachmentDraftCounts>[0],
       refresh,

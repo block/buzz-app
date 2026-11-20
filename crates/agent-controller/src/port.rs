@@ -49,6 +49,9 @@ pub struct Portable {
     pub about: Option<String>,
     /// The community it was saved for there; the new identity uses the open one.
     pub relay: String,
+    /// When old Buzz last started it, as old Buzz saved it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_started: Option<String>,
     /// Public saved runtime choices, not credentials or proof of readiness.
     pub connection: SavedConnection,
     /// Settings any type may adopt. Only taking the agent over reports them.
@@ -375,6 +378,9 @@ fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Po
             picture,
             about: description(source, record, records),
             relay,
+            last_started: (!harness)
+                .then(|| present(text("last_started_at")))
+                .flatten(),
             connection: connection::saved(source, record, records),
             carry: Carry {
                 // Old Buzz ran an instance's own prompt, never its definition's.

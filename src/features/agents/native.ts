@@ -61,6 +61,8 @@ export type PortableAgent = Readonly<{
   picture?: string;
   /** The community it was saved for there, if valid. */
   relay: string;
+  /** When old Buzz last started it, as old Buzz saved it. */
+  lastStarted?: string;
 }>;
 /** An old Buzz team as old Buzz last saved it, keyed by its old ID. */
 export type OldTeam = Readonly<{

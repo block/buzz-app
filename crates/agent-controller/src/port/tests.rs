@@ -71,7 +71,8 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
         json!([
             {"pubkey": shared.pubkey(), "name": "Ada (old)", "relay_url": "wss://old.example"},
             {"pubkey": old.pubkey(), "name": " Bea ", "relay_url": "wss://old.example/",
-             "avatar_url": "https://old.example/media/b.png"},
+             "avatar_url": "https://old.example/media/b.png",
+             "last_started_at": "2026-07-20T10:00:00Z"},
             // A persona with no identity, and an unnamed identity.
             {"pubkey": "", "name": "Persona"},
             {"pubkey": key().pubkey(), "name": ""},
@@ -99,6 +100,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: Some("data:image/png;base64,iVBO".into()),
                 about: None,
                 relay: "wss://relay.example".into(),
+                last_started: None,
                 carry: Carry::default(),
             },
             Portable {
@@ -112,6 +114,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: Some("https://old.example/media/b.png".into()),
                 about: None,
                 relay: "wss://old.example".into(),
+                last_started: Some("2026-07-20T10:00:00Z".into()),
                 carry: Carry::default(),
             },
             Portable {
@@ -125,6 +128,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: None,
                 about: None,
                 relay: String::new(),
+                last_started: None,
                 carry: Carry::default(),
             },
         ]

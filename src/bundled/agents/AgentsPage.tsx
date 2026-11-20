@@ -144,6 +144,7 @@ import {
 } from "./routes";
 import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 
@@ -1770,6 +1771,10 @@ function PeekIdentity({
 const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 const sentence = (text: string) => text.replace(/\.?$/, ".");
 const LEGACY = "Buzz (Legacy)";
+const lastRun = (saved?: string) => {
+  const at = Date.parse(saved ?? "");
+  return !Number.isNaN(at) && `Ran ${relativeTimestamp(at / 1000)}`;
+};
 
 /** The owner's teams with members `joinable` can add here: adding them gives
  * the team, which every community shares, its members here too. */
@@ -2203,8 +2208,9 @@ function ImportAgents({
               community={agent.relay || undefined}
               detail={[
                 LEGACY,
-                // Its key tells it apart only from one of the same name.
-                named.get(agent.name) !== 1 && labels.get(agent.pubkey),
+                // Its last run, else its key, tells it apart only from one of the same name.
+                named.get(agent.name) !== 1 &&
+                  (lastRun(agent.lastStarted) || labels.get(agent.pubkey)),
               ]
                 .filter(Boolean)
                 .join(" · ")}

@@ -618,6 +618,9 @@ out.command = await auth.read("c").catch((error) => error.message);
 process.env.BUZZ_PI_TEST_KEY = "secret";
 await auth.modify("e", async () => ({ type: "api_key", key: "$BUZZ_PI_TEST_KEY" }));
 out.environment = await auth.read("e").catch((error) => error.message);
+// Removing one provider's entry leaves the others.
+await auth.delete("c");
+out.afterDelete = Object.keys(await auth.all());
 // A read waits out a write \`pi\` makes in place under the same lock, rather
 // than seeing it half done; the pause gives a read that didn't wait its chance.
 const writing = await lockfile.lock(data + "/auth.json", { realpath: false });
@@ -627,9 +630,6 @@ await new Promise((resolve) => setTimeout(resolve, 100));
 await writeFile(data + "/auth.json", JSON.stringify({ p: signIn }));
 await writing();
 out.whileWritten = await reading;
-// Removing one provider's entry leaves the others.
-await auth.delete("c");
-out.afterDelete = Object.keys(await auth.all());
 // A failure after native acceptance precedes the history-watermark commit.
 pi = start();
 await pi.rpc("open", { agent, tools });

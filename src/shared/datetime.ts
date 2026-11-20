@@ -195,6 +195,14 @@ export function formatTime(unixSeconds: number): string {
   return dateFormats().time.format(new Date(unixSeconds * 1_000));
 }
 
+/** Two clock times as one range, sharing what they share: "9:30 – 9:41 AM". */
+export function formatTimeRange(startSeconds: number, endSeconds: number) {
+  return dateFormats().time.formatRange(
+    startSeconds * 1_000,
+    endSeconds * 1_000,
+  );
+}
+
 /** A continuation clock without the day period, sharing the full date's settings. */
 export function formatCompactTime(unixSeconds: number): string {
   return dateFormats()

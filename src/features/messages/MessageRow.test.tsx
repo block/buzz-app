@@ -5606,10 +5606,12 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
     const trigger = screen.getByRole("button", {
       name: "Zerk from #rebase: Rebase on main",
     });
-    expect(trigger).not.toHaveTextContent("Relayed for");
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The source chat stays a link on the line, above its button.
+    expect(screen.getByRole("link", { name: /rebase/ })).toBeVisible();
     expect(view.container.querySelector("[data-viewer-message]")).toBeNull();
     fireEvent.click(trigger);
-    expect(screen.getByText("Sent as Gil · to Juno")).toBeVisible();
+    expect(screen.getByText("Sent as you · to Juno")).toBeVisible();
     expect(screen.getByText("Rebase on main")).toBeVisible();
     expect(screen.queryByText(/Relayed for/)).toBeNull();
     // The line carries no reactions row.
@@ -5626,7 +5628,8 @@ it("draws a verified relayed message as its agent's quiet line, never the signer
       screen.getByRole("button", {
         name: "Zerk from #rebase: Rebase on main, 2 replies",
       }),
-    ).toHaveTextContent("2 replies");
+    ).toBeVisible();
+    expect(screen.getByText("2 replies")).toBeVisible();
     // A chat the reader is not in stays unnamed.
     view.rerender(<MessageRow {...props} row={relayed(true, "elsewhere")} />);
     expect(

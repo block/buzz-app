@@ -21,6 +21,7 @@ import {
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
+  CaretUpIcon,
   DotsThreeIcon,
   LightningIcon,
   RobotIcon,
@@ -2176,7 +2177,7 @@ function RelayedMessageRow(props: MessageRowProps) {
       stackNext
       renderMessage={(message, trigger) => (
         <div
-          className={styles.audienceRow}
+          className={styles.relayedRow}
           data-relayed=""
           data-layout={props.layout ?? "timeline"}
           data-open={open || undefined}
@@ -2185,19 +2186,21 @@ function RelayedMessageRow(props: MessageRowProps) {
           <Collapsible.Root
             open={open}
             onOpenChange={setOpen}
-            className={`${styles.audienceEntry} ${styles.relayedEntry}`}
+            className={styles.relayedEntry}
             data-highlight-surface=""
             data-thread-open={props.threadOpen || undefined}
             aria-current={props.threadOpen ? true : undefined}
             data-message-id={row.id}
           >
-            <Collapsible.Trigger
-              ref={trigger}
-              data-buzz-ui=""
-              className={`${styles.audienceLine} ${styles.relayedLine}`}
-              aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${row.replyCount > 0 ? `, ${row.replyCount === 1 ? "1 reply" : `${row.replyCount} replies`}` : ""}`}
-            >
-              <span className={styles.audienceAvatar} title={agent.name}>
+            {/* The whole line opens it; only the source chat link sits above. */}
+            <div className={styles.relayedHeader} data-open={open || undefined}>
+              <Collapsible.Trigger
+                ref={trigger}
+                data-buzz-ui=""
+                className={styles.relayedTrigger}
+                aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${row.replyCount > 0 ? `, ${row.replyCount === 1 ? "1 reply" : `${row.replyCount} replies`}` : ""}`}
+              />
+              <span className={styles.relayedAvatar} aria-hidden="true">
                 <AgentAvatar
                   session={session}
                   agentPubkey={source.agent}
@@ -2213,60 +2216,67 @@ function RelayedMessageRow(props: MessageRowProps) {
                   }
                 />
               </span>
-              {!open && (
-                <span className={styles.audiencePreviewText}>
-                  <span className={styles.relayedSource}>
-                    {agent.name}
-                    {chatLabel && ` from ${chatLabel}`}
-                  </span>{" "}
-                  {preview}
+              <span className={styles.relayedName} aria-hidden="true">
+                {agent.name}
+              </span>
+              {chat && (
+                <>
+                  <span className={styles.relayedSubtle} aria-hidden="true">
+                    from
+                  </span>
+                  <span className={styles.relayedChat}>
+                    <MessageLink
+                      url={`buzz://channel/${encodeURIComponent(chat.id)}`}
+                      label={chatLabel}
+                      registry={props.extensions?.links}
+                      onOpenLink={(url) => props.onOpenLink(url)}
+                      session={session}
+                      scope={props.scope}
+                      channelPrivate={!!chat.private}
+                    />
+                  </span>
+                </>
+              )}
+              <span className={styles.relayedPreview} aria-hidden="true">
+                {!open && preview}
+              </span>
+              {!open && row.edited && (
+                <span aria-hidden="true">
+                  <EditedMarker />
                 </span>
               )}
-              {!open && row.edited && <EditedMarker />}
               {/* Opening the line shows the thread control and its unread cue. */}
               {!open && row.replyCount > 0 && (
-                <span className={styles.relayedSource}>
+                <span className={styles.relayedSubtle} aria-hidden="true">
                   {row.replyCount === 1
                     ? "1 reply"
                     : `${row.replyCount} replies`}
                 </span>
               )}
-              {!open && (
-                <span className={styles.relayedTime}>
-                  <MessageTimestamp createdAt={row.createdAt} compact />
-                </span>
+              <span className={styles.relayedTime} aria-hidden="true">
+                <MessageTimestamp createdAt={row.createdAt} />
+              </span>
+              {open && (
+                <CaretUpIcon
+                  className={styles.relayedCaret}
+                  aria-hidden="true"
+                />
               )}
-            </Collapsible.Trigger>
+            </div>
             <Collapsible.Panel
-              className={`${styles.audiencePanel} ${styles.audienceBody}`}
+              className={styles.relayedPanel}
               inert={!open || undefined}
               aria-hidden={!open || undefined}
             >
-              <div className={styles.activityExpansionContent}>
-                <div className={styles.audienceContent}>
-                  <span className={styles.relayedSource}>
-                    {agent.name}
-                    {chat && (
-                      <>
-                        {" from "}
-                        <MessageLink
-                          url={`buzz://channel/${encodeURIComponent(chat.id)}`}
-                          label={chatLabel}
-                          registry={props.extensions?.links}
-                          onOpenLink={(url) => props.onOpenLink(url)}
-                          session={session}
-                          scope={props.scope}
-                          channelPrivate={!!chat.private}
-                        />
-                      </>
-                    )}
-                  </span>
-                  {message}
-                  <p className={styles.relayedFooter}>
-                    Sent as {name(row.authorId)}
-                    {recipients.length > 0 && ` · to ${recipients.join(", ")}`}
-                  </p>
-                </div>
+              <div className={styles.relayedBody}>
+                {message}
+                <p className={styles.relayedFooter}>
+                  Sent as{" "}
+                  {row.authorId === (props.viewer ?? session?.viewer)
+                    ? "you"
+                    : name(row.authorId)}
+                  {recipients.length > 0 && ` · to ${recipients.join(", ")}`}
+                </p>
               </div>
             </Collapsible.Panel>
           </Collapsible.Root>

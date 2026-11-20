@@ -4137,37 +4137,147 @@ html[data-keyboard-navigation] .activityExpansion {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
-/* A relayed line names the agent that wrote it and the chat it came from. */
-.relayedSource {
-  color: var(--text-subtle);
+/* A relayed line spans the row in the message's own columns: the agent's
+   avatar centered on the avatar column, its text where bubbles start. */
+.relayedRow,
+.relayedRun {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-3));
+  --relayed-avatar-offset: var(--space-1);
+  --relayed-avatar-center: calc(
+    var(--relayed-text-start) -
+    var(--relayed-avatar-offset) -
+    var(--size-control-sm) /
+    2
+  );
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+  padding-block: var(--space-2) var(--space-half);
 }
-.audienceContent > .relayedSource {
-  display: block;
-  margin-block-end: var(--space-1);
+.relayedRow:is([data-layout="thread"], [data-layout="continuation"]),
+.relayedRun[data-layout="thread"] {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-2));
+}
+:where(html[data-message-density="compact"]) :is(.relayedRow, .relayedRun) {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-5));
+  --relayed-avatar-offset: calc(var(--space-2) + var(--space-half));
+}
+.relayedRunItems .relayedRow {
+  padding-block: 0;
+}
+.relayedEntry {
+  border-radius: var(--radius-chip);
+}
+.relayedHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-inline-size: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1)
+    var(--relayed-text-start);
+  border-radius: var(--radius-chip);
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  white-space: nowrap;
+}
+.relayedHeader:hover {
+  background: var(--affordance-subtle-hover);
+}
+.relayedHeader[data-open]:not(:hover),
+.relayedEntry:where([data-thread-open]):not(.messageHighlight)
+  > .relayedHeader:not(:hover) {
+  background: var(--affordance-subtle);
+}
+/* The line's button covers it; the source chat link stays above it. */
+.relayedTrigger {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  cursor: pointer;
+}
+.relayedAvatar {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--relayed-avatar-center);
+  display: grid;
+  min-inline-size: var(--space-4);
+  block-size: var(--space-4);
+  translate: -50% -50%;
+  pointer-events: none;
+}
+/* A narrow row gives up the preview first, then the name and chat. */
+.relayedName,
+.relayedChat {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.relayedName {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-semibold);
+}
+.relayedSubtle {
+  flex: none;
+}
+.relayedChat {
+  position: relative;
+  z-index: 1;
+  color: var(--text-standard);
+}
+.relayedPreview {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .relayedTime {
   flex: none;
-  margin-inline-start: auto;
-  color: var(--text-subtle);
 }
-/* A relayed line spans the row: avatar in the message gutter, time at the end. */
-.relayedEntry {
-  padding-inline-start: 0;
-  max-inline-size: 100%;
+.relayedCaret {
+  flex: none;
+  inline-size: var(--space-3);
+  block-size: var(--space-3);
 }
-.relayedLine {
-  margin-inline-start: 0;
+/* Base UI measures the opened text. */
+.relayedPanel {
+  height: var(--collapsible-panel-height);
+  overflow: clip;
 }
-/* A width, not stretch: inside an opened run the entry is a block, not a flex
-   column, and the run's own line rule would otherwise fit the line to its text. */
-.relayedEntry > .relayedLine:not([data-panel-open]) {
-  box-sizing: border-box;
-  inline-size: 100%;
-  max-inline-size: 100%;
+.relayedPanel:is([data-starting-style], [data-ending-style]) {
+  height: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .relayedPanel {
+    transition: height var(--duration-state) var(--easing-enter);
+  }
+}
+/* The opened text hangs from the avatar on a thread rule. */
+.relayedBody {
+  position: relative;
+  padding: var(--space-3) var(--space-2) var(--space-1)
+    var(--relayed-text-start);
+}
+.relayedBody::before {
+  content: "";
+  position: absolute;
+  inset-block: var(--space-1) 0;
+  inset-inline-start: var(--relayed-avatar-center);
+  inline-size: 1px;
+  background: var(--border-message-thread);
+}
+.relayedBody .message:where([data-layout="continuation"]) {
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 .relayedFooter {
-  margin: var(--space-1) 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }

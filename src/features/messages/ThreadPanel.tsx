@@ -1959,6 +1959,7 @@ function ThreadMessages({
                   media={session.media}
                   expanded={expandedActivity.has(group.ids[0] ?? "")}
                   onToggle={toggleGroup}
+                  layout="thread"
                 />
               ) : (
                 <ActivityGroupPreview

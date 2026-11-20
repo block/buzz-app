@@ -1002,6 +1002,14 @@ export function createThreadView({
         }
         if (proofEpoch === rootProofEpoch) verifiedRootId = rootId;
         if (!retain(union(remote, related(root)))) return;
+        // An exact link can use proof for a root the reader already displays.
+        // The ordinary window still controls when a newly read root is shown.
+        if (
+          snapshot.root?.id === rootId &&
+          verifiedRootId === rootId &&
+          !snapshot.rootVerified
+        )
+          publishStatus({ rootVerified: true });
       }
       // A strict refresh re-reads from the newest end. Live replay covers
       // minutes, not a long disconnect, so keep paging until a reply kept

@@ -54,6 +54,7 @@ import type {
 } from "../../features/decisions/service";
 import type { SearchGroup } from "./SearchChoices";
 import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
+import { messageSortPreference } from "../../features/search/message-sort-preference";
 import { SearchResults } from "./SearchResults";
 import { useSearchMessages } from "./useSearchMessages";
 import { useSearchSettings } from "./SearchSettings";
@@ -1804,6 +1805,114 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     owner.dispose();
   }
 }, 15_000);
+
+it.each([
+  { relaySorts: true, start: "newest" },
+  { relaySorts: false, start: "relevance" },
+])(
+  "starts a new search with the saved message order where the relay sorts ($relaySorts)",
+  async ({ relaySorts, start }) => {
+    // Saved before this opening, as a restart reads it.
+    localStorage.setItem("buzz-search-message-sort.v1", "newest");
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      ...(relaySorts ? { searchSort: true as const } : {}),
+      query(filters, signal) {
+        // Message searches reach the scripted wire; people searches don't.
+        if (
+          filters.some(
+            (filter) =>
+              filter.search !== undefined && !!filter.kinds?.includes(9),
+          )
+        )
+          return wire.transport.query(filters, signal);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+    });
+    const request = async () => {
+      await waitFor(() => expect(wire.pending).toHaveLength(1));
+      return wire.next();
+    };
+    const text = {
+      kinds: [40002, 40008, 9],
+      search: "sortword",
+      search_mode: "prefix",
+      limit: 20,
+      "#h": ["crew"],
+    };
+    const sorted = (sort: string) =>
+      sort === "newest" ? { ...text, search_sort: "newest" } : text;
+    const order = () =>
+      screen
+        .getByRole("group", { name: "Messages" })
+        .querySelector(".navigation-section-label")?.textContent;
+    const props = {
+      session: owner.session,
+      query: "sortword",
+      onQueryChange: () => {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      onScopeChange: () => {},
+      openNewMessage: () => {},
+      openConversation: () => {},
+    };
+    const hit = message(viewer, "crew", "sortword hit", 1700000001);
+    try {
+      const mounted = render(
+        <SearchResults {...props} scopedChannelId="crew" />,
+      );
+      const first = await request();
+      expect(first.filters).toEqual([sorted(start)]);
+      await act(async () => first.respond([hit]));
+      // Without sorting, the heading claims no order.
+      expect(order()).toBe(relaySorts ? "Messages · Most recent" : "Messages");
+      if (!relaySorts) {
+        expect(
+          screen.queryByRole("button", { name: /^Sort messages/ }),
+        ).toBeNull();
+        return;
+      }
+      // Across conversations, search keeps relevance.
+      mounted.rerender(<SearchResults {...props} />);
+      const { "#h": _, ...unscoped } = text;
+      const global = await request();
+      expect(global.filters).toEqual([unscoped]);
+      await act(async () => global.respond([hit]));
+      // The menu overrides this search only; the saved order stays.
+      mounted.rerender(<SearchResults {...props} scopedChannelId="crew" />);
+      await act(async () => (await request()).respond([hit]));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Sort messages: Most recent" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitemradio", { name: "Most relevant" }),
+      );
+      const override = await request();
+      expect(override.filters).toEqual([text]);
+      await act(async () => override.respond([hit]));
+      expect(messageSortPreference()).toBe("newest");
+      // The next opening starts from the saved order again.
+      mounted.unmount();
+      render(<SearchResults {...props} scopedChannelId="crew" />);
+      expect((await request()).filters).toEqual([sorted("newest")]);
+    } finally {
+      cleanup();
+      owner.dispose();
+      localStorage.removeItem("buzz-search-message-sort.v1");
+    }
+  },
+);
 
 // Searches several signed pages; a busy runner has taken over 5 s.
 it.each([

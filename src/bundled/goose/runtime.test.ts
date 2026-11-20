@@ -1748,6 +1748,30 @@ describe("GooseRuntime", () => {
       ]);
     });
 
+    it("refuses a folder once the conversation's first launch chose the workspace, before any session lists it", async () => {
+      const held = gated("session/new");
+      const { agentStore, deliver, runtime } = setup({
+        hold: true,
+        wrap: held.wrap,
+        resolveDirectory: folders(),
+      });
+      try {
+        void deliver(root);
+        await vi.waitFor(() => expect(held.waiting()).toHaveLength(1));
+        expect(runtime.sessions(self)).toEqual([]);
+        await expect(assign(agentStore)).rejects.toThrow(
+          "already started in the agent's workspace",
+        );
+        // Another conversation is still given its folder.
+        await expect(
+          assign(agentStore, `${channel}/${message("9", "x").id}`),
+        ).resolves.toBe("/repos/worktree");
+      } finally {
+        held.release();
+        runtime.dispose();
+      }
+    });
+
     it("lists a conversation whose session is opening before it says its sessions are listed", async () => {
       const held = gated("session/new");
       const { deliver, runtime } = setup({ hold: true, wrap: held.wrap });

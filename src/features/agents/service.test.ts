@@ -114,6 +114,7 @@ import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { saveOwnerSections } from "./prompt-sections";
+import { startingFolder } from "./conversation-folders";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
@@ -1947,6 +1948,85 @@ describe("a conversation folder", () => {
       agents.assignConversationFolder(f.agent.key, other, "~/work"),
     ).rejects.toThrow("The agent is not running");
     expect(agents.conversationFolder(f.agent.key, other)).toBeUndefined();
+  });
+
+  it("is refused when the conversation's first session starts while the check waits on another's sessions", async () => {
+    const storage = memoryStorage();
+    let hold: Promise<void> | undefined;
+    const entered = vi.fn();
+    const f = await ready({
+      storage,
+      conversationFolders: true,
+      sessions: {
+        // Nothing lists a session that is starting, as a harness reads them.
+        list: () => [],
+        ready: async () => {
+          entered();
+          await hold;
+        },
+        subscribe: () => () => {},
+      },
+    });
+    const { agents } = f.plugin;
+    // The community's storage scope, from a folder given first.
+    const first = { channelId: channel, root: "f".repeat(64) };
+    await agents.assignConversationFolder(f.agent.key, first, "~/work");
+    const [scope] = JSON.parse(
+      (
+        storage.keys().find((key) => key.includes("conversation-folder")) ?? ""
+      ).replace(/^[^:]*:/, ""),
+    ) as string[];
+    let start!: () => void;
+    hold = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    entered.mockClear();
+    const assigning = agents.assignConversationFolder(
+      f.agent.key,
+      thread,
+      "~/work",
+    );
+    const refused = expect(assigning).rejects.toThrow(
+      "This conversation already started in the agent's workspace",
+    );
+    await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(1));
+    // The conversation's first launch picks the workspace before the check
+    // ends, and no session lists it yet.
+    await expect(
+      startingFolder(storage, scope ?? "", f.agent.key, `${channel}/${root}`),
+    ).resolves.toBeUndefined();
+    start();
+    await refused;
+    expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+  });
+
+  it("is refused for a conversation the harness itself holds history for, and when that cannot be read", async () => {
+    const history = vi.fn(async (_agent: Agent, _conversation: string) => true);
+    const f = await ready({
+      conversationFolders: true,
+      sessions: { list: () => [], history, subscribe: () => () => {} },
+    });
+    const { agents } = f.plugin;
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow(
+      "This conversation already started in the agent's workspace",
+    );
+    expect(history).toHaveBeenCalledWith(
+      expect.objectContaining({ key: f.agent.key }),
+      `${channel}/${root}`,
+    );
+    expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+    // History it cannot read may hold the conversation.
+    history.mockRejectedValue(new Error("goose is unavailable"));
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("goose is unavailable");
+    // Without any, the conversation is given its folder.
+    history.mockResolvedValue(false);
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).resolves.toBe("/home/me/work");
   });
 
   it.each(["solo", "dm"] as const)(

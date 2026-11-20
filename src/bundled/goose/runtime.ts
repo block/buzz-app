@@ -50,6 +50,7 @@ import {
   agentFolders,
   conversationFolder,
   existingFolder,
+  startingFolder,
 } from "../../features/agents/conversation-folders";
 import {
   ownerReads,
@@ -339,6 +340,14 @@ export class GooseRuntime {
     const scope = this.relay(agent)?.snapshot().scope;
     if (!scope) throw new Error("Buzz is not connected");
     return conversationFolder(this.agentStore, scope, agent, key);
+  }
+  /** `folder`, for a launching session, which records that a conversation
+   * without one starts in the workspace. A community session has none. */
+  private startFolder(agent: AgentKey, key: string | undefined) {
+    if (!key || key === COMMUNITY_SESSION) return undefined;
+    const scope = this.relay(agent)?.snapshot().scope;
+    if (!scope) throw new Error("Buzz is not connected");
+    return startingFolder(this.agentStore, scope, agent, key);
   }
 
   /** A file as the agent's sessions read one: in its saved workspace. */
@@ -1805,7 +1814,7 @@ export class GooseRuntime {
     const memory = await this.core(agent);
     // A conversation given its own folder starts there, and the folder
     // must still exist; the agent's workspace stays its home.
-    const assigned = this.folder(agent, conversation);
+    const assigned = await this.startFolder(agent, conversation);
     const { resolveDirectory } = this.desktop;
     if (conversation && assigned) entry.folders.set(conversation, assigned);
     const sections = sectionsOf(entry.handle, conversation);

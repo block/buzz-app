@@ -807,13 +807,18 @@ takes no folder. `path` is absolute or `~/…` and must be an existing
 directory; the call resolves with it as a real path. The folder is kept only on
 this device and is set once: the same folder again resolves, another rejects,
 because a session's history is found by the folder it ran in. For the same
-reason, a conversation that already has a session in the workspace rejects:
-the harness's `sessions` list names the conversations that do. A harness
-whose list can be behind (`sessions.ready`) is waited for first: Pi reads its
-sessions in the background, and Goose and Pi finish starting the
+reason, a conversation that already started in the workspace rejects. A
+harness records that when it first starts the conversation's session, in the
+same record the folder is saved in, so a start and an assignment that race have
+one winner: the later one sees it. For a conversation that started before this
+record existed, the harness's `sessions` list names the conversations that
+have a session, and a harness whose list forgets old sessions (`sessions.history`;
+Goose keeps the latest 200) is also asked for the conversation's own history.
+A harness whose list can be behind (`sessions.ready`) is waited for first: Pi
+reads its sessions in the background, and Goose and Pi finish starting the
 conversation's first turn if one is under way.
-The call rejects when the sessions cannot be read, as for a Pi agent that is
-not running.
+The call rejects when the sessions or history cannot be read, as for a Pi agent
+that is not running.
 If the folder later disappears, the conversation's next turn fails with an error naming it
 and never falls back to the workspace. The folder applies on the device that
 runs the agent, so messages from any of the owner's clients, such as mobile,

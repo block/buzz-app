@@ -54,6 +54,7 @@ import {
   conversationFolder,
   conversationKey,
   existingFolder,
+  startingFolder,
 } from "../../features/agents/conversation-folders";
 import type {
   Agent,
@@ -631,6 +632,22 @@ export class CodexRuntime {
       conversationKey(channelId, root),
     );
   }
+  /** `folder`, for a conversation's thread starting, which records that one
+   * without a folder starts in the workspace. */
+  private startFolder(
+    scope: string,
+    agent: AgentKey,
+    channelId: string,
+    root?: string,
+  ) {
+    if (this.target) return undefined;
+    return startingFolder(
+      this.storage,
+      scope,
+      agent,
+      conversationKey(channelId, root),
+    );
+  }
   /** Where a conversation's thread runs: the folder it was given, which must
    * still exist, with the agent's workspace as `home`; or else that
    * workspace. Both absolute. */
@@ -643,7 +660,12 @@ export class CodexRuntime {
     const assigned =
       settings.scope === "community"
         ? undefined
-        : this.folder(scope, agent, conversation.channelId, conversation.root);
+        : await this.startFolder(
+            scope,
+            agent,
+            conversation.channelId,
+            conversation.root,
+          );
     const workspace = await this.workspace(settings.workspace);
     if (!assigned) return { cwd: workspace };
     return {

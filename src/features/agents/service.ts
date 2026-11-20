@@ -116,6 +116,7 @@ import { ownerReads, readyOwnerReads } from "./reads";
 import { createToolOperation, type AgentToolProvider } from "./tool-operation";
 import {
   assignConversationFolder as assignFolder,
+  ALREADY_STARTED,
   conversationFolder as storedFolder,
   conversationKey,
 } from "./conversation-folders";
@@ -513,6 +514,10 @@ export type AgentSessions = Readonly<{
    * the conversation's session, if it has one or one is starting, and
    * rejects when they cannot be read. */
   ready?(agent: AgentKey, conversation: string): Promise<void>;
+  /** For a harness whose `list` forgets old sessions: whether the harness
+   * itself holds history for the conversation, in the agent's workspace.
+   * Rejects when it cannot be read. */
+  history?(agent: Agent, conversation: string): Promise<boolean>;
   subscribe(listener: () => void): () => void;
 }>;
 /** Token counts as the harness reported them. An absent count is unknown, not
@@ -5893,11 +5898,10 @@ export class AgentsService extends Service implements Agents {
             (session) =>
               !session.community &&
               conversationKey(session.channelId, session.root) === conversation,
-          )
+          ) ||
+        (await type.sessions?.history?.(agent, conversation))
       )
-        throw new Error(
-          "This conversation already started in the agent's workspace",
-        );
+        throw new Error(ALREADY_STARTED);
     }
     return assignFolder(this.storage, scope, key, conversation, folder);
   }

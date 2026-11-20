@@ -20,6 +20,7 @@ import {
   onRecommended,
   recommendedRun,
 } from "../../features/agents/recommended";
+import { REQUEST_TIMEOUT_MS } from "./goose";
 import { gooseRun } from "./run";
 import { readModelSettings } from "../../features/agents/model-settings";
 import { explainTurn, GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
@@ -198,6 +199,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     sessions: {
       ready: (agentKey) => runtime.listed(agentKey),
+      // The sessions `list` remembers are the latest 200 conversations; goose
+      // keeps the rest, and finds them by tag.
+      history: (agent, conversation) =>
+        history.started(
+          config(agent.config).workspace,
+          agent.key,
+          conversation,
+          AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ),
       list: (agentKey) => {
         const live = runtime.sessions(agentKey);
         const busy = new Map(live.map((view) => [view.key, view.busy]));

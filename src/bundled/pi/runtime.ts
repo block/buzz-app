@@ -61,6 +61,7 @@ import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import {
   conversationFolder,
   existingFolder,
+  startingFolder,
 } from "../../features/agents/conversation-folders";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
@@ -429,6 +430,14 @@ export class PiRuntime {
     const scope = this.scope(agent);
     if (!scope) throw new Error("Buzz is not connected");
     return conversationFolder(this.storage, scope, agent, key);
+  }
+  /** `folder`, for a starting turn, which records that a conversation
+   * without one starts in the workspace. */
+  private startFolder(agent: AgentKey, key: string | undefined) {
+    if (!key) return undefined;
+    const scope = this.scope(agent);
+    if (!scope) throw new Error("Buzz is not connected");
+    return startingFolder(this.storage, scope, agent, key);
   }
 
   /** The agent's Buzz conversations, most recently active first. */
@@ -1718,7 +1727,7 @@ export class PiRuntime {
     const memory = await this.core(agent);
     // A conversation given its own folder runs there, and the folder must
     // still exist; the agent's workspace stays its home.
-    const assigned = this.folder(agent, conversation);
+    const assigned = await this.startFolder(agent, conversation);
     const resolve = this.host.resolveDirectory?.bind(this.host);
     const cwd = assigned ? await existingFolder(resolve, assigned) : workspace;
     if (conversation) entry.folders.set(conversation, cwd);

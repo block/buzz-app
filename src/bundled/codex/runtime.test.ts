@@ -4381,7 +4381,12 @@ it("leaves a failed first startup unbound so the next mention can start fresh", 
   await f.runtime.run(f.delivery("first"));
   await reading.promise;
   try {
-    expect(f.storage.size).toBe(0);
+    // Only the record that the conversation began in the workspace.
+    expect(
+      [...f.storage.keys()].filter(
+        (key) => !key.includes("conversation-folder"),
+      ),
+    ).toEqual([]);
     expect(f.starts()).toHaveLength(0);
   } finally {
     gate.resolve();
@@ -9449,6 +9454,21 @@ describe("a conversation given its own folder", () => {
     return f;
   };
 
+  it("refuses a folder once the conversation's first thread started in the workspace", async () => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("@Codex hi", root));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await expect(
+      assignConversationFolder(
+        f.store,
+        scope,
+        pubkey,
+        `channel/${root}`,
+        "/repos/worktree",
+      ),
+    ).rejects.toThrow("already started in the agent's workspace");
+  });
+
   it("tells a Solo chat that works there to read its Canvas's folders, not to make a worktree", async () => {
     const f = await withFolder(folders(), "/repos/worktree", "channel");
     asSoloChat(f);
@@ -9534,7 +9554,10 @@ describe("a conversation given its own folder", () => {
     await f.runtime.run(f.delivery("@Codex first", root));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     expect(inputText(f.starts()[0])).toContain("create a new worktree");
-    // Assigned while that turn runs in the agent's workspace.
+    // Assigned while that turn runs in the agent's workspace, as another
+    // program that does not see the conversation's start would.
+    for (const key of f.store.keys())
+      if (f.store.get(key) === "workspace") await f.store.set(key, null);
     await assignConversationFolder(
       f.store,
       scope,

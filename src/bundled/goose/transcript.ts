@@ -479,6 +479,22 @@ export class GooseHistory {
     });
   }
 
+  /** Whether goose has a session the agent opened for `conversation` in
+   * `workspace`, by its tag index, which holds sessions the app no longer
+   * lists. */
+  started(
+    workspace: string,
+    agent: string,
+    conversation: string,
+    signal: AbortSignal,
+  ) {
+    return this.with(signal, async (goose, { resolveDirectory }) => {
+      const cwd = await absolute(resolveDirectory, workspace);
+      const tags = sessionTags(agent, conversation);
+      return (await page(goose, cwd, undefined, tags)).rows.length > 0;
+    });
+  }
+
   /** The listed rows of `ids`, read from goose's sessions in `workspace`
    * newest first, page by page, until every one is found or none are left:
    * no session's messages. */

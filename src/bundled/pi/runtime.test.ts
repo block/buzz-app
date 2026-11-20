@@ -1990,6 +1990,15 @@ it("runs a conversation given its own folder there and names the agent's workspa
   expect(published).toEqual([]);
 });
 
+it("refuses a folder once the conversation's first turn started in the workspace", async () => {
+  const { deliver, host, storage } = setup();
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(host.requests("deliver")).toHaveLength(1);
+  await expect(assign(storage)).rejects.toThrow(
+    "already started in the agent's workspace",
+  );
+});
+
 it("refuses the turn of a conversation whose folder is gone, naming the folder", async () => {
   const missing = new Set<string>();
   const { deliver, settled, host, storage, published, desktop } = setup();

@@ -55,6 +55,7 @@ import {
   conversationFolder,
   conversationKey,
   existingFolder,
+  startingFolder,
 } from "../../features/agents/conversation-folders";
 import type {
   Agent,
@@ -384,6 +385,16 @@ export class ClaudeRuntime {
     if (!reads) throw new Error("Buzz is not connected");
     return reads.scope
       ? conversationFolder(this.storage, reads.scope, agent, key)
+      : undefined;
+  }
+  /** `folder`, for a launching session, which records that a conversation
+   * without one starts in the workspace. */
+  private startFolder(agent: AgentKey, key: string | undefined) {
+    if (!key || this.target) return undefined;
+    const reads = this.reads(agent);
+    if (!reads) throw new Error("Buzz is not connected");
+    return reads.scope
+      ? startingFolder(this.storage, reads.scope, agent, key)
       : undefined;
   }
   /** Where the conversation's sessions ran: its own folder, or else the
@@ -2238,7 +2249,7 @@ export class ClaudeRuntime {
         gate?.assertAvailable();
         // A conversation given its own folder starts there, never in the
         // workspace, which stays within reach as an absolute path.
-        const assigned = this.folder(agent, key);
+        const assigned = await this.startFolder(agent, key);
         const resolve = this.host.resolveDirectory?.bind(this.host);
         const folder = assigned && (await existingFolder(resolve, assigned));
         const home = folder && (await resolve?.(workspace));

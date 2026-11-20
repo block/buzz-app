@@ -2540,6 +2540,11 @@ it.each(["live", "reload", "legacy"])(
       const previous = f;
       f = setup();
       for (const [key, value] of previous.data) {
+        // A conversation's folder record is no session.
+        if (key.includes("conversation-folder")) {
+          f.data.set(key, value);
+          continue;
+        }
         const saved = JSON.parse(value);
         // Older versions saved only the channel's single `seen` timestamp.
         if (mode === "legacy")
@@ -4920,6 +4925,18 @@ describe("a conversation given its own folder", () => {
       "Your persistent workspace is at `/Users/me/.buzz`, not in your working directory",
     );
     expect(published).toEqual([]);
+  });
+
+  it("refuses a folder once the conversation's first session started in the workspace", async () => {
+    const { deliver, claudes, data } = setup([root, mention], {
+      resolveDirectory: folders(),
+    });
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    expect(claudes().find((process) => process.prompts.length)).toBeDefined();
+    await expect(assign(data, "/repos/worktree")).rejects.toThrow(
+      "already started in the agent's workspace",
+    );
   });
 
   it("tells a Solo chat that works there to read its Canvas's folders, not to make a worktree", async () => {

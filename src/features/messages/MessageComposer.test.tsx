@@ -12596,6 +12596,46 @@ it("retires a conflict backup once the same version becomes canonical", () => {
   expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
 });
 
+it.each(["storage event", "delayed storage event", "same-window clear"])(
+  "does not restore a deleted conflict version (%s)",
+  (path) => {
+    const key = 'buzz-view.v1:["scope","draft:channel"]';
+    const signal = (oldValue: string | null, newValue: string | null) =>
+      fireEvent(
+        window,
+        new StorageEvent("storage", {
+          storageArea: localStorage,
+          key,
+          oldValue,
+          newValue,
+        }),
+      );
+    const h = mount();
+    h.fill("Local work");
+    act(() => h.input().blur());
+    const local = localStorage.getItem(key);
+    if (local === null) throw new Error("Expected a saved draft");
+    const peer = JSON.stringify("Saved elsewhere");
+    localStorage.setItem(key, peer);
+    signal(local, peer);
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+
+    localStorage.setItem(key, local);
+    if (path === "same-window clear")
+      act(() => clearDraft({ scope: "scope" }, "draft:channel"));
+    else {
+      if (path === "storage event") signal(peer, local);
+      localStorage.removeItem(key);
+      if (path === "delayed storage event") signal(peer, local);
+      signal(local, null);
+    }
+
+    h.remount();
+    expect(h.input()).toHaveValue("");
+    expect(screen.queryByText(/This draft changed elsewhere/)).toBeNull();
+  },
+);
+
 it("reopens an already saved local version when another window replaces it", () => {
   const h = mount();
   h.fill("Local work");

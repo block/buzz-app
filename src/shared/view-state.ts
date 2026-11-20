@@ -1,7 +1,9 @@
 import { traceDraft } from "./draft-diagnostics";
 
 // View intent is durable and explicitly partitioned; connection generations are not storage keys.
-const viewListeners = new Map<string, Set<(key?: string) => void>>();
+type RemovedView = { key: string; revision: string };
+type ViewListener = (key?: string, removed?: readonly RemovedView[]) => void;
+const viewListeners = new Map<string, Set<ViewListener>>();
 const composerDraftKey =
   /^draft:([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})(?::thread:([0-9a-f]{64}))?$/;
 export function draftCoordinates(key: string) {
@@ -11,17 +13,21 @@ export function draftCoordinates(key: string) {
     : undefined;
 }
 // `key` names the one key that changed; undefined means any key may have.
-const changed = (scope: string, key?: string) => {
+const changed = (
+  scope: string,
+  key?: string,
+  removed?: readonly RemovedView[],
+) => {
   if (key) traceDraft(scope, key, "notify");
-  for (const listener of viewListeners.get(scope) ?? []) listener(key);
+  for (const listener of viewListeners.get(scope) ?? []) listener(key, removed);
 };
 /** Same durable view keys as the composer; no parallel draft store or index. */
 export function subscribeView(
   scope: string,
-  listener: (key?: string) => void,
+  listener: ViewListener,
   keys?: string | readonly string[] | ((key: string) => boolean),
 ) {
-  const notify = (key?: string) => {
+  const notify: ViewListener = (key, removed) => {
     if (
       key === undefined ||
       keys === undefined ||
@@ -30,8 +36,10 @@ export function subscribeView(
         : typeof keys === "function"
           ? keys(key)
           : keys.includes(key))
-    )
-      listener(key);
+    ) {
+      if (removed?.length) listener(key, removed);
+      else listener(key);
+    }
   };
   let listeners = viewListeners.get(scope);
   if (!listeners) {
@@ -53,8 +61,14 @@ export function subscribeView(
       if (!event.key.startsWith("buzz-view.v1:")) return;
       const pair: unknown = JSON.parse(event.key.slice("buzz-view.v1:".length));
       if (Array.isArray(pair) && pair[0] === scope) {
-        if (typeof pair[1] === "string") traceDraft(scope, pair[1], "storage");
-        notify(typeof pair[1] === "string" ? pair[1] : undefined);
+        const key = typeof pair[1] === "string" ? pair[1] : undefined;
+        if (key) traceDraft(scope, key, "storage");
+        notify(
+          key,
+          key && event.newValue === null && event.oldValue !== null
+            ? [{ key, revision: event.oldValue }]
+            : undefined,
+        );
       }
     } catch {
       /* Storage may be unavailable while a window is closing. */
@@ -315,11 +329,14 @@ export function clearViewValue(key: string, value: unknown) {
 
 /** Recovery callers must confirm cleanup before retiring their durable operation. */
 export function clearView(scope: string, ...keys: string[]) {
+  const removed: RemovedView[] = [];
   for (const key of keys) {
     const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
+    const revision = localStorage.getItem(storageKey);
     localStorage.removeItem(storageKey);
     if (localStorage.getItem(storageKey) !== null)
       throw new Error("Could not clear the saved message. Try again.");
+    if (revision !== null) removed.push({ key, revision });
   }
-  changed(scope, keys.length === 1 ? keys[0] : undefined);
+  changed(scope, keys.length === 1 ? keys[0] : undefined, removed);
 }

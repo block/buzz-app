@@ -1730,7 +1730,11 @@ function Composer({
   // Message-local picks return with their recovered draft. Solo preferences
   // remain the chat's current choices, including edits made during an upload.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
+    (
+      restored?: MentionDraft,
+      recoveredPicks?: DraftPicks,
+      deletedRevision?: string,
+    ) => {
       traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
       const currentPurgeToken = viewScopePurgeToken(scope);
@@ -1754,6 +1758,16 @@ function Composer({
       }
       const current = viewRevision(scope, draftKey);
       if (current === undefined) return;
+      // A peer can make the backup canonical and delete it before the
+      // storage event arrives. The removed revision identifies that draft.
+      if (
+        deletedRevision !== undefined &&
+        conflictDraft.current &&
+        JSON.stringify(conflictDraft.current.draft) === deletedRevision
+      ) {
+        loadSaved(current);
+        return;
+      }
       diagnose("reconcile", revision.current, current);
       const recovering = !!restored && current === JSON.stringify(restored);
       if (current === revision.current) {
@@ -1794,7 +1808,16 @@ function Composer({
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   useEffect(() => {
     if (submission) return;
-    const stop = subscribeView(scope, () => reconcileDraft(), draftKey);
+    const stop = subscribeView(
+      scope,
+      (_key, removed) =>
+        reconcileDraft(
+          undefined,
+          undefined,
+          removed?.find(({ key }) => key === draftKey)?.revision,
+        ),
+      draftKey,
+    );
     // Reconcile changes while message-edit mode or mounting paused this listener.
     reconcileDraft(
       deferredRecovery.current?.draft,

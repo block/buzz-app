@@ -1763,6 +1763,29 @@ it("starts an agent's own server again after its start fails", async () => {
     f.runtime.dispose();
   }
 });
+it("keeps an agent's own server whose handshake fails tracked until its process exits", async () => {
+  const f = fixture();
+  env.own.add(pubkey);
+  f.failing.add("initialize");
+  // The failed process outlives its connection until the test lets it exit.
+  f.process.end.mockResolvedValue(undefined);
+  f.process.kill.mockResolvedValue(undefined);
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
+    let retired = false;
+    const retiring = f.runtime.retire(pubkey).then(() => {
+      retired = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retired).toBe(false);
+    f.exits.resolve(0);
+    await retiring;
+  } finally {
+    f.runtime.dispose();
+  }
+});
 it("reopens the shared server after it exits", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));

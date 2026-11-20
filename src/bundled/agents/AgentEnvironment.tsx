@@ -157,8 +157,10 @@ export function AgentEnvironment({ agent }: { agent: string }) {
           <Button
             size="sm"
             variant="prominent"
-            disabled={!dirty || pending}
-            aria-busy={pending || undefined}
+            // Focusable while saving and after, so focus stays on Save.
+            disabled={!dirty}
+            loading={pending}
+            focusableWhenDisabled
             onClick={() => void save()}
           >
             Save
@@ -174,7 +176,14 @@ export function AgentEnvironment({ agent }: { agent: string }) {
             title="Agents already running still use the old list"
             subtitle="New agent processes use the saved list. Restart Buzz to apply it to all of them."
             trailing={
-              <Button ref={restart} size="sm" onClick={() => setConfirm(true)}>
+              <Button
+                ref={restart}
+                size="sm"
+                // A relaunch would cut off a save still being written.
+                disabled={pending}
+                focusableWhenDisabled
+                onClick={() => setConfirm(true)}
+              >
                 Restart Buzz
               </Button>
             }

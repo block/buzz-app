@@ -151,6 +151,7 @@ async fn every_blocked_name_is_rejected_in_any_case() {
     let env = env(&Arc::new(FakeStore::default()));
     for name in BLOCKED
         .iter()
+        .chain(PATHS)
         .copied()
         .chain(["BUZZ_AGENT", "NOSTR_KEY", "path"])
         // Named here too, so dropping one from `BLOCKED` fails.
@@ -166,6 +167,12 @@ async fn every_blocked_name_is_rejected_in_any_case() {
             "CODEX_AGENT_IDENTITY_JWKS_BASE_URL",
             "AWS_CONTAINER_CREDENTIALS_FULL_URI",
             "AWS_EC2_METADATA_SERVICE_ENDPOINT",
+            "HOME",
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "GOOSE_PATH_ROOT",
+            "XDG_DATA_HOME",
+            "LOCALAPPDATA",
         ])
     {
         let mixed: String = name

@@ -200,15 +200,16 @@ export type SavedConversation = Conversation &
 /** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
  * process. */
 const STOP_WAIT_MS = 5_000;
-/** An agent's own `claude` asks for the environment variables saved for that
- * agent; its pinned protected copy and setup steps never do. A spare, started
- * for no agent yet, asks with none named and gets none. */
+/** An agent's own `claude`, and the check of which custom headers it starts
+ * with, ask for the environment variables saved for that agent; its pinned
+ * protected copy and other setup steps never do. A spare, started for no
+ * agent yet, asks with none named and gets none. */
 const agentEnv = (
   id: string,
   options: Parameters<Spawn>[1],
   agent?: AgentKey,
 ) =>
-  id === "claude"
+  id === "claude" || id === "inherited-headers"
     ? {
         ...options,
         secrets: [...(options?.secrets ?? []), "agent-env" as const],

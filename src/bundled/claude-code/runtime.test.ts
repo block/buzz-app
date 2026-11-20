@@ -167,7 +167,10 @@ function setup(
   const fake = fakeSpawn(options.known, options.env);
   const running = new Set<FakeClaude>();
   const transcriptReaders: { options: unknown }[] = [];
+  /** Every start asked for, in order. */
+  const spawns: [string, Parameters<typeof fake.spawn>[1]][] = [];
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
+    spawns.push([id, spawnOptions]);
     await options.starting;
     if (options.nativeHistory && id === "transcript-protected") {
       transcriptReaders.push({ options: spawnOptions });
@@ -434,6 +437,7 @@ function setup(
   return {
     runtime,
     transcriptReaders,
+    spawns,
     added,
     deliver,
     published,
@@ -4691,6 +4695,18 @@ it("resumes a stopped session on its Buzz session, and New session starts anothe
   const rotated = await turn("4");
   expect(rotated).toMatch(/^[0-9a-f-]{36}$/);
   expect(rotated).not.toBe(first);
+  f.runtime.dispose();
+});
+
+it("checks for custom headers in the environment the agent's claude starts with", async () => {
+  const f = setup([], { env: onGateway });
+  const { root } = threadPair();
+  await f.deliver({ type: "mention", event: root }, dispatched(root.id));
+  await settled(f);
+  const check = f.spawns.find(([id]) => id === "inherited-headers")?.[1];
+  // The agent's own list can set `ANTHROPIC_CUSTOM_HEADERS`.
+  expect(check?.secrets).toEqual(["agent-env"]);
+  expect(check?.envAgent).toBe(self);
   f.runtime.dispose();
 });
 

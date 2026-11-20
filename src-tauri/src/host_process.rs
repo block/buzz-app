@@ -579,6 +579,10 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         {
             return Err("That secret is not available to this process".into());
         }
+        // The agent's own key outranks the shared one.
+        if agent_key(&agent_env).is_some() {
+            continue;
+        }
         if let Some(key) = app.state::<crate::claude_key::ClaudeKey>().key().await? {
             command.env(crate::claude_key::ENV, &*key);
         }
@@ -636,7 +640,8 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
 /// Sets a process's environment: the app's own, less any AppImage bundle
 /// paths, plus the `login_shell` variables it forwards and then the agent's
 /// `agent_env`, less any Buzz identity these hold, plus the plugin's
-/// `environment` (`None` removes a variable), which wins over `agent_env`.
+/// `environment` (`None` removes a variable), which wins over `agent_env`
+/// except for an Anthropic API key the agent's list sets.
 /// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
 /// under Buzz.
 fn set_environment(
@@ -687,8 +692,22 @@ fn set_environment(
             None => command.env_remove(name),
         };
     }
+    // An Anthropic key saved for the agent is one the person chose for it,
+    // unlike an inherited one, which a harness may remove.
+    if let Some((name, value)) = agent_key(agent_env) {
+        command.env(name, value);
+    }
     command.env("BUZZ_VERSION", version);
     Ok(())
+}
+
+/// The Anthropic API key in an agent's list, if it has one.
+fn agent_key(
+    agent_env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Option<&(std::ffi::OsString, std::ffi::OsString)> {
+    agent_env
+        .iter()
+        .find(|(name, _)| name == crate::claude_key::ENV)
 }
 
 /// The mounted or extracted AppImage this app runs from: `APPDIR` only when

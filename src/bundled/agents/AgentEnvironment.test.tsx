@@ -90,6 +90,32 @@ it("the notice stays after Settings reopens, and restarting asks first", async (
   await waitFor(() => expect(calls("update_restart")).toHaveLength(1));
 });
 
+it("offers no restart while a save is still being written", async () => {
+  saved = true;
+  const user = userEvent.setup();
+  let finish = () => {};
+  native.invoke.mockImplementation(async (command) => {
+    if (command === "agent_env_status") return { names, saved };
+    if (command === "agent_env_set")
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    return undefined;
+  });
+  render(<AgentEnvironment agent={AGENT} />);
+  await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Restart Buzz" }));
+  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+  finish();
+  await waitFor(() =>
+    expect(screen.getByLabelText("Value of SAVED_KEY")).toBeEnabled(),
+  );
+  await user.click(screen.getByRole("button", { name: "Restart Buzz" }));
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  await waitFor(() => expect(calls("update_restart")).toHaveLength(1));
+});
+
 it("removing a saved row deletes it on save", async () => {
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} />);
@@ -119,12 +145,15 @@ it("locks the list while a save runs, so no edit is lost when it finishes", asyn
   expect(
     screen.getByRole("button", { name: "Remove SAVED_KEY" }),
   ).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  const saveButton = screen.getByRole("button", { name: "Save" });
+  expect(saveButton).toHaveAttribute("aria-disabled", "true");
+  expect(saveButton).toHaveFocus();
   finish();
   await waitFor(() =>
     expect(screen.getByLabelText("Value of SAVED_KEY")).toBeEnabled(),
   );
   expect(screen.getByRole("button", { name: "Add variable" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
 });
 
 it("offers Retry for a list it cannot read, never an empty one", async () => {

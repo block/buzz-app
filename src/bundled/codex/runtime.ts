@@ -1608,9 +1608,13 @@ export class CodexRuntime {
         void this.shutdown(agent, server).catch(() => undefined);
     });
     this.ownServers.set(agent, server);
+    // A failed start can leave its process running; unless a retirement or
+    // its disconnect already owns its close, it is tracked until it exits.
     void server.opening.catch(() => {
-      if (this.ownServers.get(agent) === server) this.ownServers.delete(agent);
-      void rpc.close();
+      if (this.ownServers.get(agent) !== server) return;
+      this.ownServers.delete(agent);
+      if (!this.unretired.has(agent))
+        void this.shutdown(agent, server).catch(() => undefined);
     });
     return server;
   }

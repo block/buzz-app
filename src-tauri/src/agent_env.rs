@@ -148,6 +148,24 @@ const BLOCKED: &[&str] = &[
     "AWS_EC2_METADATA_SERVICE_ENDPOINT",
 ];
 
+/// Where a harness, or Buzz reading its conversations, finds its files: an
+/// agent's own value would point it at another install, home or database.
+/// Compared ignoring case.
+const PATHS: &[&str] = &[
+    // Every harness's install and Buzz's reads of `~/.claude` and the rest.
+    "HOME",
+    // Claude Code's settings and conversations, which Buzz reads.
+    "CLAUDE_CONFIG_DIR",
+    // Codex's home, which `codex.sh` links Buzz's shared state into.
+    "CODEX_HOME",
+    // Goose's config and sessions, which Buzz reads from another goose.
+    "GOOSE_PATH_ROOT",
+    // Linux and Windows data roots: Claude's, Codex's and Pi's installs, and
+    // Pi's conversation database.
+    "XDG_DATA_HOME",
+    "LOCALAPPDATA",
+];
+
 /// The `secrets` name an agent launch asks for the list by.
 pub(crate) const SECRET: &str = "agent-env";
 
@@ -243,12 +261,7 @@ impl AgentEnv {
     /// Replaces the list with `rows`. Nothing changes when a row is invalid
     /// or the store can't be written.
     pub(crate) async fn set(&self, rows: Vec<Row>) -> Result<(), String> {
-        // A damaged list can still be replaced by one that keeps nothing.
-        let current = match self.load().await {
-            Ok(list) => list,
-            Err(error) if rows.iter().any(|row| row.value.is_none()) => return Err(error),
-            Err(_) => List::new(),
-        };
+        let current = self.load().await?;
         let mut next = List::new();
         let mut seen = std::collections::HashSet::new();
         for row in rows {
@@ -306,6 +319,11 @@ fn check(name: &str) -> Result<(), String> {
     }
     if upper == "PATH" {
         return Err("Buzz sets PATH for agents itself".into());
+    }
+    if PATHS.contains(&upper.as_str()) {
+        return Err(format!(
+            "{name} sets where a harness keeps its files, which Buzz relies on"
+        ));
     }
     if BLOCKED.contains(&upper.as_str()) {
         return Err(format!(

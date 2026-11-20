@@ -1302,14 +1302,14 @@ impl AppAgents {
             Ok(())
         })
     }
-    /// Deletes every key it still has, as an erase that removes agents does
-    /// before the rows go with app data. Absence is success, so it repeats safely.
     /// Whether removing it from the community at `relay` leaves it in none:
     /// as `remove` decides, so unfinished joins elsewhere don't count.
     pub fn is_last_membership(&self, pubkey: &str, relay: &str) -> Result<bool> {
         let relay = canonical_relay(relay)?;
         Ok(last_membership(&self.list()?, pubkey, &relay))
     }
+    /// Deletes every key it still has, as an erase that removes agents does
+    /// before the rows go with app data. Absence is success, so it repeats safely.
     pub fn delete_keys(&self, credentials: &dyn Credentials) -> Result<()> {
         let _keys = self.keys_lock()?;
         for agent in self.list()?.into_iter().filter(|agent| !agent.deleted) {

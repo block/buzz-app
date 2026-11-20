@@ -130,9 +130,9 @@ describe("GooseProcess", () => {
     });
   });
 
-  it("asks for the agent environment variables for the agent it runs", async () => {
+  it("asks for no secrets unless its caller does, as Mesh Agent mode's goose", async () => {
     const { process } = await start();
-    expect(process.options.secrets).toEqual(["agent-env"]);
+    expect(process.options.secrets).toBeUndefined();
   });
 
   it("points goose's Databricks provider at a packaged workspace", async () => {

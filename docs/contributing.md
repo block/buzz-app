@@ -569,6 +569,14 @@ suites. Lanes:
 - **browser:** the selected journeys plus any `--browser=<spec[:line]>` you name,
   in Chromium and WebKit. Linux uses the CI Playwright configuration; other
   hosts use the local one.
+- **agent:** starts a managed Goose agent against a private local relay (with its
+  own PostgreSQL, Redis and S3-compatible store), mentions it in a channel and
+  waits for its signed reply, using the real `GooseRuntime`, `goose-acp`, the
+  ACP permission handling and the Buzz `send` tool. The model is a scripted local
+  server, so it needs no key or network. It runs under `auto` when the diff
+  touches the agent runtime or harness, the Buzz tools or the `goose-acp` pin,
+  and always under `--lanes=agent`. It needs `postgresql` and `redis-server`
+  installed, and builds the relay at its pinned revision on first use.
 - **full:** `--lanes=full` runs `just scan` instead.
 
 A Linux host outside CI's runners needs CI's system packages once: the browser

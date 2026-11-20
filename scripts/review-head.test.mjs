@@ -7,6 +7,7 @@ import {
   parseSelection,
   renderSummary,
   reviewEnv,
+  touchesAgentRuntime,
   touchesReviewTooling,
   touchesRust,
 } from "./review-head.mjs";
@@ -18,6 +19,10 @@ describe("parseArgs", () => {
       commit: "abc1234",
       base: "release",
     });
+  });
+
+  it("accepts the agent lane by name", () => {
+    expect(parseArgs(["1", "--lanes=static,agent"]).lanes).toBe("static,agent");
   });
 
   it("accepts a tag that names a reviewer's own worktree", () => {
@@ -62,9 +67,38 @@ describe("chooseLanes", () => {
 
   it("honors explicit, all and full selections", () => {
     expect(chooseLanes("rust", { files, browser: [] })).toEqual(["rust"]);
-    expect(chooseLanes("all", { files, browser: [] })).toHaveLength(4);
+    expect(chooseLanes("all", { files, browser: [] })).toEqual([
+      "static",
+      "tests",
+      "rust",
+      "browser",
+      "agent",
+    ]);
+    expect(chooseLanes("agent", { files, browser: [] })).toEqual(["agent"]);
     expect(chooseLanes("full", { files, browser: [] })).toEqual(["full"]);
   });
+});
+
+it("starts the agent lane only for changes that can stop an agent replying", () => {
+  const files = ["src/app/App.tsx"];
+  expect(chooseLanes("auto", { files, browser: [] })).not.toContain("agent");
+  for (const file of [
+    "src/bundled/goose/runtime.ts",
+    "src/features/agent-harness/acp/process.ts",
+    "src/buzz-mcp/tools.ts",
+    "runtime/goose-acp.json",
+    "src-tauri/Cargo.toml",
+    "crates/agent-command/src/main.rs",
+    "scripts/agent-e2e.mjs",
+  ]) {
+    expect(touchesAgentRuntime([file])).toBe(true);
+    expect(chooseLanes("auto", { files: [file], browser: [] })).toContain(
+      "agent",
+    );
+  }
+  expect(touchesAgentRuntime(["docs/agents.md", "src/bundled/pi/x.ts"])).toBe(
+    false,
+  );
 });
 
 it("recognizes Rust paths", () => {
@@ -132,8 +166,11 @@ it("names what each platform leaves unproven", () => {
   expect(linux).toMatch(/@media-recorder/);
   expect(linux).toMatch(/No browser journey ran/);
   expect(linux).toMatch(/Rust checks were skipped/);
+  expect(linux).toMatch(/No managed agent was started/);
   const mac = notProven("darwin", ["full"]).join("\n");
-  expect(mac).not.toMatch(/@media-recorder|No browser journey|Rust checks/);
+  expect(mac).not.toMatch(
+    /@media-recorder|No browser journey|Rust checks|No managed agent/,
+  );
   expect(mac).toMatch(/just desktop/);
   const flagged = notProven("darwin", ["static"], {
     rustChanged: true,
@@ -143,6 +180,13 @@ it("names what each platform leaves unproven", () => {
   expect(flagged).toMatch(/Rust paths changed, but/);
   expect(flagged).toMatch(/review tooling \(bin\/pnpm\)/);
   expect(flagged).toMatch(/could not be re-read/);
+});
+
+it("says what a passing agent lane still leaves unproven", () => {
+  const gaps = notProven("linux", ["agent"]).join("\n");
+  expect(gaps).not.toMatch(/No managed agent was started/);
+  expect(gaps).toMatch(/scripted model/);
+  expect(gaps).toMatch(/desktop app/);
 });
 
 it("renders a summary that a review body can quote", () => {
@@ -243,5 +287,8 @@ it("names the host fix instead of blaming the change", () => {
     hostHint("x\nHost system is missing dependencies to run browsers."),
   ).toMatch(/install-deps chromium webkit/);
   expect(hostHint("pkg-config exited with status code 1")).toMatch(/ci\.yml/);
+  expect(hostHint("Host is missing agent-e2e dependencies: initdb")).toMatch(
+    /postgresql/,
+  );
   expect(hostHint("AssertionError: 1 !== 0")).toBeUndefined();
 });

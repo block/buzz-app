@@ -14,7 +14,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { ApiPaused } from "../../features/relay/http-admission";
-import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
+import {
+  ChannelLifecycleStale,
+  ChannelLifecycleUnconfirmed,
+} from "../../features/relay/channel-lifecycle";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type {
@@ -2609,34 +2612,44 @@ it.each(["Archive channel", "Leave channel"])(
   },
 );
 
-it("shows a removal during the viewer's Leave that fails before publishing", async () => {
-  const f = fixture({ type: "stream", canLeave: true });
-  f.mountWithToasts();
-  const user = userEvent.setup();
-  await screen.findByRole("textbox", { name: "Message Planning" });
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Leave channel" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Leave channel: Planning",
-  });
-  // Someone else removes the viewer while Leave reads its permissions, which
-  // then refuse it: nothing was published.
-  f.run.mockImplementationOnce(async () => {
-    f.remove("private");
-    throw new Error("You can’t leave this channel.");
-  });
-  await user.click(
-    within(dialog).getByRole("button", { name: "Leave channel" }),
-  );
-  expect(await screen.findByText("Leave channel failed")).toBeVisible();
-  expect(
-    await screen.findByRole("region", {
-      name: "You’re no longer a member of Planning",
-    }),
-  ).toBeVisible();
-});
+it.each([
+  ["a leave reason", new Error("You can’t leave this channel.")],
+  // Stale, so its toast offers Refresh channels, but still not sent.
+  [
+    "a permission that changed",
+    new ChannelLifecycleStale("This action is no longer permitted."),
+  ],
+])(
+  "shows a removal during the viewer's Leave that fails before publishing with %s",
+  async (_, refusal) => {
+    const f = fixture({ type: "stream", canLeave: true });
+    f.mountWithToasts();
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "Message Planning" });
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Leave channel" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Leave channel: Planning",
+    });
+    // Someone else removes the viewer while Leave reads its permissions, which
+    // then refuse it: nothing was published.
+    f.run.mockImplementationOnce(async () => {
+      f.remove("private");
+      throw refusal;
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Leave channel" }),
+    );
+    expect(await screen.findByText("Leave channel failed")).toBeVisible();
+    expect(
+      await screen.findByRole("region", {
+        name: "You’re no longer a member of Planning",
+      }),
+    ).toBeVisible();
+  },
+);
 
 /** Leave fails unconfirmed: the relay may still apply it. */
 async function failLeave(f: ReturnType<typeof fixture>) {

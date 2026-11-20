@@ -1906,7 +1906,19 @@ function ImportAgents({
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])
-    named.set(agent.name, (named.get(agent.name) ?? 0) + 1);
+    for (const key of [
+      agent.name,
+      `${agent.name}\n${lastRun(agent.lastStarted)}`,
+    ])
+      named.set(key, (named.get(key) ?? 0) + 1);
+  // Its last run tells it apart unless another of its name ran then too.
+  const apart = (agent: PortableAgent) => {
+    const run = lastRun(agent.lastStarted);
+    return (
+      (named.get(`${agent.name}\n${run}`) === 1 && run) ||
+      labels.get(agent.pubkey)
+    );
+  };
   const setPort = (pubkey: string, state?: "queued" | "done") =>
     setPorts((last) => {
       const next = new Map(last);
@@ -2206,12 +2218,7 @@ function ImportAgents({
               key={agent.pubkey}
               agent={agent}
               community={agent.relay || undefined}
-              detail={[
-                LEGACY,
-                // Its last run, else its key, tells it apart only from one of the same name.
-                named.get(agent.name) !== 1 &&
-                  (lastRun(agent.lastStarted) || labels.get(agent.pubkey)),
-              ]
+              detail={[LEGACY, named.get(agent.name) !== 1 && apart(agent)]
                 .filter(Boolean)
                 .join(" · ")}
             >

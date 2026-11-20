@@ -88,6 +88,8 @@ export type {
 } from "../features/messages/DocumentEditor";
 export type {
   ConversationWorkspaceProps,
+  ChannelView,
+  ChannelViewProps,
   PageTabTarget,
   PageTabOptions,
   PageTabsProps,

@@ -2952,8 +2952,9 @@ in place to an ordinary page target: the named page, else the plugin's primary p
 else its first page. `params` become that page's route params only when the page
 declares a route and its `validate` accepts them; otherwise the page opens without
 params. A plugin that is absent, disabled, or lacks the page fails `unavailable`.
-Conversation targets may include `panel: "members"` to restore that channel’s
-Members dialog without replacing its channel/message identity. Unknown panel
+Conversation targets may include `panel: "members"` for the Members dialog or
+`panel: "settings"` for native channel details, including when a plugin replaces
+channel content. Both preserve the channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
@@ -3014,6 +3015,27 @@ visit history. Saved sidebar preferences live in the relay session, not in the
 mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
+
+### Channel content views
+
+`conversation.registerChannelView({ id, title, matches, component })` replaces the message workspace for matching channel-only destinations. The host keeps the organizer row, sections, access resolution, channel identity and navigation history. The component receives `{ session, channel, active, companion?, companionOpening? }`. It supplies the interior layout and local actions. If you use the supplied companion, place it in every state.
+
+Check `typeof ctx.conversation.registerChannelView === "function"` on older hosts. Registrations belong to the plugin and disappear on disable, replacement or failed activation. `conversation.channelViews` exposes the active registry. Among matching contributions, the lowest contribution key wins. The host skips a matcher that throws. A failed component shows an isolated unavailable state with Retry. Disabling its plugin restores the ordinary channel workspace.
+
+The host resolves channel access before matching. A match does not grant access or signing authority. `active()` becomes false when the contribution, channel visit or session retires. Check the session's current write capabilities before each mutation too. Opening a view does not mount a hidden timeline or mark its messages read. Exact message/thread links and native channel details continue through the ordinary conversation workspace. Non-addressable panel requests return false while a contributed view replaces their host. A failed view keeps any independent companion beside its recovery state.
+
+```tsx
+if (typeof ctx.conversation.registerChannelView === "function") {
+  ctx.conversation.registerChannelView({
+    id: "board",
+    title: "Board",
+    matches: (channel) => channel.labels?.includes("example.board") === true,
+    component: Board,
+  });
+}
+```
+
+The existing `sidebarRows` API can decorate these same native rows. A channel view does not insert another row or change its organizer placement.
 
 `registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active

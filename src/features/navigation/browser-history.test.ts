@@ -95,11 +95,16 @@ for (const kind of ["memory", "browser"] as const) {
     const driver = setup();
     driver.push(page);
     const opener = driver.snapshot().current;
+    driver.push({ ...page, pageId: "detail" });
+    const detail = driver.snapshot().current;
     driver.push(settings);
     driver.push({ ...settings, section: "notifications" });
     driver.back();
     expect(driver.snapshot().current.target).toEqual(settings);
-    driver.dismiss((target) => target.kind === "settings", page);
+    driver.dismiss(
+      (target, id) => target.kind === "settings" || id === detail.id,
+      page,
+    );
     expect(driver.snapshot().current).toEqual(opener);
     expect(driver.snapshot().canGoForward).toBe(false);
     driver.back();

@@ -952,9 +952,9 @@ it.each(["draft", "edit"])(
     h.remove();
     fireEvent.click(await screen.findByRole("button", { name: "Copy text" }));
     await waitFor(() => expect(write).toHaveBeenCalledWith(text));
-    expect(
-      await screen.findByText("Text copied", { exact: true }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText("Text copied", { exact: true })).toBeVisible(),
+    );
     h.restore();
     expect(h.input()).toHaveValue("Saved draft");
   },

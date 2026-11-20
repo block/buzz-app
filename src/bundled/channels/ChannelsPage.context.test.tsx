@@ -1,9 +1,24 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+} from "@testing-library/react";
+import type {
+  ChannelView,
+  ConversationExtensions,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import type { ComponentProps, ReactElement } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import { Context } from "@deepseek-ai/cordis";
+import { provideNavigation } from "../../features/navigation/service";
+import type { Navigation } from "../../features/navigation/controller";
+import { targetKey } from "../../features/navigation/targets";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -25,6 +40,7 @@ import {
 } from "../../features/relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelsPage } from "./ChannelsPage";
+import { channelTabs } from "./useChannelTabState";
 
 // Open in channel: whether the page holds its channel list while it seeks the
 // thread's root, and what it asks the list to reveal. The real body renders;
@@ -137,7 +153,13 @@ function page(filter: ReadFilter, history: readonly RelayEvent[]) {
  * `root: false`, absent from its history. Alpha's older pages wait for
  * `release()`. A `cached` session has only alpha's saved head until
  * `connect()`. */
-async function channelsPage({ root = true, cached = false } = {}) {
+async function channelsPage({
+  root = true,
+  cached = false,
+  extensions = undefined as ConversationExtensions | undefined,
+  navigationOwner = undefined as Navigation | undefined,
+  panelContributions = [] as ReturnType<Panels["snapshot"]>,
+} = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
   const held: ((error?: Error) => void)[] = [];
@@ -216,19 +238,26 @@ async function channelsPage({ root = true, cached = false } = {}) {
     disconnect() {},
     clearCache: async () => {},
   };
-  const none: ReturnType<Panels["snapshot"]> = [];
+  const none = panelContributions;
+  const panelHandlers = new Set<Parameters<Panels["handleOpenRequests"]>[0]>();
   const panels: Panels = {
     ui: { Workspace: () => null, useSplit: vi.fn() },
     snapshot: () => none,
     subscribe: () => () => {},
-    resolve: () => undefined,
+    resolve: (target) => none.find((panel) => panel.matches(target)),
     register() {},
-    requestOpen: () => false,
-    handleOpenRequests: () => () => {},
+    requestOpen: (request) =>
+      [...panelHandlers].some((handler) => handler(request)),
+    handleOpenRequests: (handler) => {
+      panelHandlers.add(handler);
+      return () => {
+        panelHandlers.delete(handler);
+      };
+    },
   };
-  const navigator = createNavigationController(
-    createMemoryHistory(),
-  ).navigation;
+  const navigator =
+    navigationOwner ??
+    createNavigationController(createMemoryHistory()).navigation;
   const target = (
     channelId: string,
     extra: Partial<Extract<OpenTarget, { kind: "conversation" }>> = {},
@@ -265,6 +294,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
   const view = (navigation: PageNavigation) => (
     <ToastProvider>
       <ChannelsPage
+        extensions={extensions}
         relay={relay}
         panels={panels}
         navigator={navigator}
@@ -276,6 +306,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
   let rerender: ((ui: ReactElement) => void) | undefined;
   return {
     session: owner.session,
+    panels,
     held,
     /** Open in channel from the thread's tab. */
     inChannel: (extra: Parameters<typeof target>[1] = {}) =>
@@ -329,6 +360,302 @@ const renders = (channelId: string) =>
 const latest = (channelId: string) => renders(channelId).at(-1);
 const timeline = (channelId: string) =>
   document.querySelector(`[data-channel-timeline="${channelId}"]`);
+
+it("replaces a resolved channel's reader with its plugin view, restores native content on disable, and preserves native destinations", async () => {
+  let broken = false;
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  let entries: readonly Contribution<ChannelView>[] = [
+    {
+      key: "example.board/main",
+      pluginId: "example.board",
+      revision: "one",
+      id: "main",
+      title: "Board",
+      matches: (channel) => channel.id === "alpha",
+      component: ({ channel }) => {
+        if (broken) throw new Error("Broken board");
+        return <p>Board for {channel.name}</p>;
+      },
+    },
+  ];
+  const listeners = new Set<() => void>();
+  const empty: readonly never[] = [];
+  const newest = fixture.newer[0];
+  if (!newest) throw new Error("Missing top-level message fixture");
+  const h = await channelsPage({
+    extensions: {
+      tools: { snapshot: () => empty, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      channelViews: {
+        snapshot: () => entries,
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    },
+  });
+  h.go(h.visit(h.target("alpha"), "board"));
+  await screen.findByText("Board for alpha");
+  expect(renders("alpha")).toHaveLength(0);
+  expect(h.session.channels.window("alpha").status).toBe("idle");
+  const panel = {
+    id: "example",
+    key: "example/main",
+    pluginId: "example",
+    revision: "one",
+    title: "Example panel",
+    matches: () => true,
+    component: () => <p>Example panel</p>,
+  };
+  vi.spyOn(h.panels, "resolve").mockReturnValue(panel);
+  expect(
+    h.panels.requestOpen({ channelId: "alpha", target: "example:panel" }),
+  ).toBe(false);
+  h.go(
+    h.visit(
+      h.target("alpha", { messageId: newest.id, threadRootId: newest.id }),
+      "native-thread",
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(
+      channelTabs(h.session)
+        .list("alpha")
+        .some((thread) => thread.shown),
+    ).toBe(true),
+  );
+  h.go(h.visit(h.target("alpha"), "hidden-thread"));
+  await screen.findByText("Board for alpha");
+  expect(channelTabs(h.session).list("alpha")).toMatchObject([
+    { shown: false },
+  ]);
+  expect(channelTabs(h.session).close("alpha", newest.id)).toBe("closed");
+  act(() => channelTabs(h.session).openSettings("alpha", "details"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha", { panel: "settings" }), "details-route"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha", { forward: newest.id }), "forward"));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha", { messageId: newest.id }), "message"));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha"), "board-return"));
+  await screen.findByText("Board for alpha");
+  broken = true;
+  h.go(h.visit(h.target("alpha"), "broken-board"));
+  await screen.findByText("Channel view unavailable");
+  h.go(h.visit(h.target("alpha", { panel: "settings" }), "broken-details"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Channel view unavailable")).toBeNull();
+  act(() => {
+    entries = [];
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+});
+
+it.each([
+  "individual",
+  "individual-local",
+  "inactive-settings",
+  "bulk",
+  "keep-local",
+  "thread-bulk",
+])(
+  "restores the custom view through settings history and retires every settings visit on %s close",
+  async (mode) => {
+    const host = provideNavigation(new Context());
+    const dismiss = vi.fn(host.navigation.dismiss);
+    const entry: Contribution<ChannelView> = {
+      key: "example/board",
+      id: "board",
+      pluginId: "example",
+      revision: "one",
+      title: "Board",
+      matches: (channel) => channel.id === "alpha",
+      component: () => <p>Custom board</p>,
+    };
+    const empty: readonly never[] = [],
+      entries = [entry];
+    const local = mode === "keep-local" || mode === "individual-local";
+    const panelContributions: ReturnType<Panels["snapshot"]> = local
+      ? ["Canvas", "Notes"].map((title) => ({
+          key: `example/${title}`,
+          id: title,
+          pluginId: "example",
+          revision: "one",
+          title,
+          matches: () => true,
+          component: () => <p>{title} content</p>,
+          channelPlacement: "tab",
+          channelLauncher: ({ toggle }) => (
+            <button
+              type="button"
+              onClick={() => toggle(`https://example.org/${title}`)}
+            >
+              View {title}
+            </button>
+          ),
+        }))
+      : [];
+    const h = await channelsPage({
+      navigationOwner: { ...host.navigation, dismiss },
+      panelContributions,
+      extensions: {
+        tools: { snapshot: () => empty, subscribe: () => () => {} },
+        inline: { snapshot: () => empty, subscribe: () => () => {} },
+        channelViews: {
+          snapshot: () => (local ? empty : entries),
+          subscribe: () => () => {},
+        },
+      },
+    });
+    let shown = "";
+    const sync = () => {
+      const snapshot = host.navigation.snapshot(),
+        key = `${snapshot.attempt.id}:${targetKey(snapshot.entry.target)}`;
+      if (shown === key) return;
+      shown = key;
+      h.go(
+        host.request(snapshot.attempt, {
+          valid: () => true,
+          subscribe: () => () => {},
+        }).request,
+      );
+    };
+    const stop = host.navigation.subscribe(sync);
+    const open = async (target: OpenTarget) => {
+      act(() => {
+        void host.navigation.open(target);
+      });
+      await vi.waitFor(() =>
+        expect(host.navigation.snapshot().status).toBe("opened"),
+      );
+    };
+    try {
+      await open(h.target("alpha"));
+      if (local)
+        await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+      else await screen.findByText("Custom board");
+      if (mode === "individual-local") {
+        fireEvent.click(screen.getByRole("button", { name: "View Canvas" }));
+        await screen.findByText("Canvas content");
+        fireEvent.click(screen.getByRole("button", { name: "View Notes" }));
+        await screen.findByText("Notes content");
+      }
+      const root = fixture.newer.at(-1)?.id;
+      if (!root) throw new Error("Missing thread fixture");
+      if (mode === "inactive-settings")
+        await open(h.target("alpha", { messageId: root, threadRootId: root }));
+      await open(h.target("alpha", { panel: "settings" }));
+      const first = host.navigation.snapshot().entry.id;
+      await screen.findByRole("tab", { name: "Channel settings" });
+      if (mode === "inactive-settings") {
+        const threadTab = screen.getByRole("tab", { name: "Newer 24" });
+        fireEvent.click(threadTab);
+        await vi.waitFor(() =>
+          expect(channelTabs(h.session).list("alpha")[0]?.shown).toBe(true),
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+        await vi.waitFor(() =>
+          expect(host.navigation.snapshot().entry.target).toMatchObject({
+            kind: "conversation",
+            channelId: "alpha",
+            messageId: root,
+            threadRootId: root,
+          }),
+        );
+        expect(channelTabs(h.session).list("alpha")[0]?.shown).toBe(true);
+        expect(threadTab).toHaveAttribute("aria-selected", "true");
+        expect(
+          screen.queryByRole("tab", { name: "Channel settings" }),
+        ).toBeNull();
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(first);
+        return;
+      }
+      if (mode === "individual-local") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+        await vi.waitFor(() =>
+          expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute(
+            "aria-selected",
+            "true",
+          ),
+        );
+        expect(screen.getByText("Notes content")).toBeVisible();
+        return;
+      }
+      act(() => host.navigation.back());
+      if (local)
+        await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+      else await screen.findByText("Custom board");
+      act(() => host.navigation.forward());
+      await screen.findByRole("tab", { name: "Channel settings" });
+      await open(h.target("beta"));
+      await open(h.target("alpha", { panel: "settings" }));
+      const second = host.navigation.snapshot().entry.id;
+      if (mode === "keep-local") {
+        fireEvent.click(screen.getByRole("button", { name: "View Canvas" }));
+        await screen.findByText("Canvas content");
+      }
+      if (mode === "thread-bulk") {
+        const root = fixture.newer.at(-1)?.id;
+        if (!root) throw new Error("Missing thread fixture");
+        await open(h.target("alpha", { messageId: root, threadRootId: root }));
+      }
+      if (mode === "individual" || mode === "individual-local")
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+      else {
+        fireEvent.contextMenu(
+          screen.getByRole("tab", {
+            name: mode === "keep-local" ? "Canvas" : "Channel settings",
+          }),
+        );
+        fireEvent.click(
+          await screen.findByRole("menuitem", {
+            name: mode === "keep-local" ? "Close other tabs" : "Close all tabs",
+          }),
+        );
+      }
+      expect(dismiss).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(first);
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(second);
+      });
+      if (mode === "keep-local") {
+        await open(h.target("beta"));
+        await open(h.target("alpha"));
+        expect(await screen.findByText("Canvas content")).toBeVisible();
+      }
+      act(() => host.navigation.back());
+      if (mode === "thread-bulk") {
+        await vi.waitFor(() =>
+          expect(host.navigation.snapshot().entry.target).toMatchObject({
+            kind: "conversation",
+            channelId: "beta",
+          }),
+        );
+      }
+      act(() => host.navigation.forward());
+      expect(
+        screen.queryByRole("tab", { name: "Channel settings" }),
+      ).toBeNull();
+    } finally {
+      stop();
+      host.dispose();
+    }
+  },
+);
 
 it("holds the list from the visit's start, then reveals the root beside the thread", async () => {
   const h = await channelsPage();

@@ -2310,6 +2310,10 @@ On macOS, Buzz can stop a storage helper that WebKit replaces but leaves running
 This recovery only covers helpers observed during the current launch. It does
 not clear saved drafts or bypass conflict checks.
 
+## Plugin channel views
+
+A plugin can show a channel as a table, board or another view when you select its normal organizer row. The channel keeps its existing access and section placement. Exact message links still open the message. If the plugin is disabled, the channel returns to its normal conversation view.
+
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.

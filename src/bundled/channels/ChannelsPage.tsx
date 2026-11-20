@@ -1,4 +1,5 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
+import { SelectedChannelView, useChannelView } from "./ChannelView";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import {
@@ -26,6 +27,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
+  channelTabs,
   type ConversationTab,
   entryPane,
   panelTabId,
@@ -156,6 +158,7 @@ export function ChannelsPage({
   relay,
   panels,
   companion,
+  companionOpening,
   navigation,
   navigator,
   agents,
@@ -180,6 +183,7 @@ export function ChannelsPage({
   /** The open conversation's Mark as read, for the Escape shortcut. */
   read?: ReadShortcut | undefined;
   companion?: ReactNode;
+  companionOpening?: object | undefined;
 }) {
   const session = useRelayConnection(relay);
   const openSwitcher = useContext(OpenCommunitySwitcher);
@@ -330,6 +334,7 @@ export function ChannelsPage({
           archive={archive}
           read={read}
           companion={companion}
+          companionOpening={companionOpening}
           agents={agents}
           communities={communities}
           membership={membership}
@@ -356,6 +361,7 @@ function ChannelWorkspace({
   panels,
   scope,
   companion,
+  companionOpening,
   navigation,
   navigator,
   viewer,
@@ -370,6 +376,7 @@ function ChannelWorkspace({
   agents?: Agents | undefined;
   membership?: CommunityMembership | undefined;
   companion?: ReactNode;
+  companionOpening?: object | undefined;
   communities?: CommunityReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
@@ -773,6 +780,24 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
+  const matchedChannelView = useChannelView(
+    extensions?.channelViews,
+    current &&
+      !requestedMessage &&
+      !requestedThread &&
+      !composingMessage &&
+      !draft &&
+      !removed &&
+      !ownLoss &&
+      !(
+        navigation?.target.kind === "conversation" &&
+        (navigation.target.panel ||
+          navigation.target.detail ||
+          navigation.target.forward)
+      )
+      ? current
+      : undefined,
+  );
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";
@@ -845,8 +870,17 @@ function ChannelWorkspace({
     currentId,
     "messages",
     navigator,
+    (state) =>
+      !matchedChannelView ||
+      (state.paneOpen &&
+        state.selected === "settings" &&
+        state.settings?.channelId === currentId),
   );
   const { settings, setSettings } = tabState;
+  const settingsRequested =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.panel === "settings";
+
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -879,9 +913,31 @@ function ChannelWorkspace({
     !!settings &&
     settings.channelId === currentId &&
     tabState.selected === "settings";
+  const channelView = showingSettings ? undefined : matchedChannelView;
+  const settingsTarget = (target: OpenTarget) =>
+    !!currentId &&
+    target.kind === "conversation" &&
+    target.panel === "settings" &&
+    matchesConversation(target, scope, currentId);
   const closeSettings = () => {
     setSettings(undefined);
+    if (
+      settingsRequested &&
+      navigation?.target.kind === "conversation" &&
+      !navigation.signal.aborted
+    ) {
+      const target = closeTarget("side");
+      if (target) dismissContent([], target, "side", tabState.entries, true);
+      return;
+    }
     afterClose("settings");
+    dismissContent(
+      [],
+      navigator.snapshot().entry.target,
+      "side",
+      tabState.entries,
+      true,
+    );
   };
   // The Solo treatment: an agent conversation. In the owner's own chat it
   // also files into a project; the conversation scope owns composer policy.
@@ -1000,7 +1056,7 @@ function ChannelWorkspace({
   });
   // Mail's Archive chord opens the same confirmation as the chat actions menu.
   const archivable =
-    solo && !current?.readOnly && !current?.cached
+    !channelView && solo && !current?.readOnly && !current?.cached
       ? current?.archived
         ? undefined
         : current
@@ -1046,7 +1102,11 @@ function ChannelWorkspace({
     notifyLatest.current = notify;
   });
   const readableId =
-    !composingMessage && current && !current.readOnly && !current.cached
+    !channelView &&
+    !composingMessage &&
+    current &&
+    !current.readOnly &&
+    !current.cached
       ? current.id
       : undefined;
   useLayoutEffect(() => {
@@ -1330,6 +1390,7 @@ function ChannelWorkspace({
     fallback: OpenTarget,
     pane: "main" | "side",
     entries = tabState.entries,
+    includeSettings = false,
   ) => {
     keptTabReturn.current = undefined;
     if (!navigator) return;
@@ -1338,13 +1399,17 @@ function ChannelWorkspace({
     const keptTab = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
+    const closing = (target: OpenTarget, id: string) =>
+      visits.includes(id) || (includeSettings && settingsTarget(target));
+    const retiring = closing(current.target, current.id);
     if (
       keep !== undefined &&
+      !(includeSettings && keep === "settings") &&
       (keptTab ||
         keptEntry ||
         keep === "settings" ||
         (pane === "side" && tabState.sidePanel)) &&
-      visits.includes(current.id) &&
+      retiring &&
       keptTab?.kind !== "thread" &&
       !(keptEntry && historyPanel(keptEntry))
     ) {
@@ -1359,17 +1424,14 @@ function ChannelWorkspace({
           !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
       };
     }
-    navigator.dismiss(visits, fallback);
+    navigator.dismiss(includeSettings ? closing : visits, fallback);
     // A later close can retire more visits before the return lands, moving
     // where it lands.
     const pending =
       pendingReturn.current?.from === current.id
         ? pendingReturn.current
         : undefined;
-    if (
-      (pending || visits.includes(current.id)) &&
-      navigator.snapshot().entry.id === current.id
-    )
+    if ((pending || retiring) && navigator.snapshot().entry.id === current.id)
       pendingReturn.current = {
         ...pending,
         from: current.id,
@@ -1471,6 +1533,7 @@ function ChannelWorkspace({
         fallback,
         keep === "settings" ? "side" : pane,
         remaining,
+        !!settings && keep !== "settings",
       );
     },
     onClosePanel: (entry, remaining) => {
@@ -1765,6 +1828,14 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
+  // Restore the outgoing visit before selecting the routed settings pane.
+  useLayoutEffect(() => {
+    if (settingsRequested && currentId && !cached && !navigation.signal.aborted)
+      channelTabs(queries).openSettings(
+        currentId,
+        navigator.snapshot().attempt.id,
+      );
+  }, [settingsRequested, currentId, cached, navigation, navigator, queries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
@@ -2021,11 +2092,11 @@ function ChannelWorkspace({
   useEffect(
     () =>
       panels.handleOpenRequests(({ target, channelId, rootId }) =>
-        channelId === linkContext.current.channelId
+        !channelView && channelId === linkContext.current.channelId
           ? openLink(target, rootId ? { rootId, fromThread: true } : {})
           : false,
       ),
-    [panels, openLink],
+    [panels, openLink, channelView],
   );
   const hasChannelPanel =
     !composingMessage &&
@@ -2947,6 +3018,21 @@ function ChannelWorkspace({
       </PanelDock>
     </div>
   );
+  if (channelView && current && extensions?.channelViews)
+    return (
+      <SelectedChannelView
+        key={`${current.id}:${channelView.key}`}
+        entry={channelView}
+        registry={extensions.channelViews}
+        channel={current}
+        session={queries}
+        relay={relay}
+        navigation={navigation}
+        navigator={navigator}
+        companion={companion}
+        companionOpening={companionOpening}
+      />
+    );
   return (
     // The review reads thread-tab links like the workspace.
     <LinkThreadTabContext value={openLinkedThread}>

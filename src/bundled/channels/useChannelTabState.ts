@@ -592,6 +592,7 @@ export function useChannelTabState(
   channelId: string | undefined,
   page = "messages",
   navigation?: Navigation,
+  visible?: (state: State) => boolean,
 ) {
   const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
@@ -607,8 +608,12 @@ export function useChannelTabState(
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.
-  useLayoutEffect(() => store.mount(key), [key, store]);
   const state = channels[key] ?? empty;
+  const mounted = visible?.(state) ?? true;
+  useLayoutEffect(
+    () => (mounted ? store.mount(key) : undefined),
+    [key, store, mounted],
+  );
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),
     [key, store],

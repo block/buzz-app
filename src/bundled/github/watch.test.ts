@@ -448,6 +448,28 @@ describe("step", () => {
     );
   });
 
+  it("tells an approval lost while checks stay pending once they are stuck, and after that", () => {
+    const approved = snap({
+      running: true,
+      decision: "APPROVED",
+      unresolved: 1,
+    });
+    const unapproved = { ...approved, decision: "REVIEW_REQUIRED" };
+    const base = step(watch, approved, 0).watch;
+    // Lost while checks run, it waits for them, but not past stuck.
+    const held = step(base, unapproved, T);
+    expect(held.wake).toBeUndefined();
+    expect(news(step(held.watch, unapproved, STUCK_MS).wake)).toBe(
+      `CI has been pending on 111111111 for over 3 hours on ${url}; a check may be stuck.\n${url} is no longer approved: GitHub wants a review again, as when an approval is dismissed or more are required.`,
+    );
+    // Lost after the stuck wake, with the same check still pending.
+    const stuck = step(base, approved, STUCK_MS);
+    expect(news(stuck.wake)).toMatch(/a check may be stuck\.$/);
+    expect(news(step(stuck.watch, unapproved, STUCK_MS + T).wake)).toMatch(
+      /is no longer approved/,
+    );
+  });
+
   it("tells only that it closed when it closes after losing its approval", () => {
     const base = step(
       watch,

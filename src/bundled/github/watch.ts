@@ -122,6 +122,10 @@ export type Step = Readonly<{
   wake?: string | undefined;
   /** Why the watch is over, when it is. */
   ended?: "merged" | "closed" | undefined;
+  /** With a wake, whether it was approved as last read, before telling: a
+   * wake that cannot be sent keeps the watch as it was but this, so losing
+   * an approval it saw come back is news. */
+  approved?: boolean | undefined;
 }>;
 
 /** The watch after `snapshot` at `now`, and what to tell its agent; unless
@@ -167,10 +171,6 @@ export function step(
   // Checks running again on the head it was told about.
   const rechecking = !snapshot.settled && prior.head === snapshot.head;
   const { decision } = snapshot;
-  // Approval lost is told once checks are not running, so a push that
-  // dismisses stale approvals wakes once, with its CI result. Changes
-  // requested forget it unannounced: that review comes as feedback.
-  const unapproved = decision === "REVIEW_REQUIRED" && !snapshot.running;
   const rerun =
     rechecking &&
     prior.reported === `${snapshot.head}:failed` &&
@@ -207,6 +207,13 @@ export function step(
         : now,
     woken: (prior.woken ?? []).filter((at) => now - at < DAY_MS),
   };
+  // Approval lost is told once checks are not running, so a push that
+  // dismisses stale approvals wakes once, with its CI result; checks pending
+  // long enough to be stuck no longer hold it. Changes requested forget it
+  // unannounced: that review comes as feedback.
+  const unapproved =
+    decision === "REVIEW_REQUIRED" &&
+    (!pendingHead || now - (next.since ?? now) >= STUCK_MS);
   // A failed head that turns green after a rerun is news too.
   const result = `${snapshot.head}:${snapshot.failed.length ? "failed" : "passed"}`;
   const news: News = {
@@ -233,6 +240,7 @@ export function step(
   // An answer to the agent's own call is not a wake, so it waits for none.
   const told = paced ? [...woken, now] : woken;
   return {
+    approved: next.approved,
     watch: {
       ...next,
       // Feedback waiting goes with any wake.

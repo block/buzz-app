@@ -12,6 +12,7 @@ import {
   snapshotOf,
   step,
   type PullSnapshot,
+  type Step,
   type Watch,
 } from "./watch";
 import {
@@ -343,14 +344,18 @@ export function watchPulls(
           if (snapshot) {
             const [checked, news, unread] = recheck(watch, snapshot);
             if (unread.length) readMembership(unread, news.viewer);
+            let next: Step | undefined;
             try {
-              const next = step(checked, news, Date.now());
+              next = step(checked, news, Date.now());
               if (next.wake) emit(next.wake);
               watch = next.watch;
               ended = !!next.ended;
             } catch (error) {
-              // What could not be sent stays news, to be sent next time.
+              // What could not be sent stays news, to be sent next time, but
+              // an approval read stays read.
               console.warn(`GitHub watch failed for ${pull.url}`, error);
+              if (next?.approved !== undefined)
+                watch = { ...watch, approved: next.approved };
               unsent = true;
             }
           }

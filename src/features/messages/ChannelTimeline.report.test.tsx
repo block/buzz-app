@@ -16,7 +16,7 @@ import { StrictMode, type ReactElement, type ReactNode } from "react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
-import type { RelayEvent } from "../relay/events";
+import { eventDto, type RelayEvent } from "../relay/events";
 import {
   keypair,
   message,
@@ -114,6 +114,8 @@ function mount(
   const owner = createRelaySession(
     {
       ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      // The relay names itself explicitly, so its signed output is attributed.
+      archiveAuthority: relay.pubkey,
       ...(threadRoot ? { query: async () => initial } : {}),
       ...(options.media ? { media: options.media } : {}),
       writer: { sign: async (template) => signed(viewer, template), publish },
@@ -197,6 +199,85 @@ async function openReport(row: HTMLElement) {
   await screen.findByRole("dialog", { name: "Report message" });
   return { user, trigger };
 }
+
+async function menuItems(row: HTMLElement, open: "more" | "context") {
+  const user = userEvent.setup();
+  if (open === "more")
+    await user.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+  else fireEvent.contextMenu(row);
+  const menu = await screen.findByRole("menu");
+  const names = within(menu)
+    .getAllByRole("menuitem")
+    .map((item) => item.textContent?.trim());
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  return names;
+}
+
+it.each([
+  ["timeline", "more"],
+  ["timeline", "context"],
+  ["thread", "more"],
+  ["thread", "context"],
+] as const)(
+  "offers Report on a peer's message and the viewer's workflow output but not the viewer's own in the %s %s menu",
+  async (host, open) => {
+    const root = message(viewer, "c", "Root", 1);
+    const inThread =
+      host === "thread"
+        ? [
+            ["e", root.id, "", "root"],
+            ["e", root.id, "", "reply"],
+          ]
+        : [];
+    const reply = (author: typeof viewer, content: string, at: number) =>
+      message(author, "c", content, at, inThread);
+    const own = reply(viewer, "Mine", 2);
+    const peer = reply(other, "Theirs", 3);
+    // The relay signs workflow output and names its owner in the leading `p`,
+    // which the fold shows as the author. Only an admitted event is attributed.
+    const workflow = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "Automated",
+        created_at: 4,
+        tags: [
+          ["p", viewer.pubkey, "", "owner"],
+          ["h", "c"],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", viewer.pubkey],
+          ...inThread,
+        ],
+      }),
+    );
+    mount(
+      async () => {},
+      own,
+      [root, own, peer, workflow],
+      host === "thread" ? root.id : undefined,
+    );
+    const row = (id: string) =>
+      waitFor(() => {
+        const found = document.querySelector<HTMLElement>(
+          `[data-message-id="${id}"]`,
+        );
+        if (!found) throw new Error(`Missing row ${id}`);
+        return found;
+      });
+    const ownItems = await menuItems(await row(own.id), open);
+    expect(ownItems).toContain("Copy message");
+    expect(ownItems).not.toContain("Report");
+    expect(await menuItems(await row(peer.id), open)).toContain("Report");
+    const workflowRow = await row(workflow.id);
+    // Attributed to the viewer, so only the signer tells it from their own.
+    within(workflowRow).getByRole("button", {
+      name: "Workflow message details",
+    });
+    expect(await menuItems(workflowRow, open)).toContain("Report");
+  },
+);
 
 it("keeps the reporting row mounted through a held submission and its notice, then releases it", async () => {
   let settle!: () => void;

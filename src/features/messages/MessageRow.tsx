@@ -608,7 +608,13 @@ function MessageRowContent({
     () => keepMounted && (() => keepMounted(row.id)),
     [keepMounted, row.id],
   );
+  // Reporting yourself is not a real action, so a message the viewer signed
+  // has no Report. Relay-signed output attributed to the viewer keeps it: the
+  // fold makes the owner of a workflow message its authorId and leaves the
+  // relay's key in signerId. Messages from the viewer's agents keep it too;
+  // whether they should is a separate product decision.
   const report =
+    (row.signerId ?? row.authorId) !== viewer &&
     !row.membership &&
     !row.huddle &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))

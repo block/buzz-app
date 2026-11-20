@@ -77,7 +77,7 @@ if that desktop app is up and running.
   Settings → Shortcuts to give it the key.
 - **Closing the window** on Windows keeps Buzz and its agents running in the
   notification area. Click its icon there to reopen Buzz; right-click it and
-  choose **Quit Buzz** to quit.
+  choose **Quit Buzz** to quit. The first close says so in a notification.
 - **Settings** (⌘,, or **Buzz → Settings…** in the Mac app; Ctrl+, elsewhere)
   groups:
   - **Community**: **Profile**, **Local settings** (community address,

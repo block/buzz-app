@@ -1421,6 +1421,8 @@ pub fn run() {
                     api.prevent_close();
                     if let Err(error) = window.hide() {
                         eprintln!("Could not close Buzz window: {error}");
+                    } else {
+                        tray::hint_first_close(window.app_handle());
                     }
                     return;
                 }

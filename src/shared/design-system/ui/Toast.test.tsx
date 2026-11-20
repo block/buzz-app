@@ -50,7 +50,7 @@ it.each(["expiry", "Escape", "repeated Escape"])(
     expect(item).toHaveAttribute("data-removed", "true");
     view.unmount();
     // Flush queued dismissal notifications before emulating jsdom teardown,
-    // but leave the exit-removal timer pending.
+    // but leave the 200ms exit-removal timer pending.
     await act(() => vi.advanceTimersByTimeAsync(20));
     vi.stubGlobal("window", undefined);
     try {
@@ -73,11 +73,10 @@ it("finishes toast removal after the exit animation while the host stays mounted
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
   const card = screen.getByRole("dialog", { name: "Saved" });
-  const item = card.closest<HTMLElement>("[data-sonner-toast]");
-  item?.style.setProperty("--buzz-toast-removal-ms", "275");
+  const item = card.closest("[data-sonner-toast]");
   fireEvent.keyDown(card, { key: "Escape" });
   expect(item).toHaveAttribute("data-removed", "true");
-  await act(() => vi.advanceTimersByTimeAsync(274));
+  await act(() => vi.advanceTimersByTimeAsync(199));
   expect(item).toBeInTheDocument();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(item).not.toBeInTheDocument();

@@ -609,8 +609,6 @@
 
   .buzz-toast-viewport
     [data-sonner-toast][data-front="true"][data-swiping="false"][data-swipe-out="false"] {
-    /* The Sonner patch reads this delay so the 250ms exit finishes before removal. */
-    --buzz-toast-removal-ms: 275;
     transition-property: transform, opacity;
     transition-duration: var(--toast-motion-duration, 350ms);
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
@@ -631,7 +629,7 @@
     ) {
     transform: translateY(-16px);
     opacity: 0;
-    --toast-motion-duration: 250ms;
+    --toast-motion-duration: 175ms;
   }
 
   .buzz-toast-viewport

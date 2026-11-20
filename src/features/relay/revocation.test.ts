@@ -1099,3 +1099,36 @@ it.each([
     expect(disk.clear).toHaveBeenCalledTimes(clears);
   },
 );
+
+it("keeps statuses shown and reads a retired status again at once when another channel's access ends", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  const status = (key: Key, content: string) =>
+    signed(key, {
+      kind: 30315,
+      created_at: 10,
+      content,
+      tags: [["d", "general"]],
+    });
+  h.session.statuses.watch([alice.pubkey]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([status(alice, "Shown")]);
+  await vi.waitFor(() =>
+    expect(h.session.statuses.snapshot().get(alice.pubkey)?.text).toBe("Shown"),
+  );
+  h.session.statuses.watch([bob.pubkey]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const retired = h.next();
+  expect(retired.filters[0]?.authors).toEqual([bob.pubkey]);
+  h.emit([roster(relay, "a", [], 11)]);
+  expect(retired.signal?.aborted).toBe(true);
+  expect(h.session.statuses.snapshot().get(alice.pubkey)?.text).toBe("Shown");
+  // Read again now, not after the failed read's retry delay.
+  await flush();
+  const again = h.pending.map((entry) => entry.filters[0]?.authors);
+  expect(again).toContainEqual(expect.arrayContaining([bob.pubkey]));
+  h.next().respond([status(bob, "Back"), status(alice, "Shown")]);
+  await vi.waitFor(() =>
+    expect(h.session.statuses.snapshot().get(bob.pubkey)?.text).toBe("Back"),
+  );
+});

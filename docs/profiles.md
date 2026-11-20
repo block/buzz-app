@@ -127,8 +127,9 @@ self-published NIP-38 `general` status (kind 30315, emoji tag plus text) uses th
 session's shared live status owner, including expiration and clear events.
 Statuses the session shows are saved with the saved profiles, for as many
 people as those keep, and appear at once on the next start. Each row still reads
-its author's status, so a newer one replaces the saved copy; expired and empty
-statuses are not saved. A channel access change keeps statuses shown, because
+its author's status, so a newer one replaces the saved copy and one the relay
+no longer returns is dropped. Expired and empty statuses are not saved, and
+statuses use only the room the saved names leave. A channel access change keeps statuses shown, because
 they belong to the person rather than a channel, and reads them again.
 A custom `:shortcode:` status saves its catalog image URL as the emoji tag's third
 value (`["emoji", ":code:", url]`) so it renders without the viewer's catalog;

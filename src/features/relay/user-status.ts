@@ -73,6 +73,8 @@ export function createUserStatuses(
 ) {
   // Signed events, so the session can save them for the next start.
   const records = new Map<string, { event: RelayEvent; status: UserStatus }>();
+  // Authors shown only from the saved copy, until a read or live event answers.
+  const unconfirmed = new Set<string>();
   const watched = new Map<string, number>();
   const loaded = new Set<string>();
   /** Unwatched authors still held, oldest first. */
@@ -127,18 +129,29 @@ export function createUserStatuses(
       )
         continue;
       const status = parse(event);
-      if (!status) continue;
-      const old = records.get(event.pubkey);
-      if (
-        old &&
-        (old.event.created_at > event.created_at ||
-          (old.event.created_at === event.created_at &&
-            old.event.id <= event.id))
-      )
-        continue;
+      if (!status || !replaces(event)) continue;
       records.set(event.pubkey, { event, status });
+      unconfirmed.delete(event.pubkey);
     }
     publish();
+  }
+  /** Replaceable-event order: the newer event wins, then the lower ID. */
+  function replaces(event: RelayEvent) {
+    const old = records.get(event.pubkey)?.event;
+    return (
+      !old ||
+      old.created_at < event.created_at ||
+      (old.created_at === event.created_at && old.id > event.id)
+    );
+  }
+  /** Takes a read's answer for `authors`. A saved status the relay no longer
+   * returns is gone, as if cleared; a live event since then is kept. */
+  function answer(authors: readonly string[], events: readonly RelayEvent[]) {
+    const found = events.filter((event) => authors.includes(event.pubkey));
+    const answered = new Set(found.map((event) => event.pubkey));
+    for (const id of authors)
+      if (unconfirmed.delete(id) && !answered.has(id)) records.delete(id);
+    accept(found);
   }
   async function load() {
     if (closed) return;
@@ -160,7 +173,7 @@ export function createUserStatuses(
           { signal, priority: "background" },
         );
         if (closed || signal.aborted) return;
-        accept(events.filter((event) => authors.includes(event.pubkey)));
+        answer(authors, events);
         for (const id of authors) if (watched.has(id)) loaded.add(id);
       }
       error = undefined;
@@ -199,6 +212,7 @@ export function createUserStatuses(
       idle.delete(id);
       // Evict the whole coordinate, never only its latest replacement evidence.
       loaded.delete(id);
+      unconfirmed.delete(id);
       evicted = records.delete(id) || evicted;
     }
     if (evicted) publish();
@@ -345,6 +359,7 @@ export function createUserStatuses(
     pending = undefined;
     loaded.clear();
     records.clear();
+    unconfirmed.clear();
     idle.clear();
     publish();
     schedule();
@@ -373,7 +388,7 @@ export function createUserStatuses(
         { signal, fresh: true },
       );
       signal.throwIfAborted();
-      accept(events.filter((event) => event.pubkey === userId));
+      answer([userId], events);
       return snapshot.get(userId);
     },
     save,
@@ -425,14 +440,9 @@ export function createUserStatuses(
       if (closed) return;
       for (const event of events) {
         const status = parse(event);
-        const old = records.get(event.pubkey);
-        if (
-          !status ||
-          !shown(status) ||
-          (old && old.event.created_at >= event.created_at)
-        )
-          continue;
+        if (!status || !shown(status) || !replaces(event)) continue;
         records.set(event.pubkey, { event, status });
+        unconfirmed.add(event.pubkey);
         if (!watched.has(event.pubkey) && event.pubkey !== viewer)
           idle.add(event.pubkey);
       }

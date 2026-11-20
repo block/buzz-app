@@ -2,7 +2,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createRelaySession } from "./session";
-import { keypair, signed } from "./testing";
+import {
+  bounds,
+  keypair,
+  message,
+  metadata,
+  profile,
+  roster,
+  signed,
+} from "./testing";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 
@@ -650,4 +658,108 @@ it("shows saved statuses at once, reads them again when their rows mount, and sa
   // An older copy never replaces what the relay answered.
   owner.restore([saved]);
   expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Fresh");
+});
+it("restores in the order live events replace: the same second keeps the lower ID", async () => {
+  const read = vi.fn<RelayReader["read"]>(async () => []);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  const [low, high] = ["One", "Two"]
+    .map((content) =>
+      signed(bob, {
+        kind: 30315,
+        created_at: now,
+        content,
+        tags: [["d", "general"]],
+      }),
+    )
+    .sort((a, b) => a.id.localeCompare(b.id)) as [RelayEvent, RelayEvent];
+  owner.accept([high]);
+  owner.restore([low]);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe(low.content);
+  owner.accept([high]);
+  expect(owner.saved()).toEqual([low]);
+});
+it("drops a saved status a successful read no longer returns, but not after a failure or a live event", async () => {
+  const carol = keypair();
+  const saved = (author: typeof bob, content: string, time = now) =>
+    signed(author, {
+      kind: 30315,
+      created_at: time,
+      content,
+      tags: [["d", "general"]],
+    });
+  let fail = true;
+  const read = vi.fn<RelayReader["read"]>(async () => {
+    if (fail) throw new Error("offline");
+    // Carol's live event lands while the read is out.
+    owner.accept([saved(carol, "Live", now + 1)]);
+    return [];
+  });
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  owner.restore([saved(bob, "Removed"), saved(carol, "Old")]);
+  owner.queries.watch([bob.pubkey, carol.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Removed");
+  fail = false;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(owner.queries.snapshot().has(bob.pubkey)).toBe(false);
+  expect(owner.queries.snapshot().get(carol.pubkey)?.text).toBe("Live");
+  expect(owner.saved().map((event) => event.content)).toEqual(["Live"]);
+});
+it("prepares a channel's status images with its avatars", async () => {
+  const relay = keypair();
+  const created: string[] = [];
+  vi.stubGlobal(
+    "Image",
+    class {
+      decoding = "";
+      set src(url: string) {
+        created.push(url);
+      }
+    },
+  );
+  const owner = createRelaySession(
+    {
+      viewer: bob.pubkey,
+      relayAuthor: relay.pubkey,
+      media: (url) => `https://media.test/?url=${encodeURIComponent(url)}`,
+      async query(filters) {
+        const kinds = filters.flatMap((filter) => filter.kinds ?? []);
+        if (kinds.includes(39002))
+          return [roster(relay, "c", [bob.pubkey]), metadata(relay, "c", "C")];
+        if (kinds.includes(9) && filters[0]?.["#h"])
+          return [
+            message(alice, "c", "hello", now),
+            bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
+          ];
+        if (kinds.includes(0)) return [profile(alice, { name: "Alice" })];
+        if (kinds.includes(30315))
+          return [emojiStatus(["emoji", ":bee:", beeUrl])];
+        return [];
+      },
+    },
+    {},
+  );
+  try {
+    const { channels, statuses } = owner.session;
+    channels.ensureList();
+    await vi.waitFor(() => expect(channels.list().channels).toHaveLength(1));
+    channels.ensure("c");
+    statuses.watch([alice.pubkey]);
+    await vi.waitFor(() =>
+      expect(statuses.snapshot().get(alice.pubkey)?.emojiUrl).toBe(beeUrl),
+    );
+    channels.prepare?.("c");
+    expect(created).toContain(
+      `https://media.test/?url=${encodeURIComponent(beeUrl)}`,
+    );
+  } finally {
+    owner.dispose();
+    vi.unstubAllGlobals();
+  }
 });

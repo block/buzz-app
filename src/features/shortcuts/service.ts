@@ -27,6 +27,9 @@ export type Shortcuts = {
   snapshot(): readonly RegisteredShortcut[];
   subscribe(listener: () => void): () => void;
 };
+/** Bundled plugins only, not the public plugin API: the injected service also
+ * runs a host shortcut by id, whatever its binding, if it is eligible now. */
+export type BundledShortcuts = Shortcuts & Pick<ShortcutsService, "runHost">;
 /** Device-local user rebinds, keyed by host id or namespaced contribution key. */
 export type BindingOverrides = {
   /** A stored override is a nonempty alias list; anything else means the default. */
@@ -162,7 +165,7 @@ export class ShortcutsService extends Service implements Shortcuts {
       };
     });
   }
-  /** Host composition only: runs a host shortcut if it is eligible now. */
+  /** Host composition and bundled plugins: runs a host shortcut if it is eligible now. */
   readonly runHost: (id: string) => boolean;
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);

@@ -1244,6 +1244,12 @@ Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
 for destructive actions and MenuNote for explanatory or status copy outside the
 keyboard item list. Long lists scroll inside the popup.
 
+Menu letters are off unless a caller turns them on with `enableMenuLetters`
+(the optional Vim keys plugin does). While on, every item shows one key at its
+trailing edge, after any trailing content, and that key runs it. Keys come from
+the item's label, so they stay put until the menu's items change; a `letter`
+prop fixes one. Don't add per-menu shortcut hints or key handlers for this.
+
 ChoiceRow arranges a label, wrapping description, optional artwork and trailing
 metadata. It adds no second click target or tab stop. Keep its slots non-interactive
 and let the containing item own state and padding. Use the small shared avatar

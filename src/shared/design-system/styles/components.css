@@ -2688,6 +2688,34 @@
     flex: 0 0 auto;
     color: var(--text-subtle);
   }
+  /* Menu letters (menu-letters.ts): the item's key at its trailing edge, after
+     any trailing content. The item's aria-keyshortcuts names it for assistive
+     technology, so the generated text is silent. */
+  .buzz-menu-item[data-menu-letter]::after {
+    content: attr(data-menu-letter);
+    margin-inline-start: var(--space-2);
+    flex: 0 0 auto;
+    min-inline-size: 1.25rem;
+    border-radius: var(--radius-chip);
+    background: var(--surface-inset);
+    color: var(--text-subtle);
+    padding-inline: var(--space-1);
+    text-align: center;
+  }
+  .buzz-menu-item[data-menu-letter]:not(
+    :has(
+      > .buzz-menu-trailing,
+      > .buzz-menu-submenu-arrow,
+      > .buzz-menu-item-indicator
+    )
+  )::after {
+    margin-inline-start: auto;
+  }
+  @supports (content: "a" / "") {
+    .buzz-menu-item[data-menu-letter]::after {
+      content: attr(data-menu-letter) / "";
+    }
+  }
   .buzz-menu-group-label {
     padding: var(--space-2) var(--space-3) var(--space-1);
     color: var(--text-subtle);

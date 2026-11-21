@@ -22,7 +22,8 @@ function available(element: HTMLElement) {
   return front === element.closest(COVERING);
 }
 
-function workspaces() {
+/** The main, Solo focus and side panel workspaces, in document order. */
+export function workspaces() {
   return Array.from(
     document
       .getElementById("main-content")
@@ -42,7 +43,7 @@ export function composerFocusTarget() {
   );
 }
 
-function composerIn(root: HTMLElement | null | undefined) {
+export function composerIn(root: HTMLElement | null | undefined) {
   return Array.from(
     root?.querySelectorAll<HTMLElement>(
       '[data-tab-focus]:is([role="textbox"], input, textarea)',

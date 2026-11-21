@@ -51,6 +51,7 @@ import { attachmentDraftCount } from "../../features/messages/attachment-draft";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { usageScope } from "../../features/search/usage";
 import { unreadFirstPreference } from "../../features/search/unread-first-preference";
+import { CONVERSATION_SEARCH_ID, SEARCH_ID } from "./search-shortcuts";
 
 export type SearchServices = Pick<
   AppServices,
@@ -67,11 +68,9 @@ export type SearchServices = Pick<
       | "decisions"
     >
   >;
-const SEARCH_ID = "global-search";
 const SEARCH_BINDING: KeyBinding = { key: "k", mod: true };
 // Slack opens its ⌘K switcher from ⌘T too; the hint shows ⌘K.
 const SEARCH_BINDINGS = [SEARCH_BINDING, { key: "t", mod: true }];
-const CONVERSATION_SEARCH_ID = "conversation-search";
 const CONVERSATION_SEARCH_BINDING: KeyBinding = { key: "f", mod: true };
 const PREVIOUS_RESULT_ID = "search-previous-result";
 const NEXT_RESULT_ID = "search-next-result";

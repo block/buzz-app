@@ -1045,6 +1045,18 @@ Quitting Buzz also turns it off.
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings.
+- **Vim keys** is an optional plugin, off by default; turn it on in
+  **Settings → Plugins**. Then `j`/`k` move between messages and list items
+  (with nothing selected, `j` selects the newest message you can see),
+  `gg`/`G` go to the top or bottom, and `go` opens the selected message's or
+  conversation's actions, each with a key that runs it; while it is on, every
+  menu shows those keys. Space starts leader keys and shows what can follow:
+  `Space /` searches where you are, `Space Space` switches conversation and
+  `Space s k` opens Settings → Shortcuts. `]b`/`[b` step through
+  conversations, `H`/`L` go back and forward, `i` starts typing and Escape
+  stops. Apart from that Escape, its keys never fire while you type in a field
+  or terminal. `Ctrl-h`/`Ctrl-l` move between panes (`Alt` on Windows and
+  Linux). The plugin's README in Settings → Plugins lists every key.
 - **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
   Interface**. Narrow is the default; Wide gives messages and the composer
   50% more room when the pane is wide enough. The choice is saved on this device.

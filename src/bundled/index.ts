@@ -52,6 +52,8 @@ import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
+import vimManifest from "./vim/manifest.json";
+import * as vim from "./vim";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -205,6 +207,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...vimManifest, apiVersion: 1 },
+    module: vim,
+    // Opt-in: it claims plain letter keys and Space.
     enabledByDefault: false,
   },
   {

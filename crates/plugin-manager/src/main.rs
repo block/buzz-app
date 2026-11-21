@@ -321,6 +321,7 @@ fn init(directory: &Path, id: &str, name: &str) -> Result<()> {
         discovery: None,
         updates: None,
         host: None,
+        agents: Vec::new(),
     };
     manifest.validate()?;
     // Never overwrite an existing source directory.

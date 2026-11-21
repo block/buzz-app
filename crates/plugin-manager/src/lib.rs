@@ -44,6 +44,47 @@ pub struct Manifest {
     pub discovery: Option<Discovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
+    /// Agents the install review offers to create. Each still goes through the
+    /// owner's creation review; declaring one creates nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<DeclaredAgent>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeclaredAgent {
+    /// Stable across releases, so a reinstall recognises agents it already made.
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+}
+pub const MAX_DECLARED_AGENTS: usize = 16;
+/// The same bound as a shared agent's instructions.
+pub const MAX_DECLARED_AGENT_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const MAX_DECLARED_AGENT_PICTURE_BYTES: usize = 2048;
+impl DeclaredAgent {
+    fn validate(&self) -> Result<()> {
+        valid_id(&self.id)?;
+        if self.name.trim().is_empty() || self.name.len() > 80 {
+            return Err("Declared agent names must contain 1–80 bytes of text".into());
+        }
+        if self.picture.as_ref().is_some_and(|picture| {
+            picture.len() > MAX_DECLARED_AGENT_PICTURE_BYTES
+                || !picture.starts_with("https://")
+                || picture.chars().any(char::is_whitespace)
+        }) {
+            return Err("Declared agent pictures must be HTTPS URLs".into());
+        }
+        if self.instructions.as_ref().is_some_and(|instructions| {
+            instructions.trim().is_empty()
+                || instructions.len() > MAX_DECLARED_AGENT_INSTRUCTIONS_BYTES
+        }) {
+            return Err("Declared agent instructions must contain 1 byte to 64 KiB of text".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -262,6 +303,16 @@ impl Manifest {
                 if !tags.insert(key) {
                     return Err("Duplicate discovery tag".into());
                 }
+            }
+        }
+        if self.agents.len() > MAX_DECLARED_AGENTS {
+            return Err("Too many declared agents".into());
+        }
+        let mut declared_ids = std::collections::HashSet::new();
+        for agent in &self.agents {
+            agent.validate()?;
+            if !declared_ids.insert(agent.id.as_str()) {
+                return Err("Duplicate declared agent id".into());
             }
         }
         if let Some(host) = &self.host {
@@ -2544,6 +2595,63 @@ mod tests {
             .install_artifact(&release(Some(true)), source)
             .unwrap();
         assert_eq!(installed(&open()).update_checks, None);
+    }
+
+    #[test]
+    fn validates_declared_agents() {
+        let manifest = |agents: serde_json::Value| -> Manifest {
+            serde_json::from_value(serde_json::json!({
+                "id": "example.agents",
+                "name": "Example",
+                "apiVersion": 1,
+                "agents": agents,
+            }))
+            .unwrap()
+        };
+        let reviewer = serde_json::json!({
+            "id": "reviewer",
+            "name": "Reviewer",
+            "picture": "https://example.com/reviewer.png",
+            "instructions": "Review pull requests.",
+        });
+        let valid = manifest(serde_json::json!([reviewer]));
+        assert!(valid.validate().is_ok());
+        assert_eq!(
+            valid.agents[0].instructions.as_deref(),
+            Some("Review pull requests.")
+        );
+
+        let invalid = |field: &str, value: serde_json::Value| {
+            let mut agent = reviewer.clone();
+            agent[field] = value;
+            manifest(serde_json::json!([agent])).validate()
+        };
+        assert!(invalid("id", "Reviewer".into()).is_err());
+        assert!(invalid("name", " ".into()).is_err());
+        assert!(invalid("picture", "http://example.com/a.png".into()).is_err());
+        assert!(invalid(
+            "instructions",
+            "x".repeat(crate::MAX_DECLARED_AGENT_INSTRUCTIONS_BYTES + 1)
+                .into()
+        )
+        .is_err());
+        assert!(manifest(serde_json::json!([reviewer, reviewer]))
+            .validate()
+            .is_err());
+        assert!(manifest(serde_json::Value::Array(
+            (0..=crate::MAX_DECLARED_AGENTS)
+                .map(|index| serde_json::json!({"id": format!("agent-{index}"), "name": "Agent"}))
+                .collect()
+        ))
+        .validate()
+        .is_err());
+        assert!(serde_json::from_value::<Manifest>(serde_json::json!({
+            "id": "example.agents",
+            "name": "Example",
+            "apiVersion": 1,
+            "agents": [{"id": "reviewer", "name": "Reviewer", "model": "opus"}],
+        }))
+        .is_err());
     }
 
     #[test]

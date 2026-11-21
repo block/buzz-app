@@ -628,11 +628,13 @@ export function AgentCreateDialog({
           ? undefined
           : update
             ? `${update.request.requesterName} proposed these changes. Nothing changes until you save.`
-            : request
-              ? `${request.requesterName} requested this agent. Review its settings before creating it.`
-              : draft
-                ? "From an agent card. Review its settings before creating it."
-                : undefined
+            : request?.declared
+              ? `The ${request.requesterName} plugin includes this agent. Review its settings before creating it.`
+              : request
+                ? `${request.requesterName} requested this agent. Review its settings before creating it.`
+                : draft
+                  ? "From an agent card. Review its settings before creating it."
+                  : undefined
       }
       size={showRemoteIntro ? "compact" : "default"}
       closeLabel={showRemoteIntro ? "Back to agent settings" : "Close"}

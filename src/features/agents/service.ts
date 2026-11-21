@@ -1396,16 +1396,31 @@ type AgentCreation = Readonly<{
 /** A requested agent. */
 export type AgentCreationInput = AgentCreation &
   Readonly<{ picture?: ProposedPicture }>;
+/** An agent a plugin's manifest declares, offered when the plugin installs. */
+export type DeclaredAgent = Readonly<{
+  /** Stable across the plugin's releases. */
+  id: string;
+  name: string;
+  /** An HTTPS image URL. */
+  picture?: string;
+  instructions?: string;
+}>;
+/** The plugin and declared agent that a creation request came from. */
+export type DeclaredAgentSource = Readonly<{ plugin: string; agent: string }>;
 /** An unsaved creation request; `picture` is an HTTPS image URL. Only the
- * owner-facing review may approve it. */
-export type AgentCreationRequest = AgentCreation &
+ * owner-facing review may approve it. A declared agent's request names no
+ * type, so the owner picks one. */
+export type AgentCreationRequest = Omit<AgentCreation, "type"> &
   Readonly<{
+    type?: string;
     picture?: string;
     id: string;
+    /** The requesting agent's pubkey, or the declaring plugin's id. */
     requester: string;
     requesterName: string;
     owner: string;
     community: string;
+    declared?: DeclaredAgentSource;
   }>;
 /** Proposed changes; absent fields stay as they are. `picture` is an HTTPS
  * image URL. */
@@ -1834,6 +1849,13 @@ export type Agents = {
   dismissCreation(id: string): void;
   /** Creates only after the owner reviews the usual creation form. */
   approveCreation(id: string, input: NewAgent): Promise<Agent>;
+  /** Queues a creation review in the selected community for each of a
+   * plugin's declared agents that is neither made nor pending. Returns how
+   * many it queued. */
+  requestDeclaredAgents(
+    plugin: Readonly<{ id: string; name: string }>,
+    declared: readonly DeclaredAgent[],
+  ): number;
   /** Local, unsaved change requests; closing a review discards its request. */
   updateRequests(): readonly AgentUpdateRequest[];
   dismissUpdate(id: string): void;
@@ -2333,6 +2355,13 @@ function listingsOf(events: readonly EventData[], viewer: string) {
   }
   return Object.freeze(listings);
 }
+const pictureField = (picture: string | undefined) =>
+  picture ? { picture } : {};
+/** Marks an agent as made from one of a plugin's declared agents. */
+const declaredSourceNote = (declared: DeclaredAgentSource): PluginNote => ({
+  data: { declaredAgent: declared.agent },
+  tag: "declared-agent",
+});
 /** A picture as a record carries it: an HTTPS image URL, never inline data. */
 const recordPicture = (value: unknown) => {
   const source = avatarSource(value);
@@ -4750,6 +4779,73 @@ export class AgentsService extends Service implements Agents {
     );
   }
   creationRequests = () => this.requests;
+  requestDeclaredAgents(
+    plugin: Readonly<{ id: string; name: string }>,
+    declared: readonly DeclaredAgent[],
+  ) {
+    const binding = this.selectedBinding();
+    const alreadyMadeOrPending = new Set([
+      ...this.declaredAgentsMadeBy(plugin.id),
+      ...this.requests.flatMap((request) =>
+        request.declared?.plugin === plugin.id ? [request.declared.agent] : [],
+      ),
+    ]);
+    const queued = declared
+      .filter((agent) => !alreadyMadeOrPending.has(agent.id))
+      .slice(0, Math.max(0, 16 - this.pendingRequests()))
+      .map(
+        (agent): AgentCreationRequest => ({
+          id: crypto.randomUUID(),
+          requester: plugin.id,
+          requesterName: plugin.name,
+          owner: binding.viewer,
+          community: binding.origin,
+          name: agent.name,
+          ...(agent.instructions && { instructions: agent.instructions }),
+          ...pictureField(recordPicture(agent.picture)),
+          declared: { plugin: plugin.id, agent: agent.id },
+        }),
+      );
+    if (queued.length === 0) return 0;
+    this.requests = [...this.requests, ...queued];
+    this.notify();
+    return queued.length;
+  }
+  /** The local record already holds the declaring plugin's note. When the
+   * agent's settings sync, a synced head replaces local notes, so the note
+   * must also be saved there. The agent exists either way. */
+  private async syncDeclaredSource(
+    agent: Agent,
+    declared: DeclaredAgentSource,
+  ) {
+    const live = this.liveAgent(agent.key);
+    if (!live || typeof live.configBase?.settings !== "string") return;
+    try {
+      await this.savePlugin(
+        live,
+        (live.config ?? {}) as object,
+        declared.plugin,
+        {
+          note: declaredSourceNote(declared),
+        },
+      );
+    } catch (error) {
+      console.warn(`${agent.name} was created without its plugin note`, error);
+    }
+  }
+  /** Ids of the declared agents that `plugin` already made, on any device:
+   * the note saved at creation syncs with the agent's settings. */
+  private declaredAgentsMadeBy(plugin: string) {
+    const { agents, running } = this.snapshot();
+    return [...agents, ...running].flatMap((agent) => {
+      const data = noteOf(agent.config, plugin)?.data;
+      const declaredId =
+        data && typeof data === "object" && !Array.isArray(data)
+          ? (data as Readonly<Record<string, unknown>>).declaredAgent
+          : undefined;
+      return typeof declaredId === "string" ? [declaredId] : [];
+    });
+  }
   dismissCreation = (id: string) => {
     if (this.approving.has(id)) return;
     this.requests = this.requests.filter((request) => request.id !== id);
@@ -4778,9 +4874,11 @@ export class AgentsService extends Service implements Agents {
             input.name.trim(),
           ),
         }),
-        input,
+        { ...input, declared: request.declared },
         binding,
       );
+      if (request.declared)
+        await this.syncDeclaredSource(agent, request.declared);
       this.requests = this.requests.filter((item) => item.id !== id);
       this.notify();
       return agent;
@@ -5555,6 +5653,7 @@ export class AgentsService extends Service implements Agents {
       config?: unknown;
       picture?: string | undefined;
       strict?: true;
+      declared?: DeclaredAgentSource | undefined;
     }> = {},
     given?: Binding,
   ) {
@@ -5577,6 +5676,15 @@ export class AgentsService extends Service implements Agents {
         record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
+      if (made.declared)
+        record = {
+          ...record,
+          config: withNote(
+            (record.config ?? {}) as object,
+            made.declared.plugin,
+            declaredSourceNote(made.declared),
+          ),
+        };
       await this.change(identity.pubkey, () => record);
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.

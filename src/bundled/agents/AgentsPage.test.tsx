@@ -450,6 +450,7 @@ function setup(
     creationRequests: () => [],
     dismissCreation: vi.fn(),
     approveCreation: vi.fn(),
+    requestDeclaredAgents: vi.fn(() => 0),
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),

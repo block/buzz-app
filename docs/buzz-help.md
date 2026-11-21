@@ -2015,6 +2015,17 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   If the updated plugin cannot start, use **Retry activation** or its recovery
   menu to **Roll back**, when available. Checks, review, Later, and
   cancellation keep plugin work running.
+- A plugin can include agents. Its install review lists them with a
+  checkbox each. After installing, each checked agent opens **Create agent**
+  filled in with its name, picture and instructions, in the community you have
+  open; choose its harness and model there. Nothing is created until you
+  review it and choose **Create agent**. Reinstalling or updating the plugin
+  does not offer an agent it already created, and removing the plugin keeps
+  its agents.
+  A declared agent's instructions decide what it does with everything its
+  harness allows, such as running commands and reading files on your computer,
+  so add agents only from plugins you trust and read the instructions in
+  **Create agent** first.
 - A `buzz://plugin-install` Git link pinned to both a commit and a folder can
   update a plugin installed from that same repository and folder: it opens an
   **Update** review showing access changes and any change to the branch or tag

@@ -9,6 +9,7 @@ import { Dialog } from "../shared/design-system/ui/Dialog";
 import { readPluginFolder } from "./plugin-folder-drop";
 import styles from "./PluginImport.module.css";
 import {
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -18,6 +19,13 @@ import {
 import { createPortal } from "react-dom";
 import { FolderOpenIcon } from "../shared/design-system/icons/index";
 import { PluginAccessReview } from "./PluginAccessReview";
+import {
+  allDeclaredAgentIds,
+  DeclaredAgentsReview,
+  selectedDeclaredAgents,
+} from "./DeclaredAgentsReview";
+import { AgentsContext } from "../features/agents/react";
+import type { PluginManifest } from "../plugins/api";
 import { gitScope } from "../plugins/git-scope";
 import type { PluginManager } from "../plugins/manager";
 import { samePluginRelease } from "../plugins/same-release";
@@ -336,6 +344,10 @@ export function PluginImport({
     setError(recoveryHint ? { message, recoveryHint } : { message });
   }
   const [enableOnInstall, setEnableOnInstall] = useState(true);
+  const agents = useContext(AgentsContext);
+  const [selectedAgentIds, setSelectedAgentIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const lifetime = useRef({ active: true, token: "", installing: false });
   const pending = useRef(false);
   const lastClaimed = useRef(0);
@@ -477,6 +489,24 @@ export function PluginImport({
   }, [localFolder]);
 
   const candidate = preview?.candidates.find((p) => p.path === selected);
+  const candidateManifest = candidate?.manifest;
+  useEffect(() => {
+    setSelectedAgentIds(
+      candidateManifest ? allDeclaredAgentIds(candidateManifest) : new Set(),
+    );
+  }, [candidateManifest]);
+  /* Runs once the plugin is installed, before anything else can fail. With no
+   * community open there is nowhere to make agents, and the install still
+   * stands. */
+  const requestCheckedDeclaredAgents = (manifest: PluginManifest) => {
+    const checked = selectedDeclaredAgents(manifest, selectedAgentIds);
+    if (!agents || checked.length === 0) return;
+    try {
+      agents.requestDeclaredAgents(manifest, checked);
+    } catch (reason) {
+      console.warn(`Agents in ${manifest.name} were not offered`, reason);
+    }
+  };
   const updating = !!existing;
   const installedSource = existing?.updateSource;
   const conflict =
@@ -980,6 +1010,7 @@ export function PluginImport({
       // Native keeps the prepared preview after install.
       current.token = "";
       await imports.discard(preview.token).catch(() => {});
+      requestCheckedDeclaredAgents(candidate.manifest);
       if (!existing && enableOnInstall)
         await plugins.change("enable", candidate.manifest.id);
       if (!current.active) {
@@ -1632,12 +1663,20 @@ export function PluginImport({
                   (existing?.source !== "bundled" || loading) &&
                   !conflict &&
                   (!existing || !!updateId || requested) && (
-                    <PluginAccessReview
-                      manifest={candidate.manifest}
-                      previousManifest={existing?.manifest}
-                      unchangedTrigger={unchangedTrigger}
-                      onShowUnchanged={() => setShowUnchanged(true)}
-                    />
+                    <>
+                      <PluginAccessReview
+                        manifest={candidate.manifest}
+                        previousManifest={existing?.manifest}
+                        unchangedTrigger={unchangedTrigger}
+                        onShowUnchanged={() => setShowUnchanged(true)}
+                      />
+                      <DeclaredAgentsReview
+                        manifest={candidate.manifest}
+                        selected={selectedAgentIds}
+                        onSelectedChange={setSelectedAgentIds}
+                        disabled={loading}
+                      />
+                    </>
                   )}
                 {reviewing && existing?.source === "bundled" && !loading && (
                   <p className="m-0 text-body-sm">

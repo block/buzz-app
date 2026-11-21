@@ -6,7 +6,9 @@ Preview GitHub repositories, pull requests, issues, and commits without leaving 
 
 1. Pull request and issue links in messages show their state as their icon,
    and a pasted one shows its repository, number and title, such as
-   `buzz#42 · Fix the thing`, all kept current while shown. With the `gh` CLI
+   `buzz#42 · Fix the thing`, all kept current while shown. Buzz remembers
+   the last state and title on this device, for every account on it, so a
+   link shows them at once and updates in the background. With the `gh` CLI
    signed in, an open pull request's icon gains a check badge once it has
    every approval its repository requires, such as a code owner's. Where the
    repository requires none, any approval shows the badge, unless a later

@@ -33,6 +33,8 @@ import type { PullState, PullStates } from "./pull-states";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // The plugin remembers what links showed on this device.
+  localStorage.clear();
 });
 
 const pull = "https://github.com/block/buzz-app/pull/7";

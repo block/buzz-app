@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const seedVariable = "BUZZ_FIXTURE_VITE_DEPS";
+// The run's compiled app builds, which tests/browser/build.mjs shares between workers.
+export const appBuildsVariable = "BUZZ_FIXTURE_APP_BUILDS";
 // Every fixture page is in this scan. Add a dependency here only when a test
 // imports it outside these pages, for example from page.evaluate.
 const fixtureOptimizeDeps = {
@@ -214,9 +216,13 @@ export async function prepareFixtureDependencies() {
     throw error;
   }
   process.env[seedVariable] = cacheDir;
+  const builds = await mkdtemp(join(tmpdir(), "buzz-browser-builds-"));
+  process.env[appBuildsVariable] = builds;
   return async () => {
     delete process.env[seedVariable];
+    delete process.env[appBuildsVariable];
     await rm(cacheDir, { recursive: true, force: true });
+    await rm(builds, { recursive: true, force: true });
   };
 }
 

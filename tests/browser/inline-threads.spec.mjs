@@ -1,0 +1,285 @@
+import { test, expect } from "./fixture.mjs";
+import { clickRow, open, settle } from "./timeline.mjs";
+
+// Browser-only: the inline thread and details are dialogs on the conversation
+// visit. Only real history events, layout around a composer and the composer's
+// draft storage across a remount prove them. Address parsing and the setting
+// are covered by their unit tests.
+test.use({
+  productionBroker: true,
+  readState: true,
+  threadUnread: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
+
+const roots = (app) =>
+  app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+const viewThread = (page, root) =>
+  page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+const threadHeading = (page) =>
+  page.getByRole("heading", { name: "Thread", exact: true });
+const sheet = (page) =>
+  page
+    .locator("[data-details-sheet-surface]")
+    .filter({ has: threadHeading(page) });
+// A details sheet holds no thread of its own.
+const detailsSheet = (page) =>
+  page
+    .locator("[data-details-sheet-surface]")
+    .filter({ hasNot: threadHeading(page) });
+const threadTab = (page, root) =>
+  page.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`);
+const reply = (scope) =>
+  scope.getByRole("textbox", { name: "Reply to thread", exact: true });
+const side = (page) => page.locator("[data-panel-workspace]");
+const filler = "More of it follows here. ".repeat(30);
+/** A peer's details message: in `root`'s thread, or the channel's own. */
+const details = (app, text, root) =>
+  app.append(
+    "primary",
+    "alpha",
+    `${text}\n\n${filler}`,
+    true,
+    false,
+    root?.id,
+    undefined,
+    [["audience", "details"]],
+  );
+const showMore = (scope, text) =>
+  scope
+    .locator("[data-message-id]")
+    .filter({ hasText: text })
+    .getByRole("button", { name: "Show more", exact: true });
+const close = (scope) =>
+  scope.getByRole("button", { name: "Close", exact: true }).first();
+
+test.describe("Side panel", () => {
+  test.use({ threadPlacement: "side" });
+
+  test("a thread still opens in its tab", async ({ page, app }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(threadTab(page, root)).toBeVisible();
+    await expect(reply(side(page))).toBeFocused();
+    await expect(sheet(page)).toHaveCount(0);
+  });
+
+  test("details in a thread tab read over that tab's reply box", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(threadTab(page, root)).toBeVisible();
+    details(app, "Tab findings", root);
+    await showMore(side(page), "Tab findings").click();
+    const reader = detailsSheet(page);
+    await expect(reader).toBeVisible();
+    await expect(reader.getByText(filler.trim())).toBeVisible();
+    // It is the tab's dialog: drawn inside the side pane, around its composer.
+    await expect(
+      side(page).locator("[data-details-sheet-surface]"),
+    ).toHaveCount(1);
+    const [outer, inner] = [
+      await reader.boundingBox(),
+      await reply(side(page)).locator("xpath=ancestor::form[1]").boundingBox(),
+    ];
+    expect(outer.x).toBeLessThan(inner.x);
+    expect(outer.y + outer.height).toBeGreaterThan(inner.y + inner.height);
+    await page.goBack();
+    await expect(reader).toHaveCount(0);
+    await expect(threadTab(page, root)).toBeVisible();
+    await page.goForward();
+    await expect(detailsSheet(page)).toBeVisible();
+    await close(detailsSheet(page)).click();
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await expect(threadTab(page, root)).toBeVisible();
+  });
+});
+
+test.describe("Inline", () => {
+  test.use({ threadPlacement: "inline" });
+
+  test("a thread opens over the composer and follows the dialog contract", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const beta = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator('button[data-channel-id="beta"]');
+    const alpha = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator('button[data-channel-id="alpha"]');
+    await beta.click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta" }),
+    ).toBeVisible();
+    await alpha.click();
+    await settle(page);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(sheet(page)).toBeVisible();
+    await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
+    await expect(reply(sheet(page))).toBeFocused();
+    await expect(threadTab(page, root)).toHaveCount(0);
+    // Back closes the dialog and stays in the channel; Forward reopens it.
+    await page.goBack();
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha" }),
+    ).toBeVisible();
+    await page.goForward();
+    await expect(sheet(page)).toBeVisible();
+    // X retires it: Back leaves the channel with no redundant Alpha stop.
+    await close(sheet(page)).click();
+    await expect(sheet(page)).toHaveCount(0);
+    await page.goBack();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta" }),
+    ).toBeVisible();
+    await page.goForward();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha" }),
+    ).toBeVisible();
+    await expect(sheet(page)).toHaveCount(0);
+    // Opening another thread replaces the inline one; Escape closes it.
+    await clickRow(page, viewThread(page, roots(app)[1]));
+    await expect(sheet(page).getByText("Unread reply 1")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet(page)).toHaveCount(0);
+  });
+
+  test("details nest over the inline thread: Back closes them first", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(sheet(page)).toBeVisible();
+    details(app, "Nested findings", root);
+    await showMore(sheet(page), "Nested findings").click();
+    await expect(detailsSheet(page)).toBeVisible();
+    await expect(detailsSheet(page).getByText(filler.trim())).toBeVisible();
+    await page.goBack();
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await expect(sheet(page)).toBeVisible();
+    await page.goBack();
+    await expect(sheet(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(sheet(page)).toBeVisible();
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(detailsSheet(page)).toBeVisible();
+    // Reload restores the thread and the details over it.
+    await page.reload();
+    await expect(sheet(page)).toBeVisible();
+    await expect(detailsSheet(page)).toBeVisible();
+    // Escape closes only the details; X on the thread closes both for good.
+    await page.keyboard.press("Escape");
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await expect(sheet(page)).toBeVisible();
+    await showMore(sheet(page), "Nested findings").click();
+    await expect(detailsSheet(page)).toBeVisible();
+    await sheet(page)
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(sheet(page)).toHaveCount(0);
+  });
+
+  test("details in the conversation read over its composer", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    details(app, "Channel findings");
+    const timeline = page.locator("[data-channel-timeline]");
+    await showMore(timeline, "Channel findings").click();
+    const reader = detailsSheet(page);
+    await expect(reader).toBeVisible();
+    await expect(reader).toBeFocused();
+    // The composer stays usable above the reader.
+    const composer = page.getByRole("textbox", { name: "Message #Alpha" });
+    await composer.click();
+    await composer.pressSequentially("Thanks");
+    await expect(reader).toBeVisible();
+    await page.goBack();
+    await expect(reader).toHaveCount(0);
+    await page.goForward();
+    await expect(detailsSheet(page)).toBeVisible();
+    await page.reload();
+    await expect(detailsSheet(page)).toBeVisible();
+    await detailsSheet(page).focus();
+    await page.keyboard.press("Escape");
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(detailsSheet(page)).toHaveCount(0);
+  });
+
+  test("Move to side panel hands the thread and its draft to a tab", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(reply(sheet(page))).toBeFocused();
+    await page.keyboard.type("Half-written reply");
+    await sheet(page)
+      .getByRole("button", { name: "Move to side panel", exact: true })
+      .click();
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(threadTab(page, root)).toBeVisible();
+    await expect(reply(side(page))).toHaveText("Half-written reply");
+    // The handoff retired the inline visit: Back never shows both.
+    await page.goBack();
+    await expect(sheet(page)).toHaveCount(0);
+    // A thread that has a tab opens there, never inline beside it.
+    await clickRow(page, viewThread(page, root));
+    await expect(threadTab(page, root)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(reply(side(page))).toHaveText("Half-written reply");
+  });
+});
+
+test.describe("Sending", () => {
+  test.use({ productionBroker: false, sendChannels: ["alpha"] });
+
+  test("a send from the composer closes the details read over it", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    details(app, "Channel findings");
+    await showMore(
+      page.locator("[data-channel-timeline]"),
+      "Channel findings",
+    ).click();
+    await expect(detailsSheet(page)).toBeVisible();
+    const composer = page.getByRole("textbox", { name: "Message #Alpha" });
+    await composer.click();
+    await composer.pressSequentially("Thanks, merging");
+    await composer.press("Enter");
+    await expect(detailsSheet(page)).toHaveCount(0);
+    await expect(
+      page.locator("[data-channel-timeline]").getByText("Thanks, merging"),
+    ).toBeVisible();
+    // Like ✕, the send retired the visit: Forward does not reopen it.
+    await page.goForward();
+    await expect(detailsSheet(page)).toHaveCount(0);
+  });
+});

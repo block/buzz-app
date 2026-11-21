@@ -89,6 +89,18 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         forward?: string;
         /** Read-only content selected beside this conversation; never an action. */
         detail?: Readonly<{ target: string; rootId?: string }>;
+        /** The thread read inline over this conversation's composer: its
+         * root. Presentation only; at most one per conversation. */
+        inline?: string;
+        /** A details message read over the composer of the view it was
+         * opened in: the conversation without `rootId`, the inline thread
+         * when `rootId` is `inline`, otherwise the thread tab with that root,
+         * in `channelId` when that tab belongs to another channel. Read only. */
+        details?: Readonly<{
+          messageId: string;
+          rootId?: string;
+          channelId?: string;
+        }>;
       }>
   );
 
@@ -98,6 +110,7 @@ const token = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
 const provider = /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const hex = /^[a-f0-9]{64}$/i;
+const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
 const paramKey = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const gitCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const MAX_PARAMS = 16;
@@ -455,6 +468,8 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "panel",
           "forward",
           "detail",
+          "inline",
+          "details",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -481,14 +496,27 @@ export function parseOpenTarget(input: unknown): OpenTarget {
               : {}),
           });
         }
+        let details:
+          | { messageId: string; rootId?: string; channelId?: string }
+          | undefined;
+        if (value.details !== undefined) {
+          const input = record(value.details);
+          fields(input, ["messageId", "rootId", "channelId"]);
+          details = Object.freeze({
+            messageId: text(input.messageId, hex).toLowerCase(),
+            ...(input.rootId !== undefined
+              ? { rootId: text(input.rootId, hex).toLowerCase() }
+              : {}),
+            ...(input.channelId !== undefined
+              ? { channelId: text(input.channelId, channelPattern) }
+              : {}),
+          });
+        }
         target = {
           version: 1,
           kind: "conversation",
           scope: boundScope(value.scope),
-          channelId: text(
-            value.channelId,
-            /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/,
-          ),
+          channelId: text(value.channelId, channelPattern),
           ...(value.messageId !== undefined
             ? { messageId: text(value.messageId, hex).toLowerCase() }
             : {}),
@@ -501,6 +529,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { forward: text(value.forward, hex).toLowerCase() }
             : {}),
           ...(detail ? { detail } : {}),
+          ...(value.inline !== undefined
+            ? { inline: text(value.inline, hex).toLowerCase() }
+            : {}),
+          ...(details ? { details } : {}),
         };
         break;
       }

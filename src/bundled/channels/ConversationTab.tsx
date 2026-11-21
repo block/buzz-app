@@ -22,7 +22,8 @@ import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import type { ThreadPanelProps } from "../../features/messages/ThreadPanel";
 import { ChannelBody } from "./ChannelBody";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
-import type { ConversationTab as Tab } from "./useChannelTabState";
+import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
+import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
 
@@ -167,30 +168,33 @@ export function ConversationTab({
       >
         <MessageManagementStatus />
         {tab.kind === "thread" ? (
-          <ConversationThread
-            intro={intro}
-            latestRequest={active ? latestRequest : undefined}
-            active={active}
-            shown={active}
-            messageId={tab.messageId}
-            subthreadId={subthreadId}
-            sourceThreadId={subthreadId ? tab.rootId : undefined}
-            navigation={navigation}
-            retainThread
-            tabbed
-            onRetryNavigation={onRetryNavigation}
-            onResolvedRoot={onResolvedRoot}
-            onDifferentThread={onDifferentThread}
-            replyRequest={reply === restoredReply.current ? undefined : reply}
-            focusRequest={focusRequest}
-            revealSelected={threadReveal !== undefined}
-            revealRequest={threadReveal}
-            unreadRequest={
-              unread === restoredUnread.current ? undefined : unread
-            }
-            close={close}
-            parent={parent}
-          />
+          // The thread's own view, for the details its rows open.
+          <ComposerScopeProvider rootId={rootOfTab(tab)} shown={active}>
+            <ConversationThread
+              intro={intro}
+              latestRequest={active ? latestRequest : undefined}
+              active={active}
+              shown={active}
+              messageId={tab.messageId}
+              subthreadId={subthreadId}
+              sourceThreadId={subthreadId ? tab.rootId : undefined}
+              navigation={navigation}
+              retainThread
+              tabbed
+              onRetryNavigation={onRetryNavigation}
+              onResolvedRoot={onResolvedRoot}
+              onDifferentThread={onDifferentThread}
+              replyRequest={reply === restoredReply.current ? undefined : reply}
+              focusRequest={focusRequest}
+              revealSelected={threadReveal !== undefined}
+              revealRequest={threadReveal}
+              unreadRequest={
+                unread === restoredUnread.current ? undefined : unread
+              }
+              close={close}
+              parent={parent}
+            />
+          </ComposerScopeProvider>
         ) : target && inTimeline === false ? (
           <ConversationThread
             intro={intro}

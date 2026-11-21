@@ -105,6 +105,7 @@ import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
 import {
   safeMessageUrl,
   projectMarkdownAttachments,
@@ -1077,6 +1078,50 @@ function MessageRowContent({
           </p>
         )}
       </div>
+    ) : row.audience === "details" ? (
+      // Details read as their brief, which opens into their own reader.
+      <DetailsMessage
+        messageId={row.id}
+        channelId={row.channelId}
+        author={name}
+        avatar={
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size="small"
+            shape={avatarShape}
+          />
+        }
+        createdAt={row.createdAt}
+        keepMounted={keepMounted}
+        preview={
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={displayRow}
+            extensions={extensions}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            edited={editedInBody && displayRow.edited}
+          />
+        }
+      >
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      </DetailsMessage>
     ) : (
       <MessageMarkdown
         directory={directory}

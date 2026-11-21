@@ -46,6 +46,8 @@ export const test = base.extend({
   liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
+  // Open threads in: "side" (the app default), "main" or "inline".
+  threadPlacement: ["side", { option: true }],
   profilePicture: ["", { option: true }],
   // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
   // browser's zone into it; null leaves the key out so launch shares one.
@@ -62,6 +64,8 @@ export const test = base.extend({
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
   soloChannels: [[], { option: true }],
+  // Ordinary channels whose composer sends, as Solo chats' do.
+  sendChannels: [[], { option: true }],
   sessionMembers: [{}, { option: true }],
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
@@ -153,6 +157,7 @@ export const test = base.extend({
       liveDraw,
       actionProfile,
       agentMessageDeletion,
+      threadPlacement,
       profilePicture,
       profileTimeZone,
       readState,
@@ -166,6 +171,7 @@ export const test = base.extend({
       openSearch,
       searchAuthor,
       soloChannels,
+      sendChannels,
       sessionMembers,
       channelWriteKinds,
       sidebarUnread,
@@ -2441,16 +2447,17 @@ export const test = base.extend({
           acceptReadPublication(community, body);
           return send(response, { accepted: true, event_id: body.id });
         }
-        if (soloChannels.length && route === "sign") {
+        const sendable = [...soloChannels, ...sendChannels];
+        if (sendable.length && route === "sign") {
           expect(body.kind).toBe(9);
           return send(response, finalizeEvent(body, userKey));
         }
-        if (soloChannels.length && route === "publish") {
+        if (sendable.length && route === "publish") {
           expect(verifyEvent(body)).toBe(true);
           expect(body.pubkey).toBe(viewer);
           expect(body.kind).toBe(9);
           const channel = body.tags.find(([key]) => key === "h")?.[1];
-          expect(soloChannels).toContain(channel);
+          expect(sendable).toContain(channel);
           histories.get(`${community}/${channel}`).push(body);
           return send(response, { accepted: true, event_id: body.id });
         }
@@ -2769,6 +2776,12 @@ export const test = base.extend({
           });
           observer.observe(document, { childList: true, subtree: true });
         });
+      if (threadPlacement !== "side")
+        await page.addInitScript((placement) => {
+          // Seed once, so a choice made during the journey survives reloads.
+          const key = "buzz-thread-placement.v1";
+          if (!localStorage.getItem(key)) localStorage.setItem(key, placement);
+        }, threadPlacement);
       await page.addInitScript(
         ({
           viewer,

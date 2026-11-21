@@ -23,6 +23,8 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { TypingIndicator } from "./TypingIndicator";
+import { useComposerScope, useOverlayComposerRef } from "./composer-overlay";
+import { DetailsAddressContext, detailsInView } from "./DetailsMessage";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
@@ -1743,6 +1745,10 @@ function Composer({
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  // Rows above draw their readers around this form; a send answers them.
+  const formRef = useOverlayComposerRef(form);
+  const composerView = useComposerScope();
+  const detailsAddress = useContext(DetailsAddressContext);
   const [announcementHost, setAnnouncementHost] = useState<Element | null>(
     null,
   );
@@ -3921,6 +3927,12 @@ function Composer({
       };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      // A send answers the details read over this composer, as ✕ closes them.
+      if (
+        composerView &&
+        detailsInView(detailsAddress?.open, channelId, composerView)
+      )
+        detailsAddress?.dismiss();
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
@@ -4158,9 +4170,10 @@ function Composer({
           announcementHost,
         )}
       <form
-        ref={form}
+        ref={formRef}
         className={styles.composer}
         data-composer-surface=""
+        data-message-composer=""
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

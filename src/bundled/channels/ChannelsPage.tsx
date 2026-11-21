@@ -25,6 +25,12 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
+import { InlineThreadSheet } from "./InlineThreadSheet";
+import {
+  DetailsAddressContext,
+  type DetailsAddress,
+} from "../../features/messages/DetailsMessage";
+import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   type ConversationTab,
   entryPane,
@@ -799,6 +805,24 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  // The conversation's inline thread and open details: dialogs on its visit.
+  const addressed =
+    navigator && navigation?.target.kind === "conversation"
+      ? navigation.target
+      : undefined;
+  // Inline threads draw over the composer, which these conversations lack.
+  const composes =
+    !!current &&
+    !current.archived &&
+    current.viewerRole !== "guest" &&
+    (!current.readOnly || current.cached);
+  const inlineRoot =
+    addressed?.inline &&
+    addressed.channelId === currentId &&
+    composes &&
+    current?.channelType !== "solo"
+      ? addressed.inline
+      : undefined;
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -1796,6 +1820,34 @@ function ChannelWorkspace({
       tabState.leaveVisit();
       // Retire transient details first; selecting the thread is the last word.
       open(undefined);
+      const target = navigator?.snapshot().entry.target;
+      // Inline opens the thread over this conversation's composer, unless it
+      // already has a tab, which is focused instead: never both.
+      if (
+        navigator &&
+        threadPlacementPreference() === "inline" &&
+        !threadPane &&
+        composes &&
+        channelId === currentId &&
+        target?.kind === "conversation" &&
+        target.channelId === channelId &&
+        !tabState.tabs.some(
+          (tab) =>
+            tab.kind === "thread" &&
+            tab.channelId === channelId &&
+            rootOfTab(tab) === threadRootId,
+        )
+      ) {
+        if (target.inline !== threadRootId)
+          void navigator.open({
+            version: 1,
+            kind: "conversation",
+            scope: target.scope,
+            channelId,
+            inline: threadRootId,
+          });
+        return;
+      }
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
       tabState.openThreadTab(
@@ -1805,7 +1857,6 @@ function ChannelWorkspace({
         intent,
         threadPane,
       );
-      const target = navigator?.snapshot().entry.target;
       if (
         navigator &&
         viewer &&
@@ -1835,10 +1886,111 @@ function ChannelWorkspace({
       open,
       setSettings,
       threadPane,
+      composes,
+      currentId,
+      tabState.tabs,
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
   );
+  // A thread is never inline and in a tab at once: its tab wins.
+  const inlineThread =
+    inlineRoot &&
+    !tabState.tabs.some(
+      (tab) =>
+        tab.kind === "thread" &&
+        tab.channelId === currentId &&
+        rootOfTab(tab) === inlineRoot,
+    )
+      ? inlineRoot
+      : undefined;
+  // ✕, Escape and the scrim retire the thread's visits, with the details
+  // read over it; Back then leaves the conversation.
+  const inlineDismissal = (rootId: string) => {
+    const target = navigator?.snapshot().entry.target;
+    if (target?.kind !== "conversation" || target.inline !== rootId) return;
+    const { inline: _inline, details, ...rest } = target;
+    return {
+      visits: (visit: OpenTarget) =>
+        sameScope(visit, target) &&
+        visit.kind === "conversation" &&
+        visit.inline === rootId,
+      fallback: (!details || details.rootId === rootId
+        ? rest
+        : { ...rest, details }) satisfies OpenTarget,
+    };
+  };
+  const closeInline = (rootId: string) => {
+    const dismissal = inlineDismissal(rootId);
+    if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
+  };
+  // Move to side panel hands the thread over: its inline visits retire and
+  // its tab opens in their place. The draft is keyed by thread, so it follows.
+  const moveInlineToTab = (rootId: string) => {
+    const dismissal = inlineDismissal(rootId);
+    const target = navigator?.snapshot().entry.target;
+    if (!dismissal || target?.kind !== "conversation") return;
+    tabState.leaveVisit();
+    tabState.openThreadTab(target.channelId, rootId, rootId, "reply", "side");
+    navigator.dismiss(dismissal.visits, {
+      version: 1,
+      kind: "conversation",
+      scope: target.scope,
+      channelId: target.channelId,
+      messageId: rootId,
+      threadRootId: rootId,
+    });
+  };
+  // Details open over the composer of the view they were opened in; the
+  // address names that view, so reload and Back/Forward know where they go.
+  const detailsTarget = addressed?.details;
+  const detailsChannel = addressed?.channelId;
+  const detailsAddress = useMemo<DetailsAddress | undefined>(() => {
+    if (!navigator || !detailsChannel) return undefined;
+    return {
+      open: detailsTarget && {
+        messageId: detailsTarget.messageId,
+        channelId: detailsTarget.channelId ?? detailsChannel,
+        rootId: detailsTarget.rootId,
+      },
+      show({ messageId, channelId, rootId }) {
+        const target = navigator.snapshot().entry.target;
+        if (target.kind !== "conversation") return;
+        const details = {
+          messageId,
+          ...(rootId ? { rootId } : {}),
+          ...(channelId !== target.channelId ? { channelId } : {}),
+        };
+        // Over a thread the visit keeps that thread; over the conversation
+        // it is the conversation's own dialog.
+        void navigator.open(
+          rootId
+            ? { ...target, details }
+            : {
+                version: 1,
+                kind: "conversation",
+                scope: target.scope,
+                channelId: target.channelId,
+                details,
+              },
+        );
+      },
+      dismiss() {
+        const target = navigator.snapshot().entry.target;
+        if (target.kind !== "conversation" || !target.details) return;
+        const { details, ...fallback } = target;
+        navigator.dismiss(
+          (visit) =>
+            sameScope(visit, target) &&
+            visit.kind === "conversation" &&
+            visit.details?.messageId === details.messageId &&
+            visit.details.rootId === details.rootId &&
+            visit.details.channelId === details.channelId,
+          fallback,
+        );
+      },
+    };
+  }, [navigator, detailsTarget, detailsChannel]);
   const openThread = useCallback(
     (messageId: string, threadRootId: string, intent?: "reply") => {
       if (currentId)
@@ -2519,6 +2671,14 @@ function ChannelWorkspace({
             focusRequest={composerFocus}
           />
         )}
+      {inlineThread && (
+        <InlineThreadSheet
+          key={inlineThread}
+          rootId={inlineThread}
+          close={() => closeInline(inlineThread)}
+          moveToTab={() => moveInlineToTab(inlineThread)}
+        />
+      )}
     </div>
   );
   const workspace = (
@@ -2975,37 +3135,49 @@ function ChannelWorkspace({
   return (
     // The review reads thread-tab links like the workspace.
     <LinkThreadTabContext value={openLinkedThread}>
-      <ConversationChannel
-        session={queries}
-        scope={scope}
-        extensions={extensions}
-        channel={current}
-        interactions={{
-          onOpenLink: openLink,
-          canOpenLink,
-          onOpenMediaReview: openMediaReview,
-        }}
-        mediaReview={
-          showingMediaReview && {
-            ...showingMediaReview,
-            restoreFocus: mediaReviewTrigger,
-            close: () => setMediaReview(undefined),
-          }
-        }
-      >
-        <ForwardMessageProvider
+      <DetailsAddressContext value={detailsAddress}>
+        <ConversationChannel
           session={queries}
           scope={scope}
-          navigation={navigator}
-          renderDialog
+          extensions={extensions}
+          channel={current}
+          interactions={{
+            onOpenLink: openLink,
+            canOpenLink,
+            onOpenMediaReview: openMediaReview,
+          }}
+          mediaReview={
+            showingMediaReview && {
+              ...showingMediaReview,
+              restoreFocus: mediaReviewTrigger,
+              close: () => setMediaReview(undefined),
+            }
+          }
         >
-          {workspace}
-        </ForwardMessageProvider>
-      </ConversationChannel>
+          <ForwardMessageProvider
+            session={queries}
+            scope={scope}
+            navigation={navigator}
+            renderDialog
+          >
+            {workspace}
+          </ForwardMessageProvider>
+        </ConversationChannel>
+      </DetailsAddressContext>
       {soloMoveNotices}
     </LinkThreadTabContext>
   );
 }
+
+/** Whether `visit` is in `target`'s conversation, for the same viewer. */
+const sameScope = (
+  visit: OpenTarget,
+  target: Extract<OpenTarget, { kind: "conversation" }>,
+) =>
+  visit.kind === "conversation" &&
+  visit.channelId === target.channelId &&
+  visit.scope.viewer === target.scope.viewer &&
+  visit.scope.communityOrigin === target.scope.communityOrigin;
 
 export function mediaReviewForDestination<
   T extends { channelId: string; entryId?: string | undefined },

@@ -140,6 +140,37 @@ describe("open target boundary", () => {
     ])
       expect(() => parseOpenTarget({ ...conversation, detail })).toThrow();
   });
+  it("addresses an inline thread and the details over a view as their own visits", () => {
+    const inline = parseOpenTarget({ ...conversation, inline: "A".repeat(64) });
+    expect(inline.kind === "conversation" && inline.inline).toBe(
+      "a".repeat(64),
+    );
+    expect(targetKey(inline)).not.toBe(targetKey(conversation));
+    const details = {
+      messageId: "B".repeat(64),
+      rootId: "A".repeat(64),
+      channelId: "beta",
+    };
+    const nested = parseOpenTarget({ ...inline, details });
+    details.messageId = "changed";
+    expect(nested.kind === "conversation" && nested.details).toEqual({
+      messageId: "b".repeat(64),
+      rootId: "a".repeat(64),
+      channelId: "beta",
+    });
+    expect(
+      Object.isFrozen(nested.kind === "conversation" && nested.details),
+    ).toBe(true);
+    expect(targetKey(nested)).not.toBe(targetKey(inline));
+    for (const bad of [
+      { inline: "thread" },
+      { details: {} },
+      { details: { messageId: "b".repeat(64), rootId: "invalid" } },
+      { details: { messageId: "b".repeat(64), channelId: "with space" } },
+      { details: { messageId: "b".repeat(64), action: "reply" } },
+    ])
+      expect(() => parseOpenTarget({ ...conversation, ...bad })).toThrow();
+  });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [
       { version: 1, kind: "home" },

@@ -1056,7 +1056,7 @@ it("offers retry on failures and rejects a non-advancing cursor without erasing 
   expect(h.view.snapshot().replies).toHaveLength(1);
 });
 
-it("drops stale root content when the finite root is missing and exposes explicit page limits", async () => {
+it("drops stale root content when the finite root is missing, then slides a legacy window past ten pages", async () => {
   const h = seeded();
   const missing = h.view.refresh();
   h.next().respond([]);
@@ -1072,23 +1072,66 @@ it("drops stale root content when the finite root is missing and exposes explici
   }
   expect(h.view.snapshot()).toMatchObject({
     limited: true,
-    canLoadMore: false,
+    canLoadMore: true,
+    canLoadBack: false,
   });
-  await h.view.loadMore();
-  expect(h.pending).toHaveLength(0);
+  // Legacy continues toward newer replies, evicting its oldest page.
+  const eleventh = h.view.loadMore();
+  const page = h.next();
+  expect(page.filters[1]?.thread_cursor).toBe(100);
+  page.respond([root, reply("11", 110)]);
+  await eleventh;
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadBack: true,
+    canLoadMore: true,
+  });
+  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual(
+    Array.from({ length: 10 }, (_, i) => String(i + 2)),
+  );
+  // Reading the oldest page again evicts the newest.
+  const back = h.view.loadBack();
+  const request = h.next();
+  expect(request.filters[1]).not.toHaveProperty("thread_cursor");
+  request.respond([root, reply("1", 10)]);
+  await back;
+  expect(h.view.snapshot()).toMatchObject({
+    canLoadBack: false,
+    canLoadMore: true,
+  });
+  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual(
+    Array.from({ length: 10 }, (_, i) => String(i + 1)),
+  );
 });
 
-it("explicitly limits oversized evidence rather than evicting aux and resurrecting deleted rows", async () => {
+it("holds one oversized page rather than wiping the thread", async () => {
   const h = seeded();
   const loading = h.view.refresh();
   h.next().respond([root, reply("x".repeat(4 * 1024 * 1024), 2)]);
   await loading;
   expect(h.view.snapshot()).toMatchObject({
-    status: "error",
+    status: "ready",
+    error: undefined,
+    root: { id: root.id },
+  });
+  expect(h.view.snapshot().replies).toHaveLength(1);
+});
+
+it("counts the window as full once the byte budget evicts a page, so automatic traversal stops", async () => {
+  const h = seeded();
+  const loading = h.view.refresh();
+  h.next().respond([root, reply("x".repeat(1 << 20), 10)]);
+  await loading;
+  for (let page = 2; page <= 4; page++) {
+    const more = h.view.loadMore();
+    h.next().respond([root, reply("x".repeat(1 << 20), page * 10)]);
+    await more;
+    expect(h.view.snapshot().limited).toBe(page === 4);
+  }
+  expect(h.view.snapshot()).toMatchObject({
+    canLoadBack: true,
+    canLoadMore: true,
     limited: true,
-    canLoadMore: false,
-    root: undefined,
-    replies: [],
   });
 });
 
@@ -1159,14 +1202,18 @@ it.each(["live", "read"])(
       expect(thread.events()).toContain(tombstone);
       expect(thread.events()).toHaveLength(1003);
 
-      // The cap still applies to messages, even after summary compaction.
+      // Past the budget live growth divides a page that was read and holds
+      // events no page owns; the tombstone stays either way.
       thread.receive(overflow);
       expect(thread.view.snapshot()).toMatchObject({
-        status: "error",
-        limited: true,
-        root: undefined,
-        replies: [],
+        error: undefined,
+        root: { id: root.id },
+        canLoadBack: source === "read",
       });
+      expect(thread.view.snapshot().replies).toHaveLength(
+        source === "read" ? 999 : 999 + 998,
+      );
+      expect(thread.events()).toContain(tombstone);
     } finally {
       thread.view.dispose();
     }
@@ -1219,25 +1266,37 @@ it("retains one authorized summary per target with replay-independent timestamp 
   }
 });
 
-it("trips the live byte limit at exactly the whole-thread serialised size", async () => {
+it("evicts the oldest page when live replies outgrow the byte budget, never the thread being read", async () => {
   const h = seeded();
   const first = reply("first", 10);
+  const second = reply("second", 20);
   const loading = h.view.refresh();
   h.next().respond([root, first]);
   await loading;
+  const more = h.view.loadMore();
+  h.next().respond([root, second]);
+  await more;
   const limit = 4 * 1024 * 1024;
-  const sized = (length: number) => reply("x".repeat(length), 11);
-  const fits = sized(limit - byteSize([root, first, sized(0)]));
-  expect(byteSize([root, first, fits])).toBe(limit);
+  const sized = (length: number) => reply("x".repeat(length), 30);
+  const fits = sized(limit - byteSize([root, first, second, sized(0)]));
+  expect(byteSize([root, first, second, fits])).toBe(limit);
   h.traffic.receive([fits]);
-  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
-  expect(h.view.snapshot().replies).toHaveLength(2);
-  h.traffic.receive([reply("y", 12)]);
   expect(h.view.snapshot()).toMatchObject({
-    status: "error",
-    limited: true,
-    replies: [],
+    status: "ready",
+    canLoadBack: false,
   });
+  expect(h.view.snapshot().replies).toHaveLength(3);
+  h.traffic.receive([reply("y", 40)]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+    canLoadBack: true,
+  });
+  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
+    "second",
+    fits.content,
+    "y",
+  ]);
 });
 
 it("checks live overlays against retained thread targets after shared-cache eviction, without allowing orphan or denied targets", async () => {
@@ -1450,7 +1509,6 @@ it("skips folding and budgeting known replay IDs while admitting new evidence af
     thread.receive([...events, fresh]);
     expect(thread.view.snapshot().replies).toHaveLength(501);
     expect(foldMessages).toHaveBeenCalledTimes(1);
-    expect(listByteSize).toHaveBeenCalledTimes(1);
     clear();
     thread.receive([fresh]);
     expect(foldMessages).not.toHaveBeenCalled();
@@ -1467,6 +1525,73 @@ it("skips folding and budgeting known replay IDs while admitting new evidence af
   } finally {
     thread.view.dispose();
   }
+});
+
+it("shows the viewer's confirmed reply while newer pages are evicted, though its relay copy is held off", async () => {
+  const channel = "11111111-1111-4111-8111-111111111111";
+  const top = message(alice, channel, "Root", 1);
+  const answer = (n: number, author = alice) =>
+    message(author, channel, `reply ${n}`, 10 * n, [
+      ["e", top.id, "", "reply"],
+    ]);
+  const rows = Array.from({ length: 620 }, (_, n) => answer(n + 1));
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const reader: RelayReader = {
+    read: async ([filter]) => {
+      if (filter?.ids) return [top];
+      const eligible = newest.filter(
+        (row) =>
+          filter?.until === undefined ||
+          row.created_at < filter.until ||
+          (row.created_at === filter.until &&
+            row.id > (filter.before_id ?? "")),
+      );
+      const page = eligible.slice(0, filter?.limit);
+      const last = page.at(-1);
+      const more = eligible.length > page.length && last;
+      return [
+        ...page,
+        signed(relay, {
+          kind: 39007,
+          content: JSON.stringify({
+            version: 1,
+            direction: "older",
+            has_more: !!more,
+            next_cursor: more
+              ? { created_at: last.created_at, id: last.id }
+              : null,
+          }),
+          tags: [],
+        }),
+      ];
+    },
+  };
+  let operations: OutgoingEvent[] = [];
+  const thread = createThreadView({
+    channelId: channel,
+    messageId: top.id,
+    relayAuthor: relay.pubkey,
+    reader,
+    seed: top,
+    local: { snapshot: () => operations, subscribe: () => () => {} },
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: (listener) => listener(),
+  });
+  await thread.view.refresh();
+  for (let page = 1; page <= 10; page++) await thread.view.loadMore();
+  expect(thread.view.snapshot().canLoadBack).toBe(true);
+  const mine = answer(900, viewer);
+  const theirs = answer(901);
+  // The outbox keeps a delivered reply in its confirmed journal.
+  operations = [{ event: mine, delivery: "seen" }];
+  thread.localChanged();
+  thread.receive([mine, theirs]);
+  const shown = thread.view.snapshot().replies.map((row) => row.id);
+  expect(shown).toContain(mine.id);
+  expect(shown).not.toContain(theirs.id);
 });
 
 it("re-folds for local operations and profiles only when the thread's own change", () => {

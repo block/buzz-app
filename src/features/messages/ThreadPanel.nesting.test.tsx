@@ -15,7 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { ThreadSnapshot } from "../relay/threads";
+import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
 import { DayDivider } from "./MessageTimestamp";
@@ -142,6 +142,7 @@ function setup(messageId = "root") {
     },
     refresh: async () => {},
     loadMore: async () => {},
+    pin: vi.fn<ThreadView["pin"]>(),
     dispose: () => {},
   };
   const session = {
@@ -174,6 +175,7 @@ function setup(messageId = "root") {
     />,
   );
   return {
+    pin: view.pin,
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
@@ -478,6 +480,14 @@ it("targets a child, cancels on repeated Reply, resets after send and reveals th
   expect(screen.getByText("new")).toBeVisible();
   expect(composer).not.toHaveAttribute("data-parent");
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+});
+it("keeps the reply being answered loaded until its target clears", () => {
+  const h = setup();
+  expect(h.pin).toHaveBeenLastCalledWith(undefined);
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  expect(h.pin).toHaveBeenLastCalledWith("parent");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel reply target" }));
+  expect(h.pin).toHaveBeenLastCalledWith(undefined);
 });
 it("continues a branch when replying to a nested reply", () => {
   const h = setup();

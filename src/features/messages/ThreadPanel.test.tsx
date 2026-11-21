@@ -189,6 +189,9 @@ function messagesHarness(
     listeners: Set<() => void>;
     refresh: ReturnType<typeof vi.fn<() => Promise<void>>>;
     loadMore: ReturnType<typeof vi.fn<() => Promise<void>>>;
+    loadBack: ReturnType<typeof vi.fn<() => Promise<void>>>;
+    latest: ReturnType<typeof vi.fn<() => Promise<void>>>;
+    pin: ReturnType<typeof vi.fn<ThreadView["pin"]>>;
     retarget: ReturnType<typeof vi.fn<ThreadView["retarget"]>>;
     dispose: ReturnType<typeof vi.fn>;
   })[] = [];
@@ -204,6 +207,9 @@ function messagesHarness(
       },
       refresh: vi.fn(async () => {}),
       loadMore: vi.fn(async () => {}),
+      loadBack: vi.fn(async () => {}),
+      latest: vi.fn(async () => {}),
+      pin: vi.fn<ThreadView["pin"]>(),
       retarget: vi.fn<ThreadView["retarget"]>(async () => "selected"),
       dispose: vi.fn(),
       listeners,
@@ -437,11 +443,14 @@ it("loads history automatically with error-only retry and no routine history con
   h.snapshot.canLoadMore = false;
   h.render();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  // A full legacy window ends the eager walk without a limit notice.
+  h.snapshot.canLoadMore = true;
   h.snapshot.limited = true;
   h.render();
-  expect(screen.getByText("Thread history limit reached.")).toBeVisible();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(screen.queryByText(/history limit/)).toBeNull();
   h.snapshot.status = "error";
-  h.snapshot.error = "Thread view exceeded its memory limit.";
+  h.snapshot.error = "offline";
   h.render();
   expect(screen.queryByText(/appear automatically/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -1626,6 +1635,39 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
   h.snapshot.error = undefined;
   h.render();
   expect(within(section).queryByText("Loading older replies…")).toBeNull();
+});
+it("reads evicted pages back at either edge and jumps to the newest page when newer ones were evicted", () => {
+  const h = messagesHarness();
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.canLoadBack = true;
+  h.snapshot.limited = true;
+  h.snapshot.replies = [{ ...row, id: "middle-reply", content: "middle" }];
+  const section = h.render();
+  // At the bottom of a window that moved off the newest page, reading on
+  // reads the evicted newer page back; the window does not follow.
+  fireEvent.wheel(section, { deltaY: 1 });
+  h.scroll(3400);
+  expect(h.view.loadBack).toHaveBeenCalledOnce();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+  const jump = within(section).getByRole("button", { name: /latest/i });
+  fireEvent.click(jump);
+  expect(h.view.latest).toHaveBeenCalledOnce();
+  // A full window still continues toward older replies at the top.
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(0);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  // Legacy reads in the other direction: older pages back at the top, newer
+  // ones on at the bottom once its eager walk filled the window.
+  h.snapshot.direction = "forward";
+  h.render();
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(0);
+  expect(h.view.loadBack).toHaveBeenCalledTimes(2);
+  fireEvent.wheel(section, { deltaY: 1 });
+  h.scroll(3400);
+  expect(h.view.loadMore).toHaveBeenCalledTimes(2);
+  expect(h.view.latest).toHaveBeenCalledOnce();
 });
 it("keeps retained-range repair quiet and retry after the replies", () => {
   const h = messagesHarness();
@@ -3544,6 +3586,23 @@ it("reselecting an invocation thread returns its reader to the latest message", 
   h.rerenderProps();
 
   expect(h.element.scrollTop).toBe(3400);
+});
+
+it("reselecting an invocation thread whose window moved off the newest page reads that page", () => {
+  const h = messagesHarness();
+  const props: ThreadPanelProps = h.props;
+  props.subthreadId = row.id;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.canLoadBack = true;
+  h.render();
+  h.scroll(2000);
+  expect(h.view.latest).not.toHaveBeenCalled();
+
+  props.latestRequest = new AbortController().signal;
+  h.rerenderProps();
+
+  expect(h.view.latest).toHaveBeenCalledOnce();
 });
 
 it("releases bottom following after a jump that included child-only resizing", () => {

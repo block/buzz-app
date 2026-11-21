@@ -24,7 +24,9 @@ import { RESUME_READ_AGE } from "./live";
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
 const INITIAL_WINDOW_SIZE = 10;
+/** Resident pages. Reading past them evicts pages from the window's far end. */
 const MAX_PAGES = 10;
+/** Resident evidence above which far pages are evicted, never a wipe. */
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
@@ -42,11 +44,15 @@ export type ThreadSnapshot = Readonly<{
   error: string | undefined;
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
+  /** The window is full: the next continuation evicts its first page. */
   limited: boolean;
-  /** Older pages are demand-loaded; forward is the legacy bounded walk. */
+  /** Pages before the window's first were evicted and can be read again. */
+  canLoadBack?: boolean;
+  /** Traversal order: strict windows continue toward older replies, legacy
+   * toward newer ones. */
   direction?: "older" | "forward";
   /** The in-flight or failed read, distinct from the traversal direction. */
-  readKind?: "older" | "refresh" | undefined;
+  readKind?: "older" | "back" | "refresh" | undefined;
   /** Exact navigation target, folded independently of bounded thread traversal. */
   target?: ChannelMessage | undefined;
   targetStatus?: "loading" | "ready" | "unavailable" | "error" | undefined;
@@ -107,6 +113,13 @@ export type ThreadView = {
   /** Reads older replies; with `through`, keeps paging in this one read until
    * a reply at or before the time it returns is loaded. */
   loadMore(through?: () => number): Promise<void>;
+  /** Read again the page evicted just before the window. */
+  loadBack(): Promise<void>;
+  /** Strict windows: reopen at the newest page when newer pages were evicted. */
+  latest(): Promise<void>;
+  /** Keep this reply loaded through eviction until it is cleared with
+   * `undefined`: the parent of a reply being written. */
+  pin(id: string | undefined): void;
   /** Change exact selection only when verified ancestry belongs to this thread. */
   retarget(messageId: string, signal: AbortSignal): Promise<ThreadRetarget>;
   dispose(): void;
@@ -229,15 +242,26 @@ export function createThreadView({
   let mode: "probe" | "older" | "legacy" = canonicalChannel.test(channelId)
     ? "probe"
     : "legacy";
-  let cursor: ThreadCursor | undefined;
+  /** Where each page of the traversal starts (undefined: its origin), plus
+   * the continuation past the last page read. Only pages [lo, pages) are
+   * resident: the rest were evicted, and are read again from their start. */
+  let starts: (ThreadCursor | undefined)[] = [];
+  let lo = 0;
   let pages = 0;
+  /** The last page read proved more history past it. */
+  let hasMore = false;
+  /** A size bound evicted a page: the window is full, whatever its page count. */
+  let filled = false;
+  let pinned: string | undefined;
+  /** Evicted events, so a live deletion of one is kept for when it is read again. */
+  const evicted = new Set<string>();
   const isReply = (event: RelayEvent) =>
     !AUX.has(event.kind) &&
     event.id !== rootId &&
     inChannel(event, channelId) &&
     threadReference(event)?.rootId === rootId;
   /** Replies a strict refresh must reach from its newest page. The selected
-   * target is retained beyond traversal by design. */
+   * target and the pinned reply are retained beyond traversal by design. */
   const unverified = () =>
     new Set(
       remote
@@ -245,10 +269,132 @@ export function createThreadView({
           (event) =>
             isReply(event) &&
             event.id !== subthreadId &&
+            event.id !== pinned &&
             !(exact && event.id === messageId),
         )
         .map((event) => event.id),
     );
+  /** Traversal order, as each relay pages: strict windows newest first with
+   * ids ascending within a second, legacy oldest first. */
+  const order = (a: ThreadCursor, b: ThreadCursor) =>
+    mode === "older"
+      ? b.created_at - a.created_at || a.id.localeCompare(b.id)
+      : compare(a, b);
+  /** A row past an evicted page boundary. Each page holds the rows after its
+   * start, up to and including the next page's start. */
+  const outside = (event: RelayEvent) => {
+    const first = lo > 0 ? starts[lo] : undefined;
+    const last = pages < starts.length - 1 ? starts[pages] : undefined;
+    return (
+      (!!first && order(event, first) <= 0) ||
+      (!!last && order(event, last) > 0)
+    );
+  };
+  const canContinue = () => hasMore || pages < starts.length - 1;
+  const paging = () => ({
+    canLoadMore: canContinue(),
+    canLoadBack: lo > 0,
+    limited: canContinue() && (pages - lo >= MAX_PAGES || filled),
+  });
+  function rewind() {
+    filled = false;
+    reading = undefined;
+    starts = [];
+    lo = 0;
+    pages = 0;
+    hasMore = false;
+  }
+  /** Drop replies outside the window with their overlays. Deletions are kept
+   * for the view's lifetime, so an evicted reply read again can never show
+   * as undeleted; so are the exact target and every resident reply's
+   * ancestors, so eviction never detaches a reply from its parent. */
+  function evict(gone: (event: RelayEvent) => boolean = outside) {
+    const byId = new Map(remote.map((event) => [event.id, event]));
+    const kept = new Set<string>();
+    const hold = (id: string | undefined) => {
+      for (
+        let event = id ? byId.get(id) : undefined;
+        event && !kept.has(event.id);
+        event = byId.get(threadReference(event)?.parentId ?? "")
+      )
+        kept.add(event.id);
+    };
+    for (const event of remote)
+      if (isReply(event) && !gone(event)) hold(event.id);
+    if (exact) hold(messageId);
+    hold(pinned);
+    const dropped = new Set(
+      remote
+        .filter((event) => isReply(event) && !kept.has(event.id))
+        .map((event) => event.id),
+    );
+    if (!dropped.size) return;
+    for (let more = true; more; ) {
+      more = false;
+      for (const event of remote) {
+        if (
+          !AUX.has(event.kind) ||
+          event.kind === 5 ||
+          event.kind === 9005 ||
+          dropped.has(event.id)
+        )
+          continue;
+        const targets = event.tags.filter(([name]) => name === "e");
+        if (
+          targets.length &&
+          targets.every(([, id]) => dropped.has(id ?? ""))
+        ) {
+          dropped.add(event.id);
+          more = true;
+        }
+      }
+    }
+    for (const id of dropped) evicted.add(id);
+    setRemote(remote.filter((event) => !dropped.has(event.id)));
+    if (held) held = new Set([...held].filter((id) => !dropped.has(id)));
+  }
+  const over = () =>
+    remote.length > MAX_EVENTS || listByteSize(remote) > MAX_BYTES;
+  /** Live replies grew the only resident page: end a page at its middle
+   * reply, so one half can be evicted and read again from there. */
+  function split() {
+    const rows = remote
+      .filter((event) => isReply(event) && !outside(event))
+      .sort(order);
+    const cut = rows[Math.ceil(rows.length / 2) - 1];
+    if (rows.length < 2 || !cut) return false;
+    starts.splice(pages, 0, { created_at: cut.created_at, id: cut.id });
+    pages++;
+    if (starts.length <= pages) starts.length = pages + 1;
+    return true;
+  }
+  /** Evict whole pages from one end until the window fits. The last page
+   * always stays, so one oversized page is held rather than lost; live
+   * growth may divide it. */
+  function shrink(from: "start" | "end", live = false) {
+    let moved = false;
+    while (
+      pages - lo > MAX_PAGES ||
+      (over() && (pages - lo > 1 || (live && pages - lo === 1 && split())))
+    ) {
+      if (from === "start") lo++;
+      else pages--;
+      evict();
+      moved = true;
+    }
+    filled ||= moved;
+    return moved;
+  }
+  const oldest = () => (mode === "older" ? "end" : "start");
+  /** The end of the window the last page read landed at. */
+  let reading: "start" | "end" | undefined;
+  /** Live growth evicts the oldest end, away from where replies arrive. A
+   * window off that end evicts away from the page last read instead. */
+  const away = () => {
+    if (!reading || (mode === "older" ? lo === 0 : !canContinue()))
+      return oldest();
+    return reading === "end" ? "start" : "end";
+  };
   /** The replies held when the stream dropped, or read while it was down,
    * until the refresh after it is back completes. The re-established stream
    * replays its last minutes before that refresh; those replies are newer
@@ -264,11 +410,16 @@ export function createThreadView({
   /** When the refresh whose replies the view holds started. */
   let readAt = -Infinity;
   let controller: AbortController | undefined;
+  /** Replies that arrived outside the window while a read ran: the window it
+   * lands on may hold them. */
+  let arrivals: RelayEvent[] = [];
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
   /** An older page asked for while a read runs or a quiet failure waits, read
    * after it: `true`, or the frontier to read to. */
   let older: (() => number) | boolean = false;
+  /** A window move requested while a read runs or a quiet failure waits. */
+  let queued: false | "back" | "latest" = false;
   /** The read that failed transiently, which session recovery retries. */
   let failed: "refresh" | "older" | undefined;
   /** The read running is one for a missing parent, or `null` once the relay
@@ -283,6 +434,7 @@ export function createThreadView({
     replies: Object.freeze([]),
     error: undefined,
     canLoadMore: false,
+    canLoadBack: false,
     limited: false,
   });
   const listeners = new Set<() => void>();
@@ -317,9 +469,12 @@ export function createThreadView({
     for (let hop = 0; hop < 2; hop++) {
       for (const event of events) {
         if (!AUX.has(event.kind) || result.has(event.id)) continue;
+        const deletion = event.kind === 5 || event.kind === 9005;
         if (
           event.tags.some(
-            ([name, value]) => name === "e" && ids.has(value ?? ""),
+            ([name, value]) =>
+              name === "e" &&
+              (ids.has(value ?? "") || (deletion && evicted.has(value ?? ""))),
           )
         ) {
           result.set(event.id, event);
@@ -354,7 +509,7 @@ export function createThreadView({
     const seeking =
       seek !== null &&
       (next.direction
-        ? next.direction === "older" && next.canLoadMore
+        ? next.direction === "older" && next.canLoadMore && !next.limited
         : next.status === "idle" || next.status === "loading") &&
       next.replies.some(
         (row) =>
@@ -514,67 +669,49 @@ export function createThreadView({
       ...(exact ? { target, targetStatus } : {}),
     });
   }
-  function retain(events: readonly RelayEvent[], commit = true) {
-    if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
-      // Never silently evict a deletion/ancestor then display resurrected content.
-      controller?.abort();
-      selectionController?.abort();
-      selectionStaged = [];
-      remote = [];
-      remoteIds.clear();
-      staged = [];
-      rootId = undefined;
-      cursor = undefined;
-      pages = 0;
-      again = false;
-      older = false;
-      failed = undefined;
-      shown = undefined;
-      if (exact) targetStatus = "error";
-      publish({
-        status: "error",
-        limited: true,
-        canLoadMore: false,
-        error:
-          "Thread view exceeded its memory limit. Refresh to read from the beginning.",
-      });
-      recover?.();
-      return false;
-    }
-    if (commit) {
-      remote = events;
-      remoteIds = new Set(events.map((event) => event.id));
-    }
-    return true;
+  function setRemote(events: readonly RelayEvent[]) {
+    remote = events;
+    remoteIds = new Set(events.map((event) => event.id));
   }
   function receive(events: readonly RelayEvent[]) {
     if (disposed || !canAccess() || (!rootId && !exact)) return;
     const fresh = events.filter((event) => !remoteIds.has(event.id));
     if (!fresh.length) return;
-    const incoming = related(fresh);
+    // A reply past an evicted page would show beyond the gap; it returns
+    // with its page, unless a read moving the window lands over it first.
+    const found = related(fresh);
+    const incoming = found.filter(
+      (event) => !isReply(event) || !outside(event),
+    );
+    if (controller)
+      arrivals.push(...found.filter((event) => !incoming.includes(event)));
     if (!incoming.length) return;
-    if (retain(union(remote, incoming))) {
-      publish();
-      advance();
-    }
+    setRemote(union(remote, incoming));
+    // A read in progress fits the window when it lands.
+    publish(!controller && shrink(away(), true) ? paging() : {});
+    advance();
   }
   /** Reads the next older page once no read runs or waits on recovery: one
    * asked for, else, in the background, one that may hold the parent of a
    * reply shown without it. Each page that lands advances again. */
   function advance() {
     if (disposed || controller || failed) return;
-    if (older) {
+    if (queued) {
+      const kind = queued;
+      queued = false;
+      void run(kind);
+    } else if (older) {
       const through = older === true ? undefined : older;
       older = false;
-      void run(false, false, through);
+      void run("more", false, through);
     } else if (
       recover &&
       // A resumed view has no page of its own to read on from yet.
-      cursor &&
+      pages > 0 &&
       snapshot.status === "ready" &&
       snapshot.seeking
     )
-      void run(false, false, undefined, true);
+      void run("more", false, undefined, true);
   }
   if (
     !subthreadId &&
@@ -615,8 +752,10 @@ export function createThreadView({
     selectionController = undefined;
     selectionStaged = [];
     controller = undefined;
+    arrivals = [];
     again = false;
     older = false;
+    queued = false;
     failed = undefined;
     staged = [];
     shown = undefined;
@@ -624,15 +763,17 @@ export function createThreadView({
     if (clear || !canAccess()) {
       remote = [];
       staged = [];
+      evicted.clear();
+      pinned = undefined;
       rootId = undefined;
-      cursor = undefined;
-      pages = 0;
+      rewind();
       held = undefined;
     } else remote = visible(remote);
     remoteIds = new Set(remote.map((event) => event.id));
     publish({
       status: "idle",
       canLoadMore: false,
+      canLoadBack: false,
       limited: false,
       error: canAccess()
         ? "Thread read interrupted. Refresh to continue."
@@ -659,7 +800,6 @@ export function createThreadView({
       pending = events;
       if (selecting) selectionStaged = events;
       else staged = events;
-      return retain(union(remote, staged, selectionStaged), false);
     };
     const target = targetReader.read(
       [{ ids: [id], "#h": [channelId], limit: 1 }],
@@ -689,7 +829,7 @@ export function createThreadView({
     if (expectedRoot && resolvedRoot !== expectedRoot) return "different";
     // Staging makes live overlay deletions resolvable without exposing an
     // incomplete selected fold. Existing displayed content remains untouched.
-    if (!stage([event])) return "error";
+    stage([event]);
     if (subthreadId && subthreadId !== resolvedRoot && id !== subthreadId) {
       const branch = await readSubthread(
         [event],
@@ -711,7 +851,7 @@ export function createThreadView({
     }
     const overlays = await overlaysRead;
     if (!active()) return "cancelled";
-    if (!stage(union(pending, related(overlays, id)))) return "error";
+    stage(union(pending, related(overlays, id)));
     const ids = union(remote, pending)
       .filter(
         (event) =>
@@ -725,7 +865,7 @@ export function createThreadView({
         { signal: owned.signal },
       );
       if (!active()) return "cancelled";
-      if (!stage(union(pending, related(tombstones, id)))) return "error";
+      stage(union(pending, related(tombstones, id)));
     }
     // Live deletions received while reads were held are retained only by this
     // reader; admit them with the fold so every reader withdraws the overlay.
@@ -751,7 +891,7 @@ export function createThreadView({
     // traffic could populate. Resolve identity only after final admission.
     if (!selecting) rootId = resolvedRoot;
     const combined = union(remote, related(accepted, id));
-    if (!retain(combined)) return "error";
+    setRemote(combined);
     stage([]);
     if (
       (selecting || subthreadId) &&
@@ -816,36 +956,65 @@ export function createThreadView({
   /** Demand for an older page. It waits out a quiet failure, whose retry is
    * session recovery's. */
   async function more(through?: () => number) {
-    if (!failed) return run(false, false, through);
-    older = through ?? (older || true);
+    if (!failed) return run("more", false, through);
+    if (queued !== "latest") older = through ?? (older || true);
     // The wait shows as the read it is for.
     publishStatus({ status: "loading", readKind: "older" });
   }
+  /** Demand to move the window back toward its first page. */
+  async function page(kind: "back" | "latest") {
+    if (!failed) return run(kind);
+    if (queued !== "latest") {
+      queued = kind;
+      older = false;
+    }
+    publishStatus({
+      status: "loading",
+      readKind: kind === "back" ? "back" : "refresh",
+    });
+  }
+  /** A refresh re-reads the resident pages; `more` continues the traversal;
+   * `back` reads the evicted page before the window again; `latest` reads
+   * the first page, replacing a window that had moved off it. */
   async function run(
-    replace: boolean,
+    kind: "refresh" | "more" | "back" | "latest",
     established = false,
     through?: () => number,
     /** For a missing parent, not a person: see `advance`. */
     sought = false,
   ) {
     if (disposed) return;
+    const replace = kind === "refresh";
     // A read someone asked for takes the place of one for a missing parent.
     if (controller && controller === seek) controller.abort();
     else if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
-      else older = through ?? (older || true);
+      else if (kind === "more") {
+        // Reopening at the newest page outranks a page read asked for after it.
+        if (queued !== "latest") older = through ?? (older || true);
+      } else if (queued !== "latest") {
+        queued = kind;
+        older = false;
+      }
       return;
     }
     if (!canAccess()) {
       purge();
       return;
     }
-    if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
+    if (
+      (kind === "more" && !snapshot.canLoadMore) ||
+      (kind !== "refresh" && kind !== "more" && !lo) ||
+      (sought && snapshot.limited)
+    )
+      return;
     // A retry stays as quiet as the failure it follows.
     const background =
       established || sought || (replace && (!!shown || !!failed));
     failed = undefined;
+    const asked =
+      kind === "more" ? "older" : kind === "back" ? "back" : "refresh";
     const owned = new AbortController();
     controller = owned;
     if (seek !== null) seek = sought ? owned : undefined;
@@ -860,9 +1029,14 @@ export function createThreadView({
     if (established) dropped = false;
     const active = () =>
       !disposed && !owned.signal.aborted && controller === owned;
-    const targetPages = replace ? Math.max(1, pages) : 1;
-    let nextCursor = replace ? undefined : cursor;
-    let nextPages = replace ? 0 : pages;
+    // Pages [first, first + count) are read from their recorded starts.
+    const first = { refresh: lo, more: pages, back: lo - 1, latest: 0 }[kind];
+    const count = replace ? Math.max(1, pages - lo) : 1;
+    // A page read again ends where the window begins, unless a reply was
+    // since backdated into it.
+    const boundary = kind === "back" ? starts[lo] : undefined;
+    let nextCursor = starts[first];
+    let nextPages = first;
     let fetched: readonly RelayEvent[] = [];
     let branchSelection: { revision: number; id: string } | undefined;
     // Repair retains already-verified presentation; only a new/unavailable
@@ -876,7 +1050,7 @@ export function createThreadView({
         error: undefined,
         // A quiet retry leaves a page asked for behind it showing as that
         // page.
-        readKind: replace && !(background && older) ? "refresh" : "older",
+        readKind: kind === "refresh" && background && older ? "older" : asked,
       });
     try {
       if (exact && replace) {
@@ -982,28 +1156,31 @@ export function createThreadView({
           )
         ) {
           rootUnavailable = true;
-          cursor = undefined;
-          pages = 0;
-          publish({ canLoadMore: false });
+          rewind();
+          publish({ canLoadMore: false, canLoadBack: false });
           throw new Error("The original thread message is unavailable.");
         }
-        if (!retain(union(remote, related(root)))) return;
+        setRemote(union(remote, related(root)));
       }
-      // A strict refresh re-reads from the newest end. Live replay covers
-      // minutes, not a long disconnect, so keep paging until a reply kept
-      // across the drop is reached.
+      // A strict refresh at the window's newest end re-reads from it. Live
+      // replay covers minutes, not a long disconnect, so keep paging until a
+      // reply kept across the drop is reached.
       const kept = replace ? (held ?? unverified()) : new Set<string>();
       let reached = !kept.size;
       let more = false;
-      // Where the loop passed the range the reader had, so a fill that never
-      // reaches a pre-refresh reply can settle back on it.
-      let range: { cursor: ThreadCursor | undefined } | undefined;
-      let oldest = Infinity;
+      let oldestRead = Infinity;
       for (
         let page = 0;
-        page < targetPages ||
+        page < count ||
         (mode === "older" && !reached && page < MAX_PAGES) ||
-        (through !== undefined && oldest > through() && nextPages < MAX_PAGES);
+        (through !== undefined &&
+          oldestRead > through() &&
+          nextPages - lo < MAX_PAGES) ||
+        (!!boundary &&
+          more &&
+          !!nextCursor &&
+          order(nextCursor, boundary) < 0 &&
+          page < MAX_PAGES);
         page++
       ) {
         let response: readonly RelayEvent[];
@@ -1070,9 +1247,8 @@ export function createThreadView({
         ) {
           // Hide unavailable history without throwing away known tombstones.
           rootUnavailable = true;
-          cursor = undefined;
-          pages = 0;
-          publish({ canLoadMore: false });
+          rewind();
+          publish({ canLoadMore: false, canLoadBack: false });
           throw new Error("The original thread message is unavailable.");
         }
         // Count traversal rows before presentation filtering. The bridge may return
@@ -1080,7 +1256,7 @@ export function createThreadView({
         const replies = events.filter(isReply).sort(compare);
         reached ||= replies.some((event) => kept.has(event.id));
         for (const event of replies)
-          oldest = Math.min(oldest, event.created_at);
+          oldestRead = Math.min(oldestRead, event.created_at);
         if (
           !bounds &&
           replies.some((event) => nextCursor && compare(event, nextCursor) <= 0)
@@ -1093,48 +1269,61 @@ export function createThreadView({
           : (replies.at(-1) ?? nextCursor);
         nextPages++;
         fetched = union(fetched, related(events));
-        if (fetched.length > MAX_EVENTS || listByteSize(fetched) > MAX_BYTES) {
-          retain(fetched);
-          return;
-        }
         // Only strict bounds prove exhaustion. Legacy short pages may be filtered
         // after LIMIT, so an empty continuation means merely no more returned.
         more = bounds ? bounds.hasMore : replies.length > 0;
-        if (nextPages === targetPages) range = { cursor: nextCursor };
+        // A page read again keeps the window's recorded boundary.
+        if (kind !== "back") starts[nextPages] = nextCursor;
         // Each older page commits as it lands, so a later failure retries
         // from the next page rather than the first.
-        if (!replace) {
-          if (!retain(union(remote, fetched))) return;
-          cursor = nextCursor;
+        if (kind === "more") {
+          setRemote(union(remote, fetched));
           pages = nextPages;
+          hasMore = more;
         }
         if (!more) break;
       }
       if (!active()) return;
+      // Replies arrived above the window since it left them: the read cap ended
+      // short of its boundary, and joining the two ranges would leave a gap.
+      if (boundary && more && nextCursor && order(nextCursor, boundary) < 0) {
+        publish({
+          status: "ready",
+          error: undefined,
+          readKind: undefined,
+          ...paging(),
+        });
+        return;
+      }
       // A bounded response cannot retract observed evidence. Retain known edits,
       // tombstones and live rows even when a later finite read omits them. Replies
-      // the re-read never reached sit past a gap it cannot show; those go. The
-      // pages read past the reader's range stay as evidence, but the range
-      // settles back on the reader's: as the retained range, every later
+      // the re-read never reached sit past a gap it cannot show; those go, with
+      // the pages read past the reader's range: as resident pages, every later
       // refresh would re-read them all.
       const unreached = mode === "older" && !reached && more;
-      if (unreached && range) {
-        nextCursor = range.cursor;
-        nextPages = targetPages;
-      }
-      if (
-        !retain(
-          union(
-            unreached ? remote.filter((event) => !kept.has(event.id)) : remote,
-            fetched,
-          ),
-        )
-      )
-        return;
+      setRemote(
+        union(
+          unreached ? remote.filter((event) => !kept.has(event.id)) : remote,
+          fetched,
+        ),
+      );
       rootUnavailable = false;
-      cursor = nextCursor;
-      pages = nextPages;
+      if (kind === "back") lo = first;
+      else {
+        if (kind === "latest") {
+          lo = 0;
+          filled = false;
+        }
+        pages = unreached ? first + count : nextPages;
+        hasMore = more;
+        if (!more) starts.length = pages;
+      }
       if (replace) readAt = startedAt;
+      const arrived = arrivals.filter((event) => !outside(event));
+      if (arrived.length) setRemote(union(remote, arrived));
+      evict();
+      if (!replace) reading = kind === "more" ? "end" : "start";
+      shrink(kind === "more" ? "start" : kind === "back" ? "end" : away());
       // While the stream is down (a drop mid-refresh ran stale() first) the
       // held replies stand; a view holding none, or a fill that gave them up,
       // takes the replies now.
@@ -1155,8 +1344,7 @@ export function createThreadView({
         error: undefined,
         readKind: undefined,
         direction: mode === "older" ? "older" : "forward",
-        canLoadMore: more && pages < MAX_PAGES,
-        limited: more && pages >= MAX_PAGES,
+        ...paging(),
       });
     } catch (error) {
       if (active()) {
@@ -1171,8 +1359,13 @@ export function createThreadView({
           failed = replace ? "refresh" : "older";
           // The page a person asked for is still wanted once this recovers,
           // to the frontier asked for last.
-          if (!replace && !sought && typeof older !== "function")
+          if (kind === "more" && !sought && typeof older !== "function")
             older = through ?? true;
+          else if (
+            (kind === "back" || kind === "latest") &&
+            queued !== "latest"
+          )
+            queued = kind;
           publishStatus({});
         } else if (sought && !rootUnavailable) {
           // Nobody asked for this read: its failure shows only as the parent
@@ -1183,6 +1376,7 @@ export function createThreadView({
           // A failed repair stays visible with Retry; the page queued behind
           // it would clear that error.
           older = false;
+          queued = false;
           if (targetStatus === "loading") targetStatus = "error";
           // A failed refresh shows what is read, as a fresh view would.
           if (replace && shown) {
@@ -1194,7 +1388,7 @@ export function createThreadView({
             error: String(error),
             // A background read published no kind when it began, and a
             // page asked for behind it published its own.
-            readKind: replace ? "refresh" : "older",
+            readKind: asked,
           });
         }
       }
@@ -1203,11 +1397,12 @@ export function createThreadView({
       owned.abort();
       if (controller === owned) {
         staged = [];
+        arrivals = [];
         controller = undefined;
         if (again && !disposed) {
           const established = again === "established";
           again = false;
-          void run(true, established);
+          void run("refresh", established);
         } else advance();
         recover?.();
       }
@@ -1230,6 +1425,7 @@ export function createThreadView({
      * outside the root's window. A retarget only to the root keeps its rows. */
     resume(): ThreadResume | "keep" | undefined {
       if (controller || shown || selectedReply || failed) return "keep";
+      if (lo > 0) return undefined;
       const { status, root, replies, direction, canLoadMore, limited } =
         snapshot;
       if (
@@ -1277,7 +1473,7 @@ export function createThreadView({
         !controller &&
         snapshot.status === "ready";
       liveAtDrop = false;
-      if (!live) return run(true, true);
+      if (!live) return run("refresh", true);
       dropped = false;
       held = undefined;
       return Promise.resolve();
@@ -1297,7 +1493,7 @@ export function createThreadView({
      * which a view the stream dropped answers with its establishment refresh. */
     retry(timed?: boolean) {
       if (!failed || (dropped && !timed)) return;
-      if (failed === "refresh") return void run(true);
+      if (failed === "refresh") return void run("refresh");
       failed = undefined;
       advance();
       // Nothing may be left to read: the wait is over either way.
@@ -1322,9 +1518,17 @@ export function createThreadView({
           branchOpening = selection ?? { messageId };
           messageId = branchOpening.messageId;
         }
-        return run(true);
+        return run("refresh");
       },
       loadMore: more,
+      loadBack: () => page("back"),
+      latest: () => (mode === "older" ? page("latest") : Promise.resolve()),
+      pin(id: string | undefined) {
+        pinned = id;
+        const before = remote;
+        evict();
+        if (remote !== before) publish();
+      },
       dispose() {
         listeners.clear();
         purge(true);

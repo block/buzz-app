@@ -1504,14 +1504,24 @@ bottom placement. New replies arrive through the existing session and the panel
 follows near the bottom, preserving reading position above it. Sending a reply is
 explicit navigation intent and reveals the new local row.
 
-**Bounded history:** strict mode retains at most ten pages (10 initial replies
-plus nine pages of 50); legacy mode retains at most ten pages of 50. A limit notice is
-not a completeness claim. An older relay returning verified replies without thread
-bounds on the initial probe triggers a clean legacy restart: automatic oldest-first
-traversal, whose bottom may not be the newest reply in a long thread. An empty
+**Long threads:** there is no reply ceiling. The panel holds a window of at most
+ten pages (460 replies at the newest end, up to 500 elsewhere). Reading past it
+evicts pages at its far end, and scrolling back toward them reads them again; the
+row being read keeps its place. Reaching a size bound evicts far pages and never
+clears the thread. While newer pages are evicted the panel does not follow new
+replies: Jump to latest, and sending a reply to the root, reopen it at the newest
+page. If more replies arrived than a read back can cover, the window stays where it
+is and Jump to latest remains. The root, an exact target, the reply being answered
+and the parents of loaded replies stay loaded, and a deletion the panel has seen,
+including one for a reply already evicted, still applies when its page is read
+again. A window is not a
+completeness claim. An older relay returning verified replies without thread
+bounds on the initial probe triggers a clean legacy restart: oldest-first
+traversal that walks automatically until its window fills, whose bottom may not
+be the newest reply in a long thread, and continues as you scroll down. An empty
 unsigned probe is ambiguous with access denial and stays retryable/unavailable.
 Malformed bounds, failed requests and missing bounds after strict support never
-downgrade. Media review still eagerly loads its bounded comment range.
+downgrade. Media review still eagerly loads one window of comments.
 The thread and a linked object panel share that slot; a companion can remain below.
 Close or Escape returns focus to the reply button when it is still mounted. Changing
 channel/community or disabling Channels disposes the owned thread view.
@@ -1523,7 +1533,7 @@ root. Channel and thread drafts are separate and survive reconnection; failed
 replies remain inline with the shared retry action and retain their signed ancestry.
 Read-only connections keep the existing composer capability notice; missing/revoked
 roots do not expose a composer. Exact navigation can retain and focus a selected
-reply beyond the traversal range; it does not extend that range or promise complete history.
+reply beyond the loaded window; it does not move the window to it or promise complete history.
 
 A labelled divider separates the original message from replies only while at
 least one reply is displayed. With no displayed replies, including while loading,
@@ -1559,10 +1569,10 @@ exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 
 These are the requirements for scrolling a long thread; the targets below measure
 how close the panel is, and [performance runs](performance.md)
-report where it stands. A thread with hundreds of replies must scroll as smoothly
-as a short one, for every reply the panel has loaded, up to the bounded history
-above, whatever the mix of Markdown, mentions, links and authors. Reaching replies
-beyond those bounds belongs to the relay's thread retention, not to scrolling.
+report where it stands. A thread with thousands of replies must scroll as smoothly
+as a short one, through every reply it holds, whatever the mix of Markdown,
+mentions, links and authors. Replies the panel evicted come back as the reader
+scrolls to them.
 
 - **Smooth and responsive:** wheel, trackpad and keyboard input move the pane from
   the first event, at the display's frame rate, and a reversal follows at once.
@@ -1574,8 +1584,9 @@ beyond those bounds belongs to the relay's thread retention, not to scrolling.
   an older page loads.
 - **Final on arrival:** a reply appears at its final size and position. It does not
   rewrap, resize or move after it is on screen; media occupy their reserved frame.
-- **Reading position holds:** older pages, resolved media and profiles, live
-  replies and panel resizes keep the message being read at the same offset. New
+- **Reading position holds:** pages read or evicted at either edge, resolved media
+  and profiles, live replies and panel resizes keep the message being read at the
+  same offset. New
   replies are followed only while the reader is at or near the bottom.
 - **Bounded work:** the cost of a scroll gesture depends on the replies near the
   viewport, not on how many are loaded. If replies far from the viewport are not
@@ -1585,8 +1596,8 @@ beyond those bounds belongs to the relay's thread retention, not to scrolling.
 
 #### Targets
 
-These targets are measured on a fixed mock thread of 460 replies (the strict
-window's full history) in the macOS app, with every reply loaded and a 60 Hz
+These targets are measured in the macOS app on a fixed mock thread of 5,000
+replies, with the panel's window full at the newest end (460 replies) and a 60 Hz
 display. A measured run is two upward trackpad flings with a reversal, then Jump to
 latest.
 They are advisory: the [performance suite](performance.md) reports them and does

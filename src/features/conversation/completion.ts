@@ -183,6 +183,9 @@ export function completionResult(
         ...(typeof item.canSelect === "function"
           ? { canSelect: item.canSelect }
           : {}),
+        ...(typeof item.onSelect === "function"
+          ? { onSelect: item.onSelect }
+          : {}),
         edit: host
           ? edit
           : Object.freeze(

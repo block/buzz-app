@@ -3490,6 +3490,8 @@ detail/decorative previews, an optional `agent` flag (marked and announced only
 for the bundled mention and channel providers) and either text, an exact `{ pubkey, name }` mention,
 or a `mentions` array of up to 32 such recipients. Batch edit primitives are
 copied and frozen before display, and accepted as a single editor transaction.
+A choice's optional `onSelect` runs once after the host inserts it by click,
+Tab, Enter or terminator, never for highlighting; its errors cannot undo the edit.
 The host copies edit/query primitives and caps publications at 50 choices. A
 publication returns its own withdrawal disposer (or `false` after revocation).
 Providers must withdraw synchronously when the data supporting a displayed choice

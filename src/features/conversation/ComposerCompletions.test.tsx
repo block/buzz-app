@@ -290,6 +290,24 @@ it("ignores the agent flag from providers outside the bundled people providers",
 
 const folder = { kind: "folder", id: "/notes", label: "@notes" };
 it.each([true, false])(
+  "tells the provider once about an accepted choice, never a rejected one (accepted: %s)",
+  async (accepted) => {
+    const onSelect = vi.fn();
+    mountPeople("test.plugin", {
+      replace: () => accepted,
+      items: [
+        { id: "first", label: "First", edit: { text: "1" }, onSelect },
+        { id: "second", label: "Second", edit: { text: "2" } },
+      ],
+    });
+    const option = await screen.findByRole("option", { name: "First" });
+    fireEvent.pointerMove(option);
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(option);
+    expect(onSelect).toHaveBeenCalledTimes(accepted ? 1 : 0);
+  },
+);
+it.each([true, false])(
   "hands a chip edit to the composer only from a bundled provider (bundled: %s)",
   async (bundled) => {
     const replace = vi.fn(() => true);

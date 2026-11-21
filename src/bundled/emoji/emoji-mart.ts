@@ -5,9 +5,10 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
 import english from "@emoji-mart/data/i18n/en.json";
-import { Data, Picker, SearchIndex } from "emoji-mart";
+import { Data, FrequentlyUsed, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
+import { customEmojiId, seedEmojiUsage } from "./emoji-usage";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import {
   SKIN_TONE_SLOT,
@@ -22,7 +23,6 @@ const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
-const prefix = "buzz-custom/";
 // Idle and with no matches, the footer shows only its actions; the empty grid
 // under the query already says nothing matched.
 const previewStrings = {
@@ -109,7 +109,7 @@ export function mountEmojiMart({
   const emojis = entries.flatMap(({ shortcode, url }) => {
     const src = media(url);
     if (!src) return [];
-    const id = `${prefix}${encodeURIComponent(scope)}/${shortcode}`;
+    const id = customEmojiId(scope, shortcode);
     const literal = `:${shortcode}:`;
     values.set(id, { literal, shortcode });
     // Match Mart's first-hyphen query normalization as well as individual words.
@@ -130,15 +130,8 @@ export function mountEmojiMart({
       },
     ];
   });
-  // Restore Mart's default Frequent row if storage contains a poisoned empty map.
-  try {
-    if (localStorage.getItem("emoji-mart.frequently") === "{}") {
-      localStorage.removeItem("emoji-mart.frequently");
-      localStorage.removeItem("emoji-mart.last");
-    }
-  } catch {
-    /* Like Mart, selection works without localStorage. */
-  }
+  // Also restores the default row if storage contains a poisoned empty map.
+  seedEmojiUsage(FrequentlyUsed.DEFAULTS, perLine);
   const picker = new Picker({
     data,
     custom: emojis.length

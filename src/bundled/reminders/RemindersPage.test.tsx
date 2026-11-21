@@ -187,6 +187,54 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
   });
 });
 
+it("lists cancelled reminders newest first in a collapsed group below Done", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [
+      reminder("finished", "done", 10),
+      reminder("older cancelled", "cancelled", 20),
+      reminder("newer cancelled", "cancelled", 30),
+    ],
+  };
+  const reminders = {
+    snapshot: () => state,
+    subscribe: () => () => {},
+    snooze: vi.fn(() => Promise.resolve()),
+  } as unknown as Reminders;
+  page(reminders);
+  expect(screen.getByText("You're all caught up")).toBeVisible();
+  const done = screen.getByRole("region", { name: "Done" });
+  const cancelled = screen.getByRole("region", { name: "Cancelled" });
+  expect(
+    done.compareDocumentPosition(cancelled) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  const toggle = within(cancelled).getByRole("button", { name: "Cancelled 2" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("newer cancelled")).toBeNull();
+  await user.click(toggle);
+  const rows = within(cancelled).getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("newer cancelled"),
+    expect.stringContaining("older cancelled"),
+  ]);
+  const row = rows[0] as HTMLElement;
+  expect(within(row).getByLabelText("Cancelled")).toBeVisible();
+  expect(
+    within(row).getByRole("button", { name: "Open message from Ada" }),
+  ).toHaveAccessibleDescription(/^newer cancelled Cancelled /);
+  // A cancelled reminder can be brought back, but never completed.
+  expect(within(row).queryByRole("checkbox")).toBeNull();
+  await user.click(
+    within(row).getByRole("button", { name: "Remind me again: Ada" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: /^In 1 hour/ }));
+  expect(reminders.snooze).toHaveBeenCalledWith(
+    "newer cancelled",
+    expect.any(Number),
+  );
+});
+
 it("marks done, snoozes and cancels a pending reminder from its row", async () => {
   const user = userEvent.setup();
   const state = {
@@ -453,10 +501,11 @@ it("says the list is caught up when only Done reminders exist", () => {
 });
 
 it("explains how to add a reminder on an empty page", () => {
-  page([reminder("cancelled", "cancelled", 1)]);
+  page([]);
   expect(screen.getByText("No reminders yet")).toBeVisible();
   expect(screen.getByText(hint)).toBeVisible();
   expect(screen.queryByRole("region", { name: "Done" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Cancelled" })).toBeNull();
 });
 
 it.each([

@@ -134,6 +134,12 @@ const UNATTRIBUTED: Record<BlockedReason, string> = {
  * point at the gateway, so this says nothing about where inference went. */
 export const unattributedNotice = (reason: BlockedReason) =>
   `Ran without gateway attribution: ${UNATTRIBUTED[reason]}.`;
+/** The notice on an attribution-only turn that ran before this launch's
+ * plugin selection was known, so before any access check could go out.
+ * True whatever the selection turns out to be, including one that leaves
+ * the harness out. */
+export const SELECTION_PENDING_NOTICE =
+  "Ran without gateway attribution: Buzz was still deciding which agents use the gateway.";
 
 /** How long a turn waits for an access check in flight, such as the first
  * one at cold start, before it fails as still pending. Below the probe's own

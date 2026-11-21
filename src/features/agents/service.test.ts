@@ -24244,7 +24244,24 @@ describe("agent gateway gate", () => {
     }
   });
 
-  it("runs an attribution-only turn quietly while the plugin's list is unknown, and keeps quiet once it enables none", async () => {
+  const SELECTION_PENDING =
+    "Ran without gateway attribution: Buzz was still deciding which agents use the gateway.";
+  /** Mentions the attribution-only agent again, as `id`. */
+  const mentionAgain = (f: Awaited<ReturnType<typeof mentioned>>, id: string) =>
+    f.emit({
+      events: [
+        event(id, {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+
+  it("runs an attribution-only turn at once while the plugin's list is unknown, noting that, and quietly once the list enables none", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const live = selectedRoutes();
     try {
@@ -24254,34 +24271,63 @@ describe("agent gateway gate", () => {
       expect(ready).not.toHaveBeenCalled();
       const first = f.run.mock.calls[0]?.[0];
       expect(first).not.toHaveProperty("gateway");
-      expect(first).not.toHaveProperty("gatewayFallback");
-      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
-      // The list, late, enables none: nothing went to the gateway.
+      // Says only that the list was unknown: no access check went out.
+      expect(first?.gatewayFallback).toEqual({
+        reason: "readiness_pending",
+        notice: SELECTION_PENDING,
+      });
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        notice: SELECTION_PENDING,
+      });
+      expect(live.request).not.toHaveBeenCalled();
+      // The list, late, enables none: nothing went to the gateway, and the
+      // next turn is quiet.
       live.select([]);
       await vi.waitFor(() =>
         expect(live.routes.routeFor(bot as never).kind).toBe("external"),
       );
       expect(live.request).not.toHaveBeenCalled();
-      f.emit({
-        events: [
-          event("attr-after-empty", {
-            pubkey: viewer,
-            tags: [
-              ["h", channel],
-              ["p", bot],
-            ],
-          }),
-        ],
-        channelId: channel,
-      });
+      mentionAgain(f, "attr-after-empty");
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
       expect(f.run.mock.calls[1]?.[0]).not.toHaveProperty("gatewayFallback");
-      expect(f.activity.reader.work().some((work) => "notice" in work)).toBe(
-        false,
-      );
+      expect(
+        f.activity.reader
+          .work()
+          .filter((work) => "notice" in work)
+          .map((work) => work.messageId),
+      ).toEqual([mention.id]);
     } finally {
       live.restore();
       timeout.mockRestore();
+    }
+  });
+
+  it("runs an attribution-only turn quietly once the plugin's list leaves its harness out, whatever the access check", async () => {
+    const live = selectedRoutes();
+    try {
+      live.select(["pi"]);
+      await vi.waitFor(() => expect(live.request).toHaveBeenCalledTimes(1));
+      // The check is still unanswered: the route is pending.
+      const f = await mentioned("attribution");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(ready).not.toHaveBeenCalled();
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+    } finally {
+      live.restore();
+    }
+  });
+
+  it("runs an unlisted community's attribution-only turn quietly while the plugin's list is unknown", async () => {
+    const live = selectedRoutes("wss://unlisted.example.test");
+    try {
+      expect(live.routes.selecting).toBe(true);
+      const f = await mentioned("attribution");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+    } finally {
+      live.restore();
     }
   });
 

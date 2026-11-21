@@ -223,7 +223,10 @@ Claude Code and Codex do, only adds the gateway's headers where its own checks a
 so none of this holds or fails its turns: it takes the route as it stands
 without waiting, and any blocked route, a pending check or a 401/403
 included, runs the turn unattributed with the note "Ran without gateway
-attribution" and the reason. Once goose runs through the gateway, a goose
+attribution" and the reason. Before a plugin's harness list is known, such a
+turn runs unattributed at once with a note saying Buzz was still deciding
+which agents use the gateway; once the list is known and leaves its harness
+out, or in a community the descriptor doesn't list, it runs with no note. Once goose runs through the gateway, a goose
 agent's wake anchored in a conversation shows the "Ran without the agent
 gateway" note beside its prompt in Activity only while the app that ran it
 keeps running; a reload, or goose compacting the prompt out of its history,

@@ -117,6 +117,7 @@ import {
   fallbackNotice,
   gatewayRoutes,
   TURN_READINESS_WAIT_MS,
+  SELECTION_PENDING_NOTICE,
   unattributedNotice,
 } from "./gateway/route";
 import { turnContextFor } from "./gateway/turn";
@@ -3112,8 +3113,8 @@ export class AgentRunners {
    * its own configuration, without a notice, whatever the route: a turn
    * waits for the list first, within the same cap, and then neither waits
    * for nor rechecks an access check. An `attribution` turn doesn't wait for
-   * the list either: while it is unknown, the turn runs on its own
-   * configuration without a notice. */
+   * the list either: while it is unknown, the turn runs unattributed with
+   * `SELECTION_PENDING_NOTICE`, unless its route is already external. */
   private async gatewayRouting(
     agent: Agent,
     type: RegisteredAgentType,
@@ -3126,13 +3127,24 @@ export class AgentRunners {
     if (!upstream) return {};
     const attribution = type.gateway?.mode === "attribution";
     // Attribution never holds a turn, for the plugin's list or an access
-    // check. While the list is unknown, whether this harness is in scope is
-    // too, so the turn runs on its own configuration without a notice.
-    if (
-      attribution &&
-      (gatewayRoutes.selecting || gatewayRoutes.excludes(harness))
-    )
-      return {};
+    // check. A list that leaves this harness out, or a route already
+    // external, runs it on its own configuration without a notice. While the
+    // list is unknown, it runs unattributed with a notice that says only
+    // that, since no access check has gone out yet.
+    if (attribution) {
+      if (gatewayRoutes.excludes(harness)) return {};
+      if (gatewayRoutes.selecting) {
+        if (gatewayRoutes.routeFor(agent.key).kind === "external") return {};
+        const notice = SELECTION_PENDING_NOTICE;
+        job.work?.notice(notice);
+        return {
+          gatewayFallback: Object.freeze({
+            reason: "readiness_pending" as const,
+            notice,
+          }),
+        };
+      }
+    }
     // One cap for the list and the access check together.
     const wait = attribution
       ? undefined

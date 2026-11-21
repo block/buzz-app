@@ -134,7 +134,8 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   brings that identity over without signing in; **Not now** keeps the welcome
   screen, and the offer returns after signing out. Use the options actually
   shown; do not invent a setup sequence.
-- The **public key** identifies someone and is safe to share. Pasting
+- The **public key** identifies someone and is safe to share. Your **Buzz ID**
+  is your own public key, shown as an `npub`. Pasting
   someone's `npub` (with or without `nostr:`) or hex key finds them in New
   message, in ⌘K search's People results (Ctrl+K on Windows and Linux), in
   **Add people** and after `@` in a message. The **private key**, shown as an

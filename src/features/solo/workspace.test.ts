@@ -14,6 +14,7 @@ import {
   workspaceCanvas,
   workspaceDirectories,
   shareableInstructions,
+  WorkspaceUnavailable,
 } from "./workspace";
 
 it.each([{ folders: [] }, { folders: [" ", "\t"] }])(
@@ -190,6 +191,30 @@ it("loads exact project defaults and blocks when the catalog fails", async () =>
   f.kit.status = "error";
   await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
     "defaults couldn’t load",
+  );
+});
+it("tells a deleted workspace apart from an unreadable workspace list", async () => {
+  const f = fixture();
+  const deleted = loadChatSetup(f.session, "deleted");
+  await expect(deleted).rejects.toBeInstanceOf(WorkspaceUnavailable);
+  await expect(deleted).rejects.toMatchObject({
+    deleted: true,
+    message: "This workspace was deleted.",
+  });
+  const unreadable = {
+    deleted: false,
+    message: "Workspaces can’t be read right now. Try again.",
+  };
+  Object.assign(f.session.sidebarPreferences, { writable: false });
+  await expect(loadChatSetup(f.session, "work")).rejects.toMatchObject(
+    unreadable,
+  );
+  Object.assign(f.session.sidebarPreferences, {
+    writable: true,
+    snapshot: () => ({ status: "error", error: "Offline" }),
+  });
+  await expect(loadChatSetup(f.session, "work")).rejects.toMatchObject(
+    unreadable,
   );
 });
 it("names the saved defaults it read, even when they change while agents load", async () => {

@@ -634,6 +634,8 @@ Quitting Buzz also turns it off.
   as it is. **Work in a new worktree** sets where that worktree goes and the
   branch it starts from. A conversation that a plugin gave its own folder works
   in that folder instead.
+  Besides **New → New workspace**, the composer's workspace control offers
+  **New workspace**, which creates a workspace and puts the chat in it.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**. A sent chip shows the channel's current

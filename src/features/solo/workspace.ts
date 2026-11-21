@@ -355,6 +355,19 @@ export function parseChatSetup(raw: unknown): ChatSetup {
 export function defaultsRevision(kit: { entries: readonly KitEntry[] }) {
   return kit.entries.map((entry) => entry.eventId).join();
 }
+/** The chat's workspace can't be used: workspaces can't be read, or this one
+ * was deleted. Callers that offer a way out add it. */
+export class WorkspaceUnavailable extends Error {
+  readonly deleted: boolean;
+  constructor(deleted: boolean) {
+    super(
+      deleted
+        ? "This workspace was deleted."
+        : "Workspaces can’t be read right now. Try again.",
+    );
+    this.deleted = deleted;
+  }
+}
 export async function loadChatSetup(
   session: RelaySession,
   projectId: string,
@@ -362,13 +375,10 @@ export async function loadChatSetup(
   const store = session.sidebarPreferences;
   await store.refresh();
   const preferences = store.snapshot();
-  if (
-    !store.writable ||
-    !preferences.data?.sections.some((project) => project.id === projectId)
-  )
-    throw new Error(
-      "This workspace is unavailable. Refresh workspaces before starting a chat.",
-    );
+  if (!store.writable || !preferences.data)
+    throw new WorkspaceUnavailable(false);
+  if (!preferences.data.sections.some((project) => project.id === projectId))
+    throw new WorkspaceUnavailable(true);
   await session.channelKit.refresh();
   const kit = session.channelKit.snapshot();
   if (kit.status !== "ready")

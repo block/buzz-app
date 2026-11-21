@@ -1,3 +1,4 @@
+import { controlCharacterText, keyboardKey } from "../../shared/keyboard-key";
 import {
   memo,
   useLayoutEffect,
@@ -151,55 +152,9 @@ export type EditorDecoration = {
   content: ReactNode;
   editAsText?: boolean;
 };
-/** Characters a caret or function key leaves in the document when the host's
- * native text-input path commits the key as if typed. In the desktop build a
- * Right Arrow press can reach WebKit as a key event whose text is the key's raw
- * keyboard-layout translation, U+001D, rather than AppKit's function-key
- * character U+F703: the arrows translate to U+001C through U+001F, Home and End
- * to U+0001 and U+0004, Page Up and Page Down to U+000B and U+000C. WebKit
- * blanks a key event's text only for the private-use block U+F700 through
- * U+F7FF, so such an event types the control character and never moves the
- * caret. The private-use block is refused as well (NSUpArrowFunctionKey U+F700
- * through NSModeSwitchFunctionKey U+F747). No font has a glyph for any of these
- * and no layout types them as prose; the whole Unicode Control category (C0,
- * DEL and C1) is covered, except the tab, newline and carriage return that
- * typed text legitimately holds. */
-const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
-/** The control characters typed text holds: tab, newline and carriage return. */
-const TYPED_CONTROLS = /[\t\n\r]/u;
 /** Pastes from this length paint as text before their chips render. */
 const deferredPasteLength = 1000;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-/** True when a native text insertion holds only control characters. Text that
- * mixes them with real characters is not control text and passes untouched. */
-function controlCharacterText(text: string | null | undefined) {
-  return (
-    !!text &&
-    !TYPED_CONTROLS.test(text) &&
-    !text.replace(CONTROL_CHARACTERS, "")
-  );
-}
-/** Caret keys by physical code and by legacy key code, the two identities WebKit
- * still derives from the hardware key when it reports a layout translation as
- * `key`. Pressing such a key must move the caret, not type the character. */
-const CARET_KEYS = new Map<string | number, string>([
-  ["ArrowLeft", "ArrowLeft"],
-  ["ArrowRight", "ArrowRight"],
-  ["ArrowUp", "ArrowUp"],
-  ["ArrowDown", "ArrowDown"],
-  ["Home", "Home"],
-  ["End", "End"],
-  ["PageUp", "PageUp"],
-  ["PageDown", "PageDown"],
-  [33, "PageUp"],
-  [34, "PageDown"],
-  [35, "End"],
-  [36, "Home"],
-  [37, "ArrowLeft"],
-  [38, "ArrowUp"],
-  [39, "ArrowRight"],
-  [40, "ArrowDown"],
-]);
 /** The visual direction each arrow key moves the caret. */
 const arrowDirections: Partial<
   Record<string, "left" | "right" | "up" | "down">
@@ -209,16 +164,6 @@ const arrowDirections: Partial<
   ArrowUp: "up",
   ArrowDown: "down",
 };
-/** The key a keydown names, restoring a caret key the host reported as a control
- * character (Right Arrow arrives as U+001D) from its code. */
-function keyboardKey(
-  event: Pick<globalThis.KeyboardEvent, "key" | "code" | "keyCode">,
-) {
-  if (!controlCharacterText(event.key)) return event.key;
-  return (
-    CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
-  );
-}
 /** The source offsets of the line edges, between line breaks, around `offset`. */
 function lineBounds(text: string, offset: number) {
   const end = text.indexOf("\n", offset);
@@ -443,6 +388,8 @@ export type EditableInputProps = Omit<
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onScrollCaret?(bottom: number): void;
+  /** The composer owns draft content and lifecycle eligibility for empty-input shortcuts. */
+  isEmptyForShortcuts?(): boolean;
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
@@ -510,6 +457,7 @@ export function EditableInput({
   onDraftChange,
   onFormatsChange,
   onScrollCaret,
+  isEmptyForShortcuts,
   onEditLink,
   onPasteTooLong,
   onSemanticPaste,
@@ -534,6 +482,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onScrollCaret,
+    isEmptyForShortcuts,
     onEditLink,
     onPasteTooLong,
     onSemanticPaste,
@@ -552,6 +501,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onScrollCaret,
+    isEmptyForShortcuts,
     onEditLink,
     onPasteTooLong,
     onSemanticPaste,
@@ -656,6 +606,8 @@ export function EditableInput({
     // Selection events and completion read value/selection several times per
     // keystroke; projectComposerDocument memoizes per immutable document.
     const projection = () => projectComposerDocument(editor.state.doc);
+    const isEmptyForShortcuts = () =>
+      current.current.isEmptyForShortcuts?.() ?? false;
     const tokenViews = () => refresh((revision) => revision + 1);
     const { markdown_table: table, paragraph } = composerSchema.nodes;
     const endsWithTable = (doc: EditorNode) => doc.lastChild?.type === table;
@@ -2535,6 +2487,16 @@ export function EditableInput({
           }
           if (historyShortcut(event, key)) return true;
           if (named === "ArrowLeft" || named === "ArrowRight") {
+            // Explicit line movement also works when WebKit leaves a restored
+            // composer's native Command-arrow caret in place.
+            if (
+              apple &&
+              primary &&
+              !event.altKey &&
+              !event.shiftKey &&
+              projection().draft.text !== ""
+            )
+              return moveCaret(named, event);
             if (
               !event.altKey &&
               !primary &&
@@ -2640,6 +2602,21 @@ export function EditableInput({
           // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
             flushTokens();
+            // Let the shortcut dispatcher see Command arrows before ProseMirror
+            // captures them for caret movement in an empty message input.
+            if (
+              isApplePlatform(navigator.platform) &&
+              event.metaKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              !event.shiftKey &&
+              !event.isComposing &&
+              !composing.current &&
+              event.keyCode !== 229 &&
+              ["ArrowLeft", "ArrowRight"].includes(keyboardKey(event)) &&
+              isEmptyForShortcuts()
+            )
+              return true;
             return (
               (event.key === "Enter" || event.key === "Escape") &&
               !event.isComposing &&
@@ -2926,6 +2903,7 @@ export function EditableInput({
     view.current = editor;
     const root = editor.dom as ComposerInputElement;
     Object.defineProperties(root, {
+      isEmptyForShortcuts: { configurable: true, value: isEmptyForShortcuts },
       value: {
         configurable: true,
         get: () => projection().draft.text,
@@ -3323,6 +3301,7 @@ export function EditableInput({
         {...events}
         ref={mount}
         role="textbox"
+        data-composer-input=""
         aria-multiline="true"
         aria-label={events["aria-label"] ?? placeholder}
         aria-disabled={disabled || undefined}

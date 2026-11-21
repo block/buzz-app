@@ -1,4 +1,6 @@
 // FOUNDATION: In-app key matching. Local editors handle events before this layer.
+import { keyboardKey } from "../../shared/keyboard-key";
+
 export type KeyBinding = Readonly<{
   key: string;
   /** Command on Apple platforms, Control elsewhere. Other modifiers match exactly. */
@@ -96,9 +98,10 @@ export function matches(
   event: KeyboardEvent,
   apple: boolean,
 ) {
+  const key = keyboardKey(event).toLowerCase();
   return bindings.some(
     (binding) =>
-      binding.key.toLowerCase() === event.key.toLowerCase() &&
+      binding.key.toLowerCase() === key &&
       !!binding.mod === (apple ? event.metaKey : event.ctrlKey) &&
       (apple
         ? !!binding.ctrl === event.ctrlKey

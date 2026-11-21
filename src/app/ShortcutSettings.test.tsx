@@ -1290,3 +1290,45 @@ it.each([
     }
   },
 );
+
+it("shows saved plugin conflicts with Command-arrow host defaults and frees the chord after rebinding", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const h = await harness();
+  const controller = createNavigationController(createMemoryHistory());
+  h.bindings.set("example.counter/increment", { key: "ArrowLeft", mod: true });
+  const remove = registerNavigationShortcuts(
+    h.shortcuts,
+    controller.navigation,
+  );
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    expect(
+      within(row("Increment shortcut counter")).getByText(
+        /Also used by Go back/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(row("Go back")).getByText(
+        /Also used by Increment shortcut counter/,
+      ),
+    ).toBeInTheDocument();
+    // Even at the history boundary, the host reserves its default chord.
+    h.press("ArrowLeft", { ctrlKey: false, metaKey: true });
+    expect(h.runs.increment).not.toHaveBeenCalled();
+    act(() => h.bindings.set("navigation-back", { key: "[", mod: true }));
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    h.press("ArrowLeft", { ctrlKey: false, metaKey: true });
+    expect(h.runs.increment).toHaveBeenCalledOnce();
+  } finally {
+    remove();
+    controller.dispose();
+    await h.dispose();
+  }
+});

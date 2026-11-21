@@ -78,16 +78,22 @@ impl Customers {
             }
         }
     }
-    /// Lists `host`, durably, before its server is used.
+    /// Lists `host`, durably, before its server is used. A list it cannot
+    /// read fails, rather than risk a host no launch would read back.
     pub(super) fn remember(&self, host: &str) -> Result<(), String> {
         let Some(record) = &self.record else {
             return Ok(());
         };
-        if self.hosts().iter().any(|known| known == host) {
-            return Ok(());
-        }
         use std::io::Write;
         let failed = |_| "The sign-in server could not be recorded".to_string();
+        let listed = match std::fs::read_to_string(record) {
+            Ok(listed) => listed,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(failed(error)),
+        };
+        if listed.lines().any(|known| known == host) {
+            return Ok(());
+        }
         if let Some(root) = record.parent() {
             std::fs::create_dir_all(root).map_err(failed)?;
         }
@@ -96,7 +102,15 @@ impl Customers {
             .append(true)
             .open(record)
             .map_err(failed)?;
-        file.write_all(format!("{host}\n").as_bytes())
+        // An earlier append that failed partway can leave a fragment with no
+        // newline. End it first, so it stays a line of its own, which launch
+        // ignores, rather than prefixing this host and hiding it.
+        let line = if listed.is_empty() || listed.ends_with('\n') {
+            format!("{host}\n")
+        } else {
+            format!("\n{host}\n")
+        };
+        file.write_all(line.as_bytes())
             .and_then(|()| file.sync_all())
             .map_err(failed)
     }

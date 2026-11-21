@@ -21,8 +21,6 @@ export type LinkTarget = Readonly<{
   occurrence: number;
 }>;
 
-export type SourceRange = Readonly<{ start: number; end: number }>;
-
 export type WrittenLink = LinkTarget &
   Readonly<{
     node: LinkNode;
@@ -31,14 +29,8 @@ export type WrittenLink = LinkTarget &
   }>;
 
 /** Links the Markdown parser found in `source`, the string it parsed. Code spans
- * and blocks hold no link nodes, so they are never listed. Links inside
- * `hidden` are neither listed nor counted, so occurrences number only what a
- * reader of the remaining text sees. */
-export function writtenLinks(
-  tree: LinkNode,
-  source: string,
-  hidden: readonly SourceRange[] = [],
-): WrittenLink[] {
+ * and blocks hold no link nodes, so they are never listed. */
+export function writtenLinks(tree: LinkNode, source: string): WrittenLink[] {
   const seen = new Map<string, number>();
   const links: WrittenLink[] = [];
   const visit = (node: LinkNode) => {
@@ -48,8 +40,7 @@ export function writtenLinks(
       node.type === "link" &&
       node.url !== undefined &&
       start !== undefined &&
-      end !== undefined &&
-      !hidden.some((range) => start >= range.start && start < range.end)
+      end !== undefined
     ) {
       const occurrence = seen.get(node.url) ?? 0;
       seen.set(node.url, occurrence + 1);
@@ -87,10 +78,7 @@ export function remarkLinkForms(source: string) {
   };
 }
 
-function parsedLinks(
-  source: string,
-  hidden: readonly SourceRange[] = [],
-): WrittenLink[] {
+function parsedLinks(source: string): WrittenLink[] {
   let tree: LinkNode | undefined;
   Markdown({
     remarkPlugins: [
@@ -103,7 +91,7 @@ function parsedLinks(
     urlTransform: (value) => value,
     children: source,
   });
-  return tree ? writtenLinks(tree, source, hidden) : [];
+  return tree ? writtenLinks(tree, source) : [];
 }
 
 /** `source` with exactly one occurrence of a link rewritten to `<url>`, which
@@ -112,9 +100,8 @@ function parsedLinks(
 export function angleLink(
   source: string,
   link: LinkTarget,
-  hidden: readonly SourceRange[] = [],
 ): string | undefined {
-  const match = parsedLinks(source, hidden).find(
+  const match = parsedLinks(source).find(
     (item) =>
       item.url === link.url &&
       item.occurrence === link.occurrence &&

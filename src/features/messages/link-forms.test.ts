@@ -70,21 +70,6 @@ it("declines a destination that cannot sit in angle brackets", () => {
   ).toBeUndefined();
 });
 
-it("counts occurrences past the ranges it is told to ignore", () => {
-  const card = `[Chat](buzz://channel/c)`;
-  const link = `[buzz://channel/c](buzz://channel/c)`;
-  const source = `${card}\n\n${link}`;
-  const target = {
-    url: "buzz://channel/c",
-    written: "labeled" as const,
-    occurrence: 0,
-  };
-  expect(angleLink(source, target)).toBeUndefined();
-  expect(angleLink(source, target, [{ start: 0, end: card.length }])).toBe(
-    `${card}\n\n<buzz://channel/c>`,
-  );
-});
-
 it("names a link by the address as written, not as the host opens it", () => {
   const source = "https://example.test https://example.test/";
   expect(

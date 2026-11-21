@@ -1073,11 +1073,7 @@ function MessageRowContent({
         )}
       </div>
     ) : (
-      <LinkDismissalScope
-        row={shown}
-        channels={directory.channels}
-        session={session}
-      >
+      <LinkDismissalScope row={shown} session={session}>
         <MessageMarkdown
           directory={directory}
           session={references}
@@ -1733,11 +1729,7 @@ function MessageRowContent({
                 </div>
               )}
               {previewed.length > 0 && (
-                <LinkDismissalScope
-                  row={shown}
-                  channels={directory.channels}
-                  session={session}
-                >
+                <LinkDismissalScope row={shown} session={session}>
                   <LinkPreviews
                     links={previewed}
                     messageId={row.id}

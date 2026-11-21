@@ -216,7 +216,7 @@ export function MessageLink({
   // a Solo chat's title is not a channel name. The length is checked first:
   // it keeps the canonical-name scan, quadratic in whitespace, off an
   // arbitrary label.
-  const written =
+  const typedName =
     !channelSolo &&
     channelName?.startsWith("#") &&
     channelName !== `#${destination?.channelId.slice(0, 8)}` &&
@@ -225,9 +225,9 @@ export function MessageLink({
       ? children.slice(1)
       : "";
   const current =
-    written &&
-    [...written].length <= 120 &&
-    written === canonicalDetailsName(written)
+    typedName &&
+    [...typedName].length <= 120 &&
+    typedName === canonicalDetailsName(typedName)
       ? channelName
       : undefined;
   // Any other authored label is message text, so it stays; the lock marks it.
@@ -361,7 +361,9 @@ export function MessageLink({
         interactive={interactive}
         dismiss={dismiss}
       />
-    ) : (shown ?? display ?? url);
+    ) : (
+      (shown ?? display ?? url)
+    );
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a

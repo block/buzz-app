@@ -9,38 +9,19 @@ import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import { useRowProfiles } from "../relay/react";
 import type { RelaySession } from "../relay/session";
-import { separateChatCards } from "./chat-cards";
 import { angleLink, linkAt } from "./link-forms";
 import { parseMediaTimeReply } from "./media-timecode";
 import { validateMessageEdit } from "./message-edit";
 import { httpsUrl } from "./preview-links";
-import type { ReferenceChannel } from "./ReferenceText";
 import { lastEditableMessage } from "./useMessageEdit";
 
 const sourceOf = (row: ChannelMessage) => row.sourceContent ?? row.content;
 const hasLink = (content: string) => /\w:\/\/|www\./i.test(content);
 
-/** What a message row draws as its text, as `MessageRow` projects it, and where
- * `content` holds the chat cards it draws apart, whose links the text does not
- * count. */
-function drawnText(
-  row: ChannelMessage,
-  content: string,
-  channels: readonly ReferenceChannel[],
-) {
+/** What a message row draws as its text, as `MessageRow` projects it. */
+function drawnText(row: ChannelMessage, content: string) {
   const reply = row.diff ? undefined : parseMediaTimeReply(content);
-  const offset = reply ? content.length - reply.content.length : 0;
-  const { caption, ranges } = separateChatCards(
-    { ...row, content: reply?.content ?? content },
-    channels,
-  );
-  return {
-    text: caption.content,
-    cards: ranges.map(({ start, end }) => ({
-      start: start + offset,
-      end: end + offset,
-    })),
-  };
+  return reply?.content ?? content;
 }
 
 /** Messages whose dismissal is being sent, across the scopes of its body and cards. */
@@ -55,18 +36,16 @@ const noSubscribe = () => () => {};
  * is the complete message, whatever part of it the children draw. */
 export function LinkDismissalScope({
   row,
-  channels,
   session,
   children,
 }: {
   row: ChannelMessage;
-  channels: readonly ReferenceChannel[];
   session: RelaySession | undefined;
   children: ReactNode;
 }) {
   if (!session?.viewer || !hasLink(sourceOf(row))) return children;
   return (
-    <Dismissable row={row} channels={channels} session={session}>
+    <Dismissable row={row} session={session}>
       {children}
     </Dismissable>
   );
@@ -74,12 +53,10 @@ export function LinkDismissalScope({
 
 function Dismissable({
   row,
-  channels,
   session,
   children,
 }: {
   row: ChannelMessage;
-  channels: readonly ReferenceChannel[];
   session: RelaySession;
   children: ReactNode;
 }) {
@@ -96,8 +73,8 @@ function Dismissable({
     session,
     own || !agentHinted ? undefined : row.authorId,
   );
-  const current = useRef({ row, channels });
-  current.current = { row, channels };
+  const current = useRef(row);
+  current.current = row;
   useSyncExternalStore(
     session.outbox?.subscribe ?? noSubscribe,
     session.outbox?.snapshot ?? noSnapshot,
@@ -118,25 +95,19 @@ function Dismissable({
           sending.add(row.id);
           try {
             const rewrite = () => {
-              const { row: latest, channels } = current.current;
+              const latest = current.current;
               if (!lastEditableMessage(session, [latest], latest.authorId))
                 throw new Error("This message can’t be edited right now.");
               const base = sourceOf(latest);
               const target =
                 "at" in link
                   ? linkAt(
-                      drawnText(latest, latest.content, channels).text,
+                      drawnText(latest, latest.content),
                       link.at,
                       (url) => httpsUrl(url) === link.url,
                     )
                   : link;
-              const next =
-                target &&
-                angleLink(
-                  base,
-                  target,
-                  drawnText(latest, base, channels).cards,
-                );
+              const next = target && angleLink(base, target);
               if (!next) throw new Error("This link can’t be changed here.");
               validateMessageEdit(latest, base, next);
               return {

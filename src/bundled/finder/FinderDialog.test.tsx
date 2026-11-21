@@ -122,12 +122,26 @@ async function fixture() {
     session: owner.session,
     sync,
     openMessage: vi.fn(),
+    openCount: 1,
   };
-  function Finder() {
-    const [scope, setScope] = useState<FinderScope>();
+  function Finder({
+    initial = "buzz",
+    open = true,
+    openCount = 1,
+    revision = 0,
+  }: {
+    initial?: FinderScope;
+    open?: boolean;
+    openCount?: number;
+    revision?: number;
+  }) {
+    const [scope, setScope] = useState<FinderScope>(initial);
     return (
       <FinderDialog
         {...props}
+        open={open}
+        openCount={openCount}
+        revision={revision}
         currentChannelId="crew"
         scope={scope}
         onScopeChange={setScope}
@@ -151,69 +165,91 @@ const tick = async (ms: number) => {
 const type = (value: string) =>
   fireEvent.change(screen.getByRole("combobox"), { target: { value } });
 
-test("offers All of Buzz only after three letters, makes no default search, and reads once per pause", async () => {
-  const { Finder, click, reads } = await fixture();
-  render(
+const options = (group: string) =>
+  within(screen.getByRole("group", { name: group }))
+    .getAllByRole("option")
+    .map((row) => row.textContent);
+const local = (id: string, text: string) => ({
+  id,
+  channelId: "crew",
+  authorId: "x",
+  createdAt: 1_700_000_100,
+  author: "Sam",
+  place: "#crew",
+  text,
+});
+
+test("All of Buzz shows device matches at once, then relay hits below them, asking once per pause", async () => {
+  const { Finder, reads, corpus } = await fixture();
+  corpus.add([local("here", "api notes from this device")]);
+  const view = render(
     <StrictMode>
       <Finder />
     </StrictMode>,
   );
-  for (const value of ["", "ap", "api de", "🚀a"]) {
+  for (const value of ["ap", "api de", "🚀a"]) {
     type(value);
-    expect(
-      screen.queryByRole("option", { name: /Search all of Buzz/ }),
-    ).not.toBeInTheDocument();
+    await tick(SEARCH_DEBOUNCE_MS);
+    expect(reads).toHaveLength(0);
   }
-  type("api");
-  await tick(1000);
-  expect(reads).toHaveLength(0);
-  await click(screen.getByRole("option", { name: /Search all of Buzz/ }));
-  expect(
-    screen.getByRole("button", { name: "Remove All of Buzz search scope" }),
-  ).toBeVisible();
   type("apix");
   await tick(SEARCH_DEBOUNCE_MS - 1);
-  expect(reads).toHaveLength(0);
   type("api");
+  expect(options("Matches")).toEqual([
+    expect.stringContaining("api notes from this device"),
+  ]);
+  const highlighted = () =>
+    screen.getByRole("combobox").getAttribute("aria-activedescendant");
+  const first = highlighted();
   await tick(SEARCH_DEBOUNCE_MS - 1);
   expect(reads).toHaveLength(0);
   await tick(1);
   expect(reads).toHaveLength(1);
-  expect(screen.getByRole("option", { name: /API release/ })).toBeVisible();
-  expect(screen.getByRole("combobox")).toHaveAttribute(
-    "aria-activedescendant",
-    screen.getByRole("option", { name: /API release/ }).id,
+  // The recent hit also reached the index, as relay events do in the app.
+  expect(corpus.search("release").total).toBe(1);
+  view.rerender(
+    <StrictMode>
+      <Finder revision={1} />
+    </StrictMode>,
   );
-  await tick(1000);
-  expect(reads).toHaveLength(1);
-  await click(
-    screen.getByRole("button", { name: "Remove All of Buzz search scope" }),
-  );
-  type("api draft");
-  await tick(1000);
-  expect(reads).toHaveLength(1);
-});
-
-test("ranks relay hits, keeps public previews out of the index, and retains results through loading and retry", async () => {
-  const { Finder, click, control, corpus, root } = await fixture();
-  render(<Finder />);
-  type("API");
-  await click(screen.getByRole("option", { name: /Search all of Buzz/ }));
-  await tick(SEARCH_DEBOUNCE_MS);
-  const matches = () =>
-    within(screen.getByRole("group", { name: "Matches" })).getAllByRole(
-      "option",
-    );
-  expect(matches().map((row) => row.textContent)).toEqual([
+  // Relay hits arrive below; the device row and the highlight stay put.
+  expect(options("Matches")).toEqual([
+    expect.stringContaining("api notes from this device"),
+  ]);
+  expect(options("More from all of Buzz")).toEqual([
     expect.stringContaining("API release"),
     expect.stringContaining("api public notes"),
     expect.stringContaining("api draft"),
   ]);
-  expect(corpus.search("API").hits[0]?.doc.threadRootId).toBe(root.id);
-  expect(corpus.search("").hits.map(({ doc }) => doc.channelId)).toEqual([
-    "crew",
-    "crew",
-  ]);
+  expect(highlighted()).toBe(first);
+  await tick(1000);
+  expect(reads).toHaveLength(1);
+});
+
+test("skips the relay when a full page of device matches has every word", async () => {
+  const { Finder, reads, corpus } = await fixture();
+  corpus.add(
+    Array.from({ length: 50 }, (_, n) => local(`d${n}`, `api draft ${n}`)),
+  );
+  render(<Finder />);
+  type("api draft");
+  await tick(SEARCH_DEBOUNCE_MS);
+  expect(reads).toHaveLength(0);
+  expect(
+    screen.queryByRole("group", { name: "More from all of Buzz" }),
+  ).not.toBeInTheDocument();
+  type("api release");
+  await tick(SEARCH_DEBOUNCE_MS);
+  expect(reads).toHaveLength(1);
+});
+
+test("adds relay hits to the index on close, keeps public previews out, and retains results through loading and retry", async () => {
+  const { Finder, control, corpus, root } = await fixture();
+  const view = render(<Finder />);
+  type("API");
+  await tick(SEARCH_DEBOUNCE_MS);
+  const relayed = () => options("More from all of Buzz");
+  expect(relayed()).toHaveLength(3);
   let release = () => {};
   control.hold = new Promise<void>((resolve) => {
     release = resolve;
@@ -221,7 +257,7 @@ test("ranks relay hits, keeps public previews out of the index, and retains resu
   try {
     type("missing");
     await tick(SEARCH_DEBOUNCE_MS);
-    expect(matches()).toHaveLength(3);
+    expect(relayed()).toHaveLength(3);
     expect(screen.queryByText("Searching Buzz…")).not.toBeInTheDocument();
     await tick(1000);
     expect(screen.getByRole("status")).toHaveTextContent("Searching Buzz…");
@@ -230,18 +266,48 @@ test("ranks relay hits, keeps public previews out of the index, and retains resu
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Messages could not load.",
     );
-    expect(matches()).toHaveLength(3);
+    expect(relayed()).toHaveLength(3);
     control.fail = false;
-    await click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await tick(SEARCH_DEBOUNCE_MS);
-    expect(
-      screen.getByText(/No messages in Buzz match “missing”/),
-    ).toBeVisible();
+    expect(screen.getByText("Nothing more in Buzz.")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("combobox")).toHaveFocus();
   } finally {
     release();
   }
+  // Older hits (past the live stream's 90 days) wait for the close.
+  expect(corpus.search("draft").total).toBe(0);
+  view.rerender(<Finder open={false} />);
+  expect(corpus.search("API").hits[0]?.doc.threadRootId).toBe(root.id);
+  expect(corpus.search("").hits.map(({ doc }) => doc.channelId)).toEqual([
+    "crew",
+    "crew",
+  ]);
+});
+
+test("each opening starts with an empty query, and switching scope keeps it", async () => {
+  const { Finder, click } = await fixture();
+  const view = render(<Finder />);
+  type("release");
+  await click(screen.getByRole("tab", { name: "This channel" }));
+  expect(screen.getByRole("tab", { name: "This channel" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("combobox")).toHaveValue("release");
+  view.rerender(<Finder open={false} />);
+  view.rerender(<Finder openCount={2} />);
+  expect(screen.getByRole("combobox")).toHaveValue("");
+});
+
+test("This channel is unavailable outside a conversation", async () => {
+  const { props } = await fixture();
+  render(<FinderDialog {...props} scope="buzz" onScopeChange={vi.fn()} />);
+  expect(screen.getByRole("tab", { name: "This channel" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
 });
 
 test.each(["close", "scope", "session"])(
@@ -276,17 +342,13 @@ test.each(["close", "scope", "session"])(
           />,
         );
       else if (action === "scope") {
-        await click(
-          screen.getByRole("button", {
-            name: "Remove This channel search scope",
-          }),
-        );
-        expect(onScopeChange).toHaveBeenCalledWith(undefined);
+        await click(screen.getByRole("tab", { name: "All of Buzz" }));
+        expect(onScopeChange).toHaveBeenCalledWith("buzz");
         view.rerender(
           <FinderDialog
             {...props}
             currentChannelId="crew"
-            scope={undefined}
+            scope="buzz"
             onScopeChange={onScopeChange}
           />,
         );

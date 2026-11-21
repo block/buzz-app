@@ -5,6 +5,12 @@ import { relayPartition } from "../../features/relay/partition";
 import { activeModal } from "../../shared/design-system/overlayLayer";
 import { createCorpus } from "./corpus.ts";
 import { noteInterest, topInterest } from "./interest";
+import {
+  type FinderOpenOptions,
+  provideFinder,
+  type RegisteredSource,
+} from "./service";
+import { builtinSources } from "./sources";
 import type { FinderScope } from "./FinderDialog";
 import {
   type FinderSync,
@@ -26,14 +32,23 @@ type State = Readonly<{
   session?: RelaySession | undefined;
   status?: FinderSyncStatus | undefined;
   sync?: FinderSync | undefined;
-  scope?: FinderScope;
+  scope: FinderScope;
+  openCount: number;
+  /** The key of an open source other than the two scopes. */
+  source?: string | undefined;
+  initialQuery?: string | undefined;
 }>;
 
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const corpus = createCorpus();
   const listeners = new Set<() => void>();
-  let state: State = { open: false, revision: 0 };
+  let state: State = {
+    open: false,
+    revision: 0,
+    scope: "buzz",
+    openCount: 0,
+  };
   const set = (patch: Partial<State>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
@@ -58,10 +73,89 @@ export const apply: PluginModule["apply"] = (ctx) => {
       weight,
     );
   };
-  const chooseScope = (scope: FinderScope | undefined) => {
-    if (scope === "channel") interested(2);
-    set({ open: true, scope });
+  const inConversation = () =>
+    ctx.navigation.snapshot().entry.target.kind === "conversation";
+  /** Opens Finder, or switches scope while it's open, keeping the text. */
+  const show = (
+    scope: FinderScope,
+    { source, query }: { source?: string; query?: string } = {},
+  ) => {
+    // Searching a channel counts once per switch, not per key press.
+    if (
+      scope === "channel" &&
+      !source &&
+      (!state.open || state.scope !== "channel" || state.source)
+    )
+      interested(2);
+    set({
+      open: true,
+      scope,
+      source,
+      // Text from the caller starts a fresh opening even while open.
+      ...((!state.open || query !== undefined) && {
+        openCount: state.openCount + 1,
+        initialQuery: query,
+      }),
+    });
   };
+  const here = (): FinderScope => (inConversation() ? "channel" : "buzz");
+  const sources = provideFinder(ctx, ({ source, query }: FinderOpenOptions) => {
+    const options = query === undefined ? {} : { query };
+    if (!source) return show(here(), options);
+    if (source === "buzz.finder/channel") return show(here(), options);
+    if (source === "buzz.finder/all") return show("buzz", options);
+    if (!known(source)) return show("buzz", options);
+    show("buzz", { ...options, source });
+  });
+  /** Opens a conversation in the connected community, optionally with a
+   * detail (such as a profile) beside it. */
+  const openConversation = (
+    channelId: string,
+    extra: { messageId?: string; threadRootId?: string; detail?: string } = {},
+  ) => {
+    const { viewer, scope } = relay.snapshot();
+    if (!viewer || !scope?.endsWith(`:${viewer}`)) return;
+    void ctx.navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
+      channelId,
+      ...(extra.messageId && { messageId: extra.messageId }),
+      ...(extra.threadRootId && { threadRootId: extra.threadRootId }),
+      ...(extra.detail && { detail: { target: extra.detail } }),
+    });
+  };
+  // Finder's own lists sit beside the registry, under the same key form.
+  const builtins: readonly RegisteredSource[] = builtinSources({
+    session: () => state.session,
+    current: () => {
+      const { target } = ctx.navigation.snapshot().entry;
+      return target.kind === "conversation" ? target.channelId : undefined;
+    },
+    open: (channelId, detail) =>
+      openConversation(channelId, detail ? { detail } : {}),
+  }).map((source) => ({
+    ...source,
+    key: `buzz.finder/${source.id}`,
+    pluginId: "buzz.finder",
+    revision: "bundled",
+  }));
+  const find = (
+    key: string | undefined,
+    registered: readonly RegisteredSource[],
+  ) =>
+    key
+      ? (builtins.find((entry) => entry.key === key) ??
+        registered.find((entry) => entry.key === key))
+      : undefined;
+  const known = (key: string) => !!find(key, sources.snapshot());
+  // A list that goes away leaves All of Buzz, and doesn't come back unasked.
+  ctx.effect(() =>
+    sources.subscribe(() => {
+      if (state.source && !known(state.source))
+        set({ source: undefined, scope: "buzz" });
+    }),
+  );
   ctx.effect(() => {
     let visit: string | undefined;
     const visited = () => {
@@ -92,7 +186,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
           session: undefined,
           status: undefined,
           sync: undefined,
-          scope: undefined,
           revision: state.revision + 1,
         });
       const running = startFinderSync({
@@ -107,7 +200,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         session: snapshot.session,
         status: running.status(),
         sync: running,
-        scope: undefined,
         revision: state.revision + 1,
       });
     };
@@ -119,37 +211,60 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
   });
 
+  // Both work while Finder is open, so either key switches scope there.
+  const available = () => state.open || !activeModal(document);
+  /** Focus is in a text field, by the shortcut dispatcher's own rule. */
+  const typing = () => {
+    const focused = document.activeElement as HTMLElement | null;
+    return (
+      !!focused &&
+      (focused.isContentEditable ||
+        /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName) ||
+        focused.getAttribute("role") === "textbox")
+    );
+  };
   ctx.shortcuts.register({
     id: "open",
-    title: "Find in your conversations",
+    title: "Find in this channel",
     binding: { key: "p", mod: true },
     order: 10,
     allowInEditable: true,
-    run: () => set({ open: true, scope: undefined }),
+    allowInModal: true,
+    when: available,
+    run: () => show(here()),
   });
 
+  // Finder's own field takes it; other text fields keep ⌘⇧P (the
+  // composer's Spoiler), so it's left to them.
   ctx.shortcuts.register({
-    id: "channel",
-    title: "Find in this channel",
-    binding: [
-      { key: "p", mod: true, alt: true },
-      // Option+P can report π on an Apple keyboard.
-      { key: "π", mod: true, alt: true },
-    ],
+    id: "all",
+    title: "Find in all of Buzz",
+    binding: { key: "p", mod: true, shift: true },
     order: 11,
     allowInEditable: true,
     allowInModal: true,
-    when: () =>
-      (state.open || !activeModal(document)) &&
-      ctx.navigation.snapshot().entry.target.kind === "conversation",
-    run: () => chooseScope("channel"),
+    when: () => state.open || (available() && !typing()),
+    run: () => show("buzz"),
   });
 
   ctx.pages.registerOverlay({
     id: "finder",
     component: function Finder() {
-      const { open, revision, session, status, sync, scope } =
-        useSyncExternalStore(store.subscribe, store.snapshot);
+      const {
+        open,
+        revision,
+        session,
+        status,
+        sync,
+        scope,
+        openCount,
+        source,
+        initialQuery,
+      } = useSyncExternalStore(store.subscribe, store.snapshot);
+      const registered = useSyncExternalStore(
+        sources.subscribe,
+        sources.snapshot,
+      );
       const target = useSyncExternalStore(
         ctx.navigation.subscribe,
         ctx.navigation.snapshot,
@@ -170,8 +285,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
             session={session}
             sync={sync}
             currentChannelId={currentChannelId}
-            scope={scope === "channel" && !currentChannelId ? undefined : scope}
-            onScopeChange={chooseScope}
+            scope={scope === "channel" && !currentChannelId ? "buzz" : scope}
+            onScopeChange={show}
+            openCount={openCount}
+            initialQuery={initialQuery}
+            source={find(source, registered)}
+            onSourceClose={() => set({ source: undefined, scope: "buzz" })}
             status={
               !session ? (
                 <p className="px-3 text-body-sm text-subtle">
@@ -193,17 +312,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
             }
             openMessage={(doc) => {
               const { viewer, scope } = relay.snapshot();
-              if (!viewer || !scope?.endsWith(`:${viewer}`)) return;
               // The visit adds 1; finding it here is worth more.
-              noteInterest(scope, doc.channelId, 2);
-              void ctx.navigation.open({
-                version: 1,
-                kind: "conversation",
-                scope: {
-                  viewer,
-                  communityOrigin: scope.slice(0, -(viewer.length + 1)),
-                },
-                channelId: doc.channelId,
+              if (viewer && scope?.endsWith(`:${viewer}`))
+                noteInterest(scope, doc.channelId, 2);
+              openConversation(doc.channelId, {
                 messageId: doc.id,
                 ...(doc.threadRootId && { threadRootId: doc.threadRootId }),
               });

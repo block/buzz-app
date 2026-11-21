@@ -5,14 +5,14 @@ where it was said.
 
 ## Getting started
 
-1. Press ⌘P (Ctrl+P on Windows and Linux) anywhere in Buzz.
+1. Press ⌘P (Ctrl+P on Windows and Linux) to search the channel you're in,
+   or ⌘⇧P (Ctrl+Shift+P) to search all of Buzz.
 2. Type any pieces you remember. Letters don't need to be next to each other:
    `dplyrlbk` finds "deploy rollback". Words can match who wrote it or where.
 3. Use ↑ and ↓ to look through matches, with a preview of each in context, and
    press Enter to open one.
-4. To look further, choose **Search this channel** while in a conversation, or
-   type at least three letters in the last word and choose **Search all of Buzz**.
-   Remove the scope chip to return to the local index.
+4. Switch between **This channel** and **All of Buzz** under the search field,
+   or press the other key. Closing Finder clears what you typed.
 
 ---
 
@@ -31,13 +31,16 @@ where it was said.
 - The index is kept in memory on this device and never sent anywhere. It is
   built again each time Buzz starts. Signing out or switching community starts
   it over. Clear cache takes effect at the next reconnect or restart.
-- **This channel** also opens with ⌥⌘P (Ctrl+Alt+P on Windows and Linux).
-  With fewer than 20 matches, it reads older pages, up to 5,000 messages per
+- **This channel**: with fewer than 20 matches, it reads older pages, up to 5,000 messages per
   opening. **Keep going** allows another 5,000. It remembers its place for this
   session and stops when you close or switch scope. Join a public preview to
   search its history here.
-- **All of Buzz** searches the relay after you pause typing. Earlier results
-  stay visible while it searches. Use **Retry** if a read fails, or **More
-  messages** for the next page. Hits from joined channels enter the local
-  index. Public previews stay out.
+- **All of Buzz** shows matches from this device at once, then asks the relay
+  after you pause typing. Its hits appear below, under **More from all of
+  Buzz**, and the rows above them don't move. Use **Retry** if a read fails, or
+  **More messages** for the next page. Hits from joined channels join the
+  local index when you close Finder. Public previews stay out.
+- ⌘⇧P doesn't open Finder while you type in a text field: there it's Spoiler.
+- Other plugins can open Finder on their own lists, such as panes or commands,
+  and on its built-in conversations and people lists. See `docs/finder.md`.
 - Change the shortcuts in **Settings → Shortcuts**.

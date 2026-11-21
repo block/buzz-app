@@ -1209,6 +1209,18 @@ Quitting Buzz also turns it off.
   attached files without opening the conversation. A thread draft also shows
   where you left it: **Draft** on a message's reply line, or **Draft reply** when
   no one has replied yet (hidden while that thread is open).
+- **Finder** is an optional plugin, off by default. Turn it on in **Settings →
+  Plugins**. It finds a message when you remember a piece of it, a name, or a
+  word, but not where it was said. Press ⌘P (Ctrl+P) to search the channel
+  you're in, or ⌘⇧P (Ctrl+Shift+P) for all of Buzz; a switch under the field
+  changes between them. Letters don't need to be next to each other:
+  `dplyrlbk` finds "deploy rollback". Arrows move through matches with a
+  preview of each, and Enter opens one. This channel reads older messages
+  when fewer than 20 match, up to 5,000 at a time, with **Keep going** for
+  more. All of Buzz shows matches from this device first, then the rest of
+  Buzz below them after a pause in typing. Its index stays in memory on this
+  device and is rebuilt each launch. While typing in a text field, ⌘⇧P stays
+  Spoiler. Other plugins can open Finder on their own lists.
 - **Changesets** is an optional desktop plugin, off by default. When a local
   agent finishes a turn in a chat with project folders, a card under its last
   message lists the files it changed, with added and removed lines. Only you

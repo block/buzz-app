@@ -23,17 +23,23 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import { messageSearchable } from "../../shared/search-debounce";
 import {
   createCorpus,
   type FinderCorpus,
   type FinderDoc,
   type FinderResults,
 } from "./corpus.ts";
+import type { RegisteredSource } from "./service";
+import { SourceResults } from "./SourceResults";
 import type { ChannelSearchStatus, FinderSync } from "./sync";
 
-export type FinderScope = "channel" | "buzz" | undefined;
+export type FinderScope = "channel" | "buzz";
+
+/** Device results fill the page with every typed word, so relay hits could
+ * only land below them. */
+const PAGE = 50;
 
 /** About `width` characters of `text` around its first match, with the
  * matched code points shifted into the window. */
@@ -72,16 +78,43 @@ type Props = {
   currentChannelId?: string | undefined;
   scope: FinderScope;
   onScopeChange: (scope: FinderScope) => void;
+  /** Counts openings: each new one starts from `initialQuery`, or empty. */
+  openCount: number;
+  initialQuery?: string | undefined;
+  /** Another plugin's list, or a built-in one, in place of the two scopes. */
+  source?: RegisteredSource | undefined;
+  onSourceClose?: () => void;
   status?: ReactNode;
   openMessage: (doc: FinderDoc) => void;
 };
 
 export function FinderDialog(props: Props) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(props.initialQuery ?? "");
+  // A new opening starts fresh; switching scope keeps the text.
+  const [counted, setCounted] = useState(props.openCount);
+  if (counted !== props.openCount) {
+    setCounted(props.openCount);
+    setQuery(props.initialQuery ?? "");
+  }
   const input = useRef<HTMLElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: one budget per dialog opening and session, even when switching scopes.
   const opening = useMemo(() => ({}), [props.open, props.session]);
-  const contents = { ...props, query, setQuery, input, opening };
+  // Relay hits join the index when Finder closes, so the device rows above
+  // them never change while you read.
+  const held = useRef(new Map<string, FinderDoc>());
+  const { sync, open } = props;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: closing flushes, so `open` is the trigger, not an input.
+  useEffect(
+    () => () => {
+      sync?.remember([...held.current.values()]);
+      held.current.clear();
+    },
+    [sync, open],
+  );
+  const hold = (docs: readonly FinderDoc[]) => {
+    for (const doc of docs) held.current.set(doc.id, doc);
+  };
+  const contents = { ...props, query, setQuery, input, opening, hold };
   return (
     <Dialog
       open={props.open}
@@ -97,8 +130,25 @@ export function FinderDialog(props: Props) {
       initialFocus={input}
     >
       {props.open &&
-        (props.scope === "buzz" && props.session ? (
-          <BuzzResults {...contents} session={props.session} />
+        (props.source ? (
+          <SourceResults
+            // A new list starts clean: no rows from the last one.
+            key={props.source.key}
+            source={props.source}
+            query={query}
+            setQuery={setQuery}
+            input={input}
+            open={props.open}
+            session={props.session}
+            onOpenChange={props.onOpenChange}
+            onClose={() => {
+              props.onSourceClose?.();
+              input.current?.focus();
+            }}
+            footer={props.status}
+          />
+        ) : props.scope === "buzz" && props.session ? (
+          <AllResults {...contents} session={props.session} />
         ) : (
           <LocalResults {...contents} />
         ))}
@@ -111,7 +161,14 @@ type Contents = Props & {
   setQuery: (query: string) => void;
   input: RefObject<HTMLElement | null>;
   opening: object;
+  hold: (docs: readonly FinderDoc[]) => void;
 };
+
+type Section = Readonly<{
+  label: string;
+  results: FinderResults;
+  empty?: string | undefined;
+}>;
 
 function LocalResults(props: Contents) {
   const { corpus, query, revision, sync, scope, currentChannelId, opening } =
@@ -192,24 +249,65 @@ function LocalResults(props: Contents) {
   return (
     <Choices
       {...props}
-      results={results}
+      sections={[
+        {
+          label: query.trim() ? "Matches" : "Recent",
+          results,
+          empty: channelId
+            ? progress?.complete
+              ? "No messages in this channel match. Try fewer letters, or drop a word."
+              : "No matches in the messages searched so far."
+            : undefined,
+        },
+      ]}
       footer={footer}
       busy={!!progress?.loading}
-      empty={
-        channelId
-          ? progress?.complete
-            ? "No messages in this channel match. Try fewer letters, or drop a word."
-            : "No matches in the messages searched so far."
-          : undefined
-      }
     />
   );
 }
 
-/** The existing message search owns debounce, cancellation and channel access. */
-function BuzzResults(props: Contents & { session: RelaySession }) {
-  const { session, query, sync } = props;
-  const search = useSearchMessages(session, query);
+/** Words a row must contain for the relay to add nothing above it: the
+ * typed words, without `!exclusions` and `'` markers. */
+const wordsOf = (query: string) =>
+  query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word && !word.startsWith("!"))
+    .map((word) => word.replace(/^'/, ""))
+    .filter(Boolean);
+
+/** Device matches at once, then the relay's after a pause in typing. The
+ * existing message search owns debounce, cancellation and channel access. */
+function AllResults(props: Contents & { session: RelaySession }) {
+  const { session, query, corpus, revision, hold } = props;
+  // Once relay rows show, the device rows above them hold still until the
+  // text changes: the relay's own hits also reach the index as they arrive.
+  const relayShown = useRef(false);
+  const kept = useRef<{
+    query: string;
+    session: RelaySession;
+    results: FinderResults;
+  }>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision names the corpus contents.
+  const fresh = useMemo(
+    () => corpus.search(query, PAGE),
+    [corpus, query, revision],
+  );
+  const local =
+    relayShown.current &&
+    kept.current?.query === query &&
+    kept.current.session === session
+      ? kept.current.results
+      : fresh;
+  kept.current = { query, session, results: local };
+  const words = wordsOf(query);
+  const covered =
+    local.hits.length >= PAGE &&
+    local.hits.every(({ doc }) => {
+      const text = `${doc.author} ${doc.place} ${doc.text}`.toLowerCase();
+      return words.every((word) => text.includes(word));
+    });
+  const search = useSearchMessages(session, covered ? "" : query);
   const [previous, setPrevious] = useState<{
     session: RelaySession;
     messages: typeof search.messages;
@@ -230,10 +328,16 @@ function BuzzResults(props: Contents & { session: RelaySession }) {
     (search.loading || search.error) && previous?.session === session
       ? previous.messages
       : search.messages;
+  const shown = new Set(local.hits.map(({ doc }) => doc.id));
   const docs = messages
     .filter((message) => {
       const channel = session.channels.get?.(message.channelId);
-      return channel && !channel.huddle && !channel.metadataPending;
+      return (
+        !shown.has(message.id) &&
+        channel &&
+        !channel.huddle &&
+        !channel.metadataPending
+      );
     })
     .map((message): FinderDoc => {
       const channel = session.channels.get?.(message.channelId);
@@ -254,17 +358,18 @@ function BuzzResults(props: Contents & { session: RelaySession }) {
         text: message.text,
       };
     });
-  // Only fresh completed hits enter the session index. Public previews stay out.
+  // Fresh completed hits join the index when Finder closes; sync keeps
+  // public previews out.
   const freshKey = search.messages.map((message) => message.id).join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sync owns relabeling; index each fresh page once, never retained refresh results.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each fresh page once, never retained refresh results.
   useEffect(() => {
-    if (!search.loading && !search.error) sync?.remember(docs);
-  }, [sync, session, search.loading, search.error, freshKey]);
+    if (!search.loading && !search.error) hold(docs);
+  }, [session, search.loading, search.error, freshKey]);
   const ranked = createCorpus();
   ranked.add(docs);
   const results = ranked.search(query, docs.length || 1);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
-  const all = {
+  const relay = {
     total: docs.length,
     hits: [
       ...results.hits,
@@ -273,79 +378,91 @@ function BuzzResults(props: Contents & { session: RelaySession }) {
         .map((doc) => ({ doc, score: 0, positions: [] })),
     ],
   };
+  const asked = !covered && !search.tooShort && !!query.trim();
+  relayShown.current = asked && relay.hits.length > 0;
   const retry = search.error ? search.retry : search.loadMore;
   const error = search.error || search.moreError;
   return (
     <Choices
       {...props}
-      results={all}
+      sections={[
+        { label: query.trim() ? "Matches" : "Recent", results: local },
+        ...(asked
+          ? [
+              {
+                label: "More from all of Buzz",
+                results: relay,
+                empty: search.onlyExclusions
+                  ? "Add a word to search the rest of Buzz."
+                  : search.ambiguousAuthor
+                    ? "More than one person has that name. Try a different search."
+                    : search.loading || error
+                      ? ""
+                      : "Nothing more in Buzz.",
+              },
+            ]
+          : []),
+      ]}
       busy={search.loading || search.loadingMore}
-      empty={
-        !query.trim() || search.tooShort
-          ? "Type at least three letters in the last word to search Buzz."
-          : search.onlyExclusions
-            ? "Add a word to search for."
-            : search.ambiguousAuthor
-              ? "More than one person has that name. Try a different search."
-              : search.loading || error
-                ? ""
-                : `No messages in Buzz match “${query}”. Try another word.`
-      }
       footer={
-        <LoadingRegion
-          pending={search.loading || search.loadingMore}
-          label="Searching Buzz…"
-          feedback={
-            error ? (
-              <div
-                role="alert"
-                className="flex flex-wrap items-center gap-2 px-3 text-body-sm text-subtle"
-              >
-                <span>Messages could not load. Try again.</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    props.input.current?.focus();
-                    retry();
-                  }}
+        asked ? (
+          <LoadingRegion
+            pending={search.loading || search.loadingMore}
+            label="Searching Buzz…"
+            feedback={
+              error ? (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-2 px-3 text-body-sm text-subtle"
                 >
-                  Retry
-                </Button>
-              </div>
-            ) : undefined
-          }
-        >
-          {search.hasMore && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={search.loadingMore}
-              onClick={() => {
-                props.input.current?.focus();
-                search.loadMore();
-              }}
-            >
-              More messages
-            </Button>
-          )}
-        </LoadingRegion>
+                  <span>Messages could not load. Try again.</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      props.input.current?.focus();
+                      retry();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          >
+            {search.hasMore ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={search.loadingMore}
+                onClick={() => {
+                  props.input.current?.focus();
+                  search.loadMore();
+                }}
+              >
+                More messages
+              </Button>
+            ) : (
+              props.status
+            )}
+          </LoadingRegion>
+        ) : (
+          props.status
+        )
       }
     />
   );
 }
 
 function Choices({
-  results,
+  sections,
   footer,
   busy,
-  empty,
   ...props
 }: Contents & {
-  results: FinderResults;
+  sections: readonly Section[];
   footer?: ReactNode;
   busy?: boolean;
-  empty?: string | undefined;
 }) {
   const {
     query,
@@ -365,8 +482,12 @@ function Choices({
     session?.profiles.subscribe ?? noSubscribe,
     session?.profiles.snapshot ?? noProfiles,
   );
-  const byId = new Map(results.hits.map((hit) => [hit.doc.id, hit.doc]));
-  const rows: SearchDestination[] = results.hits.map(({ doc, positions }) => {
+  const hits = sections.flatMap((section) => section.results.hits);
+  const byId = new Map(hits.map((hit) => [hit.doc.id, hit.doc]));
+  const row = ({
+    doc,
+    positions,
+  }: FinderResults["hits"][number]): SearchDestination => {
     const shown = excerpt(doc.text, positions);
     return {
       key: doc.id,
@@ -393,14 +514,11 @@ function Choices({
         openMessage(doc);
       },
     };
-  });
-  const changeScope = (next: FinderScope) => {
-    onScopeChange(next);
-    input.current?.focus();
   };
-  const groups: SearchGroup[] = [
-    {
-      label: query.trim() ? "Matches" : "Recent",
+  const groups: SearchGroup[] = sections.map(({ label, results, empty }) => {
+    const rows = results.hits.map(row);
+    return {
+      label,
       destinations: rows,
       total: rows.length,
       count:
@@ -412,29 +530,9 @@ function Choices({
         (corpus.size
           ? "Nothing matches. Try fewer letters, or drop a word."
           : "No messages indexed yet."),
-    },
-  ];
-  const scopes: SearchDestination[] = [];
-  if (currentChannelId && !scope)
-    scopes.push({
-      key: "finder:channel",
-      label: "Search this channel",
-      icon: ChatCircleIcon,
-      run: () => changeScope("channel"),
-    });
-  if (!scope && session && messageSearchable(query))
-    scopes.push({
-      key: "finder:buzz",
-      label: `Search all of Buzz for “${query}”`,
-      icon: ChatCircleIcon,
-      run: () => changeScope("buzz"),
-    });
-  if (scopes.length) groups.push({ label: "Search in", destinations: scopes });
-  const terms = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((word) => word && !word.startsWith("!"))
-    .map((word) => word.replace(/^'/, ""));
+    };
+  });
+  const terms = wordsOf(query);
   return (
     <SearchChoices
       label="Find in your conversations"
@@ -445,18 +543,28 @@ function Choices({
       highlightEmpty
       groups={groups}
       footer={footer}
-      isAction={(key) => key.startsWith("finder:")}
-      scope={
-        scope
-          ? {
-              id: scope,
-              label: scope === "channel" ? "This channel" : "All of Buzz",
-              onRemove: () => changeScope(undefined),
-            }
-          : undefined
-      }
       peek={{
         ranked: false,
+        hints: (
+          <Tabs
+            label="Search in"
+            variant="segmented"
+            size="sm"
+            value={scope}
+            items={[
+              {
+                value: "channel",
+                label: "This channel",
+                disabled: !currentChannelId,
+              },
+              { value: "buzz", label: "All of Buzz" },
+            ]}
+            onValueChange={(next) => {
+              onScopeChange(next);
+              input.current?.focus();
+            }}
+          />
+        ),
         busy: !!busy,
         preview: session
           ? (row, tone, follow) => (
@@ -469,13 +577,12 @@ function Choices({
                 terms={terms}
                 nameOf={(pubkey) =>
                   profiles.get(pubkey)?.name ??
-                  results.hits.find((hit) => hit.doc.authorId === pubkey)?.doc
-                    .author ??
+                  hits.find((hit) => hit.doc.authorId === pubkey)?.doc.author ??
                   pubkey.slice(0, 10)
                 }
                 whereOf={(channelId) =>
-                  results.hits.find((hit) => hit.doc.channelId === channelId)
-                    ?.doc.place ?? "Conversation"
+                  hits.find((hit) => hit.doc.channelId === channelId)?.doc
+                    .place ?? "Conversation"
                 }
               />
             )

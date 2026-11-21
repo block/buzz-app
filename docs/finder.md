@@ -2,9 +2,10 @@
 
 You often remember a piece of a conversation, a name, or a word someone used,
 but not which channel or thread it was in. The finder lets you search for those
-pieces directly. Press ⌘P (Ctrl+P on Windows and Linux), type a few letters, and
-see matching messages from your own conversations as you type, with a preview
-of each one in context. Press Enter to jump to the message.
+pieces directly. Press ⌘P (Ctrl+P on Windows and Linux) to search the channel
+you're in, or ⌘⇧P (Ctrl+Shift+P) to search all of Buzz. Type a few letters and
+see matching messages as you type, with a preview of each one in context.
+Press Enter to jump to the message.
 
 It works like [fzf](https://github.com/junegunn/fzf) or Neovim's
 [Telescope](https://github.com/nvim-telescope/telescope.nvim): letters don't
@@ -18,38 +19,96 @@ The finder is off by default. Enable it in Settings → Plugins.
 | --- | --- |
 | Matching and ranking (`match.ts`, `corpus.ts`) | Done, with tests and a benchmark |
 | The dialog (`FinderDialog.tsx`) | Done, tried on a fixture page with fake data |
-| ⌘P in the app (`index.tsx`) | Done; the plugin is off until you enable it |
+| ⌘P and ⌘⇧P in the app (`index.tsx`) | Done; the plugin is off until you enable it |
 | Filling the index from your account (`sync.ts`) | Done; channel paging has tests |
 | This channel | Done, with older history read as needed |
-| All of Buzz | Done, after a typing pause, with retry and public previews |
+| All of Buzz | Done: this device at once, then the relay after a typing pause |
+| Lists from other plugins (`ctx.finder`) | Done, with built-in conversations and people lists |
 | Reading ahead in the channels you use most | Done, with tests and a model of how much it finds |
 | Saving the index between launches | Not started: it is rebuilt each launch |
 | Clear cache empties the index at once | Not yet: it empties on the next reconnect or restart |
 | Edited messages | Not yet: the finder shows the original text |
-| A tool other programs (Neovim) can call | Not started |
+| A commands list (run any Buzz shortcut) | Not started: Buzz can't run a shortcut by its ID yet |
 
-## Search scopes
+## The two searches
 
-The default search stays on this device. It never sends your query to the relay.
-Two scopes let you look further. Remove the scope chip to return to the index.
+| Key | Searches |
+| --- | --- |
+| ⌘P (Ctrl+P) | **This channel**, when a conversation is open. Elsewhere, **All of Buzz**. It works while you type. |
+| ⌘⇧P (Ctrl+Shift+P) | **All of Buzz**. Not while typing in a text field, where it's Spoiler formatting. |
 
-- **This channel.** Press ⌥⌘P (Ctrl+Alt+P on Windows and Linux), or choose
-  **Search this channel** in the finder while looking at a conversation. It
-  fuzzy-searches only that channel. With fewer than 20 matches, it reads older
-  messages in pages of 500, up to 5,000 per opening. **Keep going** allows
-  another 5,000. It shows how far back it searched, or when it searched the
-  whole channel. Closing or switching scope stops the read. Reopening resumes
-  where it left off. Join a public preview before searching its history here.
-- **All of Buzz.** Type at least three letters in the last word, then choose
-  **Search all of Buzz for “…”**. After a short pause, it searches every message
-  the relay lets you read, including public channels you haven't joined.
-  Results use the same fuzzy ranking; other relay hits follow in their relay
-  order. Earlier results stay visible while the next search runs. Use **Retry**
-  after a failed read, or **More messages** for the next page.
+The switch under the search field changes between them, and so does pressing
+the other key while Finder is open. The text you typed stays when you switch.
+Closing Finder clears it, so each opening starts empty. Change both keys in
+Settings → Shortcuts.
 
-Older channel messages and relay hits from joined channels stay in the index
-for this session. Public previews stay out; their access is checked on each read.
-The index is still rebuilt at each launch. Saving it between launches is next.
+- **This channel** fuzzy-searches only that channel. With fewer than 20
+  matches, it reads older messages in pages of 500, up to 5,000 per opening.
+  **Keep going** allows another 5,000. It shows how far back it searched, or
+  when it searched the whole channel. Closing or switching stops the read.
+  Reopening resumes where it left off. Join a public preview before searching
+  its history here.
+- **All of Buzz** shows matches from this device at once. After a short pause
+  in typing, with at least three letters in the last word, it also asks the
+  relay, which searches every message you can read, including public channels
+  you haven't joined. Those hits appear below, under **More from all of Buzz**,
+  ranked the same way. Rows you're looking at never move: once relay rows show,
+  the device rows above them hold still until you change the text. When a full
+  page of device matches already contains every word you typed, it doesn't ask
+  the relay, since nothing it found could rank above them. Use **Retry** after a
+  failed read, or **More messages** for the next page.
+
+Older channel messages stay in the index for this session. Relay hits from
+joined channels join it when you close Finder. Public previews stay out; their
+access is checked on each read.
+
+## Plugin sources
+
+Finder is also a picker other plugins can use, the way Telescope is for
+Neovim plugins. A plugin can open Finder on any list, or add lists of its own.
+Finder draws the window, ranks the rows, shows previews and handles the keys,
+so every list looks and works the same.
+
+Finder provides `ctx.finder` while it's on. Take it with `ctx.inject`, so your
+plugin still starts when Finder is off:
+
+```js
+export function apply(ctx) {
+  ctx.inject(["finder"], (child) => {
+    // A list of your own. Its key is "your.plugin/panes".
+    child.finder.registerSource({
+      id: "panes",
+      title: "Panes",
+      items: () => [
+        { id: "sidebar", label: "Sidebar", run: () => focusSidebar() },
+        { id: "thread", label: "Thread", keywords: "replies", run: () => focusThread() },
+      ],
+    });
+    // Open Finder on a list, with or without starting text.
+    child.finder.open({ source: "buzz.finder/people", query: "maya" });
+  });
+}
+```
+
+- `open({ source, query })`: without `source`, Finder opens as ⌘P does.
+  Without `query`, the field starts empty. An unknown source opens All of Buzz.
+- Built-in lists: `buzz.finder/channel` (This channel), `buzz.finder/all` (All
+  of Buzz), `buzz.finder/conversations` (channels and DMs you've joined; Enter
+  opens one) and `buzz.finder/people` (everyone in them, by name, handle or
+  NIP-05; Enter opens your DM with them, or their profile).
+- `registerSource(source)` returns a function that removes the list. It also
+  goes when your plugin stops; if it was open, Finder shows All of Buzz.
+- A list either gives every row with `items()`, which Finder ranks with its
+  fuzzy matcher over `label` and `keywords`, or runs its own search with
+  `search(query, publish, signal)`. A search can publish several times, such
+  as local rows first and remote ones later. Publishing for older text does
+  nothing.
+- Each row has an `id`, a `label`, and `run()`, which runs after Finder closes.
+  It can add a `detail` line, `keywords`, an `icon` or `avatar`, and a
+  `preview`: `{ kind: "channel", channelId }`, `{ kind: "person", pubkey }`,
+  or a component.
+- A list that throws shows "This list couldn't load." instead of breaking
+  Finder.
 
 ## How to search
 
@@ -211,10 +270,10 @@ bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1461
 Open `http://127.0.0.1:1461/tests/fixtures/finder.html`. Add `?extra=200000`
 to search 200,000 more synthetic messages, and `&theme=dark` for dark mode.
 
-Use `?channel=c0` to make **This channel** available. Search for `quartz`, then
-choose **Search this channel** to find notes among 3,000 signed messages; only
-the newest 300 start in the index. Try a word with no matches to reach the end.
-Use `?channel=c0&history=6000` with a word that has no matches to reach the
-5,000-message cap and try **Keep going**.
-Remove the chip, type `quartz`, and choose **Search all of Buzz** to try relay
-search. Both scopes support the same arrows, Enter and Escape keys.
+Use `?channel=c0` to make **This channel** available; it opens there. Search
+for `quartz` to find notes among 3,000 signed messages; only the newest 300
+start in the index. Try a word with no matches to reach the end. Use
+`?channel=c0&history=6000` with a word that has no matches to reach the
+5,000-message cap and try **Keep going**. Choose **All of Buzz** in the switch,
+or press ⌘⇧P, to see device matches with relay hits below them. Add
+`?source=fruit` to open a sample plugin list, with a custom preview.

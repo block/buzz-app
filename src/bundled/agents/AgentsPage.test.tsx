@@ -1974,13 +1974,24 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
   ).not.toBeInTheDocument();
 });
 
-it("tells same-named agents to import apart by their keys", async () => {
+it("tells same-named agents to import apart by their last run, else their keys", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.portable.mockResolvedValue({
     agents: [
       ...portable,
-      { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
+      // Local times, so each lands on its calendar day in any time zone.
+      ...[
+        new Date(2026, 6, 20, 12),
+        new Date(2026, 6, 20, 15, 30),
+        new Date(2026, 7, 2, 12),
+      ].map((started, index) => ({
+        source: "development" as const,
+        pubkey: String(index + 3).repeat(64),
+        name: "Bea",
+        relay: "",
+        lastStarted: started.toISOString(),
+      })),
     ],
     teams: [],
     warnings: [],
@@ -1991,7 +2002,11 @@ it("tells same-named agents to import apart by their keys", async () => {
   );
   const list = await screen.findByRole("region", { name: "Agents to import" });
   expect(within(list).getByText("Buzz (Legacy)")).toBeInTheDocument();
-  expect(within(list).getAllByText(/^Buzz \(Legacy\) · npub…/)).toHaveLength(2);
+  // The two that ran the same day, and the one that never ran, keep their keys.
+  expect(within(list).getAllByText(/^Buzz \(Legacy\) · npub…/)).toHaveLength(3);
+  expect(
+    within(list).getByText("Buzz (Legacy) · Ran on Aug 2"),
+  ).toBeInTheDocument();
 });
 
 it("imports agents only as a type that runs here", async () => {

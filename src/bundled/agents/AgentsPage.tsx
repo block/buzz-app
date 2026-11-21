@@ -144,6 +144,7 @@ import {
 } from "./routes";
 import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 
@@ -1766,6 +1767,10 @@ function PeekIdentity({
 const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 const sentence = (text: string) => text.replace(/\.?$/, ".");
 const LEGACY = "Buzz (Legacy)";
+const lastRun = (saved?: string) => {
+  const at = Date.parse(saved ?? "");
+  return !Number.isNaN(at) && `Ran ${relativeTimestamp(at / 1000)}`;
+};
 
 /** The owner's teams with members `joinable` can add here: adding them gives
  * the team, which every community shares, its members here too. */
@@ -1897,7 +1902,19 @@ function ImportAgents({
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])
-    named.set(agent.name, (named.get(agent.name) ?? 0) + 1);
+    for (const key of [
+      agent.name,
+      `${agent.name}\n${lastRun(agent.lastStarted)}`,
+    ])
+      named.set(key, (named.get(key) ?? 0) + 1);
+  // Its last run tells it apart unless another of its name ran then too.
+  const apart = (agent: PortableAgent) => {
+    const run = lastRun(agent.lastStarted);
+    return (
+      (named.get(`${agent.name}\n${run}`) === 1 && run) ||
+      labels.get(agent.pubkey)
+    );
+  };
   const setPort = (pubkey: string, state?: "queued" | "done") =>
     setPorts((last) => {
       const next = new Map(last);
@@ -2197,11 +2214,7 @@ function ImportAgents({
               key={agent.pubkey}
               agent={agent}
               community={agent.relay || undefined}
-              detail={[
-                LEGACY,
-                // Its key tells it apart only from one of the same name.
-                named.get(agent.name) !== 1 && labels.get(agent.pubkey),
-              ]
+              detail={[LEGACY, named.get(agent.name) !== 1 && apart(agent)]
                 .filter(Boolean)
                 .join(" · ")}
             >

@@ -133,6 +133,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
+import { agentAvatarMenuProps } from "../agents/avatar-menu";
 import { useThreadDraft } from "./draft-places";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
@@ -1121,6 +1122,7 @@ function MessageRowContent({
       onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
+          {...(agentAuthor ? agentAvatarMenuProps : {})}
           size="sm"
           shape="round"
           aria-label={`View ${name} profile`}
@@ -1146,7 +1148,10 @@ function MessageRowContent({
       }
     />
   ) : (
-    <span className={styles.nestedAvatar}>
+    <span
+      className={styles.nestedAvatar}
+      {...(agentAuthor ? agentAvatarMenuProps : {})}
+    >
       <Avatar
         src={picture}
         alt={

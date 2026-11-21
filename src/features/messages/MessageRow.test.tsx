@@ -62,6 +62,7 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { attestedOwner } from "../agents/owner-attestation";
+import { agentAvatars } from "../agents/avatar-packs";
 
 // Real verification, observed so tests can wait for its verdict.
 vi.mock("../agents/owner-attestation", async (original) => {
@@ -1104,6 +1105,85 @@ it("requests a small profile image without downsizing message attachments", () =
     "channel",
   );
 });
+
+it.each([false, true])(
+  "suppresses agent portrait menus without blocking profile activation (clickable=%s)",
+  async (clickable) => {
+    const pack = agentAvatars[0];
+    if (!pack) throw new Error("Missing avatar fixtures");
+    const onOpenLink = vi.fn(() => true);
+    const view = renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Bo", picture: pack.url, isAgent: true },
+      media: (url) => url,
+      canOpenLink: () => clickable,
+      onOpenLink,
+    });
+    const escaped = vi.fn();
+    document.addEventListener("contextmenu", escaped);
+    document.addEventListener("keydown", escaped);
+    try {
+      const image = view.container.querySelector("img");
+      expect(image).toHaveAttribute("src", pack.url);
+      const trigger = clickable
+        ? screen.getByRole("button", { name: "View Bo profile" })
+        : image?.closest("[data-avatar-shape]")?.parentElement;
+      if (!trigger) throw new Error("Missing avatar trigger");
+      expect(fireEvent.contextMenu(trigger)).toBe(false);
+      expect(fireEvent.keyDown(trigger, { key: "ContextMenu" })).toBe(false);
+      expect(fireEvent.keyDown(trigger, { key: "F10", shiftKey: true })).toBe(
+        false,
+      );
+      expect(escaped).not.toHaveBeenCalled();
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(onOpenLink).not.toHaveBeenCalled();
+      expect(fireEvent.keyDown(trigger, { key: "F10" })).toBe(true);
+      if (clickable) {
+        await userEvent.click(trigger);
+        expect(onOpenLink).toHaveBeenCalledOnce();
+      }
+    } finally {
+      document.removeEventListener("contextmenu", escaped);
+      document.removeEventListener("keydown", escaped);
+      view.unmount();
+    }
+  },
+);
+
+it.each([false, true])(
+  "leaves human avatar menus unchanged (clickable=%s)",
+  async (clickable) => {
+    const view = renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Bo", picture: "https://image.test/person.png" },
+      media: (url) => url,
+      canOpenLink: () => clickable,
+    });
+    try {
+      const trigger = clickable
+        ? screen.getByRole("button", { name: "View Bo profile" })
+        : view.container.querySelector("img");
+      if (!trigger) throw new Error("Missing human avatar");
+      expect(fireEvent.contextMenu(trigger)).toBe(!clickable);
+      if (clickable) {
+        // Before this fix, the real human profile button opens message actions;
+        // the image-only path keeps the browser's native image menu.
+        const menu = await screen.findByRole("menu");
+        expect(
+          within(menu).getByRole("menuitem", { name: "Copy message" }),
+        ).toBeVisible();
+      } else {
+        expect(fireEvent.keyDown(trigger, { key: "ContextMenu" })).toBe(true);
+        expect(fireEvent.keyDown(trigger, { key: "F10", shiftKey: true })).toBe(
+          true,
+        );
+        expect(screen.queryByRole("menu")).toBeNull();
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
 
 it("renders proxy audio attachments with an inline player", () => {
   const html = renderToStaticMarkup(

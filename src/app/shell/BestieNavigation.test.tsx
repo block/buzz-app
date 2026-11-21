@@ -4,6 +4,7 @@ import { StrictMode, useEffect, useState } from "react";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -232,6 +233,47 @@ it("shows the Bestie's published profile picture over its agent definition art",
   expect(
     screen.getByRole("tab", { name: "Pollen" }).querySelector("img"),
   ).toHaveAttribute("src", published.preview);
+});
+
+it("suppresses the Bestie portrait menu through picture replacement and removal without blocking navigation", async () => {
+  const f = await fixture();
+  const published = agentAvatars[1];
+  if (!published) throw new Error("Expected a second bundled avatar");
+  const onSelect = vi.fn();
+  setDefaultAgent(scope, pollen);
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <PageNavigation
+        pages={[page]}
+        selected="another-page"
+        onSelect={onSelect}
+        placement="dock"
+      />
+    </BestieNavigationProvider>,
+  );
+  const tab = await screen.findByRole("tab", { name: "Pollen" });
+  for (const picture of [portrait, published, undefined]) {
+    if (picture !== portrait)
+      act(() =>
+        f.publishProfile(pollen, {
+          name: "Pollen",
+          ...(picture ? { picture: picture.url } : {}),
+        }),
+      );
+    if (picture)
+      expect(tab.querySelector("img")).toHaveAttribute("src", picture.preview);
+    else expect(tab.querySelector("img")).toBeNull();
+    expect(fireEvent.contextMenu(tab)).toBe(false);
+    expect(fireEvent.keyDown(tab, { key: "ContextMenu" })).toBe(false);
+    expect(fireEvent.keyDown(tab, { key: "F10", shiftKey: true })).toBe(false);
+    expect(fireEvent.keyDown(tab, { key: "F10" })).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  }
+  await userEvent.click(tab);
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith(page.key, {
+    focus: "preserve",
+  });
 });
 
 it("shows initials once the Bestie's published profile drops its picture", async () => {

@@ -1711,6 +1711,18 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  Below them, **Environment variables** sets variables every local agent on
+  this device starts with, such as API keys. They're kept in the OS credential
+  store, never synced, and values aren't shown again after saving. Protected
+  and hosted agents don't get them, an agent's own list wins over them, and a
+  harness's own variables win over both, except that a saved
+  `ANTHROPIC_API_KEY` wins over the shared Claude key. The same names are refused as in an
+  agent's own list. A save applies to agent processes started afterward;
+  agents already running keep the old list until **Restart agents**, which
+  reloads Buzz so every local agent's next message starts it with the saved
+  list. It asks first, since the reload ends calls and turns in progress, and
+  stays off while the list has unsaved edits. On Windows, where names ignore
+  case, the Anthropic key is saved only as `ANTHROPIC_API_KEY`.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
   Builderlab permissions are re-read at most once a minute while the app uses
@@ -1786,7 +1798,8 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   community so its next message starts them with the saved list. It asks
   first, and it's refused while the agent is answering or in a call. A Codex or Pi agent
   with its own list runs in its own process. Removing the agent from its last
-  community on this computer deletes its list.
+  community on this computer deletes its list. Every local agent also gets the
+  device list in **Settings → Agent setup**; its own list wins over it.
 - Each Claude agent running on this computer keeps its own `claude` process for
   each active conversation. While an unprotected one runs here, Buzz also keeps
   one shared process ready for the next new conversation. Each of these starts

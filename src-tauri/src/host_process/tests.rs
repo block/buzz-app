@@ -1230,7 +1230,16 @@ fn an_agents_saved_anthropic_key_survives_its_harness_removing_inherited_ones() 
     };
     let removed = HashMap::from([("ANTHROPIC_API_KEY".to_owned(), None)]);
     let saved = [("ANTHROPIC_API_KEY".into(), "sk-ant-agent".into())];
-    for (agent_env, expected) in [(&saved[..], Some("sk-ant-agent")), (&[][..], None)] {
+    // The device list's, then the agent's own.
+    let both = [
+        ("ANTHROPIC_API_KEY".into(), "sk-ant-device".into()),
+        ("ANTHROPIC_API_KEY".into(), "sk-ant-agent".into()),
+    ];
+    for (agent_env, expected) in [
+        (&saved[..], Some("sk-ant-agent")),
+        (&both[..], Some("sk-ant-agent")),
+        (&[][..], None),
+    ] {
         let mut command = Command::new("/usr/bin/true");
         set_environment(
             &mut command,

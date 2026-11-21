@@ -392,8 +392,8 @@ enum Stream {
 /// arguments. `env` adds variables (`null` removes one) to the app's own
 /// environment, less any Buzz identity: an agent's key never leaves the app.
 /// `secrets` names native-held secrets, each only for the processes it belongs
-/// to; a secret that is not saved is left unset. `agent-env`, the list saved
-/// for the local agent `env_agent`, is set before `env` so the harness's
+/// to; a secret that is not saved is left unset. `agent-env`, the device's list
+/// then the local agent `env_agent`'s, is set before `env` so the harness's
 /// variables win; the others are set after it.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -423,15 +423,11 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         .transpose()?;
     let page = processes.page();
     let plugin = id.clone();
+    let grants_revision = revision.clone();
     let (declared, registry, policies) = with_manager(manager, move |manager| {
         let registry = manager.storage_root().to_path_buf();
         let policies = manager.managed_policy_paths();
-        manager
-            .host_grants(&id, &revision)?
-            .processes
-            .into_iter()
-            .find(|process| process.id == process_id)
-            .ok_or_else(|| "Process is not declared".into())
+        declared_process(&manager, &id, &grants_revision, &process_id)
             .map(|declared| (declared, registry, policies))
     })
     .await?;
@@ -528,13 +524,13 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     let secrets = secrets.unwrap_or_default();
     // Only a process that asks for the list touches the agent stores.
     let agent_env = if secrets.iter().any(|s| s == crate::agent_env::SECRET) {
-        crate::agent_env::for_spawn(
+        crate::agent_env::for_launch(
             &app.state(),
             &app.state(),
+            &declared,
+            &revision,
             &secrets,
             env_agent.as_deref(),
-            &plugin,
-            &declared.id,
             protected,
         )
         .await?
@@ -644,7 +640,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
 /// except for an Anthropic API key the agent's list sets.
 /// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
 /// under Buzz.
-fn set_environment(
+pub(crate) fn set_environment(
     command: &mut Command,
     login_shell: &[(std::ffi::OsString, std::ffi::OsString)],
     agent_env: &[(std::ffi::OsString, std::ffi::OsString)],
@@ -701,12 +697,14 @@ fn set_environment(
     Ok(())
 }
 
-/// The Anthropic API key in an agent's list, if it has one.
+/// The Anthropic API key in an agent's lists, if they set one: the agent's
+/// own, which follows the device's, wins.
 fn agent_key(
     agent_env: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Option<&(std::ffi::OsString, std::ffi::OsString)> {
     agent_env
         .iter()
+        .rev()
         .find(|(name, _)| name == crate::claude_key::ENV)
 }
 
@@ -1001,6 +999,21 @@ pub(crate) fn verified_artifact(mut artifact: ProcessArtifact) -> Result<PathBuf
 }
 
 /// A manifest may place an artifact under the user's home, written `~/…`.
+/// Process `process_id` as the grants of plugin `id` at `revision` declare it.
+pub(crate) fn declared_process(
+    manager: &buzzodz_plugins::Manager,
+    id: &str,
+    revision: &str,
+    process_id: &str,
+) -> buzzodz_plugins::Result<HostProcess> {
+    manager
+        .host_grants(id, revision)?
+        .processes
+        .into_iter()
+        .find(|process| process.id == process_id)
+        .ok_or_else(|| "Process is not declared".into())
+}
+
 fn at_home(mut declared: HostProcess) -> Result<HostProcess, String> {
     if let Some(artifact) = &mut declared.artifact {
         artifact.path = expand_home(&artifact.path)?.to_string_lossy().into_owned();

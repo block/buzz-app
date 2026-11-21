@@ -149,6 +149,11 @@ it("starts a turn's claude with no saved key when its agent's own variables set 
     "Claude needs an Anthropic API key.",
   );
   expect(started).toHaveLength(1);
+  // One the device list sets counts for every agent, and for the spare.
+  state.agentEnv.set("", ["ANTHROPIC_API_KEY"]);
+  await authorized("claude", { ...options, envAgent: other });
+  await authorized("claude", options);
+  expect(started).toHaveLength(3);
 });
 
 it("passes a full host's refusal on, rather than taking it for no setup", async () => {

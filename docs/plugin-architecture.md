@@ -2181,6 +2181,13 @@ which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
 never searches PATH; the Goose plugin runs `goose-acp` this way.
 
+A process declared with `"agentEnv": true` runs a local agent, so a launch of it
+may ask for `secrets: ["agent-env"]`: the environment variables every local
+agent on the device starts with, then the named agent's own. Native honors the
+declaration only in a bundled plugin's manifest, from its `bundled` grants, so
+an installed plugin that declares it gets nothing. This decides who gets the
+lists; installed plugins remain trusted, unsandboxed code.
+
 Every process also gets `BUZZ_VERSION`, the running app's version, which `env`
 cannot change or remove. A script or shell config can check for it to tell that
 it runs under Buzz; an agent's shell commands see it when its runtime passes its

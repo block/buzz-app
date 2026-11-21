@@ -1,17 +1,18 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
 
-/** The names of the local agent's own environment variables, read fresh
- * from native; `undefined` when they can't be read. Only names are known
- * here: values stay native. Without native (tests, browsers) there are none. */
+/** The names of the local agent's own environment variables, or without
+ * `pubkey` the device list's, read fresh from native; `undefined` when they
+ * can't be read. Only names are known here: values stay native. Without
+ * native (tests, browsers) there are none. */
 export async function ownEnvNames(
-  pubkey: string,
+  pubkey?: string,
 ): Promise<readonly string[] | undefined> {
   if (!isTauri()) return [];
   try {
     const status = await invoke<{ names: string[] } | null>(
       "agent_env_status",
-      { agent: pubkey },
+      pubkey ? { agent: pubkey } : {},
     );
     return status?.names ?? [];
   } catch {

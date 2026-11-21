@@ -12,6 +12,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { AgentEnvironment } from "./AgentEnvironment";
 import { ProviderDialog } from "./ProviderDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 
@@ -74,6 +75,7 @@ export function AgentDefaults({
           );
         })}
       </SettingsGroup>
+      <AgentEnvironment />
     </div>
   );
 }

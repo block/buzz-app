@@ -307,11 +307,7 @@ export class ClaudeAuth {
         (!args.includes("--setting-sources") || !(await this.has()));
       if (ownSetupUsable && (await this.connection()))
         return spawn(id, options);
-      if (
-        required &&
-        !(await this.has()) &&
-        !(await agentSetsKey(options?.envAgent))
-      )
+      if (required && !(await this.has()) && !(await agentSetsKey(options)))
         throw new Error(NO_KEY);
       return spawn(id, {
         ...options,
@@ -356,10 +352,16 @@ export class ClaudeAuth {
   }
 }
 
-/** Whether the local agent's own variables set an Anthropic API key, which
- * native code gives its `claude` in place of the saved one. */
-const agentSetsKey = async (agent: string | undefined) =>
-  !!agent && !!(await ownEnvNames(agent))?.includes("ANTHROPIC_API_KEY");
+/** Whether the device's variables or the local agent's own set an Anthropic
+ * API key, which native code gives its `claude` in place of the saved one. */
+const agentSetsKey = async (options: Parameters<Spawn>[1]) =>
+  !!options?.secrets?.includes("agent-env") &&
+  (
+    await Promise.all([
+      ownEnvNames(),
+      ...(options.envAgent ? [ownEnvNames(options.envAgent)] : []),
+    ])
+  ).some((names) => names?.includes("ANTHROPIC_API_KEY"));
 
 /** Whether a turn's error is Buzz's own refusal to start Claude without a
  * key, rather than anything Claude said. */

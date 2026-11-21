@@ -1780,8 +1780,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   its own copies of the local MCP servers in your Claude Code configuration, so
   memory use grows with active conversations times those servers. A
   conversation's process stops after 15 minutes with no message, turn or
-  background work. Protected agents load none of your MCP servers and don't use
-  the shared process. To lower the cost, remove servers agents don't need, or
+  background work. Across all Claude agents, once 8 conversations have a
+  process, a new conversation stops the idle one used longest, which resumes
+  from its saved session when next addressed. A conversation that is working
+  is never stopped, so more than 8 can run at once. Protected agents load none
+  of your MCP servers and don't use the shared process. To lower the cost, remove servers agents don't need, or
   move heavy servers from user scope to local or project scope in the folders
   where you use them. Agents work in their **Workspace** folder (`~/.buzz` by
   default), so keep those servers out of that folder, the folders above it,

@@ -57,6 +57,8 @@ function sessions(
     /** The host refuses every process, as at its process limit. */
     full: boolean;
     room: () => Promise<boolean>;
+    /** Asked before each conversation's process starts. */
+    trim: () => Promise<void>;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known, options.env);
@@ -83,6 +85,7 @@ function sessions(
   const pool = new AgentSessions({
     spawn,
     ...(options.room ? { room: options.room } : {}),
+    ...(options.trim ? { trim: options.trim } : {}),
     strictResume: !!options.strictResume,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
@@ -630,6 +633,45 @@ it("offers no conversation whose next message is still being prepared", async ()
     expect(pool.idlest()).toBeUndefined();
     second();
     expect(pool.idlest()).toBeDefined();
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("trims before a conversation's process starts, and resumes the one it stopped", async () => {
+  // Stops the idlest idle conversation once two run, as a runtime's cap would.
+  const trim = vi.fn(async () => {
+    if (pool.size >= 2) await pool.idlest()?.stop();
+  });
+  const { pool, claudes } = sessions({ trim });
+  try {
+    await pool.deliver("c/a", "one", 1);
+    await pool.deliver("c/b", "two", 2);
+    await pool.deliver("c/c", "three", 3);
+    const [a, b, c] = claudes();
+    expect(trim).toHaveBeenCalledTimes(3);
+    expect([a?.killed, b?.killed, c?.killed]).toEqual([true, false, false]);
+    expect(pool.snapshot().map(({ key }) => key)).toEqual(["c/b", "c/c"]);
+    // Its saved session continues where it left off.
+    await pool.deliver("c/a", "again", 4);
+    const resumed = claudes().at(-1);
+    expect(resumed?.options.args).toContain("--resume");
+    expect(resumed?.options.args).toContain("new-1");
+    expect(resumed?.prompts).toEqual(["again"]);
+    expect(b?.killed).toBe(true);
+    expect(c?.killed).toBe(false);
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("never trims for a one-off turn or model discovery", async () => {
+  const trim = vi.fn(async () => {});
+  const { pool } = sessions({ trim });
+  try {
+    await pool.runOnce("watch", () => "hello");
+    await pool.metadata();
+    expect(trim).not.toHaveBeenCalled();
   } finally {
     pool.dispose();
   }

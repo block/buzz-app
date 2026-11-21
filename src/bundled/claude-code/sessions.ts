@@ -76,6 +76,10 @@ export type SessionsOptions = Readonly<{
   /** At the host's process limit, stops some idle conversation's process to
    * make a place for a conversation's; false when none is idle. */
   room?(): Promise<boolean>;
+  /** Before a conversation's process starts, stops idle ones past a soft cap
+   * on live processes, so this one takes a stopped one's place. Not asked for
+   * model discovery or a one-off turn. */
+  trim?(): Promise<void>;
   strictResume?: boolean;
   /** Where a new conversation looks for a process already started. */
   spare?: Spare;
@@ -205,6 +209,10 @@ export class AgentSessions {
     const live = this.live.get(key);
     if (live) this.drop(key, live);
     this.options.onChange?.();
+  }
+  /** How many conversations have a running process. */
+  get size() {
+    return this.live.size;
   }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
@@ -731,6 +739,7 @@ export class AgentSessions {
     const fingerprint = this.options.fingerprint(key);
     const sections = this.options.sections?.(key);
     const launch = await this.options.launch(key);
+    if (key !== undefined && wanted()) await this.options.trim?.();
     const spawn = this.roomy(wanted);
     const process = resume
       ? await ClaudeProcess.start(spawn, { ...launch, resume })

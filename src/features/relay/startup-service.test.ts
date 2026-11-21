@@ -9,15 +9,31 @@ import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock("./persistence", () => ({ createHeadPersistence: storage.create }));
-const native = vi.hoisted(() => ({ clear: vi.fn(async () => {}) }));
+const native = vi.hoisted(() => ({
+  clear: vi.fn(async () => {}),
+  enabled: vi.fn(() => false),
+}));
+vi.mock("../identity/service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../identity/service")>()),
+  nativeIdentityEnabled: native.enabled,
+}));
+const images = vi.hoisted(() => ({ retry: vi.fn() }));
+vi.mock("../../shared/design-system/useReadyImage", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../shared/design-system/useReadyImage")
+  >()),
+  retryFailedImages: images.retry,
+}));
 vi.mock("./native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./native")>()),
   clearNativeMedia: native.clear,
+  nativeMediaUrl: (url: string) => `native:${url}`,
 }));
 const roots: Context[] = [];
 afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
   vi.useRealTimers();
+  native.enabled.mockReset().mockReturnValue(false);
 });
 /** A signature no JavaScript check accepts; only a stubbed host admits it. */
 const FORGED = "0".repeat(128);
@@ -38,6 +54,7 @@ function setup({
   relay = keypair(),
   verifiedProfiles,
   forged = false,
+  origin = "primary",
 }: {
   saved?: boolean;
   profiles?: unknown[];
@@ -47,6 +64,7 @@ function setup({
   verifiedProfiles?: unknown;
   /** Give the saved history message a signature only a host could accept. */
   forged?: boolean;
+  origin?: string;
 } = {}) {
   const viewer = keypair();
   const events = [
@@ -123,7 +141,7 @@ function setup({
     undefined,
     undefined,
     undefined,
-    { viewer: viewer.pubkey, scope: "primary" },
+    { viewer: viewer.pubkey, scope: origin },
     undefined,
     verifyStored,
   );
@@ -177,6 +195,31 @@ it.each(["profile mirror", "discovery", "history", "head profiles"])(
     expect(source.query).not.toHaveBeenCalled();
   },
 );
+it.each([false, true])(
+  "shows saved avatars offline with the URLs the connection will use (native=%s)",
+  async (enabled) => {
+    native.enabled.mockReturnValue(enabled);
+    const origin = "https://relay.example.org";
+    const { restored } = setup({ origin });
+    const { session } = await restored();
+    const hash = "a".repeat(64);
+    expect(session.media(`${origin}/media/${hash}.png`, "small")).toBe(
+      enabled ? `native:${origin}/media/${hash}.thumb.webp` : undefined,
+    );
+    expect(session.media("https://cdn.example.org/a.png")).toBe(
+      "https://cdn.example.org/a.png",
+    );
+  },
+);
+it("asks failed images to load again once the connection replaces the restored session", async () => {
+  images.retry.mockClear();
+  const { data, connections, source, restored } = setup();
+  await restored();
+  expect(images.retry).not.toHaveBeenCalled();
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  expect(images.retry).toHaveBeenCalledOnce();
+});
 it.each([false, true])(
   "restores valid cached profiles with JS when host verification fails or is absent (host=%s)",
   async (host) => {

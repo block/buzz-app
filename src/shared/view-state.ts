@@ -7,11 +7,15 @@ type RemovedView = { key: string; revision: string };
 type ViewListener = (key?: string, removed?: readonly RemovedView[]) => void;
 const viewListeners = new Map<string, Set<ViewListener>>();
 const composerDraftKey =
-  /^draft:([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})(?::thread:([0-9a-f]{64}))?$/;
+  /^draft:([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})(?::thread:([0-9a-f]{64})(?::subthread:([0-9a-f]{64}))?)?$/;
 export function draftCoordinates(key: string) {
   const match = composerDraftKey.exec(key);
   return match?.[1]
-    ? { channelId: match[1], ...(match[2] ? { threadRootId: match[2] } : {}) }
+    ? {
+        channelId: match[1],
+        ...(match[2] ? { threadRootId: match[2] } : {}),
+        ...(match[3] ? { subthreadId: match[3] } : {}),
+      }
     : undefined;
 }
 // `key` names the one key that changed; undefined means any key may have.

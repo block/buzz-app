@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { matchFilters } from "nostr-tools/filter";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { fromOwner } from "../agents/owner-attestation";
 import type { AgentHandle, Delivery } from "../agents/service";
@@ -383,6 +384,48 @@ describe("harnessKit.turnPrompt", () => {
   });
 });
 
+it("restores direct and nested task corrections for a rooted harness wake", async () => {
+  const root = message("1", "Source requirements");
+  const child = (id: string, parent: string, content: string) =>
+    message(id, content, {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent, "", "reply"],
+      ],
+    });
+  const anchor = child("2", root.id, "Start task");
+  const direct = child("3", anchor.id, "DIRECT_CORRECTION");
+  const nested = child("4", direct.id, "NESTED_CORRECTION");
+  const unrelated = child("5", root.id, "UNRELATED_DISCUSSION");
+  const { kit, delivery, read } = setup();
+  read.mockImplementation(async (filters) =>
+    [root, anchor, direct, nested, unrelated].filter((event) =>
+      matchFilters(filters as Parameters<typeof matchFilters>[0], event),
+    ),
+  );
+  const d = delivery(
+    {
+      type: "plugin",
+      plugin: "test",
+      id: "9".repeat(64),
+      channel,
+      root: anchor.id,
+      text: "Resume task",
+      at: 200_000,
+    },
+    {
+      routeConversation: async () => ({ root: root.id, parent: anchor.id }),
+    },
+  );
+  const conversation = await kit.conversation(d, "thread");
+  if (!conversation) throw new Error("Not admitted");
+  const prompt = await kit.turnPrompt(d, conversation);
+  expect(prompt.text).toContain("DIRECT_CORRECTION");
+  expect(prompt.text).toContain("NESTED_CORRECTION");
+  expect(prompt.text).not.toContain("UNRELATED_DISCUSSION");
+});
+
 describe("harnessKit.systemPrompt", () => {
   it("gives the agent its instructions, team and core memory", async () => {
     const { kit, delivery } = setup({ core: "Remember the milk." });
@@ -631,3 +674,52 @@ describe("harnessKit.tools", () => {
     );
   });
 });
+
+it.each(["thread", "channel"] as const)(
+  "isolates a routed %s harness and keeps its replies under the invocation",
+  async (scope) => {
+    const f = setup();
+    const event = reply("2", "1", "go");
+    const d = f.delivery(
+      { type: "mention", event },
+      {
+        routeConversation: async () => ({
+          root: "1".repeat(64),
+          parent: event.id,
+          turnContext: "FIRST_TASK_INSTRUCTIONS",
+        }),
+      },
+    );
+    const first = await f.kit.conversation(d, scope);
+    if (!first) throw new Error("not admitted");
+    const next = await f.kit.conversation(
+      f.delivery(
+        { type: "mention", event: reply("3", "1", "continue") },
+        {
+          routeConversation: async () => ({
+            root: "1".repeat(64),
+            parent: event.id,
+            turnContext: "UPDATED_TASK_INSTRUCTIONS",
+          }),
+        },
+      ),
+      scope,
+    );
+    expect(first.key).toBe(`${channel}/${event.id}`);
+    if (!next) throw new Error("follow-up was not admitted");
+    expect(next.key).toBe(first.key);
+    const [firstPrompt, nextPrompt] = await Promise.all([
+      f.kit.turnPrompt(d, first),
+      f.kit.turnPrompt(d, next),
+    ]);
+    expect(firstPrompt.text).toContain("FIRST_TASK_INSTRUCTIONS");
+    expect(nextPrompt.text).toContain("UPDATED_TASK_INSTRUCTIONS");
+    expect(nextPrompt.text).not.toContain("FIRST_TASK_INSTRUCTIONS");
+    await f.kit.reply(f.agent, first, "Work");
+    expect(f.published[0]?.tags).toEqual([
+      ["h", channel],
+      ["e", "1".repeat(64), "", "root"],
+      ["e", event.id, "", "reply"],
+    ]);
+  },
+);

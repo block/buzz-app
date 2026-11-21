@@ -82,6 +82,76 @@ as the native reset. A failed reset blocks admission until New succeeds.
 Claude and Codex implement this contract. With no router and
 no saved association, the extension adds no execution or publication work.
 
+### Invocation subthreads
+
+Hosts with `ctx.agents.invocationSubthreads === true` support an optional
+`registerSessionRouter({ route })` callback. It runs after authority and chat
+scope checks, before the harness selects its session. Solo and DMs bypass it.
+The input contains `agent`, `owner`, `harness`, `source`, `conversation`,
+`invocationId`, optional original signed `event`, `resumed`, and `signal`.
+Retries and rooted wakes also receive `savedRoute` when this device has a binding.
+
+Return `{ root, parent }` to use `parent` as the invocation task anchor inside
+physical thread `root`. The host saves that route before execution. The route
+cannot change on retry or resume. Each routed task gets its own session.
+Ordinary requests still use the agent's configured scope. The later association
+hook receives the task anchor in
+both `source.root` and `conversation.root`. Default sends and failure replies
+retain the physical root and use the invocation as their reply parent. Explicit
+other destinations retain their existing behavior. Prompts retain source context
+for the initial request and identify the source thread for later reads.
+
+When `ctx.agents.invocationTurnContext === true`, a successful route can
+include optional text `turnContext`. Codex, Claude and the shared harness
+kit include it in the prompt for that request. The host saves only the
+route's root and parent. The router can supply fresh text for each
+invocation, follow-up or retry. A failed start leaves no text for another
+request. Use this field for invocation-specific instructions.
+
+Return `undefined` only for a positively unrouted turn. Throw on incomplete
+ancestry or unconfirmed task publication; rejection stops admission without a
+fallback to the source session. The plugin owns task ancestry and shared binding
+publication. It must confirm that binding before returning a new route.
+
+An agent type declares `invocationRouting: true` when it resolves
+`Delivery.routeConversation` before selecting the provider session. Codex
+and Claude declare this capability. A signed invocation intent addressed to
+an agent whose type lacks this capability remains retryable in Buzz. The
+provider starts after a compatible type and its router are available.
+Local host receipts do not establish cross-device task identity. Existing admitted
+invocations keep their previous placement. Older plugins without `route` keep
+the existing behavior.
+
+Hosts with `ctx.agents.invocationIntentVersion === 1` include `communityOrigin`
+in router admission. It is the normalized HTTPS origin of the actual runner's
+community. The router can also implement a synchronous, read-only
+`invocationIntent({ communityOrigin, owner, source, agentPubkey })` predicate.
+`source` contains the channel ID and physical thread root. Return `true` only
+for recipients this router can admit. The host calls active routers for
+addressed agents the sending viewer owns in a writable stream or forum with a
+verified reply target.
+
+The host appends `["buzz:invocation-intent", "1", agentPubkey]` to the signed
+kind-9 reply before computing its ID. The recipient is lowercase 64-digit hex
+and must also be present in a signed `p` tag. Retry keeps the original signed
+event. The tag carries no authority or task identity. To read intent, verify
+the author, community, recipients and reply ancestry. Unknown versions,
+malformed tags and unmarked replies supply no pending-intent evidence. Reuse
+confirmed bindings for older replies. A marked ancestor without a confirmed
+binding can be a continuation of an earlier invocation. Reconcile against that
+ancestor chain with a bounded wait. Throw on an unconfirmed outcome so retry
+can try the same invocation again. A marked reply for its owner's agent needs
+a matching router that implements `invocationIntent`. If that router is
+unavailable, admission fails and the same invocation can retry.
+
+A page-owned `Workspace` can select `{ channelId, threadId: sourceRoot,
+subthreadId: invocationId }`. It shows and composes within that branch. Drafts
+created in this workspace retain the explicit branch target when reopened.
+The existing source reader still owns access, edits, deletions, paging, and limits.
+Only verified available descendant chains appear. Paging can scan unrelated
+source replies; a history limit does not establish complete task history.
+The source conversation uses ordinary thread rendering and navigation.
+
 ## Local lifecycle evidence
 
 `session.agentActivity.snapshot().local` can include `LocalWork.evidence`.
@@ -2107,8 +2177,15 @@ app's record of the session it started says it is the agent's. That record is
 kept apart from saved prompts, for 32 days from the session's start, longer than
 Usage reads back, with no limit on how many sessions it holds. Each day's starts
 are saved as one value, and a day's value is removed once all of it is past
-keeping. The snapshot has no `channelId`, and a session from before that
-record was kept is not counted.
+keeping, by the agent's next standalone turn. Each session is added to the
+record whether or not Usage is on, as its id and start time only, never its
+prompt or reply; the key of the timer or watch that started it is kept with it
+only while the Usage plugin is on (its settings card is registered), so a
+Claude, Goose or Pi turn run while Usage was off is counted once Usage is on,
+under "Other" in "By routine" when that list shows; Codex keeps no session for
+such a turn, so it is not counted. Removing the agent removes the record. The
+snapshot has no `channelId`, and a session from before that record was kept is
+not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their
 thread names, keeps those whose rollout's developer instructions name the agent's
@@ -2126,6 +2203,20 @@ counts it by when it last answered.
 
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.
+
+A harness may also set `wake` on a session snapshot: the key of the standalone
+turn that started it (`timer/ID`, `watch/ID`, `catch-up/ID` or `source/ID`), as
+`AgentType.runOnce` was given it. Claude, Goose and Pi take it from the key
+their `runOnce` recorded with the session in the agent's standalone sessions,
+never from the prompt; Codex keeps no session for such a turn, so it sets none.
+Setting it takes the session's `revision` again, so the revision covers it. The
+Usage page groups the period's cost by agent and key under "By routine", since
+each agent names its own timers and watches, counting a watch's catch-up turns
+under `watch/ID`, with the sessions that have none under "Other", and shows no
+such list while no session has one. An agent set to one session per community
+runs its timers and watches in that shared session, not a standalone one, so
+their cost counts under "Other" there; the period's total is unchanged. A
+harness that does not set it works unchanged.
 
 Where a harness recorded no cost, Usage estimates it from the token counts at the
 provider's published API list prices, including a model's long-prompt rates and,

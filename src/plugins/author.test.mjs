@@ -91,6 +91,14 @@ export function apply(ctx: Context) {
       unread.markCapturedMessagesRead(["example-message-id"]);
     void capturedRead.then(({ undo }) => undo?.());
   }
+  if (typeof unread.messages === "function") {
+    const listed = unread.messages("example-channel", 50);
+    const more: true | undefined = listed.truncated ?? listed.incomplete;
+    for (const item of listed.items ?? []) {
+      const rootId: string | undefined = item.rootId;
+      void [item.id, item.createdAt, item.authorId, rootId, more];
+    }
+  }
   for (const item of conversations.items) {
     for (const message of item.messages) {
       const id: string = message.id;

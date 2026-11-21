@@ -279,6 +279,9 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   **Copy link**, and shared expiry and use limits. On macOS, hover over the QR
   or focus its action with the keyboard to reveal **Share**, which opens the
   system share menu with a QR image and the invite link.
+  **Links** lists the community's invite links with their status, uses and
+  expiry; **Revoke** on a row, or paste a link into **Revoke a link**, stops
+  anyone new from joining with it. People who already joined stay in.
 - To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
   in builds without Builderlab). When you're signed in with Builderlab and your
   account holds this identity's backup, it says to install the app (with store
@@ -493,7 +496,8 @@ Quitting Buzz also turns it off.
   chat. Two or more in a row fold into one line showing the latest one and how
   many more there are; it names their chat when they all came from the same
   one, or says they came from other chats. Select it to list each one. A claim
-  that cannot be verified shows as the sender's ordinary message.
+  that cannot be verified shows as the sender's ordinary message. Long chat
+  names end in an ellipsis. Expand the line to see more of the name.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -892,9 +896,13 @@ Quitting Buzz also turns it off.
   you typed. The keyword order shows first; the reordered list replaces it a
   moment later, and a small sparkle appears at the end of the Messages heading
   (hover it to see **Reranked**). If you've already moved the
-  highlight or chosen a result, the order stays as it is. The provider sees the query and those
-  messages' text, conversation names and authors. Newest-first and filter-only
-  searches aren't reranked.
+  highlight or chosen a result, the order stays as it is. Other things equal,
+  it favors messages people wrote over agent or workflow output, then ones
+  that mention you, then ones in conversations you're in. The provider sees
+  the query and those messages' text, dates, conversation names and authors,
+  and whether each is a direct message, yours, from an agent or workflow,
+  mentions you, or is in a conversation you're in. Newest-first and filter-only searches aren't
+  reranked.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat

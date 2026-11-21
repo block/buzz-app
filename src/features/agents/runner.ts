@@ -1,7 +1,8 @@
 import { interestPaused } from "./attention";
-import type {
-  AgentSessionAssociation,
-  AgentSessionSource,
+import {
+  hasInvocationIntent,
+  type AgentSessionAssociation,
+  type AgentSessionSource,
 } from "./session-admission";
 import { onAutomatic } from "./recommended";
 // The agent runner: one queue per agent, its rate limit, mention and watch
@@ -111,7 +112,11 @@ import {
   type Checkpoint,
   type Stream,
 } from "./catch-up";
-import type { Interrupted } from "./interrupted";
+import {
+  interruptedChannels,
+  type Interrupted,
+  type InterruptedTurns,
+} from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
 import {
   fallbackNotice,
@@ -223,6 +228,8 @@ type Job = {
   work?: ReturnType<LocalAgentActivity["begin"]>;
   trigger: Trigger;
   channelId?: string;
+  /** This request already has native placement. */
+  nativePlacement?: true;
   /** For a watch or timer: the object and attention epoch it was matched or
    * found due under. It runs only while both are still current, so a watch or
    * timer edited, disabled, rearmed, replaced or turned off and on again since
@@ -541,8 +548,8 @@ export type RunnerHost = {
   /** Mention turns working when the page went away, as saved. */
   interrupted: {
     read(): Interrupted;
-    /** Saves the agent's turns. Throws when storage refuses it. */
-    write(key: AgentKey, turns: Readonly<Record<string, string>>): void;
+    /** Saves the agent's turns. Rejects when storage refuses it. */
+    write(key: AgentKey, turns: InterruptedTurns): Promise<void>;
     /** This copy began or stopped holding an agent with saved turns. */
     changed(): void;
   };
@@ -590,6 +597,18 @@ export type RunnerHost = {
       }>
     | undefined
   >;
+  routeConversation?(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Extract<Trigger, { type: "mention" | "plugin" | "attention" }>,
+    placement: Readonly<{
+      source: AgentSessionSource;
+      conversation: AgentSessionSource;
+    }>,
+    signal: AbortSignal,
+    nativePlacement?: true,
+    pinNativePlacement?: () => Promise<void> | undefined,
+  ): ReturnType<NonNullable<import("./service").Delivery["routeConversation"]>>;
   protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
@@ -618,6 +637,7 @@ export type RunnerHost = {
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** Whether the agent's threads in the channel have sessions of their own. */
   threadsApart?(agent: Agent, channelId: string): boolean | undefined;
+  isTaskThread?(agent: Agent, channelId: string, root: string): boolean;
   /** The instructions plugins give the agent's turns now. */
   instructions?(
     agent: Agent,
@@ -816,7 +836,7 @@ export class AgentRunners {
   /** The mentions the app left `key` working on, each with its channel or
    * "" without one. */
   interruptedTurns(key: AgentKey): Readonly<Record<string, string>> {
-    return this.left[key] ?? {};
+    return interruptedChannels(this.left[key]);
   }
   /** Gives each of `keys` again the turns it was left working on, once
    * its community is connected. */
@@ -826,7 +846,7 @@ export class AgentRunners {
       const agent = this.host.agent(key);
       const turns = this.left[key];
       if (agent && turns && this.runners.get(key)?.type?.resumes)
-        this.host.resumeFollowUps?.(agent, turns);
+        this.host.resumeFollowUps?.(agent, interruptedChannels(turns));
     }
     for (const runner of this.runners.values()) this.resumeTurns(runner);
   }
@@ -836,7 +856,8 @@ export class AgentRunners {
       const { [key]: turns, ...rest } = this.left;
       if (!turns || !this.runs(key)) continue;
       const agent = this.host.agent(key);
-      if (agent) this.host.abandonFollowUps?.(agent, turns);
+      if (agent)
+        this.host.abandonFollowUps?.(agent, interruptedChannels(turns));
       this.unmark(key, Object.keys(turns));
       this.left = rest;
     }
@@ -1846,12 +1867,13 @@ export class AgentRunners {
       return;
     const { [runner.key]: _, ...rest } = this.left;
     this.left = rest;
-    const ids = Object.keys(left);
+    const channels = interruptedChannels(left);
+    const ids = Object.keys(channels);
     if (!runner.type.resumes) {
-      this.host.abandonFollowUps?.(agent, left);
+      this.host.abandonFollowUps?.(agent, channels);
       return this.unmark(runner.key, ids);
     }
-    this.host.resumeFollowUps?.(agent, left);
+    this.host.resumeFollowUps?.(agent, channels);
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     void community.session
       .readRemote([{ ids, limit: ids.length }], {
@@ -1869,18 +1891,21 @@ export class AgentRunners {
               (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
           );
           for (const event of proven) {
-            const channel = left[event.id];
+            const channel = channels[event.id];
             if (channel === undefined) continue;
             if (!this.hasSeen(runner, event.id, channelOf(event)))
               this.markSeen(runner, event.id, channelOf(event));
             const queued = this.enqueue(runner, {
               trigger: { type: "mention", event, resumed: true },
               ...(channel ? { channelId: channel } : {}),
+              ...(typeof left[event.id] === "string"
+                ? { nativePlacement: true }
+                : {}),
             });
             if (queued) kept.add(event.id);
           }
           const forgotten = Object.fromEntries(
-            Object.entries(left).filter(([id]) => !kept.has(id)),
+            Object.entries(channels).filter(([id]) => !kept.has(id)),
           );
           this.host.abandonFollowUps?.(agent, forgotten);
           this.unmark(runner.key, Object.keys(forgotten));
@@ -1895,11 +1920,10 @@ export class AgentRunners {
         },
       );
   }
-  /** Saves the mention `id` as working, in `channel` or "" without one. */
-  private mark(key: AgentKey, id: string, channel: string) {
-    this.saveTurns(key, {
+  private mark(key: AgentKey, id: string, entry: InterruptedTurns[string]) {
+    return this.saveTurns(key, {
       ...this.turns,
-      [key]: { ...this.turns[key], [id]: channel },
+      [key]: { ...this.turns[key], [id]: entry },
     });
   }
   private unmark(key: AgentKey, ids: readonly string[]) {
@@ -1915,11 +1939,11 @@ export class AgentRunners {
   /** Saves `key`'s turns only: another program may run the others. */
   private saveTurns(key: AgentKey, turns: Interrupted) {
     this.turns = turns;
-    try {
-      this.host.interrupted.write(key, turns[key] ?? {});
-    } catch (error) {
-      console.warn("Agent turns in progress were not saved", error);
-    }
+    const saved = this.host.interrupted.write(key, turns[key] ?? {});
+    void saved.catch((error) =>
+      console.warn("Agent turns in progress were not saved", error),
+    );
+    return saved;
   }
   /** Reads each stream's missed events through `upper`, or its own `upper`
    * when that is a function, a window at a time,
@@ -2968,6 +2992,7 @@ export class AgentRunners {
                   ? { type: "mention", event: trigger.event }
                   : trigger,
               ...(job.channelId ? { channelId: job.channelId } : {}),
+              ...(job.nativePlacement ? { nativePlacement: true } : {}),
             })
         : undefined,
       trigger.type === "mention"
@@ -3210,6 +3235,29 @@ export class AgentRunners {
     };
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
+      if (
+        trigger.type === "mention" &&
+        !(type.invocationRouting && this.host.routeConversation)
+      ) {
+        const { event } = trigger;
+        const thread = threadReference(event);
+        const channelId =
+          job.channelId ?? event.tags.find(([tag]) => tag === "h")?.[1];
+        if (
+          thread &&
+          channelId &&
+          hasInvocationIntent({
+            agent: agent.key,
+            owner: agent.owner,
+            invocationId: event.id,
+            event,
+            source: { channelId, root: thread.rootId },
+          })
+        )
+          throw new Error(
+            "Invocation routing is unavailable for this agent. Restore it and retry.",
+          );
+      }
       // Before any type code (its models included) runs for this turn.
       const routing = await this.gatewayRouting(
         agent,
@@ -3246,8 +3294,40 @@ export class AgentRunners {
           : undefined;
       };
       signal.throwIfAborted();
+      const routingTrigger = addressed(job.trigger) ? job.trigger : anchor;
+      const routeConversation = this.host.routeConversation;
       const delivery = Object.freeze({
         trigger: job.trigger,
+        ...(routingTrigger && routeConversation
+          ? {
+              routeConversation: async (
+                placement: Parameters<
+                  NonNullable<import("./service").Delivery["routeConversation"]>
+                >[0],
+                admissionSignal = signal,
+              ) => {
+                const route = await routeConversation(
+                  agent,
+                  type,
+                  routingTrigger,
+                  placement,
+                  admissionSignal,
+                  job.nativePlacement,
+                  routingTrigger.type === "mention"
+                    ? working.pinNativePlacement
+                    : undefined,
+                );
+                if (!route && routingTrigger.type === "mention") {
+                  admissionSignal.throwIfAborted();
+                  // Ordinary turns keep the best-effort recovery write. A
+                  // matching router awaits the pin when it chooses native.
+                  void working.pinNativePlacement();
+                  job.nativePlacement = true;
+                }
+                return route;
+              },
+            }
+          : {}),
         ...(type.sessionAdmission ? { prepareSession } : {}),
         ...(job.channelId ? { channelId: job.channelId } : {}),
         ...routing,
@@ -3620,6 +3700,10 @@ export class AgentRunners {
             lifetime.throwIfAborted();
             return this.host.threadsApart?.(agent, channelId);
           },
+          isTaskThread: (channelId: string, root: string) => {
+            lifetime.throwIfAborted();
+            return this.host.isTaskThread?.(agent, channelId, root) ?? false;
+          },
           // The control outlives this call, so each of its calls checks the
           // run's lifetime, and set again once it has read the agents.
           bestie: () => {
@@ -3728,7 +3812,7 @@ export class AgentRunners {
    * activity stays on this device. */
   private working(
     runner: Runner,
-    { trigger, channelId, work }: Job,
+    { trigger, channelId, nativePlacement, work }: Job,
     agent: Agent,
   ) {
     work?.started();
@@ -3750,7 +3834,15 @@ export class AgentRunners {
       trigger.type === "mention" && runner.type?.resumes
         ? trigger.event.id
         : undefined;
-    if (resumable) this.mark(runner.key, resumable, channel ?? "");
+    if (resumable)
+      this.mark(
+        runner.key,
+        resumable,
+        nativePlacement
+          ? (channel ?? "")
+          : { channel: channel ?? "", placement: "pending" },
+      );
+    let savedNative: Promise<void> | undefined;
     let typing: (() => void) | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
@@ -3824,6 +3916,11 @@ export class AgentRunners {
       }
     };
     return {
+      pinNativePlacement: () => {
+        if (holds <= 0 || !resumable || nativePlacement) return;
+        savedNative ??= this.mark(runner.key, resumable, channel ?? "");
+        return savedNative;
+      },
       ok: () => outcome.ok && !outcome.stopped,
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,

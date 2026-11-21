@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createMediaPreparation } from "../../../features/relay/media";
 import { Avatar } from "./Avatar";
+import { retryFailedImages } from "../useReadyImage";
 
 afterEach(() => {
   cleanup();
@@ -249,4 +250,58 @@ it("retries a failed source behind the fallback until it or another mount loads"
   reply.unmount();
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("requests a failed source again when asked after its timed retries are spent", () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const src = "https://example.test/offline.png";
+  const view = render(<Avatar src={src} alt="Offline" fallback="O" />);
+  const artwork = () => view.container.querySelector("img");
+  for (const delay of [2_000, 10_000, 30_000, 0]) {
+    const image = artwork();
+    if (!image) throw new Error("Expected avatar artwork");
+    fireEvent.error(image);
+    act(() => vi.advanceTimersByTime(delay));
+  }
+  expect(artwork()).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+  act(() => retryFailedImages());
+  const retried = artwork();
+  if (!retried) throw new Error("Expected retried artwork");
+  expect(retried).toHaveAttribute("src", src);
+  fireEvent.load(retried);
+  expect(retried).toHaveAttribute("data-loaded", "true");
+  view.unmount();
+});
+
+it("requests a source once more when it fails after a recovery that found it still loading", () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const src = "https://example.test/pending.png";
+  const view = render(<Avatar src={src} alt="Pending" fallback="P" />);
+  const artwork = () => view.container.querySelector("img");
+  for (const delay of [2_000, 10_000, 30_000]) {
+    const image = artwork();
+    if (!image) throw new Error("Expected avatar artwork");
+    fireEvent.error(image);
+    act(() => vi.advanceTimersByTime(delay));
+  }
+  const pending = artwork();
+  if (!pending) throw new Error("Expected the last timed request");
+  act(() => retryFailedImages());
+  fireEvent.error(pending);
+  act(() => vi.advanceTimersByTime(0));
+  const recovered = artwork();
+  if (!recovered) throw new Error("Expected a request after the recovery");
+  fireEvent.load(recovered);
+  expect(recovered).toHaveAttribute("data-loaded", "true");
+  fireEvent.error(recovered);
+  expect(artwork()).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+  view.unmount();
 });

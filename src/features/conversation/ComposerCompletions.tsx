@@ -1,3 +1,4 @@
+import { withHumanMentionSelection } from "../messages/mention-draft";
 import {
   readComposerSnapshot,
   composerMarkdownContext,
@@ -407,7 +408,7 @@ function OwnedCompletion({
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
-  function accept(index: number, key = "click") {
+  function accept(index: number, event: Event, key = "click") {
     const published = latest.current;
     if (!active() || !published) return false;
     if (index === items.length && result?.retry) {
@@ -421,11 +422,8 @@ function OwnedCompletion({
     const id = terminates(key) ? published.spaceId : items[index]?.id;
     const item = published.items.find((item) => item.id === id);
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
-    const accepted = current.current.replace(
-      item.edit,
-      query,
-      observation,
-      key,
+    const accepted = withHumanMentionSelection(event, () =>
+      current.current.replace(item.edit, query, observation, key),
     );
     if (accepted) current.current.editor.invalidate();
     return accepted;
@@ -489,7 +487,7 @@ function OwnedCompletion({
         (!result?.spaceId || result.spaceId === published.spaceId)
       ) {
         // Selected by ID, so no displayed row is needed.
-        if (accept(-1, event.key)) {
+        if (accept(-1, event.nativeEvent, event.key)) {
           event.preventDefault();
           event.stopPropagation();
           return true;
@@ -501,15 +499,18 @@ function OwnedCompletion({
       // This includes a display whose exact match the publication withdrew
       // as undecided: no other recipient overrules what the user saw, the
       // decision is deferred to the resolver under the full rule.
+      const spacePending = published?.spacePending;
       if (
         terminates(event.key) &&
-        published?.spacePending &&
-        !published.spaceId &&
-        current.current.replace(
-          { pending: published.spacePending },
-          query,
-          observation,
-          event.key,
+        spacePending &&
+        !published?.spaceId &&
+        withHumanMentionSelection(event.nativeEvent, () =>
+          current.current.replace(
+            { pending: spacePending },
+            query,
+            observation,
+            event.key,
+          ),
         )
       ) {
         event.preventDefault();
@@ -530,7 +531,7 @@ function OwnedCompletion({
       if ((event.key === "Enter" || event.key === "Tab") && count) {
         event.preventDefault();
         event.stopPropagation();
-        accept(selectedIndex, event.key);
+        accept(selectedIndex, event.nativeEvent, event.key);
         return true;
       }
       return false;
@@ -627,7 +628,7 @@ function OwnedCompletion({
                         }
                       : undefined
                   }
-                  onClick={() => accept(i)}
+                  onClick={(event) => accept(i, event.nativeEvent)}
                   className={styles.option}
                 >
                   {item.preview && (
@@ -697,7 +698,7 @@ function OwnedCompletion({
                         }
                       : undefined
                   }
-                  onClick={() => accept(items.length)}
+                  onClick={(event) => accept(items.length, event.nativeEvent)}
                 >
                   Retry suggestions
                 </div>

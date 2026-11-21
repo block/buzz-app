@@ -3014,13 +3014,6 @@
     padding: var(--space-3) var(--space-4);
     gap: var(--space-4);
   }
-  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > span {
-    flex: 1;
-    min-width: 0;
-  }
-  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
-    flex-shrink: 0;
-  }
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
@@ -3056,34 +3049,143 @@
     border-block-start: 1px solid var(--border-standard);
     padding: var(--space-4);
   }
-  .buzz-accordion[data-variant="settings"] .buzz-accordion-panel {
-    padding: 0;
-    height: var(--accordion-panel-height);
-    overflow: clip;
-    transition: height var(--duration-settle) var(--easing-settle);
-  }
-  .buzz-accordion[data-variant="settings"]
-    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
-    height: 0;
-  }
-  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
-    transition: transform var(--duration-settle) var(--easing-settle);
-  }
-  html[data-keyboard-navigation]
-    .buzz-accordion[data-variant="settings"]
-    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
-    transition: none;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .buzz-accordion[data-variant="settings"]
-      :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
-      transition: none;
+  .buzz-accordion:is([data-variant="settings"], [data-variant="popout"])
+    > :where(.buzz-accordion-item) {
+    > :where(.buzz-accordion-heading) > .buzz-accordion-trigger {
+      > span {
+        flex: 1;
+        min-width: 0;
+      }
+
+      > svg {
+        flex-shrink: 0;
+        transition: transform var(--duration-settle) var(--easing-settle);
+      }
+    }
+
+    > .buzz-accordion-panel {
+      padding: 0;
+      height: var(--accordion-panel-height);
+      overflow: clip;
+      transition: height var(--duration-settle) var(--easing-settle);
+    }
+
+    > .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+      height: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      > .buzz-accordion-panel,
+      > :where(.buzz-accordion-heading) > .buzz-accordion-trigger > svg {
+        transition: none;
+      }
     }
   }
   .buzz-accordion[data-variant="settings"],
   .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
+  }
+  .buzz-accordion[data-variant="popout"] {
+    --accordion-row-inset: var(--space-4);
+    overflow-wrap: anywhere;
+    margin: 0;
+    padding-inline: var(--space-4);
+    --accordion-row-gutter: min(var(--accordion-row-inset), var(--space-half));
+    --accordion-popout-outset: calc(
+      var(--accordion-row-gutter) +
+      var(--space-4)
+    );
+    --accordion-row-padding: calc(
+      var(--accordion-row-inset) -
+      var(--accordion-row-gutter)
+    );
+
+    > .buzz-accordion-item {
+      position: relative;
+      isolation: isolate;
+      margin-inline: var(--accordion-row-gutter);
+      padding-block: var(--accordion-row-gutter);
+    }
+
+    > .buzz-accordion-item + .buzz-accordion-item {
+      border-block-start: 1px solid transparent;
+
+      &::after {
+        content: "";
+        position: absolute;
+        inset-block-start: -1px;
+        inset-inline: var(--accordion-row-padding);
+        border-block-start: 1px solid var(--border-standard);
+        pointer-events: none;
+      }
+    }
+
+    /* A card supplies its own border along adjoining disclosure rows. */
+    > .buzz-accordion-item[data-open]::after,
+    > .buzz-accordion-item[data-open] + .buzz-accordion-item::after {
+      content: none;
+    }
+
+    > .buzz-accordion-item::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      border: 1px solid var(--border-standard);
+      border-radius: var(--radius-container);
+      background: var(--affordance-subtle-hover);
+      box-shadow: var(--shadow-sm);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    > .buzz-accordion-item[data-open]::before {
+      inset-inline: calc(0px - var(--accordion-popout-outset));
+      opacity: 1;
+    }
+
+    > :where(.buzz-accordion-item) > :where(.buzz-accordion-panel) {
+      /* The body uses the card width, including during its height transition. */
+      margin-inline: calc(0px - var(--accordion-popout-outset));
+
+      > .buzz-accordion-content,
+      > div > .buzz-accordion-content {
+        padding-inline: max(var(--accordion-row-padding), var(--space-2));
+        padding-block-end: var(--space-4);
+      }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      :where(html:not([data-keyboard-input], [data-keyboard-navigation]))
+        &
+        > .buzz-accordion-item::before {
+        transition:
+          inset-inline var(--duration-settle) var(--easing-settle),
+          opacity var(--duration-settle) var(--easing-settle);
+      }
+    }
+  }
+  .buzz-accordion[data-variant="popout"]
+    > :where(.buzz-accordion-item)
+    > :where(.buzz-accordion-heading)
+    > .buzz-accordion-trigger {
+    padding: var(--space-3) var(--accordion-row-padding);
+    gap: var(--space-4);
+    border-radius: var(--radius-row);
+
+    &:focus-visible {
+      outline-color: var(--border-focus);
+      outline-offset: -2px;
+    }
+
+    :where(html:not([data-keyboard-navigation])) &:focus-visible {
+      outline: none;
+    }
+
+    &[aria-expanded="true"]:hover {
+      background: transparent;
+    }
   }
   .buzz-accordion[data-variant="navigation"] .buzz-accordion-trigger {
     padding: var(--space-1) var(--space-2);
@@ -3107,6 +3209,22 @@
   }
   .buzz-accordion[data-variant="section"] .buzz-accordion-panel {
     padding: var(--space-4) 0 0;
+  }
+  :is(
+      html[data-keyboard-navigation] .buzz-accordion[data-variant="settings"],
+      html[data-keyboard-input] .buzz-accordion[data-variant="popout"]
+    )
+    > :where(.buzz-accordion-item)
+    > .buzz-accordion-panel,
+  :is(
+      html[data-keyboard-navigation] .buzz-accordion[data-variant="settings"],
+      html[data-keyboard-input] .buzz-accordion[data-variant="popout"]
+    )
+    > :where(.buzz-accordion-item)
+    > :where(.buzz-accordion-heading)
+    > .buzz-accordion-trigger
+    > svg {
+    transition: none;
   }
 }
 

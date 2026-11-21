@@ -2923,6 +2923,38 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+
+`session.ownerMentions` is an optional, read-only capability. On a host with
+`version === 1`, call `latest({ channelId, rootId })` to read the latest confirmed
+explicit mention in that source. Use `null` for the channel level, a message ID
+for the thread it starts, or the reply target ID for an ordinary nested branch.
+For sends from an invocation composer, use the invocation anchor ID, including
+when the composer replies to a message inside it. Those sends update only that
+invocation. A top-level message also starts its own thread.
+The result has `eventId`, `createdAtMs`, and `recipientIds` in editor order.
+Pass up to 128 eligible recipient IDs as the second argument to find the
+latest retained mention of any of them. This also limits the returned
+`recipientIds` to that set.
+Subscribe once with `subscribe(listener)` and reread `latest` before using a
+result from asynchronous work. Bind to the current session on reconnect.
+
+Call `confirmedOwnerSends({ channelId, rootId }, eventIds)` with up to 128
+candidate message IDs from the same conversation. It returns confirmed human
+owner IDs in input order, including messages without explicit mentions. The
+host retains up to 4,096 confirmed IDs per viewer and community. An empty result
+means there is no positive proof for the candidates.
+
+The host records evidence from a human Send through its built-in channel and
+thread composers, media review replies, new direct messages and Solo chats,
+and main-window Huddle composer. It exposes the evidence after relay
+acknowledgement or verified history readback. The detached Huddle composer
+uses a send proxy, so its sends have unknown provenance, as do older messages
+and raw writes. Automatic recipients leave the last explicit mention in place.
+The bounded index is local to the running app and its viewer and community.
+It survives a transient reconnect and session replacement. A community access
+refusal clears the retained evidence. `null` means evidence or access is
+unavailable. This reader performs no relay queries and returns no message text.
+
 For kind 30177 publication, follow the
 [managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 

@@ -103,8 +103,7 @@ function draftEntry(
   if (changed) activity[key] = [fingerprint, nowSeconds];
   const entry: DraftEntry = {
     id: key,
-    channelId: where.channelId,
-    ...(where.threadRootId ? { threadRootId: where.threadRootId } : {}),
+    ...where,
     text:
       text ||
       (count

@@ -112,7 +112,11 @@ import {
 } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
 import { fileStore, loadAgentStorage, type AgentStore } from "./state";
-import { readInterrupted, writeInterrupted } from "./interrupted";
+import {
+  INTERRUPTED_PREFIX,
+  readInterrupted,
+  writeInterrupted,
+} from "./interrupted";
 import { saveOwnerSections } from "./prompt-sections";
 import { startingFolder } from "./conversation-folders";
 import { memoryStorage } from "./test-fakes";
@@ -10679,18 +10683,26 @@ describe("a turn closing or reloading the app stopped", () => {
     for (const key of from.keys()) next.setItem(key, from.get(key) ?? "");
     return next;
   };
+  const placementFor = (asked: RelayEvent) => {
+    const source = { channelId: channel, root: asked.id };
+    return { source, conversation: source };
+  };
   /** An app that stopped while Echo worked on `asked`, as it left storage. */
-  const stopped = async (asked: RelayEvent) => {
+  const stopped = async (asked: RelayEvent, beforeRouting = false) => {
     const first = await setup({ identities: [echo], resumes: true });
-    first.run.mockImplementationOnce(({ workingUntil }) =>
-      workingUntil(working()),
+    first.run.mockImplementationOnce(
+      async ({ routeConversation, workingUntil }) => {
+        if (!beforeRouting) await routeConversation?.(placementFor(asked));
+        workingUntil(working());
+      },
     );
     first.emit({ events: [asked], channelId: channel });
     await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
     await settle();
-    expect(readInterrupted(first.storage)).toEqual({
-      [bot]: { [asked.id]: channel },
-    });
+    if (!beforeRouting)
+      expect(readInterrupted(first.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
     first.connect(false);
     return reopen(first.storage);
   };
@@ -10740,6 +10752,112 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(third.run).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "requires a durable native fallback only when a routing plugin matches (%s)",
+    async (matches) => {
+      const asked = mention();
+      const store = memoryStorage();
+      const app = await setup({
+        storage: {
+          ...store,
+          async set(key, value) {
+            if (key.startsWith(INTERRUPTED_PREFIX))
+              throw new Error("Disk full");
+            await store.set(key, value);
+          },
+        },
+        identities: [echo],
+        resumes: true,
+      });
+      if (matches)
+        await app.ctx
+          .extend({ pluginOwner: { id: "tasks", revision: "one" } })
+          .plugin((plugin) => {
+            plugin.agents.registerSessionRouter({
+              id: "tasks",
+              ready: async () => {},
+              matches: () => true,
+              route: async () => undefined,
+              prepare: async () => undefined,
+            });
+          })
+          .await();
+      const answered = vi.fn();
+      app.run.mockImplementationOnce(async ({ routeConversation }) => {
+        await routeConversation?.(placementFor(asked));
+        answered();
+      });
+
+      app.emit({ events: [asked], channelId: channel });
+      await vi.waitFor(() =>
+        expect(app.activity.reader.work()[0]?.state).toBe(
+          matches ? "error" : "done",
+        ),
+      );
+      expect(answered).toHaveBeenCalledTimes(matches ? 0 : 1);
+    },
+  );
+
+  it.each(["legacy", "native", "pending"] as const)(
+    "keeps the %s placement decision through Resume and Retry",
+    async (state) => {
+      const asked = mention();
+      const storage =
+        state === "legacy"
+          ? memoryStorage()
+          : await stopped(asked, state === "pending");
+      if (state === "legacy")
+        await writeInterrupted(storage, bot, { [asked.id]: channel });
+      const app = await setup({
+        storage,
+        identities: [echo],
+        resumes: true,
+        history: [asked],
+      });
+      const task = { root: asked.id, parent: "d".repeat(64) };
+      await app.ctx
+        .extend({ pluginOwner: { id: "tasks", revision: "one" } })
+        .plugin((plugin) => {
+          plugin.agents.registerSessionRouter({
+            id: "tasks",
+            ready: async () => {},
+            matches: () => true,
+            route: async () => task,
+            prepare: async () => undefined,
+          });
+        })
+        .await();
+      const placements: Array<typeof task | undefined> = [];
+      const route = async ({ routeConversation }: Delivery) => {
+        placements.push(await routeConversation?.(placementFor(asked)));
+      };
+      app.run.mockImplementationOnce(async (delivery) => {
+        await route(delivery);
+        throw new Error("Provider unavailable");
+      });
+      app.run.mockImplementationOnce(route);
+
+      await vi.waitFor(() =>
+        expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]),
+      );
+      app.service.resumeInterrupted();
+      await vi.waitFor(() =>
+        expect(app.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          retryable: true,
+        }),
+      );
+      const expected = state === "pending" ? task : undefined;
+      expect(placements).toEqual([expected]);
+      app.activity.reader.retry?.(app.activity.reader.work()[0] as LocalWork);
+      await vi.waitFor(() =>
+        expect(app.activity.reader.work()[0]?.state).toBe("done"),
+      );
+      expect(placements).toEqual([expected, expected]);
+      expect(readInterrupted(storage)).toEqual({});
+    },
+  );
 
   it("previews its saved turns with Resume's fresh read, changing nothing", async () => {
     const asked = mention();
@@ -10982,7 +11100,7 @@ describe("a turn closing or reloading the app stopped", () => {
     finish();
     await settle();
     expect(readInterrupted(storage)).toEqual({
-      [sibling]: { [asked.id]: channel },
+      [sibling]: { [asked.id]: { channel, placement: "pending" } },
     });
   });
 
@@ -15493,6 +15611,76 @@ it("shows a request whose run failed before handing anything over as failed, wit
   }
 });
 
+it("keeps signed task requests retryable without starting an incompatible adapter", async () => {
+  const owner = keypair();
+  const f = await setup({
+    resumes: true,
+    identities: [{ ...echo, owner: owner.pubkey }],
+  });
+  const snapshot = f.communities.snapshot.bind(f.communities);
+  vi.spyOn(f.communities, "snapshot").mockImplementation(() => ({
+    ...snapshot(),
+    viewer: owner.pubkey,
+  }));
+  f.signIn(owner.pubkey);
+  f.confirm(channel, [owner.pubkey, bot]);
+  await vi.waitFor(() =>
+    expect(f.service.snapshot().running.map((agent) => agent.pubkey)).toContain(
+      bot,
+    ),
+  );
+  const root = message(owner, channel, "Discussion", nowSeconds());
+  const request = eventDto(
+    message(owner, channel, "Take this task", root.created_at + 1, [
+      ["e", root.id, "", "reply"],
+      ["p", bot],
+      ["buzz:invocation-intent", "1", bot],
+    ]),
+  );
+  try {
+    f.emit({ events: [request], channelId: channel });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        messageId: request.id,
+        state: "error",
+        retryable: true,
+        error: expect.stringContaining("Invocation routing is unavailable"),
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+    const failed = f.activity.reader.work()[0];
+    if (!failed) throw new Error("Missing task failure");
+    f.activity.reader.retry?.(failed);
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      messageId: request.id,
+      state: "waiting",
+    });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        messageId: request.id,
+        state: "error",
+        retryable: true,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+
+    const ordinary = eventDto(
+      message(owner, channel, "Ordinary mention", root.created_at + 2, [
+        ["e", root.id, "", "reply"],
+        ["p", bot],
+      ]),
+    );
+    f.emit({ events: [ordinary], channelId: channel });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "mention",
+      event: { id: ordinary.id },
+    });
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("retries a failed request as the same mention, which stays seen and is saved as working only while it runs", async () => {
   const f = await setup({ resumes: true });
   await f.service.create({ type: "example/echo", name: "Echo" });
@@ -15504,13 +15692,15 @@ it("retries a failed request as the same mention, which stays seen and is saved 
   });
   let finish!: () => void;
   f.run.mockRejectedValueOnce(new Error("Provider unavailable"));
-  f.run.mockImplementationOnce(({ workingUntil }) =>
+  f.run.mockImplementationOnce(async ({ routeConversation, workingUntil }) => {
+    const source = { channelId: channel, root: asked.id };
+    await routeConversation?.({ source, conversation: source });
     workingUntil(
       new Promise<void>((resolve) => {
         finish = resolve;
       }),
-    ),
-  );
+    );
+  });
   f.emit({ events: [asked], channelId: channel });
   try {
     await vi.waitFor(() =>

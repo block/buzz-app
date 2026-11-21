@@ -1,3 +1,5 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
+import { sendWithOwnerMentions } from "../relay/owner-mentions";
 import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
@@ -377,6 +379,7 @@ export function SoloDraft({
     picks?: MentionPicks,
     draftPicks?: DraftPicks,
     draftPicksRevision?: string | null,
+    explicitRecipientIds?: readonly string[],
     assigned?: readonly string[],
   ) {
     const text = composerMarkdown(draft);
@@ -611,23 +614,30 @@ export function SoloDraft({
           ),
         ];
         signMessageTokens(draftTokens(draft), () =>
-          firstReferences.length || Object.keys(firstPicks).length || assignment
-            ? session.messages.send(
-                channelId,
-                text,
-                firstRecipients,
-                uploaded,
-                undefined,
-                firstReferences,
-                firstPicks,
-                ...(assignment ? [recipients] : []),
-              )
-            : session.messages.send(
-                channelId,
-                text,
-                firstRecipients,
-                ...(uploaded.length ? [uploaded] : []),
-              ),
+          sendWithOwnerMentions(
+            session,
+            explicitRecipientIds?.filter((id) => firstRecipients.includes(id)),
+            () =>
+              firstReferences.length ||
+              Object.keys(firstPicks).length ||
+              assignment
+                ? session.messages.send(
+                    channelId,
+                    text,
+                    firstRecipients,
+                    uploaded,
+                    undefined,
+                    firstReferences,
+                    firstPicks,
+                    ...(assignment ? [recipients] : []),
+                  )
+                : session.messages.send(
+                    channelId,
+                    text,
+                    firstRecipients,
+                    ...(uploaded.length ? [uploaded] : []),
+                  ),
+          ),
         );
         files.clear();
         writeView(
@@ -885,6 +895,7 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
+        evidenceOwner={hostComposerProvenance}
         key={restored.count}
         focusRequest={restored.focus ? restored.count : 0}
         chatPresentation
@@ -933,6 +944,7 @@ export function SoloDraft({
             picks,
             draftPicks,
             revision,
+            explicitRecipientIds,
             assigned,
           ) => {
             void start(
@@ -942,6 +954,7 @@ export function SoloDraft({
               picks,
               draftPicks,
               revision,
+              explicitRecipientIds,
               assigned,
             );
           },

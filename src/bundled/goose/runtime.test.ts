@@ -1,5 +1,4 @@
 import { assignConversationFolder } from "../../features/agents/conversation-folders";
-import type { AgentStore } from "../../features/agents/store";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
@@ -20,6 +19,11 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { STEER_NOTE, steerPrompt } from "../claude-code/prompt";
 import { STEER } from "../../features/agents/activity-transcript";
 import type { Agent, Delivery } from "../../features/agents/service";
+import { localStore, type AgentStore } from "../../features/agents/store";
+import {
+  STANDALONE_PREFIX,
+  standaloneSessions,
+} from "../../features/agents/standalone-sessions";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -96,6 +100,8 @@ function setup(
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
     added?: readonly AddedTool[];
+    /** Where each session's start is kept; none is saved without one. */
+    agentStore?: AgentStore;
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
@@ -250,7 +256,7 @@ function setup(
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
   /** Agent storage. */
-  const agentStore = memoryStorage();
+  const agentStore: AgentStore = options.agentStore ?? memoryStorage();
   const runtime = new GooseRuntime(
     host,
     () => relay,
@@ -1908,6 +1914,87 @@ describe("GooseRuntime", () => {
     expect(goose()?.opened[0]?._meta).toMatchObject({
       tags: { "buzz.agent": self },
     });
+  });
+
+  it("records a one-off session but not its timer while Usage is off, and removes what was kept past keeping", async () => {
+    const items = new Map<string, string>();
+    const agentStore = localStore({
+      get length() {
+        return items.size;
+      },
+      key: (index: number) => [...items.keys()][index] ?? null,
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+      clear: () => items.clear(),
+    });
+    await standaloneSessions(agentStore, "goose", self, () => 0).add(
+      "old",
+      "timer/daily",
+    );
+    const { runOnce, runtime } = setup({ agentStore });
+    await runOnce("timer/daily", "Post the daily summary.");
+    await flush(100);
+    const [start] = runtime.prompts(self).sessions();
+    expect(start).toBeDefined();
+    // Its id and start are kept, as for any one-off turn, but not its key.
+    expect(
+      [...items.keys()]
+        .filter((key) => key.startsWith(STANDALONE_PREFIX))
+        .flatMap((key) => JSON.parse(items.get(key) ?? "").sessions),
+    ).toEqual([[start?.id, expect.any(Number)]]);
+    const usage = {
+      id: start?.id ?? "",
+      revision: "r",
+      gaps: [],
+      startedAt: 1,
+      lastAt: 2,
+      observations: [],
+    };
+    await expect(runtime.withWakes(self, [usage])).resolves.toEqual([usage]);
+  });
+
+  it("tells which timer a one-off session was started for, and no conversation's", async () => {
+    const items = new Map<string, string>();
+    const { runOnce, deliver, runtime } = setup({
+      agentStore: localStore({
+        get length() {
+          return items.size;
+        },
+        key: (index: number) => [...items.keys()][index] ?? null,
+        getItem: (key: string) => items.get(key) ?? null,
+        setItem: (key: string, value: string) => void items.set(key, value),
+        removeItem: (key: string) => void items.delete(key),
+        clear: () => items.clear(),
+      }),
+    });
+    runtime.usageOn = () => true;
+    await runOnce("timer/daily", "Post the daily summary.");
+    await deliver(message("1", "@Gander hello"));
+    await flush(100);
+    const starts = runtime.prompts(self).sessions();
+    expect(starts).toHaveLength(2);
+    const usage = (id: string) => ({
+      id,
+      revision: id,
+      gaps: [],
+      startedAt: 1,
+      lastAt: 2,
+      observations: [],
+    });
+    await expect(
+      runtime.withWakes(
+        self,
+        starts.map(({ id }) => usage(id)),
+      ),
+    ).resolves.toEqual([
+      {
+        ...usage(starts[0]?.id ?? ""),
+        wake: "timer/daily",
+        revision: expect.any(String),
+      },
+      usage(starts[1]?.id ?? ""),
+    ]);
   });
 
   it("switches a saved provider in the live session without restarting goose", async () => {
@@ -4325,6 +4412,60 @@ describe("goose turns through the agent gateway", () => {
       signal: new AbortController().signal,
       prompt: async () => "Check in",
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+
+  /** A forwarded standalone turn of an agent whose one-off sessions are
+   * recorded in `items`, run to its end. */
+  const recorded = async (usage: boolean) => {
+    const items = new Map<string, string>();
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      agentStore: localStore({
+        get length() {
+          return items.size;
+        },
+        key: (index: number) => [...items.keys()][index] ?? null,
+        getItem: (key: string) => items.get(key) ?? null,
+        setItem: (key: string, value: string) => void items.set(key, value),
+        removeItem: (key: string) => void items.delete(key),
+        clear: () => items.clear(),
+      }),
+    });
+    f.runtime.usageOn = () => usage;
+    try {
+      const turn = standalone(f);
+      await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+      f.fake.geese[0]?.turns[0]?.finish();
+      f.fake.geese[0]?.exit(null);
+      await turn;
+      const kept = [...items.keys()]
+        .filter((key) => key.startsWith(STANDALONE_PREFIX))
+        .flatMap((key) => JSON.parse(items.get(key) ?? "").sessions);
+      const session = {
+        id: "session-1",
+        revision: "r",
+        gaps: [],
+        startedAt: 1,
+        lastAt: 2,
+        observations: [],
+      };
+      return { kept, wakes: await f.runtime.withWakes(self, [session]) };
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+
+  it("tells which timer a forwarded standalone session was started for", async () => {
+    const { kept, wakes } = await recorded(true);
+    expect(kept).toEqual([["session-1", expect.any(Number), "Timer"]]);
+    expect(wakes).toMatchObject([{ id: "session-1", wake: "Timer" }]);
+  });
+
+  it("records a forwarded standalone session but not its timer while Usage is off", async () => {
+    const { kept, wakes } = await recorded(false);
+    expect(kept).toEqual([["session-1", expect.any(Number)]]);
+    expect(wakes[0]).not.toHaveProperty("wake");
+  });
 
   it("refuses a forwarded standalone wake in community scope before starting Goose", async () => {
     const g = gateway();

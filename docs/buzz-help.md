@@ -647,6 +647,12 @@ Quitting Buzz also turns it off.
   does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
+- **Skill chips.** In the desktop app, when a message addresses one of your own
+  local agents whose harness declares skill folders, type **/** and part of a
+  skill name in the composer to list matching skills from those folders on this
+  device. Choosing one adds a skill chip targeted at that agent; if a message
+  addresses more than one agent, the picker asks you to mention one agent first.
+  A query that matches no skill stays plain text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by

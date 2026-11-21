@@ -3511,10 +3511,13 @@ export class AgentsService extends Service implements Agents {
       !(
         Array.isArray(folders) &&
         folders.length <= 8 &&
-        folders.every((folder) => typeof folder === "string")
+        Array.from(folders).every((folder) => typeof folder === "string")
       )
     )
       throw new Error("Agent type skillFolders must be up to 8 folders");
+    const skillFolders = folders
+      ? Object.freeze(folders.map((folder) => folder.trim()).filter(Boolean))
+      : undefined;
     const { remote } = type;
     if (
       remote &&
@@ -3533,7 +3536,7 @@ export class AgentsService extends Service implements Agents {
     const pluginId = this.ctx.pluginOwner?.id;
     this.contributions.register(this.ctx, {
       ...type,
-      ...(folders && { skillFolders: Object.freeze([...folders]) }),
+      ...(skillFolders && { skillFolders }),
       ...(models && {
         models: async (agent: Agent<Config>) => {
           await this.checkExecution(agent.key, agent.type);

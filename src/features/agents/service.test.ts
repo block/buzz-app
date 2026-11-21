@@ -8467,6 +8467,38 @@ it("keeps the skill folders an agent type registered when the caller changes its
   ).toEqual(["~/.skills/a"]);
 });
 
+it("drops blank skill folder entries on registration and refuses sparse lists", async () => {
+  const { plugin, service } = await setup();
+  const type = {
+    id: "skills",
+    title: "Skills",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  };
+  const sparse = new Array<string>(2);
+  sparse[0] = "~/.skills/a";
+  expect(() =>
+    plugin.agents.register({ ...type, skillFolders: sparse }),
+  ).toThrow("skillFolders");
+  plugin.agents.register({
+    ...type,
+    skillFolders: [" ~/.skills/a ", "", "   ", "~/.skills/b"],
+  });
+  expect(
+    service.types().find((entry) => entry.key === "example/skills")
+      ?.skillFolders,
+  ).toEqual(["~/.skills/a", "~/.skills/b"]);
+  plugin.agents.register({
+    ...type,
+    id: "blank-skills",
+    skillFolders: [" ", ""],
+  });
+  expect(
+    service.types().find((entry) => entry.key === "example/blank-skills")
+      ?.skillFolders,
+  ).toEqual([]);
+});
+
 it("returns the created agent after the community changes mid-create", async () => {
   const { service, native, connect } = await setup();
   const create = native.create.getMockImplementation();

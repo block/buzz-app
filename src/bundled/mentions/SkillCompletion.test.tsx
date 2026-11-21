@@ -212,7 +212,7 @@ it("offers the one addressed local agent's skills as chips for that agent, liste
   expect(shown.last()).toBeUndefined();
 });
 
-it("offers a plugin agent's skills once its type registers", async () => {
+it("offers a plugin agent's skills once its type registers, ignoring blank folders", async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(invoke).mockReset().mockResolvedValue(rows);
   const shown = showSkills("late", [plugin], "");
@@ -222,7 +222,7 @@ it("offers a plugin agent's skills once its type registers", async () => {
     ...registered,
     {
       key: "com.example.harness/harness",
-      skillFolders: ["~/.example/skills"],
+      skillFolders: ["~/.example/skills", " ", ""],
     },
   ];
   act(() => {

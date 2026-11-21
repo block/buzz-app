@@ -63,7 +63,8 @@ export function SkillCompletion({
   const declared = agent?.type
     ? types?.find((type) => type.key === agent.type)?.skillFolders
     : undefined;
-  const folders = declared?.length ? declared : undefined;
+  const cleaned = declared?.map((folder) => folder.trim()).filter(Boolean);
+  const folders = cleaned?.length ? cleaned : undefined;
   // One `/` token in one composer, for one agent, lists the skills once.
   const skills = useHeldListing(
     JSON.stringify([

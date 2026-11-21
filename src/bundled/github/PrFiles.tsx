@@ -1,3 +1,4 @@
+import { useDiffLayout, setDiffLayout } from "./diff-layout";
 import {
   useCallback,
   useEffect,
@@ -90,7 +91,8 @@ export function PrFiles({
   const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(true);
-  const [layout, setLayout] = useState<"unified" | "split">("unified");
+  const layout = useDiffLayout();
+  const [layoutError, setLayoutError] = useState(false);
   const [available, setAvailable] = useState<ReadonlySet<string>>(new Set());
   const refreshButton = useRef<HTMLButtonElement>(null);
   const restoreFocus = (composer: Composer) => {
@@ -611,11 +613,19 @@ export function PrFiles({
               ],
             },
           ]}
-          onValueChange={(value) =>
-            setLayout(value === "split" ? "split" : "unified")
-          }
+          onValueChange={(value) => {
+            try {
+              setDiffLayout(value === "split" ? "split" : "unified");
+              setLayoutError(false);
+            } catch {
+              setLayoutError(true);
+            }
+          }}
         />
       </div>
+      {layoutError && (
+        <p role="alert">Your diff layout could not be saved. Try again.</p>
+      )}
       {status.sentUrl && (
         <p role="status">
           Comment sent.{" "}

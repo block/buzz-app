@@ -2071,7 +2071,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   it. **Changes** and **Submit review** need the desktop app with `gh` signed
   in. Diff and comments begin loading when Summary opens. The loaded Changes
   view stays mounted when switching tabs; reloading the window or turning the
-  GitHub plugin off and on clears that loaded state. Supported code files use
+  GitHub plugin off and on clears that loaded state. Your Unified/Split layout
+  persists across PRs and app restarts on this device. Supported code files use
   syntax highlighting, including Kotlin, even for small changes
   deep in large files. Oversized, unsupported or unparseable patches remain
   readable without syntax colors. Added and deleted lines use colored bars.

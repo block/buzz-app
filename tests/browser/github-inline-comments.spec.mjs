@@ -467,7 +467,7 @@ for (const layout of ["Unified", "Split"]) {
     await page.reload();
     await expect(
       page.getByRole("combobox", { name: "Diff layout" }),
-    ).toHaveText("Unified");
+    ).toHaveText(layout);
     await expect(
       page.getByText("Synthetic inline feedback", { exact: true }),
     ).toBeVisible();

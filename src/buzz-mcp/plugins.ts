@@ -66,7 +66,7 @@ export const PLUGIN_TOOLS: readonly Tool[] = [
       },
       repository: {
         ...repository,
-        description: `${repository.description} Or an absolute local folder path, which installs linked to the folder as Settings' Browse does.`,
+        description: `${repository.description} Or an absolute local folder path: nothing reads it until your owner reviews it, and it installs linked to the folder as Settings' Browse does.`,
       },
       reference,
       path: str,

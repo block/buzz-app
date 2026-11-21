@@ -61,16 +61,13 @@ function harness(
 ) {
   let shown = current;
   const checkGit = vi.fn<PluginImports["checkGit"]>(async () => checked);
-  const checkPath = vi.fn<PluginImports["checkPath"]>(
-    async () => checked && { ...checked, source: "/src/plugins", commit: null },
-  );
   const checkFolder = vi.fn<PluginImports["checkFolder"]>(async () => ({
     revision: "example.local-2",
   }));
   const change = vi.fn(async () => true);
   const requests = createPluginRequests({
     catalog: () => shown,
-    imports: { checkGit, checkPath, checkFolder } as unknown as PluginImports,
+    imports: { checkGit, checkFolder } as unknown as PluginImports,
     change,
     error: () => null,
     managed: () => managed,
@@ -79,7 +76,6 @@ function harness(
     requests,
     agent: requests.forAgent(AGENT),
     checkGit,
-    checkPath,
     checkFolder,
     change,
     show: (next: Catalog) => {
@@ -341,15 +337,26 @@ describe("install requests", () => {
     );
   });
 
-  it("queue a local folder as the native reader resolved it", async () => {
-    const { requests, agent, checkGit, checkPath } = harness();
-    await agent.request(install({ repository: "/src/plugins/" }));
-    expect(checkPath).toHaveBeenCalledWith("/src/plugins/");
+  it("queue a local folder without reading it, named by its folder", async () => {
+    const { requests, agent, checkGit, checkFolder } = harness();
+    const { pluginName } = await agent.request(
+      install({ repository: "/src/plugins/", path: undefined }),
+    );
+    // The card the agent publishes names only what the agent supplied.
+    expect(pluginName).toBe("plugin from /src/plugins/");
     expect(checkGit).not.toHaveBeenCalled();
+    expect(checkFolder).not.toHaveBeenCalled();
     expect(requests.pending()[0]).toMatchObject({
-      pluginId: "example.tasks",
-      source: { folder: "/src/plugins", path: "tasks" },
+      action: "install",
+      pluginId: "",
+      pluginName: "plugin from /src/plugins/",
+      source: { folder: "/src/plugins/", path: "" },
     });
+    await expect(
+      agent.request(install({ repository: "/src/plugins/" })),
+    ).rejects.toThrow(
+      "A request for plugin from /src/plugins/ is already pending",
+    );
   });
 
   it.each([
@@ -362,27 +369,19 @@ describe("install requests", () => {
       { repository: "/src/plugins", reference: "main" },
       "reference and commit apply only to Git repositories",
     ],
-  ])("refuse folder %o", async (extra, message) => {
-    const { requests, agent, checkPath } = harness();
+    [
+      { repository: "/src/plugins", commit: COMMIT },
+      "reference and commit apply only to Git repositories",
+    ],
+    [
+      { repository: "/src/plugins", id: "example.notes" },
+      "example.notes is already installed",
+    ],
+  ])("refuse folder %o without reading it", async (extra, message) => {
+    const { requests, agent, checkGit } = harness();
     await expect(agent.request(install(extra))).rejects.toThrow(message);
-    expect(checkPath).not.toHaveBeenCalled();
+    expect(checkGit).not.toHaveBeenCalled();
     expect(requests.pending()).toEqual([]);
-  });
-
-  it("refuse a folder without built plugins", async () => {
-    const { agent, checkPath } = harness();
-    checkPath.mockResolvedValueOnce({
-      token: "",
-      source: "/src/empty",
-      commit: null,
-      candidates: [],
-      warnings: ["Selected folder: Missing file: plugin.js"],
-    });
-    await expect(
-      agent.request(install({ repository: "/src/empty" })),
-    ).rejects.toThrow(
-      "No built plugins found. Selected folder: Missing file: plugin.js",
-    );
   });
 
   it("refuse an agent that is no longer available", async () => {

@@ -817,7 +817,6 @@ export function apply(ctx) {
       readModule: vi.fn(async () => code),
       imports: {
         folder: vi.fn(),
-        checkPath: vi.fn(),
         files: vi.fn(),
         git: vi.fn(async () => preview),
         url: vi.fn(),

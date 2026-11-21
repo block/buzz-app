@@ -32,11 +32,13 @@ export type PluginRequest = Readonly<{
   id: string;
   requester: Readonly<{ pubkey: string; name: string }>;
   action: PluginRequestAction;
+  /** Empty for a folder install until the owner's review reads the folder. */
   pluginId: string;
+  /** What the card names: the plugin, or a folder install's folder. */
   pluginName: string;
   /** What install and update review: the commit the agent saw, so the code
    * the owner confirms cannot change after the request; or a local folder,
-   * which the review reads again. */
+   * which only the owner's review reads, and which it shows as read. */
   source?:
     | Readonly<{
         repository: string;
@@ -184,28 +186,39 @@ export function createPluginRequests({
       throw new Error(`The repository is at ${commit}, not ${wanted}`);
     return { preview, commit };
   }
-  async function folder(path: string) {
+  /** Nothing reads the folder until the owner reviews it: the agent's own
+   * file access may not reach it, and the card publishes what it names. */
+  function folder(input: PluginRequestInput & { repository: string }) {
+    const { repository: path, id } = input;
     if (path.startsWith("~"))
       throw new Error("Enter an absolute folder path, without ~");
     if (/\p{Cc}/u.test(path))
       throw new Error("The folder path must not contain control characters");
-    const preview = await gitImports().checkPath(path);
-    if (!preview?.candidates.length)
-      throw new Error(
-        ["No built plugins found.", ...(preview?.warnings ?? [])].join(" "),
-      );
-    return preview;
+    if (input.reference || input.commit)
+      throw new Error("reference and commit apply only to Git repositories");
+    gitImports();
+    if (id) {
+      unmanaged(id);
+      if (plugins().some((item) => item.manifest.id === id))
+        throw new Error(`${id} is already installed`);
+    }
+    return {
+      pluginId: id ?? "",
+      pluginName: `plugin from ${path}`,
+      source: { folder: path, path: input.path ?? "" },
+    };
   }
   async function install(input: PluginRequestInput) {
     const { repository } = input;
     if (!repository) throw new Error("repository is required to install");
-    const local = LOCAL_FOLDER.test(repository);
-    if (local && (input.reference || input.commit))
-      throw new Error("reference and commit apply only to Git repositories");
+    if (LOCAL_FOLDER.test(repository)) return folder({ ...input, repository });
     const reference = input.reference ?? "";
-    const { preview, commit } = local
-      ? { preview: await folder(repository), commit: "" }
-      : await pinned(repository, reference, input.commit, input.path);
+    const { preview, commit } = await pinned(
+      repository,
+      reference,
+      input.commit,
+      input.path,
+    );
     const paths = preview.candidates.map((item) => item.path).join(", ");
     const candidate = input.path
       ? preview.candidates.find((item) => item.path === input.path)
@@ -232,10 +245,7 @@ export function createPluginRequests({
     return {
       pluginId: id,
       pluginName: name,
-      // The folder as the native reader resolved it.
-      source: local
-        ? { folder: preview.source, path: candidate.path }
-        : { repository, reference, path: candidate.path, commit },
+      source: { repository, reference, path: candidate.path, commit },
     };
   }
   async function target(input: PluginRequestInput) {
@@ -365,9 +375,12 @@ export function createPluginRequests({
         // Checked after reading the repository, which takes a while.
         if (requester.live && !requester.live())
           throw new Error("The requesting agent is no longer available");
-        if (pending.some((item) => item.pluginId === change.pluginId))
+        // A folder install is named by its folder until its review.
+        const subject = (item: { pluginId: string; pluginName: string }) =>
+          item.pluginId || item.pluginName;
+        if (pending.some((item) => subject(item) === subject(change)))
           throw new Error(
-            `A request for ${change.pluginId} is already pending`,
+            `A request for ${subject(change)} is already pending`,
           );
         if (pending.length >= PENDING_MAX)
           throw new Error("Review the pending plugin requests first");

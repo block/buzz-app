@@ -225,6 +225,16 @@ async function choicesLoaded() {
   );
 }
 
+function fillComposer(field: ComposerInputElement, text: string) {
+  act(() => {
+    field.focus();
+    field.value = text;
+    field.setSelectionRange(text.length, text.length);
+  });
+  fireEvent.input(field);
+  fireEvent(document, new Event("selectionchange"));
+}
+
 function mount(
   options: Partial<MessageComposerProps> = {},
   control?: LocalAgents,
@@ -631,18 +641,7 @@ function mount(
         for (const listener of emojiListeners) listener();
       });
     },
-    fill(text: string) {
-      const field = input();
-      act(() => {
-        field.focus();
-        field.value = text;
-        field.setSelectionRange(text.length, text.length);
-      });
-      fireEvent.input(field);
-      // Browsers queue selectionchange after the editor restores its native
-      // selection. Deliver that boundary explicitly in this synchronous fixture.
-      fireEvent(document, new Event("selectionchange"));
-    },
+    fill: (text: string) => fillComposer(input(), text),
     submit() {
       fireEvent.submit(within(view.container).getByRole("form"));
     },
@@ -2123,7 +2122,8 @@ async function mountUploadComposer(
     reactStrictMode: true,
     wrapper: ToastProvider,
   });
-  const input = () => within(view.container).getByRole("textbox");
+  const input = () =>
+    within(view.container).getByRole<ComposerInputElement>("textbox");
   const form = () => within(view.container).getByRole("form");
   const send = () =>
     within(view.container).getByRole("button", { name: "Send message" });
@@ -2132,6 +2132,7 @@ async function mountUploadComposer(
     ...view,
     owner,
     input,
+    fill: (text: string) => fillComposer(input(), text),
     form,
     send,
     scope,
@@ -2147,6 +2148,25 @@ async function mountUploadComposer(
       view.rerender(composer(presented, shown)),
   };
 }
+
+const firstMentionTools: readonly Contribution<ComposerTool>[] = [
+  {
+    id: "fixture",
+    key: "test/fixture",
+    pluginId: "test",
+    revision: "1",
+    title: "Fixture tools",
+    component: (props: ComposerToolProps) => (
+      <button type="button" onClick={() => props.insertMention(first)}>
+        First Honey
+      </button>
+    ),
+  },
+];
+const firstMentionTool = {
+  snapshot: () => firstMentionTools,
+  subscribe: () => () => {},
+};
 
 function pickAttachments(container: HTMLElement, files: readonly File[]) {
   const picker =
@@ -2499,22 +2519,8 @@ it.each(["never", "before the failure", "after the failure"])(
       snapshot: () => snapshot,
       types: () => types,
     } as unknown as Agents;
-    const tools: readonly Contribution<ComposerTool>[] = [
-      {
-        id: "fixture",
-        key: "test/fixture",
-        pluginId: "test",
-        revision: "1",
-        title: "Fixture tools",
-        component: (props: ComposerToolProps) => (
-          <button type="button" onClick={() => props.insertMention(first)}>
-            First Honey
-          </button>
-        ),
-      },
-    ];
     const extensions = {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      tools: firstMentionTool,
       inline: { snapshot: () => [], subscribe: () => () => {} },
     };
     const h = await mountUploadComposer({
@@ -17996,6 +18002,65 @@ it("holds a reply typed in a task subthread under the thread's root and publishe
   expect(event.tags.filter(([name]) => name === "e")).toEqual([
     ["e", root, "", "root"],
     ["e", invocation, "", "reply"],
+  ]);
+});
+it("gives a later send gate the recipients and chips the composer prepared, whatever an earlier gate tried to change", async () => {
+  const chips = folderChips();
+  const { folder } = chips;
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const held = deferred<{ message: OutgoingMessage; session: RelaySession }>();
+  const published = deferred<RelayEvent>();
+  const contribution = { pluginId: "t", revision: "1" };
+  const gates = [
+    {
+      ...contribution,
+      id: "b",
+      key: "t/b",
+      hold: (message: OutgoingMessage, session: RelaySession) => {
+        held.resolve({ message, session });
+        return true;
+      },
+    },
+    {
+      ...contribution,
+      id: "a",
+      key: "t/a",
+      hold: (message: OutgoingMessage) => {
+        Reflect.set(message.recipients, 1, second.pubkey);
+        Reflect.set(message.picks, first.pubkey, { effort: "high" });
+        Reflect.set(message.tokens?.[0] as object, "id", "/other");
+        return false;
+      },
+    },
+  ];
+  const h = await mountUploadComposer({
+    members: [first.pubkey, second.pubkey],
+    publish: async (event) => published.resolve(event),
+    extensions: {
+      tools: firstMentionTool,
+      inline: none,
+      completions: chips.completions,
+      sendGates: { ...none, snapshot: () => gates },
+    },
+  });
+  chips.type(h, "Hold @no");
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  const { message, session } = await held.promise;
+  expect(message).toMatchObject({
+    recipients: [first.pubkey],
+    tokens: [folder],
+  });
+  expect(message.picks).toEqual({});
+  await publishOutgoing(session, message);
+  const event = await published.promise;
+  expect(event.tags.filter(([name]) => name === "p")).toEqual([
+    ["p", first.pubkey],
+  ]);
+  expect(event.tags.filter(([name]) => name === MESSAGE_TOKENS_TAG)).toEqual([
+    [MESSAGE_TOKENS_TAG, JSON.stringify([folder])],
   ]);
 });
 it("keeps the note and disables Send for an inaccessible pasted forward until removed", async () => {

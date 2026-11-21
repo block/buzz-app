@@ -3621,9 +3621,9 @@ Solo's own queue, and only for a message it would otherwise publish now. Only a
 main-window composer with a full relay session asks gates; a detached composer,
 such as the Huddle pop-out, publishes at once. A message with a pasted forward is
 never offered to gates either: it publishes at once, and `{ refuse }` doesn't
-apply to it. `hold` gets the `OutgoingMessage` (channel, thread, text,
-recipients as sent, references, uploaded attachments, model picks and chips) and
-the session, and answers at once:
+apply to it. `hold` gets a deeply frozen copy of the `OutgoingMessage` (channel,
+thread, text, recipients as sent, references, uploaded attachments, model picks
+and chips) and the session, and answers at once:
 
 - `true` keeps the message. The host clears the draft as sent and forgets the
   message. Save it before you return `true`: the plugin owns it from then on.

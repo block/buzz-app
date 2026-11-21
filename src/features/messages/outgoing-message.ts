@@ -7,7 +7,8 @@ import { signMessageTokens } from "./message-tokens";
 
 /** A message the composer is about to publish, after its prompts and uploads.
  * Plain JSON, so a send gate can save it and hand it to `publish` later.
- * `attachments`, `picks` and `tokens` are host data to keep unchanged. */
+ * Gates get a deeply frozen copy, so one gate cannot change what another
+ * holds. `attachments`, `picks` and `tokens` are host data to keep unchanged. */
 export type OutgoingMessage = Readonly<{
   channelId: string;
   /** A thread reply's root, and the reply it answers when not the root. */
@@ -23,6 +24,12 @@ export type OutgoingMessage = Readonly<{
   tokens?: readonly unknown[];
 }>;
 
+const freeze = <T extends object>(item: T) => {
+  for (const nested of Object.values(item))
+    if (nested && typeof nested === "object") freeze(nested);
+  return Object.freeze(item);
+};
+
 /** The first gate answer other than false: true when a gate keeps the
  * message, `{ refuse }` when one refuses it. Gates are asked by contribution
  * key; a throwing gate, or a refusal without a reason, is skipped, so the host
@@ -36,7 +43,7 @@ export function heldBySendGate(
     a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
   );
   if (!entries.length) return false;
-  const frozen = Object.freeze(structuredClone(message));
+  const frozen = freeze(structuredClone(message));
   for (const gate of entries) {
     try {
       const answer = gate.hold(frozen, session);

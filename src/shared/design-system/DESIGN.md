@@ -1156,6 +1156,11 @@ filtering, custom-value commits, and async requests with the feature. Its Contro
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. For a closed dropdown with search inside, use Combobox.Trigger
 and Combobox.Popup with search; opening focuses the popup search input.
+In a row of compact controls, such as beside a compact Select, use
+`Combobox.Trigger variant="compact"`: the same outlined capsule as a compact
+Select, with its label announced rather than shown. Combobox menus keep the
+compact Select's minimum width, so a narrow trigger such as an avatar stack never
+squeezes its choices.
 Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.

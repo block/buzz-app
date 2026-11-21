@@ -395,3 +395,27 @@ it("defaults combobox queries to exact text while permitting explicit correction
   expect(input).toHaveAttribute("autocapitalize", "sentences");
   expect(input).toHaveAttribute("spellcheck", "true");
 });
+
+it("names a compact Combobox trigger without showing its label", async () => {
+  const user = userEvent.setup();
+  render(
+    <Combobox.Root items={options}>
+      <Combobox.Trigger variant="compact" label="Assignees">
+        Nobody
+      </Combobox.Trigger>
+      <Combobox.Popup search empty="No choices">
+        <Combobox.List>
+          {(item: (typeof options)[number]) => (
+            <Combobox.Item value={item} key={item.value}>
+              {item.label}
+            </Combobox.Item>
+          )}
+        </Combobox.List>
+      </Combobox.Popup>
+    </Combobox.Root>,
+  );
+  const trigger = screen.getByRole("combobox", { name: "Assignees" });
+  expect(screen.queryByText("Assignees")).not.toBeInTheDocument();
+  await user.click(trigger);
+  expect(await screen.findByRole("option", { name: "One" })).toBeVisible();
+});

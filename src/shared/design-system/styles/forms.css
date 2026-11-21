@@ -412,6 +412,21 @@
     display: flex;
     flex-shrink: 0;
   }
+  /* Artwork in a compact value, such as a Combobox trigger's avatar stack,
+     aligns to the line box instead of the text baseline, so the trigger keeps
+     the compact Select's height. Identity artwork tucks toward the leading
+     edge, as small identity buttons do. */
+  .buzz-select[data-variant="compact"]
+    .buzz-select-value
+    > :is([data-avatar-stack], svg) {
+    vertical-align: top;
+  }
+  .buzz-select[data-variant="compact"]
+    .buzz-button[data-size="sm"]:has(
+      .buzz-select-value > [data-avatar-stack]:first-child
+    ) {
+    padding-inline-start: var(--space-1h);
+  }
   .buzz-select-popup[data-variant="compact"] {
     min-width: min(
       max(var(--anchor-width), 11.25rem),
@@ -452,6 +467,15 @@
   .buzz-select-popup[data-variant="field"] {
     width: var(--anchor-width);
     overflow-wrap: anywhere;
+  }
+  /* A combobox menu can open from a trigger narrower than its choices, such as
+     a compact avatar trigger. Keep the compact Select's minimum so names never
+     break mid-word. */
+  .buzz-select-popup[data-combobox-size] {
+    min-width: min(
+      max(var(--anchor-width), 11.25rem),
+      calc(100vw - var(--space-6))
+    );
   }
   /* Roughly four avatar-and-detail rows plus search. The viewport may make
      the list shorter; keep search fixed and every result scrollable. */

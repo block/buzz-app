@@ -4,6 +4,7 @@ import { CaretDownIcon, CircleNotchIcon, CheckIcon } from "../icons";
 import { Field } from "./Field";
 import { InputGroup } from "./InputGroup";
 import { IconButton } from "./IconButton";
+import { Button } from "./Button";
 
 /** Shared presentation; callers retain filtering, custom values and async work. */
 function Control({
@@ -94,20 +95,60 @@ function Control({
   );
 }
 
-/** A button-style field for comboboxes whose search input lives in the popup. */
+/** A button-style trigger for comboboxes whose search input lives in the popup.
+ * `field` is a labelled form field. `compact` matches Select's compact
+ * variant: a small outlined capsule whose label is announced, not shown, for
+ * rows of adjacent controls. */
 function Trigger({
   label,
   children,
-  error,
   disabled,
+  ...props
 }: {
   label: string;
   children: ReactNode;
-  error?: ReactNode;
   disabled?: boolean | undefined;
-}) {
+} & (
+  | { variant?: "field"; error?: ReactNode }
+  | { variant: "compact"; error?: never }
+)) {
+  if (props.variant === "compact")
+    return (
+      <div
+        data-buzz-ui=""
+        className="buzz-select text-body"
+        data-variant="compact"
+        data-appearance="outlined"
+      >
+        <BaseCombobox.Trigger
+          aria-label={label}
+          disabled={disabled}
+          render={(triggerProps) => (
+            <Button
+              {...triggerProps}
+              shape="capsule"
+              variant="outline"
+              size="sm"
+            >
+              <span className="buzz-select-value-content">
+                <span className="buzz-select-value-text">
+                  <span className="buzz-select-value">{children}</span>
+                </span>
+              </span>
+              <span>
+                <CaretDownIcon
+                  size={14}
+                  className="buzz-dropdown-chevron"
+                  aria-hidden="true"
+                />
+              </span>
+            </Button>
+          )}
+        />
+      </div>
+    );
   return (
-    <Field label={label} error={error}>
+    <Field label={label} error={props.error}>
       <BaseCombobox.Trigger
         aria-label={label}
         disabled={disabled}

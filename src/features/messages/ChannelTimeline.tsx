@@ -2059,6 +2059,14 @@ function Timeline({
         element.clientHeight,
         element.scrollHeight / Math.max(1, window.rows.length),
       );
+      // A read-ahead the reader scrolls into reach of is theirs now, and
+      // survives leaving the channel as their own reads do.
+      if (
+        window.loadingOlder &&
+        userScrolled.current &&
+        element.scrollTop < ahead.distance
+      )
+        fillReading.current = false;
       if (
         !handle.current ||
         !userScrolled.current ||

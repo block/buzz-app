@@ -33,16 +33,18 @@ tall(
       }),
     ).toHaveCount(0);
     await history(page).hover();
+    // Distance from the bottom: rows above that measure taller raise
+    // scrollTop by their growth while the reader's row stays put.
+    const fromBottom = () =>
+      history(page).evaluate((e) => e.scrollHeight - e.scrollTop);
     for (let i = 0; i < 100 && !app.pending.length; i++) {
-      const before = await history(page).evaluate((e) => e.scrollTop);
+      const before = await fromBottom();
       await page.mouse.wheel(0, -450);
       // Each wheel step must land (scroll moves or the older page is
       // requested) before the next one.
       await expect
         .poll(
-          async () =>
-            app.pending.length > 0 ||
-            (await history(page).evaluate((e) => e.scrollTop)) < before,
+          async () => app.pending.length > 0 || (await fromBottom()) > before,
         )
         .toBe(true);
       if (
@@ -205,6 +207,26 @@ test("returning to the top continues history loading on wheel without a button",
   await settle(page);
   await toOlder(page, app);
   app.pending.shift().release();
+});
+
+test("a read-ahead the reader scrolls up to survives leaving the channel", async ({
+  page,
+  app,
+}) => {
+  await open(page, app, { hold: true });
+  const [ahead] = app.pending;
+  await toOlder(page, app);
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  expect(app.pending, "the reader's read is still in flight").toEqual([ahead]);
+  app.pending.shift().release();
+  await settle(page);
 });
 
 test("saved top resumes automatic history on an upward gesture after remount", async ({

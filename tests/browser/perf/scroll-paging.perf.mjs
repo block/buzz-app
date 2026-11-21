@@ -38,8 +38,12 @@ for (const [name, olderPageDelayMs, modality, options] of [
           .slice(0, -head.limit)
           .map(({ id }) => id);
         // Served events are in the app's proof memo; first-seen ones verify.
-        const olderRowsServedBefore = expectedOlderIds.filter((id) =>
-          app.served.has(id),
+        // The visit's own older pages, read ahead, verify as they arrive.
+        const paged = new Set(
+          app.pending.flatMap(({ events }) => events.map(({ id }) => id)),
+        );
+        const olderRowsServedBefore = expectedOlderIds.filter(
+          (id) => app.served.has(id) && !paged.has(id),
         ).length;
         if (options.firstSeenHistory)
           expect(olderRowsServedBefore, "older history is first-seen").toBe(0);

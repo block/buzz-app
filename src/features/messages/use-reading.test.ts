@@ -32,6 +32,9 @@ function setup({
   enabled = true,
   concealed = false,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
+  trailing = undefined as
+    | (() => { top: number; extra: number } | undefined)
+    | undefined,
 } = {}) {
   vi.useFakeTimers();
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
@@ -130,6 +133,7 @@ function setup({
       catchUpMessageId,
       rootId,
       enabled,
+      trailing,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -205,6 +209,7 @@ function setup({
         catchUpMessageId,
         rootId,
         enabled,
+        trailing,
       }),
     setLatest: (id: string) =>
       view.rerender({
@@ -216,6 +221,7 @@ function setup({
         catchUpMessageId,
         rootId,
         enabled,
+        trailing,
       }),
     unmount: view.unmount,
   };
@@ -753,6 +759,38 @@ it("a historical viewport or a bottom reached only at dwell end cannot catch up"
     undefined,
   );
 });
+
+it("rows under trailing content are covered, not read", () => {
+  const h = setup({ trailing: () => ({ top: 300, extra: 0 }) });
+  h.setRows([row("visible", 100, 200), row("covered", 250, 350)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it.each([true, false])(
+  "the latest row above trailing content at its rest position catches up (trailing=%s)",
+  async (present) => {
+    const h = setup({
+      latestMessageId: "latest",
+      // The content's rest height starts at 300; 200px of it lies below.
+      trailing: () => (present ? { top: 300, extra: 200 } : undefined),
+    });
+    vi.spyOn(h.element, "scrollHeight", "get").mockReturnValue(1000);
+    vi.spyOn(h.element, "clientHeight", "get").mockReturnValue(500);
+    h.element.scrollTop = 300;
+    h.setRows([row("latest", 200, 290)]);
+    h.mutation();
+    vi.advanceTimersToNextFrame();
+    await vi.advanceTimersByTimeAsync(300);
+    if (present)
+      expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+        "latest",
+        undefined,
+      );
+    else expect(h.dwelled()?.catchUp).not.toHaveBeenCalled();
+  },
+);
 
 it("settled notification starts dwell without changed rows, focus or geometry", () => {
   const h = setup({ focus: "header", settled: false });

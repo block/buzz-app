@@ -103,6 +103,17 @@ it("provides ui.Tabs only while a plugin supplies the tab workspace", async () =
   h.runtime.reconcile([]);
   await vi.waitFor(() => expect(h.service.ui.Tabs).toBeUndefined());
 });
+it("tells plugins that ui.Workspace renders trailing content", async () => {
+  let slots: unknown;
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      slots = ctx.conversation.workspaceSlots;
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() => expect(slots).toHaveProperty("trailing", true));
+});
 it("bundled Emoji really registers a picker and a renderer, including reaction metadata", async () => {
   const h = harness(emoji);
   h.runtime.reconcile([h.plugin]);

@@ -47,6 +47,9 @@ type Reading = {
   /** False: this list marks nothing read; its owner decides what was read, or
    * when reading may start. Turning it on schedules dwell at once. */
   enabled?: boolean | undefined;
+  /** Content after the rows: rows below its top are covered, and the scroll
+   * range it adds past its rest height is past the latest row. */
+  trailing?: (() => { top: number; extra: number } | undefined) | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -68,12 +71,14 @@ export function useReading({
   settled,
   restoring,
   enabled = true,
+  trailing,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   // Read at measurement time: a new latest message mutates the list, which
   // already remeasures in the next frame, so it must not restart observation.
   const latestId = useEffectEvent(() => latestMessageId);
   const catchUpId = useEffectEvent(() => catchUpMessageId ?? latestMessageId);
+  const trailingEdge = useEffectEvent(() => trailing?.());
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -179,10 +184,14 @@ export function useReading({
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.top >= Math.max(viewport.top, 0) - 1 &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) + 1 &&
+        bounds.bottom <=
+          Math.min(shownBottom(viewport), window.innerHeight) + 1 &&
         bounds.left >= Math.max(viewport.left, 0) - 1 &&
         bounds.right <= Math.min(viewport.right, window.innerWidth) + 1
       );
+    }
+    function shownBottom(viewport: DOMRect) {
+      return Math.min(viewport.bottom, trailingEdge()?.top ?? viewport.bottom);
     }
     function visibleIds() {
       const viewport = element.getBoundingClientRect();
@@ -211,7 +220,11 @@ export function useReading({
       const latest = latestId();
       if (
         !latest ||
-        element.scrollHeight - element.clientHeight - element.scrollTop > 1
+        element.scrollHeight -
+          element.clientHeight -
+          (trailingEdge()?.extra ?? 0) -
+          element.scrollTop >
+          1
       )
         return;
       const viewport = element.getBoundingClientRect();
@@ -230,7 +243,7 @@ export function useReading({
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.bottom > Math.max(viewport.top, 0) &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
+        bounds.bottom <= Math.min(shownBottom(viewport), window.innerHeight) &&
         bounds.left >= Math.max(viewport.left, 0) &&
         bounds.right <= Math.min(viewport.right, window.innerWidth)
         ? latest

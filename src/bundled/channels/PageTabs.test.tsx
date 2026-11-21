@@ -32,8 +32,10 @@ vi.mock("./ConversationTab", () => ({
     onResolvedRoot,
     parent,
     intro,
+    trailing,
   }: {
     intro?: import("react").ReactNode;
+    trailing?: { content(state: object): import("react").ReactNode };
     tab: Tab;
     channel: { name: string };
     visit: boolean;
@@ -50,6 +52,7 @@ vi.mock("./ConversationTab", () => ({
     >
       {intro}
       {tab.kind} in {channel.name}
+      {trailing?.content({ expanded: false, toggle() {} })}
       {!visit && " unvisited"}
       {onResolvedRoot && (
         <button type="button" onClick={() => onResolvedRoot("older")}>
@@ -450,6 +453,23 @@ it("a workspace owns its main reader, intro, menu, and no initial detail", async
     await screen.findByRole("menuitem", { name: "View in source channel" }),
   );
   expect(source).toHaveBeenCalledOnce();
+});
+
+it("a workspace gives its trailing content to its main reader", () => {
+  const f = fixture();
+  cleanup();
+  render(
+    <ConversationWorkspace
+      id="task"
+      session={f.session}
+      scope="origin:viewer"
+      target={{ channelId: "alpha" }}
+      label="Task"
+      host={f.host}
+      trailing={{ restHeight: 100, content: () => <p>Decision card</p> }}
+    />,
+  );
+  expect(screen.getByText("Decision card")).toBeVisible();
 });
 
 it.each([false, true])(

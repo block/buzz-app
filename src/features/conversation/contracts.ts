@@ -516,6 +516,14 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Content after the channel timeline's last message; a thread ignores it.
+   * Its first `restHeight` pixels show below the latest message. Scrolling
+   * past the latest message grows the rest into view; `expanded` is true
+   * there. `toggle()` scrolls to the content's top, or back. */
+  trailing?: {
+    restHeight: number;
+    content(state: { expanded: boolean; toggle(): void }): ReactNode;
+  };
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

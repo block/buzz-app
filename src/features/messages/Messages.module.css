@@ -91,6 +91,23 @@
 :where(html[data-message-density="compact"]) .timelineEnd {
   height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
+/* A workspace's content after the rows. ChannelTimeline sets its bottom to
+   minus its height past the rest height, so that rest height stays in view.
+   It ends the scroll range itself, so the feed drops its history inset: that
+   padding would hold the content's bottom-stuck controls above the scrollport
+   edge and leave a strip of the content showing below them. */
+.feed[data-trailing] {
+  --history-bottom-inset: 0px;
+}
+.trailing {
+  /* The content's own margins count toward the height the reader measures. */
+  display: flow-root;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+}
 .feed ol {
   list-style: none;
   margin: 0;
@@ -2873,7 +2890,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     100% +
     var(--history-bottom-inset) -
     var(--space-3) -
-    var(--channel-preview-inset, 0px)
+    var(--channel-preview-inset, 0px) -
+    var(--timeline-trailing-rest, 0px)
   );
 }
 

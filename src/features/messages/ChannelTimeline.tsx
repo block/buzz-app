@@ -21,7 +21,10 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { DayDivider } from "./MessageTimestamp";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import {
@@ -169,9 +172,25 @@ function contentInset(row: Element) {
     item: content - (row.closest("li") ?? row).getBoundingClientRect().top,
   };
 }
+// Trailing content's height past its rest height extends the scroll range
+// below the latest message: at this offset the latest message sits directly
+// above the content's rest height. Further down, the content grows into view.
+function latestTop(element: HTMLElement, extra: number) {
+  return Math.max(0, element.scrollHeight - element.clientHeight - extra);
+}
+function pastLatest(element: HTMLElement, extra: number) {
+  return extra > 0 && element.scrollTop - latestTop(element, extra) > 1;
+}
+/** History left above trailing content that its toggle scrolls to. */
+const TRAILING_TOP_GAP = 100;
+/** The end-alignment offset that leaves the latest message above the rest height. */
+function trailingRest(box: HTMLElement | null, extra: number) {
+  return box ? box.getBoundingClientRect().height - extra : 0;
+}
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
+  extra = 0,
 ): ReadingPosition {
   const top = element.getBoundingClientRect().top;
   const mounted = Array.from(
@@ -199,7 +218,8 @@ function positionAt(
     mounted.find((row) => row.getBoundingClientRect().bottom > top);
   return {
     bottom:
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80,
+      !pastLatest(element, extra) &&
+      latestTop(element, extra) - element.scrollTop < 80,
     ...(row?.dataset.messageId
       ? {
           anchor: {
@@ -221,6 +241,8 @@ export type ChannelTimelineProps = {
   window: ChannelWindow;
   /** Local presentation at the known history start, outside message semantics. */
   intro?: ReactNode;
+  /** Content after the rows that grows into view past the latest message. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   launchPending?: boolean | undefined;
   /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
@@ -280,6 +302,7 @@ function Timeline({
   window,
   launchPending,
   intro,
+  trailing,
   historyControl = "button",
   onOpenLink,
   canOpenLink,
@@ -920,6 +943,9 @@ function Timeline({
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
   const activityTail = useRef<HTMLDivElement>(null);
+  const trailingBox = useRef<HTMLDivElement>(null);
+  // The trailing content's height past its rest height.
+  const trailingExtra = useRef(0);
   useLayoutEffect(() => {
     const tail = activityTail.current;
     const element = scroller.current;
@@ -927,7 +953,7 @@ function Timeline({
     const observer = new ResizeObserver(() => {
       if (settled.current && follow.current) {
         layoutCorrection.current = true;
-        element.scrollTop = element.scrollHeight;
+        element.scrollTop = latestTop(element, trailingExtra.current);
       }
     });
     observer.observe(tail);
@@ -1010,6 +1036,146 @@ function Timeline({
   const inputEnded = useRef<number | undefined>(undefined);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  // A reader past the latest message, into the trailing content, as last
+  // scrolled there: at its end (Full), or this far past the latest message.
+  // Changes to the content, the viewport or the rows keep that place.
+  const trailingPlace = useRef<{ full: boolean; offset: number }>(undefined);
+  // How far above the latest message a follower last scrolled: within the
+  // follow threshold, layout keeps that gap rather than undoing the scroll.
+  const followGap = useRef(0);
+  const [trailingExpanded, setTrailingExpanded] = useState(false);
+  const restHeight = trailing?.restHeight ?? 0;
+  const latestRest = useRef(restHeight);
+  const holdTrailing = useRef<() => void>(undefined);
+  // A new rest height moves the latest message's place, as a resize does.
+  useLayoutEffect(() => {
+    latestRest.current = restHeight;
+    holdTrailing.current?.();
+  }, [restHeight]);
+  const trackTrailing = (element: HTMLElement) => {
+    const extra = trailingExtra.current;
+    followGap.current = follow.current
+      ? Math.max(0, latestTop(element, extra) - element.scrollTop)
+      : 0;
+    trailingPlace.current =
+      !follow.current && pastLatest(element, extra)
+        ? {
+            full:
+              element.scrollHeight - element.clientHeight - element.scrollTop <=
+              1,
+            offset: element.scrollTop - latestTop(element, extra),
+          }
+        : undefined;
+    setTrailingExpanded(!!trailingPlace.current);
+  };
+  const hasTrailing = !!trailing;
+  const listMounted = width > 0;
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const box = trailingBox.current;
+    // The box mounts with `trailing`, the list once the scroller has a width.
+    if (!hasTrailing || !listMounted || !element || !box) return;
+    if (typeof ResizeObserver === "undefined") return;
+    const hold = () => {
+      const height = box.getBoundingClientRect().height;
+      // End the scroll range on a whole pixel. Integer scroll extents would
+      // otherwise stop short of a fractional end, lifting the content's
+      // bottom-stuck controls by up to a pixel at the end of the range.
+      const above = box.previousElementSibling?.getBoundingClientRect().bottom;
+      if (above !== undefined) {
+        const end =
+          above -
+          element.getBoundingClientRect().top +
+          element.scrollTop +
+          height;
+        const snap = Math.ceil(end - 0.01) - end;
+        if (
+          Math.abs(snap - (Number.parseFloat(box.style.marginTop) || 0)) > 0.01
+        )
+          box.style.marginTop = `${snap}px`;
+      }
+      const extra = Math.max(0, height - latestRest.current);
+      if (extra !== trailingExtra.current) {
+        trailingExtra.current = extra;
+        box.style.bottom = `${-extra}px`;
+      }
+      element.style.setProperty(
+        "--timeline-trailing-rest",
+        `${height - extra}px`,
+      );
+      // A send or Jump to latest makes the reader follow again.
+      const place = follow.current ? undefined : trailingPlace.current;
+      const top = latestTop(element, extra);
+      const next = place?.full
+        ? element.scrollHeight - element.clientHeight
+        : place
+          ? top + Math.min(Math.max(place.offset, 0), extra)
+          : settled.current && follow.current
+            ? top - followGap.current
+            : undefined;
+      if (next === undefined || Math.abs(next - element.scrollTop) < 1) return;
+      layoutCorrection.current = true;
+      element.scrollTop = next;
+    };
+    hold();
+    holdTrailing.current = hold;
+    const resize = new ResizeObserver(hold);
+    resize.observe(box);
+    resize.observe(element);
+    if (activityTail.current) resize.observe(activityTail.current);
+    // Virtua commits the rows' height to the list's style.
+    const rows = new MutationObserver(hold);
+    const list = element.querySelector(":scope > ol");
+    if (list)
+      rows.observe(list, { attributes: true, attributeFilter: ["style"] });
+    return () => {
+      resize.disconnect();
+      rows.disconnect();
+      holdTrailing.current = undefined;
+      trailingExtra.current = 0;
+      trailingPlace.current = undefined;
+      setTrailingExpanded(false);
+      element.style.removeProperty("--timeline-trailing-rest");
+    };
+  }, [hasTrailing, listMounted]);
+  const toggleTrailing = useCallback(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const extra = trailingExtra.current;
+    const expand = !pastLatest(element, extra);
+    intent.current++;
+    restoredAnchor.current = undefined;
+    pendingRestore.current = undefined;
+    layoutCorrection.current = false;
+    userScrolled.current = true;
+    upwardGesture.current = false;
+    follow.current = !expand;
+    // Expanding shows the content's top below a gap of history, or its end
+    // when all of it fits. It ends the scroll range, so its top is that end
+    // less its height. A short viewport narrows the gap to a third of it, and
+    // never below the content's rest height.
+    const maxTop = element.scrollHeight - element.clientHeight;
+    const height = trailingBox.current?.getBoundingClientRect().height ?? 0;
+    const view = element.clientHeight;
+    const gap = Math.max(
+      0,
+      Math.min(TRAILING_TOP_GAP, view / 3, view - latestRest.current),
+    );
+    const top = expand
+      ? Math.min(maxTop, element.scrollHeight - height - gap)
+      : latestTop(element, extra);
+    trailingPlace.current = expand
+      ? { full: top >= maxTop, offset: top - latestTop(element, extra) }
+      : undefined;
+    const reduced = element.ownerDocument.defaultView?.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    element.scrollTo({ top, behavior: reduced ? "instant" : "smooth" });
+  }, []);
+  const trailingState = useMemo(
+    () => ({ expanded: trailingExpanded, toggle: toggleTrailing }),
+    [trailingExpanded, toggleTrailing],
+  );
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -1022,7 +1188,8 @@ function Timeline({
               row.membershipRows?.some((member) => member.id === anchor.id),
           )?.id
         : undefined;
-      const position = positionAt(element, renderedAnchor);
+      const extra = trailingExtra.current;
+      const position = positionAt(element, renderedAnchor, extra);
       // A removed saved row cannot keep a restoration alive once a visible row
       // replaces it. A temporarily unmounted row is still pending measurement.
       if (anchor && !renderedAnchor && position.anchor)
@@ -1055,6 +1222,12 @@ function Timeline({
       )
         return;
       const previous = measuredPosition.current;
+      // A new width or viewport rewraps rows and moves the range's end; the
+      // offset it leaves is the layout's, not the reader's.
+      const resized =
+        !!previous &&
+        (edge.current?.clientWidth !== previous.width ||
+          element.clientHeight !== previous.viewport);
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
@@ -1067,21 +1240,32 @@ function Timeline({
         previous &&
         (upwardGesture.current ||
           (!layoutOwned &&
-            edge.current?.clientWidth === previous.width &&
-            element.clientHeight === previous.viewport &&
+            !resized &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
       // One smooth key scroll or scrollbar drag can cross several frames.
       // Keep observed upward movement until scrollend or a newer intent, even
       // when its first event has not left the near-bottom threshold yet.
       if (movedUp) upwardGesture.current = "moving";
-      if (follow.current && !movedUp && (previous || !userScrolled.current))
+      // Past the latest message, the reader reads the trailing content: new
+      // rows no longer move them. A follower the timeline or a resize moved
+      // there still follows; its own alignment brings them back.
+      const inTrailing =
+        pastLatest(element, extra) &&
+        !((layoutOwned || resized) && follow.current);
+      if (
+        follow.current &&
+        !movedUp &&
+        !inTrailing &&
+        (previous || !userScrolled.current)
+      )
         position.bottom = true;
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
+      // Its saved place is the latest message: it opens again at rest.
       if (pendingRestore.current !== intent.current)
-        savedPosition.current = position;
+        savedPosition.current = inTrailing ? { bottom: true } : position;
       follow.current = position.bottom;
       measuredPosition.current = {
         offset: element.scrollTop,
@@ -1093,8 +1277,10 @@ function Timeline({
     [rows],
   );
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
+    const extra = trailingExtra.current;
     const bottom =
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+      !pastLatest(element, extra) &&
+      latestTop(element, extra) - element.scrollTop < 80;
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);
@@ -1109,8 +1295,10 @@ function Timeline({
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
+    trailingPlace.current = undefined;
     const tailHeight =
-      activityTail.current?.getBoundingClientRect().height ?? 0;
+      (activityTail.current?.getBoundingClientRect().height ?? 0) +
+      trailingRest(trailingBox.current, trailingExtra.current);
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
@@ -1148,6 +1336,9 @@ function Timeline({
     const list = handle.current;
     const element = scroller.current;
     if (!list || !element) return;
+    // A reveal stops at the latest message, short of trailing content.
+    if (pastLatest(element, trailingExtra.current))
+      element.scrollTop = latestTop(element, trailingExtra.current);
     // Replace the mounting request with the reveal's exact position. Retain
     // that same item-relative offset through Virtua's late measurements.
     list.scrollToIndex(targetIndex, {
@@ -1193,14 +1384,14 @@ function Timeline({
     // keeps its row where it placed it instead of re-aligning to the end.
     if (
       element &&
-      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+      latestTop(element, trailingExtra.current) - element.scrollTop > 1
     )
       follow.current = false;
     // The reveal's placement is the reader's place even when it moved nothing
     // and so no scroll event records it. Its visit keeps the follow state, so
     // Back doesn't re-align the row; the channel's place keeps the 80 px rule.
     if (element) {
-      const channel = positionAt(element);
+      const channel = positionAt(element, undefined, trailingExtra.current);
       savedPosition.current = { ...channel, bottom: follow.current };
       revealedPlace.current = { visit: savedPosition.current, channel };
     }
@@ -1349,6 +1540,13 @@ function Timeline({
       !boundaryCandidate.awaitingPage &&
       !boundaryCandidate.awaitingRepair &&
       !(awayPending && !boundaryPending),
+    trailing: () =>
+      trailingBox.current
+        ? {
+            top: trailingBox.current.getBoundingClientRect().top,
+            extra: trailingExtra.current,
+          }
+        : undefined,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -1409,6 +1607,7 @@ function Timeline({
       prepend ||
       !settled.current ||
       follow.current ||
+      trailingPlace.current ||
       index < 0 ||
       !element ||
       !list ||
@@ -1627,9 +1826,13 @@ function Timeline({
         follow.current &&
         settled.current &&
         next.height < measuredSize.height &&
-        element.scrollHeight - measuredSize.height - element.scrollTop < 2
+        element.scrollHeight -
+          trailingExtra.current -
+          measuredSize.height -
+          element.scrollTop <
+          2
       )
-        element.scrollTop = element.scrollHeight;
+        element.scrollTop = latestTop(element, trailingExtra.current);
       measuredSize = next;
       settled.current = false;
       setSize(next);
@@ -1821,7 +2024,8 @@ function Timeline({
         layoutCorrection.current = true;
         const tailHeight =
           endIndex === rows.length - 1
-            ? (activityTail.current?.getBoundingClientRect().height ?? 0)
+            ? (activityTail.current?.getBoundingClientRect().height ?? 0) +
+              trailingRest(trailingBox.current, trailingExtra.current)
             : 0;
         handle.current.scrollToIndex(endIndex, {
           align: "end",
@@ -2007,7 +2211,7 @@ function Timeline({
       window.historyLimited ||
       window.loadingOlder ||
       window.error ||
-      element.scrollHeight > element.clientHeight
+      latestTop(element, trailingExtra.current) > 0
     )
       return;
     queries.channels.loadOlder(channelId);
@@ -2073,6 +2277,9 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  // Reading the trailing content, the reader learns only of new rows.
+  const jumpVisible =
+    showJumpToLatest && (!trailingExpanded || newMessageCount > 0);
   const feed = (
     <section
       ref={scroller}
@@ -2082,7 +2289,8 @@ function Timeline({
       data-channel-timeline={channelId}
       data-activity-history-scope=""
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
-      data-jump-visible={showJumpToLatest || undefined}
+      data-jump-visible={jumpVisible || undefined}
+      data-trailing={trailing ? "" : undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -2171,6 +2379,7 @@ function Timeline({
           );
           updateJumpToLatest(element);
         }
+        if (trailing) trackTrailing(element);
         loadNearTop(element);
       }}
     >
@@ -2208,7 +2417,7 @@ function Timeline({
         ) : null}
       </div>
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={jumpVisible}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
       />
@@ -2233,6 +2442,7 @@ function Timeline({
               edge.current?.clientWidth === size.width &&
               element.clientHeight === size.height &&
               !follow.current &&
+              !trailingPlace.current &&
               !restoredAnchor.current &&
               pendingRestore.current !== intent.current &&
               heldReader.current?.intent !== intent.current
@@ -2458,6 +2668,11 @@ function Timeline({
         />
         <div className={styles.timelineEnd} aria-hidden="true" />
       </div>
+      {trailing && (
+        <div ref={trailingBox} className={styles.trailing}>
+          {trailing.content(trailingState)}
+        </div>
+      )}
     </section>
   );
   return <MessageContextMenus>{feed}</MessageContextMenus>;

@@ -317,7 +317,7 @@ Add `"host"` to `inject`, then:
   Check that it exists before use. Channels supplies it through
   `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
   Set the page's `layout` to `"workspace"`. Pass
-  `{ id, session, scope, target, label, intro?, actions?, detail?, latestRequest? }`.
+  `{ id, session, scope, target, label, intro?, trailing?, actions?, detail?, latestRequest? }`.
   Set `target` to `{ channelId, threadId?, subthreadId?, messageId? }`. Omit
   `threadId` for the channel timeline. Supply a thread ID to show the thread.
   Add `subthreadId` to show and compose within a branch of that thread.
@@ -327,6 +327,16 @@ Add `"host"` to `inject`, then:
   the signal to that opening. Omit it on Back or Forward. An aborted signal is
   ignored, and an explicit `target.messageId` takes precedence.
   `intro` supplies content at the start of history. It scrolls with the messages.
+  `trailing: { restHeight, content({ expanded, toggle }) }` supplies content
+  after the channel timeline's latest message, such as a card that asks for a
+  decision, when `ctx.conversation.workspaceSlots?.trailing === true`; an older
+  host and a thread target ignore it. Its first `restHeight` pixels stay in view
+  below the latest message, and scrolling past that grows the rest into view.
+  `expanded` is true once it has grown; `toggle()` scrolls to its top, with some history above it, or back.
+  Keep controls in view with `position: sticky; bottom: 0` inside the content,
+  give that element an opaque background, and draw the content's outline with
+  a box shadow rather than a bottom border, which would show below the controls
+  only once the content has fully grown.
   `actions` supplies
   entries in the header's three-dot menu and the tab's context menu, with
   `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel

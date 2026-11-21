@@ -633,7 +633,9 @@ Quitting Buzz also turns it off.
   changes a repository makes a new worktree of it and leaves the main worktree
   as it is. **Work in a new worktree** sets where that worktree goes and the
   branch it starts from. A conversation that a plugin gave its own folder works
-  in that folder instead.
+  in that folder instead, with Claude, Codex, Goose, Pi or a custom ACP agent.
+  A custom ACP agent still runs the command you confirmed; only that
+  conversation works in the folder.
 - **Channel links.** Type **#** and part of a channel name to link a channel.
   The link is a chip: Backspace or Delete removes it whole, so to change it,
   remove it and pick again with **#**. A sent chip shows the channel's current
@@ -1697,7 +1699,9 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   context; on another computer, it asks for a new session. The install review
   says so.
   When you choose Off or Custom for one of them, your own choice also applies
-  in those chats. A choice applies to all your
+  in those chats. A custom ACP agent takes a change from its next turn in a
+  new session: it can't change the instructions of a session it already
+  started. A choice applies to all your
   agents on this device, not on your other devices, and each agent gets it
   from its next turn. After the first choice that is not Default, older Codex
   conversations on this device start over once; older Codex conversations on
@@ -1914,6 +1918,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   sessions in goose's local history by the conversation they were tagged with.
   Sessions from before Buzz tagged them aren't found, and watch and timer
   turns from before Buzz recorded where they started aren't listed.
+- A custom ACP agent's **History** lists its conversations on this device and
+  its watch and timer turns. **Transcript** replays one when the harness
+  supports it; some harnesses can't. Use **Refresh** to read it again while
+  it works. If an older session can no longer be loaded, the transcript shows
+  the rest and says its history is incomplete.
 - Confirmed failures keep **Couldn’t finish** visible after the working indicator
   stops, even when the agent sends no reply. Cancelled requests show **Stopped**.
   There is no viewing timer. Outcomes supplied only by live activity may be lost

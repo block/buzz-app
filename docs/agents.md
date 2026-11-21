@@ -843,8 +843,11 @@ set as `{ text, applied, reason? }` per section, where `reason` is `"owner"`,
 the plugin holds none there. When the plugin replaces `working-location` in a
 Solo chat, the Canvas's folders are for reading, as in a chat with an assigned
 folder. The set is kept on this device, survives a restart, and is dropped
-when the agent is deleted. Claude, Codex, Goose and Pi (`conversationSections`
-on the type) support it; other harnesses reject. Plugins feature-detect the methods.
+when the agent is deleted. Claude, Codex, Goose, Pi and the custom ACP agent
+(`conversationSections` on the type) support it; other harnesses reject. The
+custom ACP agent takes a conversation's choices as its session starts, so a
+change, the owner's or a plugin's, gives that conversation's next turn a new
+session, a busy one's included; its other conversations keep theirs. Plugins feature-detect the methods.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -896,8 +899,11 @@ start there. Another program that does not share this device's agent state,
 such as a development build with its own storage, an older build or another
 computer, does not see the folder and starts the conversation in the
 workspace. `ctx.agents.conversationFolder(pubkey,
-place)` returns the folder. Claude, Codex, Goose and Pi (`conversationFolders`
-on the type) support folders; other harnesses and agents on an execution target
+place)` returns the folder. Claude, Codex, Goose, Pi and the custom ACP agent
+(`conversationFolders` on the type) support folders; the custom ACP agent's
+harness still runs on the command, args, env and workspace its owner
+confirmed, and only the conversation's session and History replay work in the
+folder; other harnesses and agents on an execution target
 reject. Plugins feature-detect the method.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
@@ -1725,6 +1731,23 @@ special case: pi-acp repeats its `session/new` startup banner
 direction. Agent-elided strings and payloads are labeled, not hidden. Turns whose
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
+
+A custom ACP agent's History reads a transcript only when its harness offers
+`session/load`. Otherwise it says the harness can't replay its transcripts.
+Each read starts a short-lived harness process. It replays the sessions Buzz
+recorded on this device for the conversation, oldest first (up to ten), plus
+the working one. The transcript reads again when you Refresh it, when its
+session changes, and as its work starts and ends. It never reads on a timer.
+A session the harness can no longer load is left out, and the transcript says
+its history is incomplete. Standalone turns, such as a watch's or a timer's,
+are listed on their own. A session's system prompt shows only when Buzz kept
+it when the session started, so sessions saved before that show none. A
+session is marked as started when its replay begins with a prompt and Buzz
+cut none of its turns. A replay Buzz cut to its limits, or one that begins
+partway through a turn, shows as continued. Buzz can't tell when a harness
+leaves whole early turns out of its replay, so such a session can still show
+as started. Sessions
+another build or device started aren't listed.
 
 The shared Claude, Goose, and Pi turn formatter sends conversation history and
 the triggering event as exact JSON records with escaped markup delimiters, the

@@ -305,6 +305,7 @@ export function TranscriptPanel<T extends Transcript>({
   missing,
   failed,
   notes,
+  openConversation,
 }: {
   agent: AgentViewProps["agent"];
   /** The agent type's read; resolves undefined when it has no transcript. */
@@ -331,6 +332,8 @@ export function TranscriptPanel<T extends Transcript>({
   failed: string;
   /** Shown above the oldest loaded turn. */
   notes?: (transcript: T) => ReactNode;
+  /** Opens a turn's conversation from its label. */
+  openConversation?: AgentViewProps["openConversation"];
 }) {
   const { shown, loading, refresh } = useLiveTranscript({
     read,
@@ -381,6 +384,7 @@ export function TranscriptPanel<T extends Transcript>({
             community={agent.relay}
             state={() => (working ? "working" : undefined)}
             before={notes?.(transcript)}
+            openConversation={openConversation}
           />
         ) : (
           transcript === null && missing

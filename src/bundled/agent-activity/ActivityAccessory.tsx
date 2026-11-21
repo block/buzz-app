@@ -275,6 +275,7 @@ function MessageWork(
         working: entry.working,
         state: entry.state,
         reason: entry.reason,
+        ...(entry.detail ? { detail: entry.detail } : {}),
         ...(entry.step ? { step: entry.step } : {}),
         ...(entry.stoppable ? { stoppable: true } : {}),
         ...(entry.retryable ? { retryable: true } : {}),
@@ -398,6 +399,7 @@ type Entry = {
   working: boolean;
   state: RequestWork["state"];
   reason: string | undefined;
+  detail?: string;
   step?: WorkStep;
   stoppable?: boolean;
   retryable?: boolean;
@@ -781,6 +783,16 @@ function ActivityBubble({
                 <span className={styles.action}>{stopAction(entry)}</span>
               ) : undefined}
             </NavigationCard>
+            {entry.lifecycle && entry.state === "error" && entry.detail && (
+              // The whole error, local to this device: the row and the
+              // channel show only a summary.
+              <details className={styles.errorDetail}>
+                <summary className="text-body-sm text-secondary">
+                  Details
+                </summary>
+                <pre>{entry.detail}</pre>
+              </details>
+            )}
           </div>
         );
       })}

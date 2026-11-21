@@ -12,6 +12,8 @@ export type RequestWork = {
   agent: string;
   state: LocalWorkState | ReturnType<typeof requestActivityState>;
   reason: string | undefined;
+  /** The whole error behind a cut `reason`, on this device only. */
+  detail?: string;
   /** Latest live local step, such as a tool name. */
   step?: WorkStep;
   lifecycle: boolean;
@@ -87,6 +89,7 @@ export function requestWork(
           agent,
           state: chosen.state,
           reason: chosen.error,
+          ...(chosen.detail ? { detail: chosen.detail } : {}),
           ...(chosen.step ? { step: chosen.step } : {}),
           turns: [],
           selected: {

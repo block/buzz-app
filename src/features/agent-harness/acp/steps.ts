@@ -1,4 +1,5 @@
 // What a harness's session updates show, and how its requests are answered.
+import type { AuthMethod } from "./types";
 
 const STEP_KEYS = [
   "description",
@@ -50,6 +51,27 @@ export function allow(params: Record<string, unknown>) {
 }
 
 /** The JSON-RPC code of a harness's error answer, when `error` is one. */
+/** A failure Buzz itself raised, with what the owner can do about it. Only
+ * our own code throws one, so a harness's text can never pose as its hint. */
+export class HintedError extends Error {
+  constructor(
+    message: string,
+    readonly hint: string,
+  ) {
+    super(message);
+  }
+}
+
+/** ACP's error code for a harness that needs its user to sign in. */
+export const AUTH_REQUIRED = -32000;
+
+/** The sign-in methods an `auth_required` error from `session/new` carries. */
+export function authMethodsOf(error: unknown): readonly AuthMethod[] {
+  return (
+    (error as { authMethods?: readonly AuthMethod[] } | null)?.authMethods ?? []
+  );
+}
+
 export function codeOf(error: unknown) {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "number" ? code : undefined;

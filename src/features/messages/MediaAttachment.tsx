@@ -1,3 +1,5 @@
+import { MediaMenuDownloadStatus } from "./MediaDownloadAction";
+import { MediaViewerToasts } from "./MediaViewerToasts";
 import { useMediaReadRecovery } from "./use-media-read-recovery";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { prepareReviewEntrance } from "./use-review-entrance";
@@ -525,22 +527,25 @@ export function MediaViewer({
         aria-modal="true"
         aria-label={title}
       >
-        <div className={styles.mediaViewerHeading} data-tauri-drag-region>
-          <PanelHeader
-            title={<PanelHeaderLabel title={title} />}
-            actions={
-              <IconButton
-                size="compact"
-                ref={closeButton}
-                type="button"
-                aria-label="Close fullscreen viewer"
-                onClick={close}
-                icon={<XIcon size={20} aria-hidden="true" />}
-              />
-            }
-          />
-        </div>
-        <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
+        <MediaViewerToasts>
+          <div className={styles.mediaViewerHeading} data-tauri-drag-region>
+            <PanelHeader
+              title={<PanelHeaderLabel title={title} />}
+              actions={
+                <IconButton
+                  size="compact"
+                  ref={closeButton}
+                  type="button"
+                  aria-label="Close fullscreen viewer"
+                  onClick={close}
+                  icon={<XIcon size={20} aria-hidden="true" />}
+                />
+              }
+            />
+            <MediaMenuDownloadStatus />
+          </div>
+          <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
+        </MediaViewerToasts>
       </section>
     </div>
   );

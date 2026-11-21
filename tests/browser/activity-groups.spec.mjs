@@ -169,10 +169,35 @@ async function toggleActivity(element) {
   // and a toggle that starts none fails with the panel's state instead of
   // waiting out the test.
   const transition = new Promise((resolve, reject) => {
-    const deadline = performance.now() + 5_000;
+    const started = performance.now();
+    const deadline = started + 5_000;
+    const observations = [];
+    const record = (value) => {
+      if (observations.length < 32)
+        observations.push({ at: performance.now() - started, ...value });
+    };
+    // Capture at the lifecycle microtask: a loaded runner can deliver the next
+    // frame and transitionrun after the entire transition has elapsed.
+    const observer = new MutationObserver((records) => {
+      let panelChanged = false;
+      for (const mutation of records) {
+        if (!mutation.target.className?.includes("audienceBody")) continue;
+        panelChanged = true;
+        record({
+          attribute: mutation.attributeName,
+          previous: mutation.oldValue,
+          value: mutation.target.getAttribute(mutation.attributeName),
+        });
+      }
+      if (panelChanged) {
+        const animation = running();
+        if (animation) done(animation);
+      }
+    });
     let frame;
     const done = (animation) => {
       cancelAnimationFrame(frame);
+      observer.disconnect();
       element.removeEventListener("transitionrun", capture);
       animation.pause();
       resolve(animation);
@@ -184,9 +209,19 @@ async function toggleActivity(element) {
       )
         return;
       const animation = running();
+      record({
+        event: event.type,
+        elapsedTime: event.elapsedTime,
+        found: !!animation,
+      });
       if (animation) done(animation);
     };
+    let lastFrame = started;
+    let longestFrameGap = 0;
     const poll = () => {
+      const now = performance.now();
+      longestFrameGap = Math.max(longestFrameGap, now - lastFrame);
+      lastFrame = now;
       const animation = running();
       if (animation) return done(animation);
       if (performance.now() < deadline) {
@@ -194,10 +229,13 @@ async function toggleActivity(element) {
         return;
       }
       element.removeEventListener("transitionrun", capture);
+      observer.disconnect();
       const panel = element.querySelector('[class*="audienceBody"]');
       reject(
         new Error(
-          `The toggle started no height transition: ${JSON.stringify({
+          `No height transition captured: ${JSON.stringify({
+            observations,
+            longestFrameGap,
             connected: element.isConnected,
             expanded: element.querySelector("button").ariaExpanded,
             panel: panel && {
@@ -209,6 +247,12 @@ async function toggleActivity(element) {
         ),
       );
     };
+    observer.observe(element, {
+      subtree: true,
+      attributes: true,
+      attributeOldValue: true,
+      attributeFilter: ["data-starting-style", "data-ending-style", "style"],
+    });
     element.addEventListener("transitionrun", capture);
     frame = requestAnimationFrame(poll);
   });
@@ -560,6 +604,11 @@ test("activity details keep readable text through both handoffs and survive new 
       await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
       await virtuaIdle(page);
       for (const open of [true, false]) {
+        // Narrow wrapping can move this row below the viewport. Sample a
+        // visible transition, after scrolling and its measurements finish.
+        await step.scrollIntoViewIfNeeded();
+        await virtuaIdle(page);
+        await expect(step).toBeInViewport();
         const painted = await step.evaluate(toggleActivity);
         expect(painted).toHaveLength(7);
         expect(painted.every((sample) => sample.readable)).toBe(true);

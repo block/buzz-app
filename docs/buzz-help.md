@@ -1000,6 +1000,12 @@ Quitting Buzz also turns it off.
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.
+- **Fullscreen media** temporarily hides background notices, including update
+  failures. Close the viewer to retry or dismiss an update failure notice. Actions inside
+  the viewer, including copying comment code and native image/video menu
+  downloads, show their result inside the open viewer. Comment actions such as
+  Stop and copying code report results in the app if the viewer closes first.
+  If another viewer hides that feedback, its expiry pauses until it is visible again.
 - **Dragging files in**: while files are dragged over a conversation, a dashed
   frame marks where they will attach and the messages stay visible. Rest the
   drag for about 0.7 seconds on a channel, DM or chat in the sidebar, or on a

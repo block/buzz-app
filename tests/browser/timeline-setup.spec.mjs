@@ -38,6 +38,31 @@ test("reading setup handles partial wheel progress without weakening the anchor"
   }
 });
 
+test("edge setup completes partial native gestures in both directions", async ({
+  page,
+}) => {
+  const { edge } = await import("./timeline.mjs");
+  await page.setContent(
+    '<section role="region" aria-label="Channel message history" style="height:200px;overflow:auto"><div style="height:2000px"></div></section>',
+  );
+  const input = page.mouse.wheel.bind(page.mouse);
+  try {
+    for (const direction of [1, -1]) {
+      let gestures = 0;
+      page.mouse.wheel = (x, y) => {
+        gestures++;
+        // Reproduce a completed gesture that leaves 198px still to travel.
+        return input(x, gestures === 1 ? y - direction * 198 : y);
+      };
+      await edge(page, direction);
+      expect(gestures).toBeGreaterThan(1);
+      expect(gestures).toBeLessThanOrEqual(4);
+    }
+  } finally {
+    page.mouse.wheel = input;
+  }
+});
+
 test("reading anchor handles clipped paragraphs and still detects displacement", async ({
   page,
 }) => {

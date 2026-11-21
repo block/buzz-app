@@ -155,9 +155,17 @@ for (const kind of ["image", "video"]) {
     await expect(viewer).toBeVisible();
     const toastRoot = page.locator("#buzz-toast-root");
     await expect(toastRoot).toHaveAttribute("aria-hidden", "true");
+    await expect(toastRoot).toHaveAttribute("inert", "");
+    await expect(toastRoot).toBeHidden();
+    await expect(
+      viewer.getByRole("dialog", {
+        name: "Couldn’t copy URL. Try again.",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(
       toastRoot.getByText("Couldn’t copy URL. Try again.", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.evaluate(() => {
       window.mediaClipboard.denyUrlCopy = false;
     });

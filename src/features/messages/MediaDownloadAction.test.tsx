@@ -12,7 +12,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { MediaMenuDownloadNotice } from "./MediaDownloadAction";
+import {
+  MediaMenuDownloadProvider,
+  MediaMenuDownloadStatus,
+} from "./MediaDownloadAction";
 import { VideoPlayer } from "./VideoPlayer";
 import { AudioAttachment } from "./AudioAttachment";
 import { VoiceNoteCard } from "../../bundled/voice-notes/VoiceNoteCard";
@@ -217,7 +220,7 @@ it("shows native media menu download results until unmounted", async () => {
   });
   const view = render(
     <ToastProvider>
-      <MediaMenuDownloadNotice />
+      <MediaMenuDownloadProvider />
     </ToastProvider>,
   );
   await act(() => registered.promise);
@@ -246,7 +249,7 @@ it("stops a menu download listener that registers after unmount", async () => {
   );
   const view = render(
     <ToastProvider>
-      <MediaMenuDownloadNotice />
+      <MediaMenuDownloadProvider />
     </ToastProvider>,
   );
   view.unmount();
@@ -259,8 +262,72 @@ it("does not listen for menu downloads outside the desktop host", () => {
   vi.mocked(isTauri).mockReturnValue(false);
   render(
     <ToastProvider>
-      <MediaMenuDownloadNotice />
+      <MediaMenuDownloadProvider />
     </ToastProvider>,
   );
   expect(listen).not.toHaveBeenCalled();
+});
+
+it("routes menu results to the active viewer, resets expiry, and restores host feedback on close", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  let publish!: (event: { payload: string | null }) => void;
+  vi.mocked(listen).mockImplementation(async (_event, handler) => {
+    publish = handler as typeof publish;
+    return () => {};
+  });
+  function Viewer({ open }: { open: boolean }) {
+    return (
+      <ToastProvider>
+        <MediaMenuDownloadProvider>
+          {open && (
+            <section aria-label="Viewer">
+              <MediaMenuDownloadStatus />
+            </section>
+          )}
+        </MediaMenuDownloadProvider>
+      </ToastProvider>
+    );
+  }
+  const view = render(<Viewer open />);
+  await act(async () => {});
+  vi.useFakeTimers();
+  try {
+    act(() => publish({ payload: "image.png" }));
+    expect(
+      screen.getByRole("status", { name: "Download status" }),
+    ).toHaveTextContent("Saved to Downloads");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(3999));
+    act(() => publish({ payload: "video.mp4" }));
+    act(() => vi.advanceTimersByTime(3999));
+    expect(
+      screen.getByRole("status", { name: "Download status" }),
+    ).toHaveTextContent("Saved to Downloads");
+    act(() => vi.advanceTimersByTime(1));
+    expect(
+      screen.getByRole("status", { name: "Download status" }),
+    ).toBeEmptyDOMElement();
+    act(() => publish({ payload: null }));
+    expect(
+      screen.getByRole("alert", { name: "Download error" }),
+    ).toHaveTextContent("Couldn’t download. Try again.");
+    act(() => vi.advanceTimersByTime(5999));
+    expect(
+      screen.getByRole("alert", { name: "Download error" }),
+    ).not.toBeEmptyDOMElement();
+    act(() => vi.advanceTimersByTime(1));
+    expect(
+      screen.getByRole("alert", { name: "Download error" }),
+    ).toBeEmptyDOMElement();
+    // Close with a pending timer; subsequent results belong to the host again.
+    act(() => publish({ payload: null }));
+    view.rerender(<Viewer open={false} />);
+    act(() => vi.advanceTimersByTime(6000));
+  } finally {
+    vi.useRealTimers();
+  }
+  act(() => publish({ payload: "after-close.png" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Saved to Downloads" }),
+  ).toBeVisible();
 });

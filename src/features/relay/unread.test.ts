@@ -7106,6 +7106,50 @@ it("catch-up reads a viewed mention through the channel frontier without message
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
 });
 
+it("catch-up keeps its captured cutoff when mentions arrive during its save", async () => {
+  const h = setup();
+  h.grant("room");
+  const retained = message(h.alice, "room", "retained mention", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([retained, bottom]);
+  await h.session.unread.ensure();
+  const lease = h.session.unread.reading("room");
+  const held = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  try {
+    await held.started;
+    // Arrival order cannot move the captured timestamp cutoff in either direction.
+    const older = message(h.alice, "room", "late older mention", 12, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const newer = message(h.alice, "room", "late newer mention", 14, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([older, newer]);
+    expect(h.session.unread.attention("room", older.id).unread).toBe(true);
+    expect(h.session.unread.attention("room", newer.id).unread).toBe(true);
+    held.release();
+    await pending;
+    expect(h.session.unread.attention("room", retained.id).unread).toBe(false);
+    expect(h.session.unread.attention("room", older.id).unread).toBe(false);
+    expect(h.session.unread.attention("room", newer.id).unread).toBe(true);
+    expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
+    // A subsequent dwell at the new bottom may acknowledge the newer mention.
+    await lease.catchUp(newer.id);
+    expect(h.session.unread.attention("room", newer.id).unread).toBe(false);
+    expect(h.journal()?.state.frontiers).toEqual({ room: 14 });
+  } finally {
+    held.release();
+    try {
+      await pending;
+    } finally {
+      lease.dispose();
+    }
+  }
+});
+
 it("catch-up clears a mention marked unread among the top-level messages it covers", async () => {
   const h = setup();
   h.grant("room");

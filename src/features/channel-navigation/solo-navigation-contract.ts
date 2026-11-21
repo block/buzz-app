@@ -48,6 +48,14 @@ export type SoloRegionSource = Readonly<{
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
   /** Agents a draft from `openDraft` may address. Without it, any available agent. */
   draftAgent?(binding: SoloRegionBinding, pubkey: string): boolean;
+  /** Static labels in the native draft title. Pure presentation, not placement
+   * or parent authority. Input has the current workspace and original draft
+   * context. At most 6 nonempty labels of at most 160 characters each;
+   * empty/undefined keeps the default title. Re-read on source revisions. */
+  draftHeader?(
+    binding: SoloRegionBinding,
+    input: SoloDraftStart,
+  ): readonly string[] | undefined;
   /** On draft Send, after the start record is saved and before chat creation or
    * its first message. The host waits up to 3 seconds; rejection or timeout warns
    * and continues. Timed-out work is not canceled. Not called by createChat. */

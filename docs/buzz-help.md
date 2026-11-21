@@ -1284,6 +1284,10 @@ Quitting Buzz also turns it off.
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
 
+Plugin-owned Solo drafts can show a breadcrumb title with their workspace and
+parent context. The workspace label follows the current composer choice. These
+labels describe the draft; the plugin still checks its destination when you send.
+
 ## Saved Solo follow-ups
 
 Messages queued behind a working agent are saved on this device for the current

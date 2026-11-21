@@ -429,3 +429,22 @@ show an upgrade explanation if supporting older hosts.
 - Editing `manifest.host` and expecting `plugin_reload` to apply it; it refuses until the owner approves the update in Settings.
 - Invalid ids (uppercase, underscores in the plugin id, a page id starting with `-`), or an unknown manifest key, which rejects the whole folder.
 - Expecting React state to survive a reload, or a plugin added by drag and drop to be reloadable.
+
+## Solo draft breadcrumb titles
+
+A `SoloRegionSource` may provide `draftHeader(binding, input)` to label its native
+Solo draft header. Return static labels such as `["Solo", "Workspace", "Parent",
+"New task"]`. Buzz uses the existing title style and separates labels with `›`.
+The callback is pure: it must not write state or use React hooks.
+
+`input.workspace` is the current composer choice. `input.draft` retains the
+original saved key and context. The callback runs again when these inputs or the
+source change. These labels are presentation only; they do not set a destination,
+workspace filing, formal parent, or permission. Creation must validate those facts
+through its existing owner.
+
+Return at most six nonempty labels, each at most 160 characters. An empty array or
+`undefined` restores “New chat”. A failed or invalid contribution shows the default
+header and a notice while the composer and settings remain available. Older hosts
+ignore the callback and keep their default title. Channel panels can use the
+existing `panels.useTabTitle` hook for a joined static location label.

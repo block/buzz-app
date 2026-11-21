@@ -57,7 +57,10 @@ the shared design system: Base UI-backed buttons, Tabler icons, `PanelHeader`,
 named text roles and the system mono face. The drawer is a precise `data-buzz-ui`
 boundary inside the otherwise legacy channel screen, not a second rounded Panel.
 In **Settings → Plugins → Terminal**, choose an installed **Font family** and
-**Font size (px)**, then **Apply**. Nerd Fonts must be installed separately;
+**Font size (px)**, then **Apply**. On macOS, Font family is a dropdown of the
+families the system reports, searchable by name; where the host lists none, it
+is a text field for an exact family name. Buzz reads the list once per launch,
+so restart Buzz after installing a font. Nerd Fonts must be installed separately;
 use a Mono variant for cell alignment. Applying a new family requires a successful
 load check; failures show an inline error with Retry. The preview is a plain
 text sample and follows drafts; Apply updates open terminals without

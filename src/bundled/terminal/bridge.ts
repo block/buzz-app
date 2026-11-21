@@ -44,3 +44,7 @@ export const nativeBridge: TerminalBridge = {
   close: (owner, id) => invoke("terminal_close", { owner, id }),
   closeOwner: (owner) => invoke("terminal_close_owner", { owner }),
 };
+
+/** Installed families the host reports; empty where it lists none. */
+export const listFontFamilies = () =>
+  invoke<string[]>("terminal_font_families").catch(() => []);

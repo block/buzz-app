@@ -50,14 +50,19 @@ beforeEach(() => {
     },
   );
 });
-function setup() {
+function setup(families?: () => Promise<readonly string[]>) {
   const font = createTerminalFontPreference();
   const drafts = createTerminalSettingsDraft();
   stores.push(font);
   const content = (active = true) => (
     <StrictMode>
       <ToastProvider>
-        <TerminalSettings font={font} drafts={drafts} active={() => active} />
+        <TerminalSettings
+          font={font}
+          drafts={drafts}
+          active={() => active}
+          {...(families ? { families } : {})}
+        />
       </ToastProvider>
     </StrictMode>
   );
@@ -72,6 +77,38 @@ afterEach(() => {
     Object.defineProperty(document, "fonts", fontsDescriptor);
   else Reflect.deleteProperty(document, "fonts");
   localStorage.clear();
+});
+
+it("picks an installed family from a searchable dropdown and applies it", async () => {
+  const installed = ["Menlo", "MesloLGS NF", "JetBrainsMono Nerd Font Mono"];
+  const { font } = setup(async () => installed);
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("combobox", { name: "Font family" }),
+  );
+  await user.type(
+    await screen.findByRole("combobox", { name: "Search" }),
+    "nerd",
+  );
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["JetBrainsMono Nerd Font Mono"]);
+  await user.click(
+    screen.getByRole("option", { name: "JetBrainsMono Nerd Font Mono" }),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Font family" }),
+  ).toHaveTextContent("JetBrainsMono Nerd Font Mono");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  expect(font.snapshot().family).toBe("JetBrainsMono Nerd Font Mono");
+});
+
+it("shows a saved family the host does not list in the dropdown", async () => {
+  localStorage.setItem(TERMINAL_FONT_KEY, "Unlisted Mono");
+  setup(async () => ["Menlo"]);
+  expect(
+    await screen.findByRole("combobox", { name: "Font family" }),
+  ).toHaveTextContent("Unlisted Mono");
 });
 
 it("blocks pending and unavailable submissions without changing the active font", async () => {

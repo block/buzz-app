@@ -2,7 +2,9 @@ import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import { flush } from "../relay/testing";
 import {
+  COMMUNITY_DECISION_BACKENDS_KEY,
   DECISION_BACKEND_KEY,
+  DECISIONS_OFF,
   DEFAULT_DECISION_PROVIDER,
   DecisionsService,
   type DecisionProvider,
@@ -273,57 +275,307 @@ it("uses Builderlab while it is registered, unless the user chose another", asyn
   expect(service.backend()).toBe("block.builderlab/builderlab");
   await builderlab.dispose();
   expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  // A choice of Builderlab falls back to TypeSafe while it is missing.
+  // A chosen Builderlab that is missing leaves decisions unavailable: no
+  // other provider answers in its place.
   builderlab = await plugin("block.builderlab", { id: "builderlab" });
   service.setBackend("block.builderlab/builderlab");
   await builderlab.dispose();
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  // A choice of TypeSafe stays when Builderlab registers again, and falls
-  // back to Builderlab while TypeSafe is off.
+  expect(service.backend()).toBeUndefined();
+  expect(service.status()).toBe("unavailable");
+  // A chosen TypeSafe stays when Builderlab registers again, and is not
+  // replaced by Builderlab while TypeSafe is off.
   service.setBackend(DEFAULT_DECISION_PROVIDER);
   builderlab = await plugin("block.builderlab", { id: "builderlab" });
   expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   await typesafe.dispose();
-  expect(service.backend()).toBe("block.builderlab/builderlab");
+  expect(service.backend()).toBeUndefined();
   expect(storage.values.get(DECISION_BACKEND_KEY)).toBe(
     DEFAULT_DECISION_PROVIDER,
   );
 });
 
-it("routes to the first default that can answer, else TypeSafe", async () => {
+it("routes to the first default offered, whether or not it can answer", async () => {
   const { service, plugin } = setup();
   const builderlab = settable("needs-setup");
-  const typesafe = settable("needs-setup");
+  const typesafe = settable("ready");
+  const community = "wss://community.example";
+  let offered = true;
   await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
-  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
-  // When no default can answer, TypeSafe shows: the user can set it up.
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("needs-setup");
-  // A default still checking makes the routing checking, not the backend.
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    ...builderlab,
+    offered: () => offered,
+  });
+  // Builderlab is offered, so it is the provider even while it cannot
+  // answer: a ready TypeSafe does not answer in its place.
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("needs-setup");
   builderlab.set("checking");
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("checking");
-  typesafe.set("ready");
-  // One that can answer is not held up by one that is checking.
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(service.status()).toBe("ready");
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("checking");
   builderlab.set("ready");
-  expect(service.backend()).toBe("block.builderlab/builderlab");
-  // A choice is kept even while it needs setup.
+  expect(service.status(community)).toBe("ready");
+  // Where it is not offered, and for a request with no community, TypeSafe
+  // is the default.
+  offered = false;
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // A chosen provider that cannot answer stays the provider.
+  offered = true;
+  typesafe.set("needs-setup");
+  service.setBackend(DEFAULT_DECISION_PROVIDER, community);
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(community)).toBe("needs-setup");
   builderlab.set("needs-setup");
-  service.setBackend("block.builderlab/builderlab");
-  expect(service.backend()).toBe("block.builderlab/builderlab");
-  expect(service.status()).toBe("needs-setup");
+  typesafe.set("ready");
+  service.setBackend("block.builderlab/builderlab", community);
+  expect(service.backend(community)).toBe("block.builderlab/builderlab");
+  expect(service.status(community)).toBe("needs-setup");
 });
 
-it("routes a request once a checking default knows whether it can answer", async () => {
+it("routes each community's requests to its own provider, and no other", async () => {
+  const { service, plugin } = setup();
+  const offered = "wss://offered.example";
+  const other = "wss://other.example";
+  const asked: (string | undefined)[] = [];
+  const typesafe = settable("ready");
+  // Builderlab is offered, and answers, only where the community offers it.
+  const builderlab = {
+    status: (community?: string) =>
+      community === offered ? ("ready" as const) : ("needs-setup" as const),
+    offered: (community: string) => community === offered,
+    decide: async (sent: DecisionRequest) => {
+      asked.push(sent.community);
+      return sent.community === offered
+        ? reply
+        : {
+            outcome: "failed" as const,
+            reason: "missing_credentials" as const,
+          };
+    },
+  };
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    ...typesafe,
+    decide: async (sent) => {
+      asked.push(`typesafe:${sent.community}`);
+      return reply;
+    },
+  });
+  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
+  expect(service.backend(offered)).toBe("block.builderlab/builderlab");
+  expect(service.backend(other)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(other)).toBe("ready");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  const answered = [
+    await service.decide({ ...request, community: offered }),
+    await service.decide({ ...request, community: other }),
+  ];
+  expect(answered.map(({ backend }) => backend)).toEqual([
+    "block.builderlab/builderlab",
+    DEFAULT_DECISION_PROVIDER,
+  ]);
+  expect(asked).toEqual([offered, `typesafe:${other}`]);
+  // A Builderlab chosen everywhere answers where it can and fails elsewhere:
+  // TypeSafe does not answer in its place.
+  service.setBackend("block.builderlab/builderlab");
+  asked.length = 0;
+  expect(service.backend(other)).toBe("block.builderlab/builderlab");
+  expect(service.status(other)).toBe("needs-setup");
+  await expect(
+    service.decide({ ...request, community: other }),
+  ).resolves.toMatchObject({
+    outcome: "failed",
+    backend: "block.builderlab/builderlab",
+    reason: "missing_credentials",
+  });
+  expect(asked).toEqual([other]);
+  // Without TypeSafe's key, a community that uses it has no answer.
+  service.setBackend(DEFAULT_DECISION_PROVIDER);
+  typesafe.set("needs-setup");
+  expect(service.backend(offered)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status(other)).toBe("needs-setup");
+  // A chosen provider that is not a default never falls back either.
+  await plugin("acme.other", { id: "other", status: () => "needs-setup" });
+  service.setBackend("acme.other/other");
+  expect(service.backend(other)).toBe("acme.other/other");
+  expect(service.status(other)).toBe("needs-setup");
+});
+
+it("keeps a choice for each community, by host, across reloads", async () => {
+  const storage = memory();
+  const { root, service, plugin } = setup(storage);
+  const block = "wss://Buzz.Block.example";
+  const hiking = "wss://hiking.example";
+  const typesafe = settable("ready");
+  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    status: (community?: string) =>
+      community?.toLowerCase().includes("buzz.block.example")
+        ? "ready"
+        : "needs-setup",
+    offered: (community) =>
+      !!community?.toLowerCase().includes("buzz.block.example"),
+  });
+  await plugin("acme.helper", { id: "p" });
+  const changed = vi.fn();
+  service.subscribe(changed);
+  // A choice for one community changes only that community.
+  service.setBackend("acme.helper/p", hiking);
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(service.backend(hiking)).toBe("acme.helper/p");
+  expect(service.backend(block)).toBe("block.builderlab/builderlab");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // Its https:// URL, as Settings lists it, shares the choice.
+  service.setBackend(DEFAULT_DECISION_PROVIDER, "https://buzz.block.example");
+  expect(service.backend(block)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.chosenIn(block)).toBe(DEFAULT_DECISION_PROVIDER);
+  // A community that is not a URL keeps no choice.
+  service.setBackend("acme.helper/p", "not a relay");
+  expect(service.backend("not a relay")).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(
+    JSON.parse(storage.getItem(COMMUNITY_DECISION_BACKENDS_KEY) ?? "null"),
+  ).toEqual({
+    "hiking.example": "acme.helper/p",
+    "buzz.block.example": DEFAULT_DECISION_PROVIDER,
+  });
+  expect(storage.getItem(DECISION_BACKEND_KEY)).toBeNull();
+  await root.fiber.dispose();
+  // After a reload, each community keeps its own; a retired provider's
+  // choices go, and those communities use the defaults again.
+  const reloaded = setup(storage);
+  await reloaded.plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await reloaded.plugin("acme.helper", { id: "p" });
+  expect(reloaded.service.backend(hiking)).toBe("acme.helper/p");
+  reloaded.root
+    .extend({ pluginOwner: { id: "acme.helper", revision: "one" } })
+    .decisions.retireProvider("p");
+  expect(reloaded.service.backend(hiking)).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(
+    JSON.parse(storage.getItem(COMMUNITY_DECISION_BACKENDS_KEY) ?? "null"),
+  ).toEqual({ "buzz.block.example": DEFAULT_DECISION_PROVIDER });
+  await reloaded.root.fiber.dispose();
+});
+
+it("applies a choice saved before per-community choices where a community has none", async () => {
+  const storage = memory({
+    [DECISION_BACKEND_KEY]: "acme.helper/p",
+    [COMMUNITY_DECISION_BACKENDS_KEY]: JSON.stringify({
+      "hiking.example": DEFAULT_DECISION_PROVIDER,
+    }),
+  });
+  const { root, service, plugin } = setup(storage);
+  await plugin("buzz.typesafe", { id: "typesafe" });
+  // The earlier choice is not a default: decisions stay unavailable until it
+  // registers, rather than going to TypeSafe.
+  expect(service.backend("wss://other.example")).toBeUndefined();
+  expect(service.backend("wss://hiking.example")).toBe(
+    DEFAULT_DECISION_PROVIDER,
+  );
+  await plugin("acme.helper", { id: "p" });
+  expect(service.backend("wss://other.example")).toBe("acme.helper/p");
+  expect(service.backend()).toBe("acme.helper/p");
+  await root.fiber.dispose();
+});
+
+it("asks no provider in a community where the user turned decisions off", async () => {
+  const storage = memory({
+    [DECISION_BACKEND_KEY]: "block.builderlab/builderlab",
+  });
+  const { root, service, plugin } = setup(storage);
+  const typesafe = vi.fn(async () => reply);
+  const builderlab = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  await plugin("block.builderlab", { id: "builderlab", decide: builderlab });
+  const off = "wss://billed.example";
+  const other = "wss://other.example";
+  const changed = vi.fn();
+  service.subscribe(changed);
+  service.setBackend(DECISIONS_OFF, off);
+  expect(changed).toHaveBeenCalledOnce();
+  // Off wins over the choice saved for every community, and nothing
+  // answers in its place, not even TypeSafe.
+  expect(service.chosenIn(off)).toBe(DECISIONS_OFF);
+  expect(service.backend(off)).toBeUndefined();
+  expect(service.status(off)).toBe("unavailable");
+  await expect(
+    service.decide({ ...request, community: off }),
+  ).resolves.toMatchObject({ outcome: "failed", reason: "unavailable" });
+  // Every spelling of the community is the same one: Settings saves the
+  // https origin, a plugin may name it by its relay URL with a final DNS
+  // dot, any case or the default port.
+  for (const spelling of [
+    "https://billed.example",
+    "wss://billed.example.",
+    "wss://BILLED.example:443/",
+  ]) {
+    expect(service.chosenIn(spelling)).toBe(DECISIONS_OFF);
+    await expect(
+      service.decide({ ...request, community: spelling }),
+    ).resolves.toMatchObject({ outcome: "failed", reason: "unavailable" });
+  }
+  expect(typesafe).not.toHaveBeenCalled();
+  expect(builderlab).not.toHaveBeenCalled();
+  // Other communities keep their providers.
+  expect(service.backend(other)).toBe("block.builderlab/builderlab");
+  // It is kept across a reload, and stays off while providers come and go.
+  await root.fiber.dispose();
+  const reloaded = setup(storage);
+  await reloaded.plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  expect(reloaded.service.chosenIn(off)).toBe(DECISIONS_OFF);
+  expect(reloaded.service.backend(off)).toBeUndefined();
+  reloaded.root
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .decisions.retireProvider("builderlab");
+  expect(reloaded.service.chosenIn(off)).toBe(DECISIONS_OFF);
+  // Choosing a provider turns it back on.
+  reloaded.service.setBackend(DEFAULT_DECISION_PROVIDER, off);
+  expect(reloaded.service.backend(off)).toBe(DEFAULT_DECISION_PROVIDER);
+  await reloaded.root.fiber.dispose();
+});
+
+it("treats a provider whose offered() throws as not offered, and never rejects", async () => {
+  const { service, plugin } = setup();
+  const thrower = vi.fn(async () => reply);
+  const typesafe = vi.fn(async () => reply);
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    decide: thrower,
+    offered: () => {
+      throw new Error("plugin bug");
+    },
+  });
+  await plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  const community = "wss://relay.example";
+  // With no choice, the default that throws is skipped for the next one.
+  expect(service.backend(community)).toBe(DEFAULT_DECISION_PROVIDER);
+  await expect(
+    service.decide({ ...request, community }),
+  ).resolves.toMatchObject({ outcome: "answered" });
+  expect(thrower).not.toHaveBeenCalled();
+  expect(typesafe).toHaveBeenCalledOnce();
+});
+
+it("ignores malformed saved community choices", async () => {
+  for (const saved of ["{", "[]", JSON.stringify({ "a.example": 7 })]) {
+    const { root, service, plugin } = setup(
+      memory({ [COMMUNITY_DECISION_BACKENDS_KEY]: saved }),
+    );
+    await plugin("buzz.typesafe", { id: "typesafe" });
+    expect(service.backend("wss://a.example")).toBe(DEFAULT_DECISION_PROVIDER);
+    await root.fiber.dispose();
+  }
+});
+
+it("holds a request for a checking provider, and never sends it elsewhere", async () => {
   const { service, plugin, timers } = setup();
   const builderlab = settable("checking");
   const fromBuilderlab = vi.fn(async () => reply);
   const fromTypesafe = vi.fn(async () => reply);
   await plugin("buzz.typesafe", {
     id: "typesafe",
-    ...settable("needs-setup"),
+    ...settable("ready"),
     decide: fromTypesafe,
   });
   await plugin("block.builderlab", {
@@ -331,47 +583,32 @@ it("routes a request once a checking default knows whether it can answer", async
     ...builderlab,
     decide: fromBuilderlab,
   });
-  const refused = service.decide(request);
+  // A ready TypeSafe does not answer while Builderlab checks.
+  const held = service.decide(request);
   await flush();
   expect(fromBuilderlab).not.toHaveBeenCalled();
-  expect(fromTypesafe).not.toHaveBeenCalled();
   builderlab.set("needs-setup");
-  await expect(refused).resolves.toMatchObject({
-    outcome: "answered",
-    backend: DEFAULT_DECISION_PROVIDER,
+  await expect(held).resolves.toMatchObject({
+    backend: "block.builderlab/builderlab",
   });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
   builderlab.set("checking");
   const granted = service.decide(request);
   await flush();
   builderlab.set("ready");
   await expect(granted).resolves.toMatchObject({
+    outcome: "answered",
     backend: "block.builderlab/builderlab",
   });
-  expect(fromBuilderlab).toHaveBeenCalledOnce();
+  expect(fromBuilderlab).toHaveBeenCalledTimes(2);
   // The wait counts against the request's deadline.
   builderlab.set("checking");
   const late = service.decide(request);
   await flush();
   timers[0]?.run();
   await expect(late).resolves.toMatchObject({ reason: "timeout" });
-  expect(fromBuilderlab).toHaveBeenCalledOnce();
-});
-
-it("does not hold a request for a checking default when another can answer", async () => {
-  const { service, plugin } = setup();
-  const fromBuilderlab = vi.fn(async () => reply);
-  const fromTypesafe = vi.fn(async () => reply);
-  await plugin("buzz.typesafe", { id: "typesafe", decide: fromTypesafe });
-  await plugin("block.builderlab", {
-    id: "builderlab",
-    ...settable("checking"),
-    decide: fromBuilderlab,
-  });
-  await expect(service.decide(request)).resolves.toMatchObject({
-    outcome: "answered",
-    backend: DEFAULT_DECISION_PROVIDER,
-  });
-  expect(fromBuilderlab).not.toHaveBeenCalled();
+  expect(fromBuilderlab).toHaveBeenCalledTimes(2);
+  expect(fromTypesafe).not.toHaveBeenCalled();
 });
 
 it("removes a provider when the plugin asks, before its scope ends", async () => {

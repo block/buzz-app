@@ -97,11 +97,12 @@ import {
 } from "./service";
 import {
   DecisionsService,
+  DECISIONS_OFF,
   type DecisionFailure,
   type DecisionRequest,
   type DecisionResult,
 } from "../decisions/service";
-import { TypeSafeKey } from "../../bundled/typesafe/key";
+import { TypeSafeKeys } from "../../bundled/typesafe/key";
 import { typesafeProvider } from "../../bundled/typesafe";
 import {
   CATCH_UP_PREFIX,
@@ -327,7 +328,7 @@ async function setup({
   const activity = createLocalAgentActivity();
   // The TypeSafe plugin on the real decisions service, over a fake key store.
   const decisions = jev ? new DecisionsService(ctx, undefined) : undefined;
-  const typesafe = jev ? new TypeSafeKey(jev) : undefined;
+  const typesafe = jev ? new TypeSafeKeys(jev) : undefined;
   if (typesafe) {
     typesafe.load();
     await ctx
@@ -447,6 +448,7 @@ async function setup({
     owners,
     inactive,
     typesafe,
+    decisions,
     /** Ends startup, as when the last plugin finishes starting. */
     settleStartup: settle,
     type,
@@ -9630,17 +9632,20 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
   expect(triggers[1]).not.toHaveProperty("interest");
 });
 
+/** The community of the agent `classifiedAgent` makes. */
+const agentRelay = "wss://relay.example.test";
 /** Native TypeSafe: the saved key, and the answers the test sets. */
 function fakeJev(configured = true) {
   let key = configured;
   return {
     status: vi.fn(async () => key),
-    setKey: vi.fn(async (_: string) => {
+    setKey: vi.fn(async (_: string, __: string) => {
       key = true;
     }),
-    clearKey: vi.fn(async () => {
+    clearKey: vi.fn(async (_: string) => {
       key = false;
     }),
+    adopt: vi.fn(async (_: readonly string[]) => {}),
     decide: vi.fn<(request: DecisionRequest) => Promise<unknown>>(
       async () => yes,
     ),
@@ -9693,13 +9698,15 @@ async function classifiedAgent(jev: FakeJev) {
   });
   const { typesafe } = harness;
   if (!typesafe) throw new Error("no TypeSafe key");
-  return { ...harness, typesafe };
+  return { ...harness, typesafe: typesafe.for(agentRelay) };
 }
 
 it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
   const jev = fakeJev();
   const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  await vi.waitFor(() =>
+    expect(service.classifier(agentRelay)).toBe("available"),
+  );
   emit({ events: [event("w", { content: "shipping v2" })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
@@ -9779,7 +9786,7 @@ it("without a key the classifier does not run and the turn is told so", async ()
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "not-run" },
   });
-  expect(service.classifier()).toBe("unavailable");
+  expect(service.classifier(agentRelay)).toBe("unavailable");
 });
 
 it("discovers newly granted Decisions access before Attention skips an unconfigured classifier", async () => {
@@ -9807,7 +9814,7 @@ it("discovers newly granted Decisions access before Attention skips an unconfigu
   });
   const plugin = h.ctx
     .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
-    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, decide));
   try {
     await plugin.await();
     await session.signIn();
@@ -9843,11 +9850,10 @@ it("a key set or cleared takes effect at once, and one removed elsewhere is noti
   const jev = fakeJev(false);
   const { service, typesafe, run, emit } = await classifiedAgent(jev);
   await typesafe.save("tk");
-  expect(jev.setKey).toHaveBeenCalledWith("tk");
-  expect(service.classifier()).toBe("available");
-  expect(service.snapshot().classifier).toBe("available");
+  expect(jev.setKey).toHaveBeenCalledWith(agentRelay, "tk");
+  expect(service.classifier(agentRelay)).toBe("available");
   await typesafe.clear();
-  expect(service.classifier()).toBe("unavailable");
+  expect(service.classifier(agentRelay)).toBe("unavailable");
   await typesafe.save("tk");
   jev.decide.mockResolvedValueOnce(failure("missing_credentials"));
   emit({ events: [event("w")] });
@@ -9855,7 +9861,7 @@ it("a key set or cleared takes effect at once, and one removed elsewhere is noti
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "not-run" },
   });
-  expect(service.classifier()).toBe("unavailable");
+  expect(service.classifier(agentRelay)).toBe("unavailable");
 });
 
 it("shows a key it cannot read as unreadable, and one the service refuses as refused", async () => {
@@ -9876,7 +9882,7 @@ it("shows a key it cannot read as unreadable, and one the service refuses as ref
     classifier: { outcome: "failed", reason: "unauthorized" },
   });
   expect(typesafe.snapshot()).toBe("refused");
-  expect(service.classifier()).toBe("available");
+  expect(service.classifier(agentRelay)).toBe("available");
   // Another failure does not say whether the key was accepted.
   jev.decide.mockResolvedValueOnce(failure("timeout"));
   emit({ events: [event("c")] });
@@ -9949,18 +9955,72 @@ it("an event heard before the saved key's status is read waits for it, then is c
   });
 });
 
+it("does not classify in a community where the user turned decisions off", async () => {
+  const jev = fakeJev();
+  const { service, run, emit, decisions } = await classifiedAgent(jev);
+  if (!decisions) throw new Error("no decisions");
+  const provider = decisions.backend("wss://relay.example.test");
+  if (!provider) throw new Error("no provider");
+  decisions.setBackend(DECISIONS_OFF, "wss://relay.example.test");
+  expect(decisions.chosenIn("wss://relay.example.test")).toBe(DECISIONS_OFF);
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.decide).not.toHaveBeenCalled();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
+  });
+  // The key is ready in another community, but the agent's attention, and
+  // the Attention page, report what its own community's classifiers do.
+  const other = "wss://other.example.test";
+  await vi.waitFor(() => expect(decisions.status(other)).toBe("ready"));
+  expect(service.classifier(other)).toBe("available");
+  expect(service.classifier(agentRelay)).toBe("unavailable");
+  expect(run.mock.calls[0]?.[0].agent.attention.classifier()).toBe(
+    "unavailable",
+  );
+  decisions.setBackend(provider, "wss://relay.example.test");
+  await vi.waitFor(() =>
+    expect(run.mock.calls[0]?.[0].agent.attention.classifier()).toBe(
+      "available",
+    ),
+  );
+});
+
+it("a provider that never finishes checking its setup does not hold an event forever", async () => {
+  const jev = fakeJev();
+  jev.status.mockImplementationOnce(() => new Promise<boolean>(() => {}));
+  const { run, emit } = await classifiedAgent(jev);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    emit({ events: [event("w")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(jev.decide).not.toHaveBeenCalled();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
+  });
+});
+
 it("a failed read of the key's status does not stop a saved key from classifying", async () => {
   const jev = fakeJev();
   jev.status.mockRejectedValueOnce(new Error("The Keychain is locked"));
   const { service, run, emit } = await classifiedAgent(jev);
-  expect(service.classifier()).toBe("unavailable");
+  // Unconfirmed: the classifier still asks it, so it is reported available.
+  await vi.waitFor(() =>
+    expect(service.classifier(agentRelay)).toBe("available"),
+  );
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(jev.decide).toHaveBeenCalledOnce();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "passed" },
   });
-  expect(service.classifier()).toBe("available");
+  expect(service.classifier(agentRelay)).toBe("available");
 });
 
 it("keeps a key removed while a call that used it ran shown as missing", async () => {
@@ -9977,7 +10037,7 @@ it("keeps a key removed while a call that used it ran shown as missing", async (
   answer(yes);
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(typesafe.snapshot()).toBe("missing");
-  expect(service.classifier()).toBe("unavailable");
+  expect(service.classifier(agentRelay)).toBe("unavailable");
 });
 
 it("keeps a key saved while an old key's call ran shown as saved, though the old one was refused", async () => {
@@ -10003,6 +10063,8 @@ it("keeps a key saved before the first status read answers shown as saved", asyn
     () => new Promise<boolean>((resolve) => (known = resolve)),
   );
   const { typesafe } = await classifiedAgent(jev);
+  // Asking starts the first read.
+  expect(typesafe.snapshot()).toBe("checking");
   await typesafe.save("tk");
   known(false);
   await settle();
@@ -10012,7 +10074,9 @@ it("keeps a key saved before the first status read answers shown as saved", asyn
 it("classifies a watched event of an agent whose community is not selected", async () => {
   const jev = fakeJev();
   const { service, run, emit, second, select } = await classifiedAgent(jev);
-  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  await vi.waitFor(() =>
+    expect(service.classifier(agentRelay)).toBe("available"),
+  );
   select(second.origin);
   expect(service.find(bot)).toBeUndefined();
   emit({ events: [event("w", { content: "shipping v2" })] });

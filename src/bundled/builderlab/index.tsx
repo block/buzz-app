@@ -14,6 +14,7 @@ import { Login } from "./login/Login";
 import { browserLoginAvailable, oauthTarget } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
 import {
+  communitySessions,
   createNativeSession,
   followCommunity,
   nativeBuilderlab,
@@ -24,7 +25,10 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
-import { offerBuilderlabDecisions } from "./decisions";
+import {
+  communityDecisionSessions,
+  offerBuilderlabDecisions,
+} from "./decisions";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { useAgentsSnapshot } from "../../features/agents/react";
@@ -70,9 +74,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.effect(() => () => session.dispose());
   // Remote agents use the sign-in server of the community in view; the rest
   // of Builderlab stays with the build's.
-  const agentSession = dev
-    ? session
-    : followCommunity(session, ctx.federatedIdentity, ctx.relay);
+  const sessions = dev
+    ? undefined
+    : communitySessions(session, ctx.federatedIdentity);
+  if (sessions) ctx.effect(() => () => sessions.dispose());
+  const agentSession = sessions
+    ? followCommunity(session, ctx.federatedIdentity, ctx.relay, sessions)
+    : session;
   if (agentSession !== session) ctx.effect(() => () => agentSession.dispose());
   const loginAvailable = (!!dev || browserLoginAvailable()) && !unavailable;
   const openSettings = (section: string) =>
@@ -201,13 +209,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-    // Native validation stays in place; the dev transport uses a public revision.
+    // Native validation stays in place; the dev transport uses a public
+    // revision. Each community's decisions use its own sign-in server's
+    // session.
     offerBuilderlabDecisions(
       ctx,
-      session,
-      loginAvailable,
+      agentSession,
       dev?.decide,
-      openIdentity,
+      // A community's own server is signed in to under Community sign-ins;
+      // without them, only the build's, on this plugin's card.
+      openIdentity
+        ? {
+            label: "Community sign-ins",
+            section: "identity",
+            open: openIdentity,
+          }
+        : {
+            label: "Builderlab settings",
+            section: "block.builderlab/login",
+            open: openSettings,
+          },
+      sessions &&
+        communityDecisionSessions(
+          sessions,
+          ctx.federatedIdentity,
+          ctx.knownCommunities,
+        ),
     );
     ctx.provide("builderlab", hostedAgentSettings(agentSession, agents));
   }

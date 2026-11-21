@@ -4,15 +4,19 @@
 //! owns the endpoints, credentials, limits and answer checks, so every
 //! provider returns the same checked answers or the same failure reasons.
 //!
-//! - `typesafe`: TypeSafe System One with the user's own TypeSafe key, which
-//!   only native code reads (see `jev.rs`).
+//! - `typesafe`: TypeSafe System One with the key the user saved for the
+//!   request's community, which only native code reads (see `jev.rs`). A
+//!   call without a community has no key.
 //! - `builderlab`: the build's Builderlab (`BUZZ_BUILDERLAB_URL`), with the
 //!   Builderlab sign-in the webview holds. Builds without one have no
 //!   `builderlab` endpoint. An FI build instead calls the API of its identity
 //!   origin with the native NIP-FI session, which the webview never sees, as
-//!   its other Builderlab calls do. It takes System One's request and answer shapes,
-//!   answers with Jev unless asked for another model, and bills the
-//!   request's community, so a call without one is not sent.
+//!   its other Builderlab calls do. The request's community picks the sign-in
+//!   server, as for the community's other calls, so each community's
+//!   Builderlab answers its decisions. It takes System One's request and
+//!   answer shapes, answers with Jev unless asked for another model, and
+//!   bills the request's community, so a call without one is not sent.
+use crate::federated_identity::config::canonical_relay;
 use crate::federated_identity::FederatedIdentity;
 use crate::jev::JevHost;
 use serde::{Deserialize, Serialize};
@@ -70,7 +74,8 @@ pub(crate) struct Request {
     #[serde(default)]
     pub(crate) timeout_ms: Option<u64>,
     /// The Buzz community (its relay URL) the text comes from. Builderlab
-    /// bills that community and refuses a call without one.
+    /// bills that community and TypeSafe uses its key; both refuse a call
+    /// without one.
     #[serde(default)]
     pub(crate) community: Option<String>,
 }
@@ -229,7 +234,13 @@ impl DecisionsHost {
                 .map_err(|_| Failure::ServiceError)?;
             let client = client().ok_or(Failure::ServiceError)?;
             let post = match backend {
-                Backend::Typesafe => match keys.key().await {
+                // Only a community has a key.
+                Backend::Typesafe => match match request.community.as_deref() {
+                    Some(community) if crate::jev::account(community).is_some() => {
+                        keys.key(community).await
+                    }
+                    _ => Ok(None),
+                } {
                     Ok(Some(key)) => client
                         .post(&self.endpoints.typesafe)
                         .bearer_auth(key.as_str()),
@@ -283,7 +294,9 @@ impl DecisionsHost {
                 300..=399 | 401 | 403 => {
                     if backend == Backend::Typesafe {
                         // The key may have been removed or replaced elsewhere.
-                        keys.forget().await;
+                        if let Some(community) = request.community.as_deref() {
+                            keys.forget(community).await;
+                        }
                     } else if status == 401 {
                         return Err(Failure::SessionExpired);
                     }
@@ -535,7 +548,7 @@ fn list_or_map(
 /// The community as Builderlab names it: the relay's host, lowercase, with
 /// its port only when not the scheme's default. `None` when it is not a relay
 /// URL.
-fn community_host(community: &str) -> Option<String> {
+pub(crate) fn community_host(community: &str) -> Option<String> {
     let url = reqwest::Url::parse(community.trim()).ok()?;
     if !matches!(url.scheme(), "wss" | "ws" | "https" | "http") {
         return None;
@@ -614,11 +627,12 @@ fn federated_sign_in(
     .flatten()
 }
 
-/// Builderlab with an FI build's native session. Only the session the caller
-/// started under may answer: a sign-out or account switch during the call
-/// drops its answer. A 401 refuses this call only: the adapter, asked once in
-/// the background, decides whether the session ended, as for other granted
-/// calls.
+/// Builderlab with the native session of the sign-in server for the
+/// request's community, chosen by its host as for the community's other
+/// calls. Only the session the caller started under may answer: a sign-out
+/// or account switch during the call drops its answer. A 401 refuses this
+/// call only: the adapter, asked once in the background, decides whether the
+/// session ended, as for other granted calls.
 async fn decide_federated(
     host: &DecisionsHost,
     keys: &JevHost,
@@ -631,6 +645,23 @@ async fn decide_federated(
         backend,
         reason: Failure::MissingCredentials,
     };
+    // Builderlab bills the community, so a call without one is not sent,
+    // nor one for a community no sign-in server covers: `server_for` falls
+    // back to the build's own server.
+    let Some(Ok(fi)) = request.community.as_deref().map(|community| {
+        let relay = canonical_relay(community)?;
+        let server = fi.server_for(&relay)?;
+        match server.config().map(|config| config.matches_relay(&relay)) {
+            Some(Ok(true)) => Ok(server),
+            _ => Err("No sign-in server covers this community".to_owned()),
+        }
+    }) else {
+        return Decided::Failed {
+            backend,
+            reason: Failure::InvalidRequest,
+        };
+    };
+    let fi = &fi;
     let Some((cancel, builderlab, session)) = federated_sign_in(fi, revision) else {
         return ended;
     };

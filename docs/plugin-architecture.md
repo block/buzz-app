@@ -3834,13 +3834,19 @@ export function apply(ctx: Context) {
     id: "example",
     label: "Example",
     description: "Use your Example account.",
-    status: () => "ready", // or "checking", "unconfirmed", "needs-setup"
+    // or "checking", "unconfirmed", "needs-setup"; `community` (a relay URL)
+    // asks about one community, as for a provider that bills it.
+    status: (community?: string) => "ready",
     subscribe: (listener) => () => {}, // call listener when status changes
     async decide(request, { signal }) {
       // request is already checked and has its timeoutMs; signal aborts at it.
       return { outcome: "answered", model: "example-1", answers: {} };
     },
-    Settings: ({ active }) => null, // shown while this provider is selected
+    // Optional: whether it can be chosen and set up for a community.
+    offered: (community) => true,
+    // Shown in Settings for each community that chose it, such as why it
+    // can't answer there; without communities, once.
+    Settings: ({ active, community }) => null,
   });
 }
 ```
@@ -3852,31 +3858,37 @@ the reply. An answer of the wrong type, an unknown choice, a value outside 0 to
 1 or a missing answer makes the call `invalid_response`; answers to questions
 that were not asked are dropped.
 
-The user chooses the provider in Settings > Decisions API, and the choice is
-kept on this device. Until they choose, the first default provider that is on
-and can answer (`ready` or `unconfirmed`) does: Builderlab
-(`block.builderlab/builderlab`), then TypeSafe (`buzz.typesafe/typesafe`).
-When none can, TypeSafe is the provider, and the status is `checking` while
-another default is still finding out whether it can answer. The same holds
-while a chosen default is not on.
-Decision text can include private messages, so no other provider gets it
-without that choice: while a chosen provider that is not a default is not on,
-decisions are `unavailable` and are not sent to another provider. `ctx.decisions.backend()`
-is the answering provider's key (`<plugin id>/<provider id>`), or undefined
-when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
-no way to choose the provider. `state` and every question go to the provider,
-so send only what the decision needs.
+Settings > Decisions API lists each joined community with a menu of the
+providers `offered` there, and below it the chosen provider's `Settings` for
+that community. The user
+chooses a provider for each community, or Off, which asks no provider there
+and lets none answer in its place: `backend` is undefined and `status`
+`unavailable`. Choices are kept on this device, by the
+community's relay host. Each request is routed in its `community`, to the
+provider chosen for that community, or one chosen before per-community
+choices. Until the user chooses, the first default provider that is on and
+`offered` there answers: Builderlab (`block.builderlab/builderlab`), then
+TypeSafe (`buzz.typesafe/typesafe`). `offered()` with no community says
+whether it serves a request that names none; Builderlab does not. The
+routed provider answers whatever its status: when it cannot (`needs-setup`),
+or a chosen provider is not on, decisions there fail, and no other provider
+answers in its place. Decision text can include private messages, so no
+provider gets it without that choice or default. `ctx.decisions.backend(community?)` is the key
+(`<plugin id>/<provider id>`) of the provider that answers in that community,
+or undefined when none is on, and `ctx.decisions.status(community?)` its
+status. `Decisions` exposes no way to choose the provider. `state` and every
+question go to the provider, so send only what the decision needs.
 
-`ctx.decisions.retireProvider(id)` clears a saved choice for a retired provider
-from the calling plugin. Pass the local provider ID, without a plugin prefix.
+`ctx.decisions.retireProvider(id)` clears saved choices for a retired provider
+from the calling plugin, in every community. Pass the local provider ID, without a plugin prefix.
 The host then uses its default providers. Choices for other providers stay in
 effect. The method throws if the saved change fails or the caller has no plugin
 scope. It does not register a provider or let a plugin select another provider.
 
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
-| `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
-| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered while the user is signed in, and `needs-setup` unless Builderlab allows the account decisions | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
+| `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The TypeSafe key the user saved for the request's community, kept and read only by native code (`src-tauri/src/jev.rs`); a request without a community has no key |
+| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered while the build's sign-in is signed in or being restored, or while a joined community has a sign-in server that covers it, signed in or not, so it can be chosen before sign-in; offered only in communities such a server covers, and there `needs-setup` until that server is signed in and allows the account decisions | The Builderlab sign-in of the request's community, which native code sends with each call. Builderlab answers with Jev and bills that `community`; its server allows up to 32 questions per call |
 
 ## In-app keyboard shortcuts
 

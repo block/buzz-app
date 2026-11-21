@@ -380,7 +380,11 @@ it("signs in to a community's own server and follows only that server", async ()
   const { service } = setup();
   vi.mocked(invoke).mockResolvedValue({ ...signedOut, authority: peer });
   const community = service.forCommunity("wss://team.communities.example");
+  // Settings names a community by its https origin, agents by its wss URL.
   expect(service.forCommunity("wss://team.communities.example")).toBe(
+    community,
+  );
+  expect(service.forCommunity("https://Team.communities.example/")).toBe(
     community,
   );
   const changes = vi.fn();
@@ -389,7 +393,7 @@ it("signs in to a community's own server and follows only that server", async ()
     expect(community.snapshot().authority?.id).toBe("peer"),
   );
   expect(invoke).toHaveBeenCalledWith("federated_identity_snapshot", {
-    relay: "wss://team.communities.example",
+    relay: "https://team.communities.example",
   });
   // Another server's snapshot is not this community's.
   emit("federated-identity", signedIn);
@@ -399,7 +403,7 @@ it("signs in to a community's own server and follows only that server", async ()
   vi.mocked(invoke).mockResolvedValue({ ...signedIn, authority: peer });
   await community.signIn();
   expect(invoke).toHaveBeenCalledWith("federated_identity_sign_in", {
-    relay: "wss://team.communities.example",
+    relay: "https://team.communities.example",
   });
 });
 

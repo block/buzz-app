@@ -14,14 +14,37 @@ pub(crate) fn signed_in(adapter_base: String, relay: &str, required: bool) -> Fe
 /// `origin`, a plain loopback fixture, so granted API calls and the adapter's
 /// session route reach one test server.
 pub(crate) fn signed_in_at(origin: String) -> FederatedIdentity {
+    signed_in_with(origin, |_| {})
+}
+/// As `signed_in_at`, for a build's server that covers the community at
+/// `host`.
+pub(crate) fn signed_in_covering(origin: String, host: &str) -> FederatedIdentity {
+    signed_in_with(origin, |inner| {
+        inner.config.as_mut().unwrap().community_hosts = vec![host.into()];
+    })
+}
+/// The build's server signed in at `first_origin`, as `signed_in_at`, with a
+/// compiled peer signed in at `peer_origin` that covers `peer_host`. Returns
+/// both.
+pub(crate) fn signed_in_with_peer(
+    first_origin: String,
+    peer_origin: String,
+    peer_host: &str,
+) -> (FederatedIdentity, FederatedIdentity) {
+    let peer = signed_in_with(peer_origin, |inner| {
+        let config = inner.config.as_mut().unwrap();
+        config.id = "peer".into();
+        config.community_hosts = vec![peer_host.into()];
+    });
+    let first = signed_in_with(first_origin, |inner| inner.peers = vec![peer.clone()]);
+    (first, peer)
+}
+fn signed_in_with(origin: String, edit: impl FnOnce(&mut super::Inner)) -> FederatedIdentity {
     let store = Arc::new(tests::Memory::default());
     let mut owner = tests::at_adapter(store.clone(), origin.clone());
-    Arc::get_mut(&mut owner.0)
-        .unwrap()
-        .config
-        .as_mut()
-        .unwrap()
-        .identity_origin = origin;
+    let inner = Arc::get_mut(&mut owner.0).unwrap();
+    inner.config.as_mut().unwrap().identity_origin = origin;
+    edit(inner);
     let session = tests::record();
     *store.raw.lock().unwrap() = Some(session.raw.clone());
     owner.install(session);

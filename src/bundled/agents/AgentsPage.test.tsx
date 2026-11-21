@@ -200,7 +200,6 @@ function setup(
 ) {
   let snapshot: AgentsSnapshot = {
     status,
-    classifier: "unavailable",
     agents: saved,
     running: saved,
     interrupted: [],

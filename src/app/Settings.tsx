@@ -1536,6 +1536,7 @@ export function Settings({
               decisions={decisions}
               active={() => selected === "decisions"}
               onSection={openSection}
+              memberships={client.memberships}
             />
           </div>
         )}

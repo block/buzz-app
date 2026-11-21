@@ -114,6 +114,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save,
     },
@@ -280,6 +281,7 @@ it.each(["source", "event", "timer"] as const)(
       agents: {
         presentWatch: () => undefined,
         snapshot: () => snapshot,
+        classifier: () => "unavailable" as const,
         subscribe: (listener: () => void) => {
           changed = listener;
           return () => {};
@@ -500,6 +502,7 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save,
     },
@@ -602,6 +605,7 @@ function renderRefusedSave() {
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save,
     },
@@ -722,6 +726,7 @@ it("deletes the watch the dialog showed, not one revised while it was open", asy
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         changed = listener;
         return () => {};
@@ -799,6 +804,7 @@ it("explains Attention to a new agent with no switch to turn on", () => {
     react: React,
     agents: {
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save: vi.fn(),
     },
@@ -828,6 +834,7 @@ it("says why an agent's watches are not shown", async () => {
   const ctx = {
     agents: {
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save: vi.fn(),
     },
@@ -898,7 +905,12 @@ it.each([undefined, "missing"])(
     const disconnected = { status: "disconnected", ...community };
     const ctx = {
       react: React,
-      agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+      agents: {
+        snapshot: () => snapshot,
+        classifier: () => "unavailable" as const,
+        subscribe: () => () => {},
+        save,
+      },
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
     render(
@@ -946,7 +958,12 @@ it("keeps unreadable legacy watches visible and removes only the selected object
   const disconnected = { status: "disconnected", ...community };
   const ctx = {
     react: React,
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+    agents: {
+      snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
+      subscribe: () => () => {},
+      save,
+    },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
   render(
@@ -1064,6 +1081,7 @@ it.each([false, true])(
               }
             : undefined,
         snapshot: () => snapshot,
+        classifier: () => snapshot.classifier,
         subscribe: (listener: () => void) => {
           changed = listener;
           return () => {};
@@ -1211,6 +1229,7 @@ it("keeps overview and destination navigation in the selected community", async 
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save,
     },
@@ -1308,7 +1327,11 @@ it("keeps technical data out of message summaries and avoids repeating the desti
     session: { channels: queries },
   };
   const ctx = {
-    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    agents: {
+      snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
+      subscribe: () => () => {},
+    },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
   } as unknown as Context;
   render(
@@ -1463,6 +1486,7 @@ it("shows a minimal activity timeline with full message and output previews", ()
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         changed = listener;
         return () => {};
@@ -1612,6 +1636,7 @@ it("keeps spoilers hidden in activity summaries", () => {
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
     },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
@@ -1681,7 +1706,11 @@ it("shows a fired timer's wake as activity", () => {
     },
   };
   const ctx = {
-    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    agents: {
+      snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
+      subscribe: () => () => {},
+    },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
   } as unknown as Context;
   render(
@@ -1748,7 +1777,11 @@ it("shows an Interest's title and summary, and no summary when it has none", () 
     },
   };
   const ctx = {
-    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    agents: {
+      snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
+      subscribe: () => () => {},
+    },
     relay: { snapshot: () => connection, subscribe: () => () => {} },
   } as unknown as Context;
   render(
@@ -1825,6 +1858,7 @@ it("confirms deleting an Interest whose only watch was skipped", () => {
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
+      classifier: () => "unavailable" as const,
       subscribe: () => () => {},
       save,
     },

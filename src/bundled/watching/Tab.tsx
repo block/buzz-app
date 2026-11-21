@@ -476,7 +476,7 @@ export function createAttentionComponents({
         <div className="attention-content">
           {agent &&
             here &&
-            snapshot.classifier !== "available" &&
+            agents.classifier(agent.relay) !== "available" &&
             Object.values(agent.attention).some(
               ({ value }) => value.type === "event" && value.classifier,
             ) && (

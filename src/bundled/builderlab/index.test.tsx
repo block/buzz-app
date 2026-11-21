@@ -12,7 +12,10 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { KnownCommunities } from "../../features/communities/service";
+import type {
+  KnownCommunities,
+  Membership,
+} from "../../features/communities/service";
 import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import { PanelsService } from "../../features/panels/service";
@@ -44,7 +47,11 @@ async function settingsOverview() {
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
-function provideKnownCommunities(root: Context, viewer: string) {
+function provideKnownCommunities(
+  root: Context,
+  viewer: string,
+  memberships: Membership[] = [],
+) {
   const knownCommunities: KnownCommunities = {
     snapshot: () => ({
       status: "ready",
@@ -53,7 +60,7 @@ function provideKnownCommunities(root: Context, viewer: string) {
       sync: { known: [], outbox: [] },
       viewer,
       selected: null,
-      memberships: [],
+      memberships,
     }),
     subscribe: vi.fn(() => vi.fn()),
     pending: () => [],
@@ -723,7 +730,10 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   root.provide("federatedIdentity", identity.service);
   const navigation = { open: vi.fn(async () => ({ status: "opened" })) };
   root.provide("navigation", navigation as never);
-  provideKnownCommunities(root, community.viewer);
+  // Decisions answer in a community the build's sign-in server covers.
+  provideKnownCommunities(root, community.viewer, [
+    { id: "wss://relay.example", name: "Relay" },
+  ]);
   const service = provideAgents(root, community);
   // The native service owns inventory; this Settings test supplies its snapshot.
   const saved = {
@@ -795,16 +805,26 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     // Decisions name the native session; its token stays in native.
     const [provider] = decisions.providers();
     if (!provider) throw new Error("Missing FI Decisions provider");
-    expect(decisions.backend()).toBe("block.builderlab/builderlab");
+    expect(decisions.backend("wss://relay.example")).toBe(
+      "block.builderlab/builderlab",
+    );
     const question = {
       timeoutMs: 30_000,
       state: "test",
-      community: "wss://buzz.example.com",
+      community: "wss://relay.example",
       questions: { a: { type: "yes_no" as const, instructions: "test" } },
     };
     await expect(
       provider.decide(question, { signal: new AbortController().signal }),
     ).resolves.toMatchObject({ outcome: "answered" });
+    // A community no Builderlab serves is not Builderlab's to answer.
+    expect(provider.status("wss://buzz.example.com")).toBe("needs-setup");
+    await expect(
+      provider.decide(
+        { ...question, community: "wss://buzz.example.com" },
+        { signal: new AbortController().signal },
+      ),
+    ).resolves.toEqual({ outcome: "failed", reason: "missing_credentials" });
     expect(native.invoke).toHaveBeenCalledWith("decide", {
       backend: "builderlab",
       request: question,
@@ -1066,12 +1086,15 @@ it.for([
       expect(screen.queryByText("a@example.com")).not.toBeInTheDocument();
       expect(document.body).not.toHaveTextContent("private-token");
       // A sign-in Builderlab allows decisions for offers Builderlab as a
-      // decision provider. It answers, since the user chose no other.
+      // decision provider in the communities its server covers. It answers
+      // there, since the user chose no other.
       const [provider] = decisions.providers();
       expect(provider?.key).toBe("block.builderlab/builderlab");
-      expect(provider?.status()).toBe("ready");
-      expect(decisions.backend()).toBe("block.builderlab/builderlab");
-      expect(decisions.status()).toBe("ready");
+      expect(provider?.status("wss://relay.example")).toBe("ready");
+      expect(decisions.backend("wss://relay.example")).toBe(
+        "block.builderlab/builderlab",
+      );
+      expect(decisions.status("wss://relay.example")).toBe("ready");
       // Sign-in also checks the account's linked Buzz identity, and the
       // account's community list follows through the same native session:
       // the complete list is read once. The card's Communities section reads

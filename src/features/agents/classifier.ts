@@ -100,7 +100,7 @@ export const classifierRequest = (input: ClassifierInput): DecisionRequest => ({
 
 const NOT_RUN: ClassifierOutcome = Object.freeze({
   outcome: "not-run",
-  reason: "no decision provider is set up on this device",
+  reason: "no decision provider can answer in this community",
 });
 /** The outcome when no classifier can run. */
 export const notRun = () => NOT_RUN;

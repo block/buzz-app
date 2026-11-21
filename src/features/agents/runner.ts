@@ -83,7 +83,7 @@ import {
   type ClassifierOutcome,
   type ClassifierInput,
 } from "./classifier";
-import type { Decisions } from "../decisions/service";
+import { MAX_TIMEOUT_MS, type Decisions } from "../decisions/service";
 import { readErrorKind } from "../relay/errors";
 import type { EventWatch } from "./attention";
 import {
@@ -664,8 +664,8 @@ export type RunnerHost = {
   settings?(): DeviceSettings | undefined;
   /** The owner's Bestie as the agent's run handle offers it. */
   bestie(agent: Agent): ReturnType<NonNullable<AgentHandle["bestie"]>>;
-  /** Whether watch classifiers can run here. */
-  classifier(): ClassifierAvailability;
+  /** Whether watch classifiers can run in `community`, the agent's. */
+  classifier(community: string): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
   decisions(): Decisions | undefined;
   /** The event's surroundings for the classifier. */
@@ -2610,11 +2610,17 @@ export class AgentRunners {
     const decisions = this.host.decisions();
     if (!decisions) return notRun();
     // A provider still checking its setup, such as reading a saved key, is
-    // waited for rather than let the event pass unchecked. One that cannot
-    // confirm its setup is still asked: it may be able to answer.
-    await statusKnown(decisions);
-    const status = decisions.status();
-    if (status === "needs-setup" || status === "unavailable") return notRun();
+    // waited for rather than let the event pass unchecked, for as long as a
+    // decision may take; one still checking then does not run. One that
+    // cannot confirm its setup is still asked: it may be able to answer.
+    await statusKnown(decisions, agent.relay);
+    const status = decisions.status(agent.relay);
+    if (
+      status === "needs-setup" ||
+      status === "unavailable" ||
+      status === "checking"
+    )
+      return notRun();
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const facts: ClassifierInput =
@@ -4034,7 +4040,11 @@ export class AgentRunners {
     return guarded(
       {
         enabled: () => this.host.attentionShown(),
-        classifier: () => this.host.classifier(),
+        // The community its classifiers run in, so the answer matches them.
+        classifier: () => {
+          const agent = this.host.agent(key);
+          return agent ? this.host.classifier(agent.relay) : "unavailable";
+        },
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);
           const object = result.object;
@@ -4262,14 +4272,19 @@ async function standalone<T>(
   }
 }
 
-/** Resolves once the selected provider's status is not `checking`. */
-function statusKnown(decisions: Decisions): Promise<void> {
-  if (decisions.status() !== "checking") return Promise.resolve();
+/** Resolves once the status of the provider that answers in `community` is
+ * not `checking`, or after as long as the longest decision may take. */
+function statusKnown(decisions: Decisions, community: string): Promise<void> {
+  if (decisions.status(community) !== "checking") return Promise.resolve();
   return new Promise((resolve) => {
-    const stop = decisions.subscribe(() => {
-      if (decisions.status() === "checking") return;
+    const done = () => {
+      clearTimeout(timer);
       stop();
       resolve();
+    };
+    const timer = setTimeout(done, MAX_TIMEOUT_MS);
+    const stop = decisions.subscribe(() => {
+      if (decisions.status(community) !== "checking") done();
     });
   });
 }

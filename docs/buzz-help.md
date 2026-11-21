@@ -2035,18 +2035,30 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   its settings: sections it adds, such as GitHub comment authors, and Decisions
   API for a decision provider, such as TypeSafe. Only sections the Settings
   sidebar currently shows are linked. Back from one returns to those details.
-- When Builderlab and TypeSafe are available in **Settings → Decisions API**,
-  the **Decision provider** dropdown chooses Builderlab or TypeSafe. Each choice
-  uses that provider for requests. Choosing TypeSafe without a key opens
-  **Connect TypeSafe**, with a link to create a key in the TypeSafe console.
-  Saving the key completes the switch; closing setup keeps the current provider.
-  If a selected Builderlab account lacks Decisions API access, the pane explains
-  that you can use your own TypeSafe key or contact your account administrator.
-- In **Settings → Decisions API**, TypeSafe’s saved API key stays masked. Its
+- **Settings → Decisions API** lists each community you joined, with a menu
+  that chooses its decision provider and, below it, whether that provider can
+  answer there. Builderlab is offered where the community has a Builderlab
+  sign-in server. You sign in to that server under **Settings → Identity →
+  Community sign-ins**; communities on the same server share that sign-in, so
+  their availability matches. Each community using TypeSafe has its own
+  TypeSafe API key, set in that community's row. A key saved before keys were
+  per community is given to every community you had joined then. Until you
+  choose, a
+  community uses Builderlab where it is offered and TypeSafe elsewhere. When
+  the provider a community uses cannot answer (for example Builderlab is not
+  signed in there, or the account cannot use decisions), decisions there fail
+  and the row says why: no other provider answers in its place. A Builderlab
+  account without decisions access says to contact your account
+  administrator.
+  Choose **Off** for a community to turn decisions off there, for example
+  where they are billed and you don't want to use them: no provider is asked.
+- In **Settings → Decisions API**, a community’s saved TypeSafe API key stays
+  masked. Its
   chevron menu offers **Replace / Remove**. Replacement starts blank and masked,
   with inline **Cancel / Save** controls. **Save** stays disabled until you enter
-  a key; removal asks for confirmation before
-  deleting the key from this device’s secure storage. Settings cannot reveal or
+  a key; removal asks for confirmation before deleting that community’s key
+  from this device’s secure storage. Other communities keep theirs. Settings
+  cannot reveal or
   copy the saved key.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the

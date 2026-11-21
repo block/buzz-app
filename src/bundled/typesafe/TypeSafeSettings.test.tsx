@@ -109,7 +109,7 @@ it("adds, replaces, and confirms removal without revealing a saved key", async (
   expect(typesafe.save).toHaveBeenLastCalledWith("tk-new");
   await action(user, "Remove");
   expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-    "This removes the key from this Mac’s Keychain. Add a key again to keep using TypeSafe.",
+    "This removes this community’s key from this Mac’s Keychain. Add a key again to keep using TypeSafe here.",
   );
   expect(typesafe.clear).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -144,7 +144,7 @@ it("keeps a failed removal open and refuses writes after leaving settings", asyn
   );
   await action(user, "Remove");
   expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-    "This removes the key from this device’s secure storage. Add a key again to keep using TypeSafe.",
+    "This removes this community’s key from this device’s secure storage. Add a key again to keep using TypeSafe here.",
   );
   await user.click(screen.getByRole("button", { name: "Remove key" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Storage locked");

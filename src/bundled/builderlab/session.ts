@@ -430,9 +430,13 @@ const unresolved = (): never => {
     "Builderlab is still finding this community's sign-in server. Try again.",
   );
 };
-const PENDING_STATE: LoginSnapshot = Object.freeze({ status: "pending" });
+// Finding the server needs no browser step.
+const PENDING_STATE: LoginSnapshot = Object.freeze({
+  status: "pending",
+  checking: true,
+});
 /** The selected community's session while its sign-in server is unknown. */
-const PENDING: BuilderlabSession = Object.freeze({
+export const PENDING: BuilderlabSession = Object.freeze({
   snapshot: () => PENDING_STATE,
   subscribe: () => () => {},
   credential: unresolved,
@@ -447,11 +451,84 @@ const PENDING: BuilderlabSession = Object.freeze({
   dispose: () => {},
 });
 
+/** Builderlab sessions by community sign-in server; see `communitySessions`. */
+export type CommunitySessions = Readonly<{
+  /** The session for the sign-in server of the community at `relay`:
+   * the build's unless that community names another server, then that
+   * server's, or a pending one until both servers are known. */
+  forCommunity(relay: string | undefined): BuilderlabSession;
+  /** The sign-in server's session for the community at `relay`. */
+  server(relay: string | undefined): FederatedIdentity | undefined;
+  dispose(): void;
+}>;
+
 /**
- * The Builderlab session for the sign-in server of the selected community:
- * `session`, the build's, unless that community names another server, then
- * one native session per server, whose calls carry that community so native
- * sends them with its server's session.
+ * One native Builderlab session per sign-in server besides the build's
+ * `session`, whose calls carry the community that first named the server, so
+ * native sends them with that server's session.
+ */
+export function communitySessions(
+  session: BuilderlabSession,
+  identity: FederatedIdentity,
+): CommunitySessions {
+  const servers = new Map<string, BuilderlabSession>();
+  let disposed = false;
+  const server = (named: string | undefined) =>
+    named ? identity.forCommunity?.(named) : undefined;
+  return {
+    server,
+    forCommunity(named) {
+      const community = server(named);
+      if (disposed || !named || !community) return session;
+      const selected = community.snapshot();
+      const build = identity.snapshot();
+      // Until both servers are known it could be either; nothing runs on one.
+      if (!selected.authority || !build.authority)
+        return selected.status === "restoring" || build.status === "restoring"
+          ? PENDING
+          : session;
+      const authority = selected.authority;
+      if (authority.id === build.authority.id) return session;
+      let found = servers.get(authority.id);
+      if (!found) {
+        const native = createNativeSession({
+          apiAvailable: identity.apiAvailable,
+          snapshot: community.snapshot,
+          subscribe: community.subscribe,
+          signIn: () => community.signIn(),
+          cancelSignIn: () => community.cancelSignIn(),
+          signInLink: () => community.signInLink(),
+          signOut: (options) => community.signOut(options),
+          request: (input) => identity.request({ ...input, relay: named }),
+        });
+        const target =
+          `${authority.identityOrigin}${authority.apiBasePath}`.replace(
+            /\/$/,
+            "",
+          );
+        // Named apart from the build's even when both name one organization.
+        const providerName =
+          native.providerName === session.providerName
+            ? new URL(authority.identityOrigin).host
+            : native.providerName;
+        found = Object.freeze({ ...native, target, providerName });
+        servers.set(authority.id, found);
+      }
+      return found;
+    },
+    dispose() {
+      disposed = true;
+      for (const each of servers.values()) each.dispose();
+      servers.clear();
+    },
+  };
+}
+
+/**
+ * The Builderlab session for the sign-in server of the selected community
+ * (see `CommunitySessions.forCommunity`). It follows the selection, and
+ * either server's authority. With `sessions`, it shares their server
+ * sessions, which their owner disposes.
  */
 export function followCommunity(
   session: BuilderlabSession,
@@ -461,55 +538,15 @@ export function followCommunity(
     subscribe(listener: () => void): () => void;
     selected?(): string | undefined;
   }>,
+  sessions?: CommunitySessions,
 ): BuilderlabSession {
-  const servers = new Map<string, BuilderlabSession>();
+  const owned = sessions ?? communitySessions(session, identity);
   let disposed = false;
   const origin = () =>
     relay.selected ? relay.selected() : relay.snapshot().origin;
-  const community = () => {
-    const named = origin();
-    return named ? identity.forCommunity?.(named) : undefined;
-  };
-  const current = (): BuilderlabSession => {
-    const named = origin();
-    const server = community();
-    if (disposed || !named || !server) return session;
-    const selected = server.snapshot();
-    const build = identity.snapshot();
-    // Until both servers are known it could be either; nothing runs on one.
-    if (!selected.authority || !build.authority)
-      return selected.status === "restoring" || build.status === "restoring"
-        ? PENDING
-        : session;
-    const authority = selected.authority;
-    if (authority.id === build.authority.id) return session;
-    let found = servers.get(authority.id);
-    if (!found) {
-      const native = createNativeSession({
-        apiAvailable: identity.apiAvailable,
-        snapshot: server.snapshot,
-        subscribe: server.subscribe,
-        signIn: () => server.signIn(),
-        cancelSignIn: () => server.cancelSignIn(),
-        signInLink: () => server.signInLink(),
-        signOut: (options) => server.signOut(options),
-        request: (input) => identity.request({ ...input, relay: named }),
-      });
-      const target =
-        `${authority.identityOrigin}${authority.apiBasePath}`.replace(
-          /\/$/,
-          "",
-        );
-      // Named apart from the build's even when both name one organization.
-      const providerName =
-        native.providerName === session.providerName
-          ? new URL(authority.identityOrigin).host
-          : native.providerName;
-      found = Object.freeze({ ...native, target, providerName });
-      servers.set(authority.id, found);
-    }
-    return found;
-  };
+  const community = () => owned.server(origin());
+  const current = (): BuilderlabSession =>
+    disposed ? session : owned.forCommunity(origin());
   return {
     get providerName() {
       return current().providerName;
@@ -559,8 +596,7 @@ export function followCommunity(
     signOut: () => current().signOut(),
     dispose() {
       disposed = true;
-      for (const server of servers.values()) server.dispose();
-      servers.clear();
+      if (!sessions) owned.dispose();
     },
   };
 }

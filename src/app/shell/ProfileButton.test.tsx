@@ -1252,3 +1252,92 @@ it.each([
     else expect(item).not.toHaveTextContent("recommended");
   },
 );
+
+it("clears the status from the menu, keeping the menu open with the error when it fails", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const owner = createRelaySession(null);
+  const user = userEvent.setup();
+  const viewer = "a".repeat(64);
+  let statuses = new Map([
+    [viewer, { userId: viewer, text: "Buzzin'", emoji: "🏠", updatedAt: 1 }],
+  ]);
+  const listeners = new Set<() => void>();
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockImplementationOnce(async () => {
+      statuses = new Map();
+      for (const listener of listeners) listener();
+    });
+  const connection = {
+    scope: "https://status.test",
+    session: {
+      ...owner.session,
+      statuses: {
+        ...owner.session.statuses,
+        writable: true,
+        save,
+        snapshot: () => statuses,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    },
+  };
+  const snapshot = { profile: { name: "Local", picture: "" }, viewer };
+  const presence = { status: "online", preference: "auto", error: null };
+  const subscribe = () => () => {};
+  const actions: readonly [] = [];
+  const view = render(
+    <ProfileButton
+      communities={
+        {
+          subscribe,
+          snapshot: () => snapshot,
+          presence: { subscribe, snapshot: () => presence },
+          relay: { subscribe, snapshot: () => connection },
+        } as unknown as Communities
+      }
+      accountActions={
+        {
+          subscribe,
+          snapshot: () => actions,
+        } as unknown as AccountActionsService
+      }
+      appearance={testAppearance}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    const menu = await screen.findByRole("menu", { name: "Local" });
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Clear status" }),
+    );
+    expect(await within(menu).findByRole("alert")).toHaveTextContent("Offline");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Clear status" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menu", { name: "Local" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(save).toHaveBeenLastCalledWith({ text: "", emoji: "" });
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    await screen.findByRole("menu", { name: "Local" });
+    expect(
+      screen.getByRole("menuitem", { name: "Set a status" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: "Clear status" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});

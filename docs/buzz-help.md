@@ -289,8 +289,11 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   there. Otherwise it pairs the phone with this identity by QR code and a
   verification code.
 - Set or clear your status from the profile menu, or with **Update status** /
-  **Set a status** on your own profile. On a profile or in the profile menu,
-  hover the status emoji to see its `:name:`.
+  **Set a status** on your own profile. **Clear status**, under your status in
+  the profile menu, clears it without opening the editor. On a profile or in the profile menu,
+  hover the status emoji to see its `:name:`. When you have no status, the editor
+  offers your last two custom statuses on this device under **Recent**, below
+  the quick statuses.
 - Your profile shares your local time by default: joining a community, or
   opening one whose profile has never had a time zone, publishes this device's
   time zone name, such as `America/Los_Angeles`. Each device does this at most

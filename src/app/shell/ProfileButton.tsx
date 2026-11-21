@@ -28,6 +28,7 @@ import {
   SunIcon,
   MoonIcon,
   MonitorIcon,
+  XIcon,
 } from "../../shared/design-system/icons/index";
 import type {
   Appearance,
@@ -228,6 +229,22 @@ export function ProfileButton({
   const picture = selected ? avatarMedia(source, session?.media) : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState("");
+  async function clearStatus() {
+    if (!session || clearing) return;
+    setClearing(true);
+    setClearError("");
+    try {
+      await session.statuses.save({ text: "", emoji: "" });
+      // The row disappears with the status, so close rather than strand focus.
+      setMenuOpen(false);
+    } catch (reason) {
+      setClearError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setClearing(false);
+    }
+  }
   // The Set status shortcut follows the menu item's availability.
   const statusAvailable =
     !!viewer && !!session?.statuses?.writable && !!connection.scope;
@@ -283,6 +300,7 @@ export function ProfileButton({
           if (open) {
             handoff.current = false;
             openingStatus.current = false;
+            setClearError("");
           } else {
             openingStatus.current = false;
           }
@@ -484,8 +502,21 @@ export function ProfileButton({
                   </>
                 )}
               </MenuItem>
+              {status && session.statuses.writable && (
+                <MenuItem
+                  closeOnClick={false}
+                  disabled={clearing}
+                  onClick={() => void clearStatus()}
+                >
+                  <MenuIcon>
+                    <XIcon size={16} aria-hidden="true" />
+                  </MenuIcon>
+                  Clear status
+                </MenuItem>
+              )}
             </div>
           )}
+          {clearError && <MenuNote role="alert">{clearError}</MenuNote>}
           {session?.statuses && !session.statuses.writable && (
             <p
               id={statusUnavailable}

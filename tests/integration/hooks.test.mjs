@@ -545,10 +545,7 @@ for (const [name, importer] of [
         path.join(f.git("rev-parse", "--show-toplevel").trim(), importer),
       ]);
     else {
-      assert.match(
-        deleted.stdout,
-        /No unit tests import the changed JS inputs/,
-      );
+      assert.match(deleted.stdout, /Type check only: no related unit tests/);
       assert.throws(() => f.args(), /ENOENT/);
     }
   });
@@ -633,17 +630,19 @@ test("JS-only pushes skip Clippy; the lane stays independent of unit-test skip",
   assert.throws(() => f.read("cargo-args"), /ENOENT/);
 });
 
-test("shared config and unknown base conservatively run all JS unit tests", (t) => {
+test("shared config and unknown base run the type check, never the full suite", (t) => {
   const f = pushFixture(t, { "vitest.config.ts": "export default {};\n" });
   const shared = f.push();
   assert.equal(shared.status, 0, shared.stdout + shared.stderr);
   assert.match(shared.stdout + shared.stderr, /App foundations: no private/);
-  assert.deepEqual(f.args(), ["run"]);
+  assert.match(shared.stdout, /Type check only: no related unit tests/);
+  assert.throws(() => f.args(), /ENOENT/);
   f.git("update-ref", "-d", "refs/remotes/origin/main");
   const missing = f.push("HEAD:refs/heads/without-base");
   assert.equal(missing.status, 0, missing.stdout + missing.stderr);
   assert.match(missing.stdout + missing.stderr, /App foundations: no private/);
-  assert.deepEqual(f.args(), ["run"]);
+  assert.match(missing.stdout, /Type check only: no related unit tests/);
+  assert.throws(() => f.args(), /ENOENT/);
 });
 
 test("source deletion tests the unchanged files that imported it", (t) => {
@@ -669,7 +668,7 @@ test("source deletion tests the unchanged files that imported it", (t) => {
   ]);
 });
 
-test("tsconfig and scripts edits skip the full suite; dependency inputs run it", (t) => {
+test("config and dependency edits run the type check only; CI runs the suite", (t) => {
   const lock = (packages, importers = "  .: {}\n") =>
     `lockfileVersion: '9.0'\n\nimporters:\n${importers}\npackages:\n${packages}`;
   const f = pushFixture(t, { "pnpm-lock.yaml": lock("  a@1.0.0: {}\n") });
@@ -686,7 +685,7 @@ test("tsconfig and scripts edits skip the full suite; dependency inputs run it",
     try {
       return f.args();
     } catch {
-      assert.match(result.stdout, /No unit tests import the changed JS inputs/);
+      assert.match(result.stdout, /Type check only: no related unit tests/);
       return "types only";
     }
   };
@@ -725,15 +724,15 @@ test("tsconfig and scripts edits skip the full suite; dependency inputs run it",
       },
       "importers",
     ),
-    ["run"],
+    "types only",
   );
   assert.deepEqual(
     step({ "pnpm-workspace.yaml": "overrides:\n  a: 1.0.0\n" }, "workspace"),
-    ["run"],
+    "types only",
   );
   assert.deepEqual(
     step({ "pnpm-lock.yaml": lock("  a@1.0.1: {}\n") }, "lock"),
-    ["run"],
+    "types only",
   );
   const added = {
     ...scripts,
@@ -744,14 +743,14 @@ test("tsconfig and scripts edits skip the full suite; dependency inputs run it",
       { "package.json": `${JSON.stringify(added, null, 2)}\n` },
       "dependency",
     ),
-    ["run"],
+    "types only",
   );
 });
 
 test("a fast-forward push diffs from the pushed tip, not a stale origin/main", (t) => {
   const f = pushFixture(t, { "vitest.config.ts": "export default {};\n" });
   assert.equal(f.push().status, 0);
-  assert.deepEqual(f.args(), ["run"]);
+  assert.throws(() => f.args(), /ENOENT/);
   // origin/main stays behind, as after main was merged into the remote branch.
   f.write("src/later.ts", "export const later = 1;\n");
   f.git("add", "src/later.ts");
@@ -776,7 +775,14 @@ test("a fast-forward push diffs from the pushed tip, not a stale origin/main", (
     "HEAD:refs/heads/fresh",
   ]);
   assert.equal(both.status, 0, both.stdout + both.stderr);
-  assert.deepEqual(f.args(), ["run"]);
+  assert.deepEqual(f.args(), [
+    "related",
+    "--run",
+    "--passWithNoTests",
+    path.join(top, "src/last.ts"),
+    path.join(top, "src/later.ts"),
+    path.join(top, "src/app/pages.integration.test.mjs"),
+  ]);
 });
 
 test("a type error blocks the actual Git push before unit tests", (t) => {

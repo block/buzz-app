@@ -28,11 +28,11 @@ if (!updates.some(([, sha]) => sha === head)) process.exit(0);
 // Use the nearest local base, never fetch or install during a push: the merge
 // base with origin/main, or the remote ref's tip when this push fast-forwards
 // it (except for Clippy). That tip was pushed already, with any main it merged,
-// so a stale origin/main or an earlier dependency change does not select every
-// later push.
-// Every PR gets the full suites in CI; this is fast feedback, not proof for
-// arbitrary refs or uncommitted work. A missing base conservatively runs the
-// full JS unit suite.
+// so a stale origin/main does not select main's commits again.
+// This hook never runs the full JS unit suite: every PR gets it in CI, and
+// dependency and config changes are left to CI. This is fast feedback, not
+// proof for arbitrary refs or uncommitted work. Without a base, only the type
+// check runs.
 const gitRun = (...args) => spawnSync("git", args, { encoding: "utf8" });
 const bases = [gitRun("merge-base", "HEAD", "refs/remotes/origin/main")]
   .filter((result) => result.status === 0)
@@ -49,7 +49,7 @@ for (const [, , , remote] of pushed)
     bases.push(remote);
 const distance = (base) => Number(git("rev-list", "--count", `${base}..HEAD`));
 const base = bases.sort((a, b) => distance(a) - distance(b))[0];
-let args = ["run"];
+let args;
 if (base) {
   const changed = (filter = "") =>
     execFileSync(
@@ -92,21 +92,6 @@ if (base) {
       process.exit(0);
     }
   }
-  // tsc checks package.json; the unit suite depends only on what it installs.
-  const installs = (rev) => {
-    const text = gitRun("show", `${rev}:package.json`).stdout;
-    try {
-      const { scripts, ...rest } = JSON.parse(text);
-      return JSON.stringify(rest);
-    } catch {
-      return text;
-    }
-  };
-  const suite =
-    /^(?:vitest\.config\.[cm]?[jt]s|tests\/relay-config\.ts|pnpm-(?:lock|workspace)\.yaml|patches\/|bin\/(?:node|\.node-[^/]*|packages\/node\.hcl)$)/;
-  const full =
-    files.some((file) => suite.test(file)) ||
-    (files.includes("package.json") && installs(base) !== installs("HEAD"));
   const deleted = changed("D").filter((file) => source.test(file));
   const related = new Set(
     files.filter((file) => source.test(file) && !deleted.includes(file)),
@@ -131,24 +116,25 @@ if (base) {
     related.add("browser-host/vite-config.test.mjs");
   if (files.some((file) => file.startsWith("src/")))
     related.add("src/app/pages.integration.test.mjs");
+  // Shared configuration and dependency changes get the type check only.
   const checks =
-    full ||
     related.size ||
     deleted.length ||
-    files.some((file) => shared.test(file));
+    files.some(
+      (file) =>
+        shared.test(file) || /^(?:pnpm-workspace\.yaml|patches\/)/.test(file),
+    );
   if (!design && !clippy && !checks) {
     console.log("No JS unit-test inputs changed; remaining checks run in CI.");
     process.exit(0);
   }
-  if (!full)
-    args = related.size
-      ? [
-          "related",
-          "--run",
-          "--passWithNoTests",
-          ...Array.from(related, (file) => resolve(file)),
-        ]
-      : undefined;
+  if (related.size)
+    args = [
+      "related",
+      "--run",
+      "--passWithNoTests",
+      ...Array.from(related, (file) => resolve(file)),
+    ];
 }
 function importers(deleted) {
   if (!deleted.length) return [];
@@ -248,7 +234,7 @@ if (types.error) console.error(types.error.message);
 if (types.status !== 0) process.exit(types.status ?? 1);
 if (!args) {
   console.log(
-    "No unit tests import the changed JS inputs; the rest runs in CI.",
+    "Type check only: no related unit tests; the full suite runs in CI.",
   );
   process.exit(0);
 }

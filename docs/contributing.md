@@ -756,14 +756,13 @@ probes do not replace this confirmation before PR readiness.
 Pre-push runs the project TypeScript check (`tsc --noEmit`), then Vitest tests
 related to the branch's changed JS/TS inputs, using the locally available merge
 base with `origin/main`, or the remote ref's tip when the push fast-forwards its
-only destination. Documentation-only, native-only and Rust-only pushes skip this
-runner. A source deletion selects tests related to the files that referenced it
-at the base. TypeScript config, `package.json` scripts and other `bin/` changes
-need only the type check, plus the author-package test for
-`tsconfig.author.json` and the pnpm pin. Dependency changes (`package.json`
-outside scripts, the lockfile, `pnpm-workspace.yaml`, `patches/`), the Vitest
-config or its relay fixture, the Hermit Node pin or definition, or a missing
-base run the full Vitest suite instead.
+only destination. It never runs the full Vitest suite: CI runs it on every PR,
+and dependency and configuration changes are left to CI. Documentation-only,
+native-only and Rust-only pushes skip this runner. A source deletion selects
+tests related to the files that referenced it at the base.
+`tsconfig.author.json` and the pnpm pin select the author-package test. A push
+whose changes have no related tests (a lockfile or Vitest config change, say) or
+that has no local base runs the type check only.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, the Vite config test for `vite.config.ts` (unit tests use
 `vitest.config.ts`, so it selects only its importers), and the app composition

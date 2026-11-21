@@ -55,6 +55,7 @@ function fixture(
     ({
       status: "ready" as const,
       complete: true,
+      current: true,
       pending: false,
       selectable,
       identities: selectable,

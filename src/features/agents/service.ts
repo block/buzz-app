@@ -169,6 +169,7 @@ import { channelTemplates, templateAgents } from "../channel-templates/local";
 import { moveHome, TeamMoves, type SyncState } from "./team-migration";
 import { NoTeamChannel, teamResultOf } from "./team-ops";
 import type { LocalAgentsSnapshot } from "./local";
+import { libraryRetryDelay } from "./library";
 import { unshare } from "./agent-share";
 import {
   deleteAgentRecord,
@@ -2513,6 +2514,13 @@ export class AgentsService extends Service implements Agents {
   private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
+  /** The latest list request, which an earlier one's caller waits for. */
+  private latestList: Promise<void> | undefined;
+  /** A list read has succeeded, so `identities` hold a whole list. */
+  private hasListed = false;
+  /** Failed list reads in a row, and when the tick reads again. */
+  private listFailures = 0;
+  private listRetryAt = 0;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
    * and whether it finished. */
   private cleaning = new Map<
@@ -3486,6 +3494,8 @@ export class AgentsService extends Service implements Agents {
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
+        if (this.state.status === "error" && Date.now() >= this.listRetryAt)
+          void this.refresh();
         this.reconnect();
         this.announce();
         this.runners.catchUp(true);
@@ -4704,6 +4714,9 @@ export class AgentsService extends Service implements Agents {
           }
         : {}),
       ...(state.error ? { error: state.error } : {}),
+      ...(state.status === "error" && this.hasListed
+        ? { stale: true as const }
+        : {}),
     });
     this.localCache = { identities, state, bindings, remote, hosted, value };
     return value;
@@ -8379,10 +8392,23 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Reads the agent list from native. Every change is made there first and
-   * then read back here, so the list has one source; Retry reads it again. */
+   * then read back here, so the list has one source; Retry reads it again.
+   * A request a newer one replaced waits for that one, so a finished refresh
+   * means the latest list. */
   async refresh() {
     if (!this.native) return;
-    const turn = ++this.listed;
+    let read = this.readList(++this.listed);
+    this.latestList = read;
+    await read;
+    while (this.latestList && this.latestList !== read) {
+      read = this.latestList;
+      await read;
+    }
+  }
+
+  private async readList(turn: number) {
+    if (!this.native) return;
+    this.listRetryAt = Number.POSITIVE_INFINITY;
     try {
       const rows = await this.native.list();
       // A newer list is on its way; this one may predate a change.
@@ -8400,6 +8426,8 @@ export class AgentsService extends Service implements Agents {
       }
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
+      this.hasListed = true;
+      this.listFailures = 0;
       this.state = Object.freeze({ ...state, status: "ready" });
       // Settings whose agent is gone, or that a community it left kept, do
       // nothing. Its home record keeps its config while it is anywhere.
@@ -8431,11 +8459,20 @@ export class AgentsService extends Service implements Agents {
         ).catch((error) => console.warn("Agent teams were not saved", error));
     } catch (error) {
       if (turn !== this.listed) return;
+      // The tick reads again with backoff, so nobody has to press Retry.
+      this.listFailures++;
+      this.listRetryAt = Date.now() + libraryRetryDelay(this.listFailures);
       this.state = Object.freeze({
         ...this.state,
         status: "error",
         error: message(error),
       });
+      // The relay listings follow only a list native confirmed; the kept
+      // rows may predate a delete.
+      this.watch();
+      this.update();
+      this.notify();
+      return;
     }
     this.watch();
     this.update();

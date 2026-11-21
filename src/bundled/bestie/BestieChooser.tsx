@@ -123,7 +123,7 @@ export function BestieChooser({
     choices.archives.status === "loading";
   const shownError = error || choices.error || choices.archives.error;
   const firstAgent =
-    choices.complete &&
+    choices.current &&
     ["ready", "unavailable"].includes(choices.archives.status) &&
     !available.length &&
     !pending &&

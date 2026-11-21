@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { createAgentLibrary, type AgentLibrary } from "./library";
+import {
+  createAgentLibrary,
+  libraryRetryDelay,
+  type AgentLibrary,
+} from "./library";
 import { combineInventory } from "./inventory";
 import { createRelaySession } from "../relay/session";
 import { keypair, metadata, roster } from "../relay/testing";
@@ -301,4 +305,147 @@ it("a fresh refresh supersedes a read in flight, and its waiters wait for the ne
     status: "ready",
     identities: [{ pubkey: "current" }],
   });
+});
+
+it("retries a failed read on its own with jittered backoff while the list is needed, unless reading again cannot fix it", async () => {
+  // Equal jitter under a ceiling that doubles from 2s to a minute.
+  expect(libraryRetryDelay(1, () => 0)).toBe(1_000);
+  expect(libraryRetryDelay(2, () => 1)).toBe(4_000);
+  expect(libraryRetryDelay(20, () => 1)).toBe(60_000);
+  expect(libraryRetryDelay(20, () => 0)).toBe(30_000);
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  try {
+    const read = vi
+      .fn<() => Promise<AgentLibrary & { error?: string; retry?: false }>>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(library);
+    const owner = createAgentLibrary(read);
+    const release = owner.queries.retain();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(owner.queries.snapshot()).toMatchObject({
+      status: "error",
+      retrying: true,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(read).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(read).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(owner.queries.snapshot().status).toBe("ready");
+    // A recovered list stops retrying.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(read).toHaveBeenCalledTimes(3);
+    // Without demand a failure waits for the next ask; demand restarts it.
+    release();
+    read.mockRejectedValueOnce(new Error("offline"));
+    await owner.queries.refresh();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(owner.queries.snapshot()).not.toHaveProperty("retrying");
+    const again = owner.queries.retain({ refresh: false });
+    expect(owner.queries.snapshot().retrying).toBe(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(read).toHaveBeenCalledTimes(5);
+    // A hard failure, thrown or partial, waits for Retry.
+    read
+      .mockRejectedValueOnce(
+        Object.assign(new Error("over budget"), { retry: false }),
+      )
+      .mockResolvedValueOnce({
+        ...library,
+        error: "Relay inventory unavailable",
+        retry: false,
+      });
+    await owner.queries.refresh();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(read).toHaveBeenCalledTimes(6);
+    await owner.queries.refresh();
+    expect(owner.queries.snapshot()).toMatchObject({
+      error: "Relay inventory unavailable",
+    });
+    expect(owner.queries.snapshot()).not.toHaveProperty("retry");
+    expect(owner.queries.snapshot()).not.toHaveProperty("retrying");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(read).toHaveBeenCalledTimes(7);
+    again();
+    owner.dispose();
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the last whole read through failed and partial rereads and a dropped connection, until the cache is cleared", async () => {
+  const forget = vi.fn();
+  const read = Object.assign(
+    vi
+      .fn<() => Promise<AgentLibrary & { error?: string }>>()
+      .mockResolvedValue(library),
+    { forget },
+  );
+  const owner = createAgentLibrary(read);
+  await owner.queries.refresh();
+  read.mockRejectedValueOnce(new Error("offline"));
+  await owner.queries.refresh();
+  expect(owner.queries.snapshot()).toMatchObject({
+    status: "error",
+    stale: true,
+    identities: library.identities,
+  });
+  // A partial reread shows its rows, still kept; a whole one is current.
+  const added = { pubkey: "e".repeat(64), name: "New" };
+  read.mockResolvedValueOnce({
+    definitions: [],
+    identities: [added],
+    error: "Relay inventory unavailable",
+  });
+  await owner.queries.refresh();
+  expect(owner.queries.snapshot()).toMatchObject({
+    status: "ready",
+    stale: true,
+    identities: [added],
+  });
+  await owner.queries.refresh();
+  expect(owner.queries.snapshot().stale).toBeUndefined();
+  expect(owner.queries.snapshot().error).toBeUndefined();
+  // A drop keeps the rows. A read that finishes before the stream is back
+  // still owes a reread on reconnect, which runs over the kept rows.
+  const release = owner.queries.retain();
+  owner.stale();
+  expect(owner.queries.snapshot()).toMatchObject({
+    status: "idle",
+    stale: true,
+    identities: library.identities,
+  });
+  await owner.queries.refresh();
+  let finish!: (value: AgentLibrary) => void;
+  read.mockImplementationOnce(
+    () => new Promise<AgentLibrary>((resolve) => (finish = resolve)),
+  );
+  owner.reconnect();
+  expect(owner.queries.snapshot()).toMatchObject({
+    status: "loading",
+    stale: true,
+    identities: library.identities,
+  });
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  finish(library);
+  await vi.waitFor(() => expect(owner.queries.snapshot().status).toBe("ready"));
+  expect(owner.queries.snapshot().stale).toBeUndefined();
+  // The repair is owed once.
+  const reads = read.mock.calls.length;
+  owner.reconnect();
+  expect(read).toHaveBeenCalledTimes(reads);
+  expect(forget).not.toHaveBeenCalled();
+  owner.clear();
+  expect(forget).toHaveBeenCalledOnce();
+  expect(owner.queries.snapshot()).toMatchObject({
+    status: "idle",
+    identities: [],
+  });
+  expect(owner.queries.snapshot().stale).toBeUndefined();
+  release();
+  owner.dispose();
 });

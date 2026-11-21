@@ -122,6 +122,17 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey, draftRoster, profileGeneration]);
+  // A pill with no agent yet: silent for a second, then "Loading agents". It
+  // stays a working trigger: Button's `loading` would disable it, and a list
+  // that keeps retrying would then leave no way to pick an agent.
+  const awaiting = !!audience?.loading && !audience.recipients.length;
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!awaiting) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [awaiting]);
   const chooseRecipient = (
     recipient: (typeof candidates)[number]["recipient"],
   ) => {
@@ -240,6 +251,7 @@ export function MentionPicker({
                 variant="subtle"
                 size="sm"
                 disabled={disabled}
+                aria-busy={awaiting}
                 ref={trigger}
                 type="button"
                 aria-label={
@@ -247,7 +259,9 @@ export function MentionPicker({
                     ? `Sending to ${audience.recipients
                         .map((person) => person.name)
                         .join(", ")}. Change agents`
-                    : "Choose agent"
+                    : audience.loading
+                      ? "Loading agents"
+                      : "Choose agent"
                 }
               >
                 <AvatarStack
@@ -262,7 +276,8 @@ export function MentionPicker({
                     shape: "squircle",
                   }))}
                 />
-                {audience.recipients[0]?.name ?? "Choose agent"}
+                {audience.recipients[0]?.name ??
+                  (awaiting ? slow && "Loading agents" : "Choose agent")}
                 <CaretDownIcon size={12} aria-hidden="true" />
               </Button>
             ) : (
@@ -351,21 +366,25 @@ export function MentionPicker({
                 </Button>
               </>
             )}
-            {agents.status === "loading" && !candidates.length && (
-              <p role="status">Loading agents…</p>
-            )}
-            {(agents.status === "error" || !!agents.error) && (
-              <Button
-                type="button"
-                onClick={() =>
-                  void session.agentChoices.refresh(
-                    !!inviteAgents || teams.includeLegacy,
-                  )
-                }
-              >
-                Retry agent list
-              </Button>
-            )}
+            {agents.status === "loading" &&
+              !candidates.length &&
+              !agents.error && <p role="status">Loading agents…</p>}
+            {(agents.status === "error" || !!agents.error) &&
+              // Retry only when nothing will read again on its own.
+              (agents.retrying ? (
+                <p role="status">Couldn't load agents. Retrying…</p>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={() =>
+                    void session.agentChoices.refresh(
+                      !!inviteAgents || teams.includeLegacy,
+                    )
+                  }
+                >
+                  Retry agent list
+                </Button>
+              ))}
             {model.archives.status === "error" && (
               <Button
                 type="button"

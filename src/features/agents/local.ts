@@ -23,6 +23,8 @@ export type LocalAgentsSnapshot = Readonly<{
   /** Completed owned hosted agents shown in the selected community. No local custody. */
   hosted?: readonly LocalAgent[];
   error?: string;
+  /** With an error: `agents` are the last list read, kept since it failed. */
+  stale?: true;
 }>;
 export type LocalAgents = {
   snapshot(): LocalAgentsSnapshot;

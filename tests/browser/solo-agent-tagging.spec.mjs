@@ -41,18 +41,11 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
   let gapped = false;
   const held = Promise.withResolvers();
   const gate = Promise.withResolvers();
-  // The gap also clears the agent inventory. Refuse its re-read until the
-  // snapshot is in flight, so the read the viewer's Retry issues is the one
-  // scheduled against it. The library rejects a record from another author
-  // outright, with no transport error to retry or log.
+  // The gap also rereads the agent inventory. Fail that reread with a
+  // transient 502 until the snapshot is in flight, so the automatic retry is
+  // the read scheduled against it.
   let inventoryAnswered = true;
   let refused = 0;
-  const foreign = app.signRelay({
-    kind: INVENTORY_KINDS[1],
-    created_at: 1,
-    tags: [["d", "f".repeat(64)]],
-    content: JSON.stringify({ name: "Not yours" }),
-  });
   await page.route("**/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (isSnapshot(filters)) {
@@ -65,7 +58,9 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
       }
     } else if (isInventory(filters) && !inventoryAnswered) {
       refused++;
-      return route.fulfill({ json: [foreign] });
+      app.report.startupFailures ??= [];
+      app.report.startupFailures.push(route.request().url());
+      return route.fulfill({ status: 502, body: "unavailable" });
     }
     await route.continue();
   });
@@ -78,12 +73,10 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     name: `Sending to ${agent.name}. Change agents`,
     exact: true,
   });
-  // The composer shows no standing notice (#2948); the failed read offers
-  // Retry in its picker. Until the agent's profile loads, the chat cannot
-  // tell it is an agent, so the picker opens from the mention button rather
-  // than the agent pill. Either is right while the inventory is missing.
-  const picker = page.getByRole("button", {
-    name: /^(Choose agent|Mention a member)$/,
+  // The composer shows no standing notice (#2948); the failed read says in
+  // its picker that it is retrying, and offers no Retry button.
+  const retrying = page.getByText("Couldn't load agents. Retrying…", {
+    exact: true,
   });
   const retry = page.getByRole("button", {
     name: "Retry agent list",
@@ -118,22 +111,23 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     ).toBeVisible();
     const snapshot = await held.promise;
     expect(snapshot.headers()["x-buzz-read-priority"]).toBe("background");
-    // Without complete inventory the chat offers Retry and tags nobody.
-    await picker.click();
-    await expect(retry).toBeVisible();
-    expect(refused).toBeGreaterThan(0);
-    await expect(pill).toHaveCount(0);
-    // The relay answers again. The snapshot is still running, so this read
-    // must not wait for it.
-    inventoryAnswered = true;
-    await retry.click();
-    // Alone with one agent, the composer addresses it without a mention.
+    // The gap keeps the last whole agent list, so the chat stays addressed
+    // while its reread is refused: nobody has to press Retry.
     await expect(pill).toBeVisible();
+    await expect.poll(() => refused).toBeGreaterThan(0);
+    // The failed reread shows quietly in the pill's menu.
+    await pill.click();
+    await expect(retrying).toBeVisible();
     await expect(retry).toHaveCount(0);
+    // The relay answers again. The snapshot is still running, so the
+    // automatic retry must not wait for it.
+    inventoryAnswered = true;
+    await expect(retrying).toHaveCount(0, { timeout: 20_000 });
+    await expect(pill).toBeVisible();
   } finally {
     gate.resolve();
   }
   // The snapshot completing changes nothing about the addressed agent.
   await expect(pill).toBeVisible();
-  await expect(retry).toHaveCount(0);
+  await expect(retrying).toHaveCount(0);
 });

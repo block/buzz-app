@@ -357,6 +357,35 @@ it("revokes failed local evidence without dropping ready legacy candidates, then
   library.dispose();
 });
 
+it("reports retrying while only the local list fails, since it rereads on its own tick", async () => {
+  const native = localAgentsFixture([agent]);
+  const legacy = { pubkey: "cd".repeat(32), name: "Legacy" };
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [legacy],
+  }));
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native,
+    archives: archiveFixture(),
+    signal: lifetime.signal,
+  });
+  await choices.refresh();
+  expect(choices.snapshot().retrying).toBeUndefined();
+  native.set({ status: "error", error: "Could not list agents" });
+  expect(choices.snapshot()).toMatchObject({
+    error: "Could not list agents",
+    retrying: true,
+  });
+  native.set({ status: "ready", agents: [agent] });
+  expect(choices.snapshot().error).toBeUndefined();
+  expect(choices.snapshot().retrying).toBeUndefined();
+  lifetime.abort();
+  library.dispose();
+});
+
 it("reads the local list again from Retry and clears its error once a read succeeds", async () => {
   // The error shape Agents reports when `app_agent_list` fails at startup.
   const native = localAgentsFixture([], "error");
@@ -617,4 +646,39 @@ it("leaves an agent whose Delete started out of template lineups and defaults", 
   expect(choices.snapshot().identities.map((a) => a.pubkey)).toEqual([
     agent.pubkey,
   ]);
+});
+
+it("counts kept lists as complete while a reread loads or failed, but not as current", async () => {
+  const native = localAgentsFixture([agent]);
+  const legacy = { pubkey: "cd".repeat(32), name: "Legacy" };
+  let fail = false;
+  const library = createAgentLibrary(async () => {
+    if (fail) throw new Error("offline");
+    return { definitions: [], identities: [legacy] };
+  });
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native,
+    archives: archiveFixture(),
+    signal: lifetime.signal,
+  });
+  expect(choices.snapshot()).toMatchObject({ complete: false, current: false });
+  await choices.refresh();
+  expect(choices.snapshot()).toMatchObject({ complete: true, current: true });
+  fail = true;
+  await library.queries.refresh();
+  native.set({ status: "error", error: "Could not list agents", stale: true });
+  expect(choices.snapshot()).toMatchObject({ complete: true, current: false });
+  expect(choices.snapshot().selectable.map((row) => row.pubkey)).toEqual([
+    legacy.pubkey,
+    agent.pubkey,
+  ]);
+  expect(choices.snapshot().error).toContain("Could not list agents");
+  // A local list that never loaded is not a kept list.
+  native.set({ status: "error", error: "Could not list agents", agents: [] });
+  expect(choices.snapshot()).toMatchObject({ complete: false, current: false });
+  lifetime.abort();
+  library.dispose();
 });

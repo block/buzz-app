@@ -1148,19 +1148,29 @@ alone does not grant DM eligibility. Existing DMs can reopen without agent-contr
 evidence, through the normal relay-confirmed DM open.
 
 A snapshot exposes `identities`, `selectable`, `archives`, `definitions`, `status`,
-`pending`, `complete` and a separate `templates` projection. `status: ready` means
-usable, not complete: automatic-recipient inference must honor `complete`, which
+`pending`, `complete`, `current`, `retrying` and a separate `templates` projection. `status:
+ready` means usable, not complete. `complete` means a whole list is held: the last
+whole read of each source keeps counting, marked `stale`, while a reread loads,
+after it fails and across a dropped connection, so seeding, mentions and sending
+keep working. A source that fails in a partial read shows its last rows. `current`
 requires a ready, error-free library and a local source that is ready or
-unavailable. A failed source contributes no stale candidates; another ready source
-stays usable, with partial failures surfaced through Retry.
+unavailable; anything that acts on an agent's absence (automatic-recipient
+inference, Bestie promotion, telling an outside reference from your agent) must
+honor `current`, since a kept list can lack an agent made since. A failed read
+retries on its own with jittered backoff while the list is needed, unless reading
+again cannot fix it (the reader then reports `retry: false`); explicit Retry
+and reconnect still reread. `retrying` marks a failure that will read again on its
+own: the agent menu then says so instead of offering Retry, and a pill with no
+agent yet keeps loading.
 
 Do not build another agent inventory in a plugin. `useAgentChoices(session,
 includeLegacy, archive)` retains the projection while mounted, which preserves
 ready evidence across menu remounts, and ensures the lazy library and archive reads
 on demand. Ordinary mentions subscribe without loading the library
-(`includeLegacy` false); explicit Refresh retries source failures. The projection
-adds no runner, polling, directory scan or signing authority, and session
-retirement revokes its candidates.
+(`includeLegacy` false); explicit Refresh retries source failures at once, and a
+retained failed read also retries on its own as described above. The projection
+adds no runner, directory scan or signing authority, and session retirement
+revokes its candidates.
 
 `templates` serves saved channel-kit templates and project defaults (Solo chat setup
 resolves lineups through it with `templateAgentChoices`). Its identities are the

@@ -15,7 +15,7 @@ const archived = "e".repeat(64);
 function session(
   channel: Record<string, unknown> | undefined,
   viewer?: string,
-  complete = true,
+  current = true,
 ): RelaySession {
   return {
     viewer,
@@ -30,7 +30,9 @@ function session(
     agentChoices: {
       snapshot: () => ({
         identities: [{ pubkey: library, name: "Honey" }],
-        complete,
+        // A kept list counts as complete; only a current one admits outside keys.
+        complete: true,
+        current,
       }),
     },
     archives: {
@@ -60,8 +62,9 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   const inviting = mentionAdmission(sessionChannel, "channel", true);
   expect(inviting(library)).toBe(true);
   expect(inviting(outside)).toBe(true);
-  // Until the agent read is complete, an outside key may be the viewer's
-  // agent, so none is admitted; the agents it lists still are.
+  // Until the agent read is current, an outside key may be the viewer's
+  // agent (a kept list can lack a new one), so none is admitted; the agents
+  // it lists still are.
   const reading = mentionAdmission(
     session({ channelType: "solo" }, undefined, false),
     "channel",

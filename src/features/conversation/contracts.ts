@@ -42,6 +42,9 @@ export type ComposerToolProps = Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
         /** True while inline mentions in the text decide, so picks only change the stand-ins. */
         named: boolean;
+        /** True while the default stand-ins are still being worked out, as
+         * before the first agent list arrives. */
+        loading?: boolean;
         only(
           recipients: readonly Readonly<{ pubkey: string; name: string }>[],
         ): void;

@@ -73,7 +73,7 @@ export function createNameProvider(
     if (base && inputs.every((input, index) => input === base?.inputs[index]))
       return base;
     const names = new Map<string, string>();
-    if (library.status === "ready") {
+    if (library.status === "ready" || library.stale) {
       for (const row of library.identities) {
         const key = row.pubkey.toLowerCase();
         if (!names.has(key)) {

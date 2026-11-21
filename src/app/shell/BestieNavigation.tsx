@@ -56,7 +56,7 @@ export function BestieNavigationProvider({
     enabled &&
     saved &&
     !choices.archives.archived.includes(saved) &&
-    (agent || choices.status !== "ready" || !choices.complete)
+    (agent || choices.status !== "ready" || !choices.current)
       ? saved
       : undefined;
   const channels = useSyncExternalStore(
@@ -105,7 +105,7 @@ export function BestieNavigationProvider({
         savedState.read &&
         !savedState.error &&
         !saved &&
-        choices.complete &&
+        choices.current &&
         ["ready", "unavailable"].includes(choices.archives.status) &&
         !choices.archives.error &&
         !choices.error

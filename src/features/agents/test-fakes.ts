@@ -64,6 +64,7 @@ export function readyAgentChoices(
     templates: { status: "ready", identities, complete: true, pending: false },
     definitions: [],
     complete: true,
+    current: true,
     pending: false,
   };
 }

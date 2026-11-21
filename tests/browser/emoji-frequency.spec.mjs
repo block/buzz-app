@@ -119,29 +119,26 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("a first suggestion choice in a narrow window seeds at most one wide row", async ({
+test("a default row first seen in a narrow window fills a wider picker later", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/tests/fixtures/emoji.html");
-  const input = page.getByRole("textbox", { name: "Message #general" });
-  await input.fill(":smirk");
-  await expect(page.getByRole("option").first()).toHaveText(/:smirk:/);
-  await input.press(":");
-  await expect(input).toHaveJSProperty("value", "😏 ");
-  await expect
-    .poll(() =>
-      page.evaluate(() => localStorage.getItem("emoji-mart.frequently")),
-    )
-    .toContain("smirk");
-  await page
-    .getByRole("button", { name: "Emoji and GIFS", exact: true })
-    .click();
+  const errors = watchPageErrors(page);
   const frequent = page.locator(
     'em-emoji-picker .category[data-id="frequent"] button',
   );
-  await expect(frequent.first()).toBeVisible();
-  // Without the picker width, the choice joins the widest row of defaults,
-  // which wraps here: no more than that.
-  await expect(frequent).toHaveCount(9);
+  const openPicker = async () => {
+    await page
+      .getByRole("button", { name: "Emoji and GIFS", exact: true })
+      .click();
+    await expect(frequent.first()).toBeVisible();
+  };
+  await page.setViewportSize({ width: 240, height: 844 });
+  await page.goto("/tests/fixtures/emoji.html");
+  await openPicker();
+  await expect(frequent).toHaveCount(4);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await openPicker();
+  await expect(frequent).toHaveCount(8);
+  expect(errors.unexplained()).toEqual([]);
 });

@@ -35,7 +35,7 @@ it("reads whole choices from the picker's counts for Unicode and community sugge
   expect(emojiUsage("wss://relay.test/a")("unicode/smile")).toBe(0);
 });
 
-it("seeds one default row below one choice, only into a store Mart treats as empty", () => {
+it("seeds one default row below one choice, only into a store without choices", () => {
   const stored = () =>
     JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "");
   seedEmojiUsage(["+1", "grinning", "kissing_heart"], 2);
@@ -46,8 +46,30 @@ it("seeds one default row below one choice, only into a store Mart treats as emp
   localStorage.setItem("emoji-mart.frequently", JSON.stringify({ smile: 1 }));
   seedEmojiUsage(["+1"], 1);
   expect(stored()).toEqual({ smile: 1 });
+  // A wider picker widens a seeded row, never a row with choices.
+  localStorage.clear();
+  seedEmojiUsage(["+1", "grinning"], 1);
+  seedEmojiUsage(["+1", "grinning", "kissing_heart"], 3);
+  expect(Object.keys(stored())).toEqual(["+1", "grinning", "kissing_heart"]);
+  seedEmojiUsage(["+1"], 1);
+  expect(Object.keys(stored())).toHaveLength(3);
+  localStorage.setItem(
+    "emoji-mart.frequently",
+    JSON.stringify({ smile: 1, "+1": 0.5 }),
+  );
+  seedEmojiUsage(["+1", "grinning", "kissing_heart"], 3);
+  expect(stored()).toEqual({ smile: 1, "+1": 0.5 });
   // Empty and malformed stores get the default row back.
-  for (const value of ["{}", "[]", "null", "", "0", "false", "garbage"]) {
+  for (const value of [
+    "{}",
+    "[]",
+    "[1,2]",
+    "null",
+    "",
+    "0",
+    "false",
+    "garbage",
+  ]) {
     localStorage.setItem("emoji-mart.frequently", value);
     seedEmojiUsage(["+1"], 1);
     expect(Object.keys(stored())).toEqual(["+1"]);

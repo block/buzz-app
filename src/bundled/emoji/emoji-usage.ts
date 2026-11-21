@@ -1,9 +1,9 @@
 // Picker and autocomplete share Emoji Mart's usage store: its Frequently used
 // row and the counts that rank colon suggestions. Mart keeps at most the
 // picker's two rows, plus the latest choice, whenever a picker opens.
+import { MAX_PER_LINE } from "./picker-layout";
+
 const STORE = "emoji-mart.frequently";
-/** The composer picker's most columns. */
-const WIDEST_ROW = 8;
 
 /** The picker's ID for a community emoji, scoped like its catalog. */
 export const customEmojiId = (scope: string, shortcode: string) =>
@@ -18,11 +18,11 @@ function usageId(scope: string, id: string) {
 }
 
 /** Seed Mart's one default row, `perLine` wide, with weights below one choice
- * before Mart reads a store it treats as empty; Mart's own seed would save its
- * defaults as whole choices. */
+ * before Mart reads a store without choices; Mart's own seed would save its
+ * defaults as whole choices. A wider picker widens a narrower seeded row. */
 export function seedEmojiUsage(defaults: readonly string[], perLine: number) {
   try {
-    if (!emptyStore(localStorage.getItem(STORE))) return;
+    if (!unchosen(localStorage.getItem(STORE), perLine)) return;
     const row = defaults.slice(0, perLine);
     const seed = Object.fromEntries(
       row.map((id, index) => [id, (row.length - index) / (row.length + 1)]),
@@ -34,10 +34,17 @@ export function seedEmojiUsage(defaults: readonly string[], perLine: number) {
   }
 }
 
-function emptyStore(stored: string | null) {
+/** Unreadable, or only defaults seeded for a narrower row. */
+function unchosen(stored: string | null, perLine: number) {
   try {
     const counts: unknown = JSON.parse(stored || "null");
-    return !counts || typeof counts !== "object" || !Object.keys(counts).length;
+    if (!counts || typeof counts !== "object" || Array.isArray(counts))
+      return true;
+    const weights = Object.values(counts);
+    return (
+      weights.length < perLine &&
+      weights.every((weight) => typeof weight === "number" && weight < 1)
+    );
   } catch {
     return true;
   }
@@ -70,7 +77,7 @@ export function recordEmojiUsage(scope: string, id: string) {
   void import("emoji-mart")
     .then(({ FrequentlyUsed }) => {
       // Without a picker width, seed the widest picker row.
-      seedEmojiUsage(FrequentlyUsed.DEFAULTS, WIDEST_ROW);
+      seedEmojiUsage(FrequentlyUsed.DEFAULTS, MAX_PER_LINE);
       FrequentlyUsed.add({ id: key });
     })
     .catch(() => {

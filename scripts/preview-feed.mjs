@@ -5,7 +5,7 @@ import {
   createPublicKey,
   verify as verifyEd25519,
 } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Must match the key and endpoints embedded by updater-enabled release builds (#312).
@@ -41,6 +41,12 @@ const assets = {
   "windows-x86_64": `Buzz_${version}_x64_unsigned.exe`,
   "linux-x86_64-deb": `Buzz_${version}_amd64.deb`,
   "linux-x86_64-appimage": `Buzz_${version}_x86_64.AppImage`,
+};
+// Releases built before the Linux arm64 leg have neither installer nor
+// signature. Any one of the four files makes both targets required.
+const arm64Assets = {
+  "linux-aarch64-deb": `Buzz_${version}_arm64.deb`,
+  "linux-aarch64-appimage": `Buzz_${version}_aarch64.AppImage`,
 };
 const usage =
   "Usage: preview-feed.mjs generate|verify <version> <asset-dir> <manifest-file> <macos-app-binary-file> [current-manifest-file]";
@@ -160,8 +166,20 @@ function validate(manifest, platforms) {
   assert.deepEqual(manifest.platforms, platforms);
 }
 
+// Once a feed serves Linux arm64, a release without it would strand those installs.
+function keepsTargets(current, platforms) {
+  for (const target of Object.keys(current.platforms ?? {}))
+    assert.ok(target in platforms, `Candidate drops ${target} from the feed`);
+}
+
 if (command !== "generate" && command !== "verify") throw new Error(usage);
 assert.ok(assetDir && manifestPath && binaryPath, usage);
+if (
+  Object.values(arm64Assets).some((asset) =>
+    [asset, `${asset}.sig`].some((file) => existsSync(join(assetDir, file))),
+  )
+)
+  Object.assign(assets, arm64Assets);
 const key = publicKey();
 const platforms = Object.fromEntries(
   Object.entries(assets).map(([target, asset]) => {
@@ -185,6 +203,7 @@ if (command === "generate") {
       writeFileSync(manifestPath, readFileSync(currentPath, "utf8"));
       process.exit(0);
     }
+    keepsTargets(current, platforms);
   }
   writeFileSync(
     manifestPath,
@@ -205,6 +224,7 @@ if (command === "generate") {
     const current = JSON.parse(readFileSync(currentPath, "utf8"));
     const order = compareVersions(version, current.version);
     assert.ok(order >= 0, `Refusing ${channelName} feed rollback`);
+    keepsTargets(current, platforms);
     if (order === 0) {
       assert.equal(
         readFileSync(manifestPath, "utf8"),

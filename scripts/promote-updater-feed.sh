@@ -28,8 +28,19 @@ esac
 archive="Buzz_${VERSION}_aarch64.app.tar.gz"
 mkdir -p "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/current" "$RUNNER_TEMP/served"
 # A failed publication can leave a draft whose asset URLs 404 for the public.
-gh release view "v$VERSION" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"' | grep -qx "false $prerelease"
-for asset in "$archive" "Buzz_${VERSION}_x64.app.tar.gz" "Buzz_${VERSION}_x64_unsigned.exe" "Buzz_${VERSION}_amd64.deb" "Buzz_${VERSION}_x86_64.AppImage"; do
+release=$(gh release view "v$VERSION" --json isDraft,isPrerelease,assets --jq '"\(.isDraft) \(.isPrerelease)", .assets[].name')
+head -n 1 <<< "$release" | grep -qx "false $prerelease"
+assets=("$archive" "Buzz_${VERSION}_x64.app.tar.gz" "Buzz_${VERSION}_x64_unsigned.exe" "Buzz_${VERSION}_amd64.deb" "Buzz_${VERSION}_x86_64.AppImage")
+arm64=("Buzz_${VERSION}_arm64.deb" "Buzz_${VERSION}_aarch64.AppImage")
+# Releases built before the Linux arm64 leg have neither arm64 installer nor
+# signature and stay promotable without those targets. Any one of the four
+# means the release has the leg, and then all of them are required.
+if grep -qxFf <(printf '%s\n' "${arm64[@]}" "${arm64[@]/%/.sig}") <<< "$release"; then
+  assets+=("${arm64[@]}")
+else
+  echo "v$VERSION has no Linux arm64 installers; promoting it without them."
+fi
+for asset in "${assets[@]}"; do
   gh release download "v$VERSION" --pattern "$asset" --pattern "$asset.sig" --dir "$RUNNER_TEMP/candidate"
   [[ -s "$RUNNER_TEMP/candidate/$asset" && -s "$RUNNER_TEMP/candidate/$asset.sig" ]]
 done

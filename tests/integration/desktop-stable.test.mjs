@@ -281,7 +281,7 @@ test("feed promotion serves each version only on its own feed and release type",
     fakeGh(
       dir,
       `echo "$1 $2 $3" >> "$DIR/calls"
-[ "$1 $2" = "release view" ] && { ${jq({ isDraft: draft, isPrerelease: prerelease })}; exit 0; }
+[ "$1 $2" = "release view" ] && { ${jq({ isDraft: draft, isPrerelease: prerelease, assets: [] })}; exit 0; }
 exit 1
 `,
     );
@@ -323,6 +323,58 @@ exit 1
     // The type check passed, so the next call is the first asset download.
     assert.equal(result.calls[0], view(version));
     assert.match(result.calls[1], new RegExp(`^release download v${version}$`));
+  }
+});
+
+test("feed promotion requires Linux arm64 installers only from releases that have them", (t) => {
+  const version = "1.0.0";
+  const name = (suffix) => `Buzz_${version}_${suffix}`;
+  const before = [
+    "aarch64.app.tar.gz",
+    "x64.app.tar.gz",
+    "x64_unsigned.exe",
+    "amd64.deb",
+    "x86_64.AppImage",
+  ].map(name);
+  const arm64 = ["arm64.deb", "aarch64.AppImage"].map(name);
+  const signed = (installers) =>
+    installers.flatMap((installer) => [installer, `${installer}.sig`]);
+  // Downloads only what the release holds, and logs each requested installer.
+  // Promotion then stops at the macOS archive, which is not a real one.
+  const requested = (published) => {
+    const dir = temp(t);
+    fakeGh(
+      dir,
+      `[ "$1 $2" = "release view" ] && { ${jq({ isDraft: false, isPrerelease: false, assets: published.map((asset) => ({ name: asset })) })}; exit 0; }
+[ "$1 $2" = "release download" ] || exit 1
+echo "$5" >> "$DIR/calls"
+for asset in "$5" "$7"; do
+  case " ${published.join(" ")} " in *" $asset "*) echo bytes > "$9/$asset" ;; esac
+done
+`,
+    );
+    return run(dir, `scripts/promote-updater-feed.sh stable-feed ${version}`, {
+      RUNNER_TEMP: dir,
+      GITHUB_SHA: sha,
+    });
+  };
+  // A release built before the arm64 leg (a rollback target) has none of them.
+  const older = requested(signed(before));
+  assert.deepEqual(older.calls, before);
+  assert.match(older.stdout, /v1\.0\.0 has no Linux arm64 installers/);
+  assert.deepEqual(requested(signed([...before, ...arm64])).calls, [
+    ...before,
+    ...arm64,
+  ]);
+  // One leftover arm64 file makes both installers and signatures required.
+  for (const [partial, stopsAt] of [
+    [[`${arm64[0]}.sig`], arm64[0]],
+    [[arm64[0], `${arm64[0]}.sig`], arm64[1]],
+    [[...signed([arm64[0]]), arm64[1]], arm64[1]],
+  ]) {
+    const result = requested([...signed(before), ...partial]);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.calls.at(-1), stopsAt, partial.join(" "));
   }
 });
 

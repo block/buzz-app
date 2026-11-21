@@ -440,6 +440,7 @@ it("turns the plugin back on when a disable lands late in the real manager", asy
       recoverSettings: async () => stored(),
       readModule: async () => "",
       reloadPlugin: async () => stored(),
+      retryCredentialCleanup: async () => ({ pending: 0, running: 0 }),
     },
   });
   try {

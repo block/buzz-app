@@ -1954,6 +1954,19 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
   old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
   running the command. Update scripts or PATH links to use the bundled CLI.
+- Desktop sign-out can stop if Buzz cannot inspect plugin storage. This means
+  saved-credential cleanup is unknown—not that credentials were deleted. If a
+  sign-out is already pending, Buzz can exit before opening its window.
+  Linked storage or unrelated files in a profiles folder do not, by themselves,
+  stop an ordinary launch or the existing storage migration/copy.
+  If the stop comes from this build's own unfinished saved-credential setup,
+  the dialog offers **Finish credential setup**. After a confirmation, Buzz
+  finishes that setup and restarts; nothing is signed out or removed. Saved
+  credentials work again only after that restart, and other causes stay refused.
+- The installed and development builds of Buzz keep separate saved plugin
+  credentials in the same data. Each signs out only its own; erasing is refused
+  while the other build still keeps credentials in data it would erase. On macOS,
+  Keychain may ask to let one build check the other's setup.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

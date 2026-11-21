@@ -11,8 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
@@ -26,13 +25,25 @@ const OTHERS_ALL: &str =
     "Quit every other Buzz window, then sign out and erase again. Nothing was removed.";
 const SIGNING_OUT: &str = "Buzz is signing out in another window. Open Buzz again in a moment.";
 const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try again.";
-const FENCED: &str = "Buzz had to quit to sign out safely. Open Buzz again to continue.";
+const FENCED: &str = "Buzz couldn't confirm whether this sign-out request was recorded. Open Buzz again to check for pending sign-out work.";
+const IDENTITY_UNAVAILABLE: &str = "Buzz couldn't start this sign-out request because your identity is busy or unavailable. Try again later.";
 const AGENT_STOPPING: &str =
     "Erasing didn't finish because an agent is still stopping; nothing was removed. Open Buzz again to retry.";
 const ALREADY: &str = "Buzz is already signing out.";
+const H1_UNKNOWN: &str =
+    "Buzz couldn't inspect all plugin storage. Saved-credential cleanup is unknown.";
+const SAVING: &str = "A saved-key operation is still finishing. Try signing out again in a moment.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
 const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys with the installed Buzz";
+// Named from this build's side: the other build is the one that keeps custody.
+const PEER_CUSTODY: &str = if cfg!(debug_assertions) {
+    "Erasing is unavailable because the installed Buzz keeps saved plugin credentials in this data; nothing was removed. Clear them there first."
+} else {
+    "Erasing is unavailable because a development build of Buzz keeps saved plugin credentials in this data; nothing was removed. Clear them in that build first."
+};
+const SETUP_UNAVAILABLE: &str = "Saved-credential setup can't be finished here.";
 pub(crate) mod legacy_identifier;
+mod preflight;
 // TEMPORARY agents rename: remove after 2026-10-18; see the migration module.
 pub(crate) mod migrate_agents;
 /// App data folder holding the current Agents identities.
@@ -88,6 +99,7 @@ pub(crate) struct Paths {
     lock: PathBuf,
     /// Held shared by every Buzz using this human key store, alone to sign out of it.
     key_lock: PathBuf,
+    other_key_lock: PathBuf,
     /// Agent ownership locks; an erase waits until none is held.
     ownership: PathBuf,
     pub(crate) app_data: PathBuf,
@@ -100,6 +112,7 @@ pub(crate) struct Paths {
     moves: Vec<(PathBuf, PathBuf)>,
     /// Where a first development launch copies the installed app's folders, app data last.
     seeds: Vec<PathBuf>,
+    plugin_home: Option<PathBuf>,
 }
 /// One marker per key store, so a debug launch never acts on a release sign-out.
 fn marker_name(identifier: &str, service: &str) -> String {
@@ -135,6 +148,9 @@ impl Paths {
             finished: data.join(finished_name(buzz_credential_store::HUMAN_STORE)),
             lock: data.join(LOCK),
             key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_STORE)),
+            other_key_lock: data.join(key_lock_name(buzz_credential_store::human_store(!cfg!(
+                debug_assertions
+            )))),
             ownership: data.join(AGENT_OWNERSHIP),
             app_data,
             backups: crate::nsec_backup_choice::root()?,
@@ -142,8 +158,95 @@ impl Paths {
             media,
             moves: legacy_identifier::moves(identifier)?,
             seeds: legacy_identifier::seeds(identifier)?,
+            plugin_home: std::env::var_os("BUZZODZ_HOME").map(PathBuf::from),
         })
     }
+    /// The existing build-specific inventory lives beside, never inside, wiped app homes.
+    pub(crate) fn plugin_inventory(&self) -> Result<PathBuf, String> {
+        self.lock
+            .parent()
+            .map(|data| data.join(format!(".{}", buzzodz_plugins::secrets::SERVICE)))
+            .ok_or_else(|| H1_UNKNOWN.to_owned())
+    }
+
+    /// The other supported build's fixed inventory: other-owned evidence only.
+    fn plugin_peer_inventory(&self) -> Result<PathBuf, String> {
+        self.lock
+            .parent()
+            .map(|data| data.join(format!(".{}", buzzodz_plugins::secrets::PEER_SERVICE)))
+            .ok_or_else(|| H1_UNKNOWN.to_owned())
+    }
+
+    pub(crate) fn plugin_slots<'a>(
+        &self,
+        root: &'a Path,
+        store: Arc<dyn buzzodz_plugins::SecretStore>,
+    ) -> Result<Slots<'a>, String> {
+        self.plugin_slots_with_peer(
+            root,
+            store,
+            Arc::new(buzzodz_plugins::secrets::PeerStore),
+            self.peer_inspection_scope()?,
+        )
+    }
+
+    /// `peer_scope` is the scope the other build binds at its fixed inventory.
+    pub(crate) fn plugin_slots_with_peer<'a>(
+        &self,
+        root: &'a Path,
+        store: Arc<dyn buzzodz_plugins::SecretStore>,
+        peer_store: Arc<dyn buzzodz_plugins::SecretStore>,
+        peer_scope: buzzodz_plugins::secrets::preflight::Scope,
+    ) -> Result<Slots<'a>, String> {
+        use buzzodz_plugins::secrets::continuity::{self, Peer};
+        let scope = self.inspection_scope(Some(root))?;
+        let peer_root = self.plugin_peer_inventory()?;
+        let peer = {
+            let (root, store) = (peer_root.clone(), peer_store.clone());
+            move || Peer::new(root.clone(), peer_scope.clone(), store.clone())
+        };
+        let (witness_root, witness_store) = (root.to_owned(), store.clone());
+        let (finish_scope, finish_root, finish_store) =
+            (scope.clone(), root.to_owned(), store.clone());
+        let finish_peer = peer.clone();
+        let cleanup_root = root.to_owned();
+        Ok(Slots {
+            inventory: Some(root),
+            continuity: Some(Box::new(move || {
+                continuity::establish(&scope, &witness_root, witness_store.as_ref(), peer())
+            })),
+            finish: Some(Arc::new(move || {
+                continuity::finish(
+                    &finish_scope,
+                    &finish_root,
+                    finish_store.as_ref(),
+                    finish_peer(),
+                )
+            })),
+            pending: Box::new(move || buzzodz_plugins::secrets::sign_out_pending(root)),
+            cleanup: Some(Box::new(move || {
+                buzzodz_plugins::secrets::finish_sign_out(
+                    &cleanup_root,
+                    store.as_ref(),
+                    buzzodz_plugins::secrets::CLEANUP_BUDGET,
+                )
+            })),
+            wait: buzzodz_plugins::secrets::CLEANUP_BUDGET,
+        })
+    }
+
+    /// Every folder an erase empties, with its trash.
+    fn wiped_homes(&self) -> Vec<PathBuf> {
+        let erase = Choices {
+            wipe: true,
+            remove_agents: false,
+        };
+        self.targets(erase)
+            .into_iter()
+            .flat_map(|(path, _)| [path.to_owned(), trash(path)])
+            .collect()
+    }
+
     /// Each wiped folder, and the children it keeps (the agent registries) unless agents go too.
     fn targets(&self, choices: Choices) -> Vec<(&Path, Kept)> {
         let kept = if choices.remove_agents { &[] } else { KEPT };
@@ -198,37 +301,288 @@ fn real_dir(path: &Path) -> std::io::Result<bool> {
 /// alone, so no copy using the key runs; a wipe also needs the all-Buzz lock
 /// alone, so no copy using shared storage runs. Locks are taken key first, then
 /// all-Buzz, and released in reverse, never waiting while holding one alone.
-/// `started` admits one sign-out per instance: after it commits, Buzz restarts
-/// or exits, so it is never cleared. `seen` is the finished record at launch: a
-/// change means a sign-out finished while this instance let go of its locks.
+/// Admission closes before any handle changes. Completion-owned creator leases
+/// pin the shared handles, including after the caller or Instance is dropped.
+/// `seen` detects a sign-out completed while ownership was handed off.
 pub(crate) struct Instance {
-    locks: Mutex<Locks>,
+    shared: Arc<Shared>,
+    other_key_lock: PathBuf,
     marker: PathBuf,
     finished: PathBuf,
     seen: u64,
-    started: AtomicBool,
+    h1_unknown: bool,
+    inventory: Option<PathBuf>,
+    /// Shared so a completion-owned worker can requalify after the Instance is gone.
+    continuity: Option<(
+        buzzodz_plugins::secrets::preflight::Scope,
+        Arc<buzzodz_plugins::secrets::continuity::Established>,
+    )>,
+    finish: Option<FinishSetup>,
+    wait: Duration,
+}
+type FinishSetup = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+struct Shared {
+    locks: Mutex<Locks>,
+    gate: Mutex<Gate>,
+}
+impl Shared {
+    fn mark_h1_unknown(&self) {
+        self.gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .h1_unknown = true;
+    }
+}
+#[derive(Default)]
+struct Gate {
+    closed: bool,
+    active: usize,
+    // Unlike the immutable boot observation, prepare can raise this later.
+    h1_unknown: bool,
+}
+struct Creator {
+    shared: Arc<Shared>,
+    other: Option<File>,
+}
+impl Drop for Creator {
+    fn drop(&mut self) {
+        drop(self.other.take()); // Gate becomes idle only after other-K release.
+        self.shared
+            .gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .active -= 1;
+    }
 }
 struct Locks {
     key: File,
     all: File,
+    other: Option<File>,
+}
+#[allow(clippy::incompatible_msrv)]
+fn other_key(path: &Path) -> Result<File, String> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|_| SAVING.to_owned())?;
+    file.try_lock_shared().map_err(|_| SAVING.to_owned())?;
+    Ok(file)
 }
 // `File` locking is Rust 1.89; credential-store and plugin-manager already need it.
 #[allow(clippy::incompatible_msrv)]
 impl Instance {
-    /// Admit this instance's one sign-out, holding the locks it needs alone.
-    fn begin(&self, choices: Choices) -> Result<(), Failure> {
-        if self.started.swap(true, Ordering::SeqCst) {
-            return Err(refuse(ALREADY));
+    /// Before establishment/metadata; never wait for the other build's K under
+    /// inherited K/A handles. The lease pins those handles through completion,
+    /// including the requalification's OS read of a new peer witness: the caller
+    /// waits a bounded time, while the worker keeps the lease until the read
+    /// returns. A timeout is sticky unknown; late success changes nothing.
+    fn creator(&self) -> Result<Creator, String> {
+        self.requalified(self.lease(true)?)
+    }
+
+    /// Before sign-out admission: owns the requalification like `creator`, so
+    /// sign-out cannot close over a peer read, with the established refusal
+    /// order (unknown, then already signing out). It takes no other-K: it
+    /// writes nothing, and sign-out stays independent of the other build.
+    fn requalify_before_sign_out(&self) -> Result<(), String> {
+        let lease = {
+            let mut gate = self.shared.gate.lock().unwrap_or_else(|e| e.into_inner());
+            if self.h1_unknown || gate.h1_unknown {
+                return Err(H1_UNKNOWN.into());
+            }
+            if gate.closed {
+                return Err(ALREADY.into());
+            }
+            gate.active += 1;
+            Creator {
+                shared: self.shared.clone(),
+                other: None,
+            }
+        };
+        self.requalified(lease).map(drop)
+    }
+
+    /// Requalifies under `lease`, handing the same lease back on timely success.
+    fn requalified(&self, lease: Creator) -> Result<Creator, String> {
+        let Some((scope, established)) = self.continuity.clone() else {
+            return Ok(lease);
+        };
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("plugin installation requalify".into())
+            .spawn(move || {
+                let qualified = established.requalify(&scope).is_ok();
+                if !qualified {
+                    lease.shared.mark_h1_unknown();
+                }
+                let _ = done.send(qualified.then_some(lease));
+            })
+            .map_err(|_| SAVING.to_owned())?;
+        match result.recv_timeout(self.wait) {
+            Ok(Some(lease)) => Ok(lease),
+            _ => {
+                self.mark_h1_unknown();
+                Err(H1_UNKNOWN.into())
+            }
         }
-        let locks = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+    }
+
+    /// `creator` without continuity: setup recovery runs while custody is unknown.
+    fn lease(&self, unknown_refuses: bool) -> Result<Creator, String> {
+        let mut gate = self.shared.gate.lock().unwrap_or_else(|e| e.into_inner());
+        if unknown_refuses && (self.h1_unknown || gate.h1_unknown) {
+            return Err(H1_UNKNOWN.into());
+        }
+        if gate.closed {
+            return Err(SAVING.into());
+        }
+        let other = other_key(&self.other_key_lock)?;
+        gate.active += 1;
+        Ok(Creator {
+            shared: self.shared.clone(),
+            other: Some(other),
+        })
+    }
+
+    /// Whether this unqualified launch found its own unfinished setup intent.
+    fn setup_unfinished(&self) -> bool {
+        self.continuity.is_none()
+            && self.finish.is_some()
+            && self
+                .inventory
+                .as_deref()
+                .is_some_and(buzzodz_plugins::secrets::continuity::unfinished)
+    }
+
+    /// Explicit recovery of this build's failed fresh setup, under the same
+    /// completion-owned lease as enrollment. It never qualifies this launch:
+    /// custody stays unknown until a restart qualifies the committed pair.
+    /// A timeout is outcome-unknown; the lease lasts until the work finishes.
+    pub(crate) fn finish_credential_setup(&self) -> Result<(), String> {
+        let finish = match (&self.continuity, &self.finish) {
+            (None, Some(finish)) if cfg!(unix) => finish.clone(),
+            _ => return Err(SETUP_UNAVAILABLE.into()),
+        };
+        let lease = self.lease(false)?;
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("plugin installation setup".into())
+            .spawn(move || {
+                let outcome = finish();
+                drop(lease);
+                let _ = done.send(outcome);
+            })
+            .map_err(|_| SAVING.to_owned())?;
+        result
+            .recv_timeout(self.wait)
+            .map_err(|_| SAVING.to_owned())?
+    }
+
+    fn inspect_continuity(&self) -> Result<(), String> {
+        if let Some((scope, established)) = &self.continuity {
+            if established.inspect(scope).is_err() {
+                self.mark_h1_unknown();
+                return Err(H1_UNKNOWN.into());
+            }
+        }
+        Ok(())
+    }
+
+    fn h1_unknown(&self) -> bool {
+        self.h1_unknown
+            || self
+                .shared
+                .gate
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .h1_unknown
+    }
+
+    fn mark_h1_unknown(&self) {
+        self.shared.mark_h1_unknown();
+    }
+
+    /// Only a qualified installation supplies the production journal/count root.
+    pub(crate) fn plugin_inventory(&self) -> Option<&Path> {
+        self.continuity.as_ref().and(self.inventory.as_deref())
+    }
+
+    /// Count observation precedes exposing storage to any plugin-facing caller.
+    /// Failure keeps ordinary launch available, with custody disabled and unknown sticky.
+    pub(crate) fn configure_plugin_secrets(
+        &self,
+        manager: buzzodz_plugins::Manager,
+        store: Arc<dyn buzzodz_plugins::SecretStore>,
+    ) -> buzzodz_plugins::Manager {
+        let Some(root) = self.plugin_inventory() else {
+            return manager;
+        };
+        if self.observe_sign_outs(Some(root)).is_err() {
+            return manager;
+        }
+        manager.with_secret_storage(root.to_owned(), store)
+    }
+
+    pub(crate) fn observe_sign_outs(&self, root: Option<&Path>) -> Result<(), String> {
+        #[cfg(not(unix))]
+        let root = {
+            let _ = root;
+            None::<&Path>
+        };
+        if let Some(root) = root {
+            if self.h1_unknown() {
+                return Err(H1_UNKNOWN.into());
+            }
+            let result = (|| {
+                let _lease = self.creator()?;
+                buzzodz_plugins::secrets::observe_sign_outs(root, self.seen)
+            })();
+            if result.is_err() {
+                // Before metadata: no write. After entry: an error may follow commit.
+                self.mark_h1_unknown();
+            }
+            result?;
+        }
+        Ok(())
+    }
+
+    /// Admit this instance's one sign-out, holding the locks it needs alone.
+    fn begin(&self, choices: Choices, journal: Option<&Journal>) -> Result<(), Failure> {
+        {
+            let mut gate = self.shared.gate.lock().unwrap_or_else(|e| e.into_inner());
+            if gate.closed {
+                return Err(refuse(ALREADY));
+            }
+            if gate.h1_unknown {
+                return Err(refuse(H1_UNKNOWN));
+            }
+            gate.closed = true;
+            if gate.active != 0 {
+                gate.closed = false; // No handle changed; this attempt committed nothing.
+                return Err(refuse(SAVING));
+            }
+        }
+        let mut locks = self.shared.locks.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(error) = locks.key.unlock() {
             return Err(lost(error));
         }
         if locks.key.try_lock().is_err() {
             handoff();
-            return Err(self.share(&locks, false, OTHERS));
+            return Err(self.share(&locks, false, OTHERS, journal));
         }
         if !choices.wipe {
+            if journal.is_some() {
+                match other_key(&self.other_key_lock) {
+                    Ok(other) => locks.other = Some(other),
+                    Err(_) => {
+                        locks.key.unlock().map_err(lost)?;
+                        handoff();
+                        return Err(self.share(&locks, false, SAVING, journal));
+                    }
+                }
+            }
             return Ok(());
         }
         if let Err(error) = locks.all.unlock() {
@@ -241,25 +595,30 @@ impl Instance {
             return Err(lost(error));
         }
         handoff();
-        Err(self.share(&locks, true, OTHERS_ALL))
+        Err(self.share(&locks, true, OTHERS_ALL, journal))
     }
     /// Withdraw a sign-out that committed nothing, returning why.
-    fn abort(&self, choices: Choices, failure: Failure) -> Failure {
-        let locks = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+    fn abort(&self, choices: Choices, failure: Failure, journal: Option<&Journal>) -> Failure {
+        let mut locks = self.shared.locks.lock().unwrap_or_else(|e| e.into_inner());
+        locks.other.take();
         let released = if choices.wipe {
             locks.all.unlock()
         } else {
             Ok(())
         };
         match released.and_then(|()| locks.key.unlock()) {
-            Ok(()) => self.share(&locks, choices.wipe, &failure.message),
+            Ok(()) => {
+                handoff();
+                self.share(&locks, choices.wipe, &failure.message, journal)
+            }
             Err(error) => lost(error),
         }
     }
     /// Share the unlocked key lock again, and the all-Buzz lock when `all` was
     /// let go too. Another process may have committed, or even finished, a
-    /// sign-out meanwhile; only with neither can this instance carry on.
-    fn share(&self, locks: &Locks, all: bool, message: &str) -> Failure {
+    /// sign-out meanwhile, perhaps only its journal; only with none of these
+    /// can this instance carry on.
+    fn share(&self, locks: &Locks, all: bool, message: &str, journal: Option<&Journal>) -> Failure {
         // Bounded: a stuck owner must not hang the refusal; not sharing again means exiting.
         if !wait_for(|| locks.key.try_lock_shared())
             || (all && !wait_for(|| locks.all.try_lock_shared()))
@@ -271,11 +630,16 @@ impl Instance {
             .try_exists()
             .and_then(|pending| Ok(pending || finished(&self.finished)? != self.seen));
         match changed {
-            Ok(false) => {
-                self.started.store(false, Ordering::SeqCst);
+            // A journal alone, or not knowing, is a sign-out to leave for the next launch.
+            Ok(false) if journal.map_or(Ok(false), |journal| (journal.pending)()) == Ok(false) => {
+                self.shared
+                    .gate
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .closed = false;
                 refuse(message)
             }
-            Ok(true) => fenced(),
+            Ok(_) => fenced(),
             Err(error) => lost(error),
         }
     }
@@ -308,14 +672,170 @@ fn wait_for<E>(mut attempt: impl FnMut() -> Result<(), E>) -> bool {
     }
 }
 
+/// Plugin secret cleanup, which a sign-out journals before its marker. `None`
+/// leaves boot as it was, which proves no cleanup.
+pub(crate) struct Slots<'a> {
+    /// Injected negative-evidence candidate, never a continuity witness.
+    inventory: Option<&'a Path>,
+    /// Optional existing-owner qualification; never substitutes for journal cleanup.
+    continuity: Option<
+        Box<
+            dyn FnOnce() -> Result<buzzodz_plugins::secrets::continuity::Established, String>
+                + Send,
+        >,
+    >,
+    /// Explicit completion of this build's own failed fresh setup; never run at boot.
+    finish: Option<FinishSetup>,
+    /// Whether a journaled sign-out still owes cleanup; reads only.
+    pending: Box<dyn Fn() -> Result<bool, String> + 'a>,
+    /// This launch's one attempt, which may ask for secure storage access.
+    /// It owns what it uses, as it may outlive the launch's wait for it.
+    cleanup: Option<Box<dyn FnOnce() -> Result<(), String> + Send>>,
+    /// How long the launch waits for that attempt; nonzero.
+    wait: Duration,
+}
+fn owed(slots: &Option<Slots>) -> Result<bool, String> {
+    slots.as_ref().map_or(Ok(false), |slots| (slots.pending)())
+}
+/// Settle owed cleanup with this launch's attempt, which owns `locks` until it
+/// returns. Owed again after it, by a sign-out committed while this launch let
+/// go of its locks, it waits for the next deliberate launch rather than asking
+/// twice. An attempt still running when the wait ends keeps the locks until it
+/// returns or Buzz exits, and nothing continues after it: the launch stays fenced.
+fn settle(slots: &mut Option<Slots>, locks: Locks) -> Result<Locks, String> {
+    if !owed(slots)? {
+        return Ok(locks);
+    }
+    let Some((cleanup, wait)) = slots
+        .as_mut()
+        .and_then(|slots| Some((slots.cleanup.take()?, slots.wait)))
+    else {
+        return Err(FAILED.into());
+    };
+    let (done, attempt) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("sign-out cleanup".into())
+        .spawn(move || {
+            let result = cleanup();
+            // Dropped with the locks only now, if the launch stopped waiting.
+            let _ = done.send((locks, result));
+        })
+        .map_err(|error| {
+            eprintln!("buzz: could not start sign-out cleanup: {error}");
+            FAILED.to_owned()
+        })?;
+    match attempt.recv_timeout(wait) {
+        Ok((locks, result)) => result.map(|()| locks),
+        Err(_) => Err(buzzodz_plugins::secrets::SIGN_OUT_INCOMPLETE.into()),
+    }
+}
+
+/// Keep all inherited ownership through OS-witness read/create completion,
+/// including when launch stops waiting. No structural metadata lock is held.
+fn qualify_continuity<'a>(
+    paths: &Paths,
+    slots: &mut Option<Slots<'a>>,
+    mut locks: Locks,
+    ready: impl Fn(&Option<Slots<'a>>) -> Result<bool, String>,
+) -> Result<
+    (
+        Locks,
+        Option<buzzodz_plugins::secrets::continuity::Established>,
+        bool,
+    ),
+    String,
+> {
+    let Some((qualify, wait)) = slots
+        .as_mut()
+        .and_then(|s| Some((s.continuity.take()?, s.wait)))
+    else {
+        return Ok((locks, None, false));
+    };
+    if !wait_for(|| locks.key.try_lock_shared()) || !wait_for(|| locks.all.try_lock_shared()) {
+        return Err(SIGNING_OUT.into());
+    }
+    // Reuse boot's fresh journal classification, including its sticky unknown.
+    if !ready(slots)? {
+        locks.all.unlock().map_err(|_| SAVING.to_owned())?;
+        locks.key.unlock().map_err(|_| SAVING.to_owned())?;
+        return Ok((locks, None, true));
+    }
+    match other_key(&paths.other_key_lock) {
+        Ok(other) => locks.other = Some(other),
+        Err(_) => {
+            locks.all.unlock().map_err(|_| SAVING.to_owned())?;
+            locks.key.unlock().map_err(|_| SAVING.to_owned())?;
+            return Ok((locks, None, true));
+        }
+    }
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("plugin installation continuity".into())
+        .spawn(move || {
+            let observed = qualify();
+            let _ = done.send((locks, observed));
+        })
+        .map_err(|_| SAVING.to_owned())?;
+    let (mut locks, observed) = result.recv_timeout(wait).map_err(|_| SAVING.to_owned())?;
+    locks.other.take();
+    locks.all.unlock().map_err(|_| SAVING.to_owned())?;
+    locks.key.unlock().map_err(|_| SAVING.to_owned())?;
+    Ok(match observed {
+        Ok(observed) => (locks, Some(observed), false),
+        Err(_) => (locks, None, true),
+    })
+}
+
+/// K exclusive then A shared (plain) or exclusive (erase), always releasing K
+/// before retrying A. No K acquisition occurs inside an A-exclusive transaction.
+#[allow(clippy::incompatible_msrv)]
+fn cleanup_locks(locks: &Locks, wipe: bool) -> Result<(), String> {
+    let mut busy = BUSY;
+    let mut stuck = None;
+    let taken = wait_for(|| {
+        busy = BUSY;
+        locks.key.try_lock().map_err(drop)?;
+        let all = if wipe {
+            locks.all.try_lock()
+        } else {
+            locks.all.try_lock_shared()
+        };
+        if all.is_err() {
+            busy = if wipe { BUSY_ALL } else { SIGNING_OUT };
+            return match locks.key.unlock() {
+                Ok(()) => Err(()),
+                Err(error) => {
+                    stuck = Some(error);
+                    Ok(())
+                }
+            };
+        }
+        Ok(())
+    });
+    if let Some(error) = stuck {
+        eprintln!("buzz: instance lock: {error}");
+        return Err(FAILED.into());
+    }
+    if taken {
+        Ok(())
+    } else {
+        Err(busy.into())
+    }
+}
+
 /// Run at launch, before anything else. Returns this instance's lock, or the
 /// message to show before exiting.
 #[allow(clippy::incompatible_msrv)] // `File` locking; see `Instance`.
 pub(crate) fn boot(
     paths: &Paths,
+    mut slots: Option<Slots<'_>>,
     mut remove_agent_keys: impl FnMut(&Path) -> Result<(), String>,
     mut remove_key: impl FnMut() -> Result<(), String>,
 ) -> Result<Instance, String> {
+    #[cfg(not(unix))]
+    {
+        let _ = slots.take();
+    }
     let open = |path: &Path| {
         OpenOptions::new()
             .create(true)
@@ -334,59 +854,107 @@ pub(crate) fn boot(
             FAILED.to_owned()
         })?;
     }
-    let locks = Locks {
+    let mut locks = Locks {
         key: open(&paths.key_lock)?,
         all: open(&paths.lock)?,
+        other: None,
     };
     let failed = |error: std::io::Error| {
         eprintln!("buzz: instance lock: {error}");
         FAILED.to_owned()
     };
+    let h1_unknown = std::cell::Cell::new(false);
+    let pending_slots = |slots: &Option<Slots>| match owed(slots) {
+        Ok(pending) => Ok(pending),
+        Err(error) => {
+            h1_unknown.set(true);
+            // Read uncertainty is not positive journal authority. A real marker
+            // still fences; without intent, ordinary launch remains available.
+            if pending(&paths.marker)?.is_some() {
+                Err(error)
+            } else {
+                Ok(false)
+            }
+        }
+    };
+    let mut owned_cleanup = false;
+    // A journal commits before its marker, so cleanup may be owed without one:
+    // settle it before moving storage, holding K exclusive and A shared.
+    if pending_slots(&slots)? {
+        cleanup_locks(&locks, false)?;
+        let available = slots.as_ref().is_some_and(|s| s.cleanup.is_some());
+        locks = settle(&mut slots, locks)?;
+        owned_cleanup = available && slots.as_ref().is_some_and(|s| s.cleanup.is_none());
+        locks.all.unlock().map_err(failed)?;
+        locks.key.unlock().map_err(failed)?;
+    }
+    let (qualified_locks, continuity, unknown) =
+        qualify_continuity(paths, &mut slots, locks, |slots| {
+            // A newly committed readable journal belongs to the next deliberate attempt.
+            if pending_slots(slots)? {
+                return Err(buzzodz_plugins::secrets::SIGN_OUT_INCOMPLETE.into());
+            }
+            Ok(!h1_unknown.get())
+        })?;
+    locks = qualified_locks;
+    if unknown {
+        h1_unknown.set(true);
+    }
+    let observe = |slots: &Option<Slots>| {
+        if paths
+            .inspect_continuity(
+                slots.as_ref().and_then(|s| s.inventory),
+                continuity.as_ref(),
+            )
+            .is_err()
+        {
+            h1_unknown.set(true);
+        }
+    };
+    observe(&slots);
     // Before looking for a marker: a pending sign-out may be the legacy one.
-    legacy_identifier::migrate(&paths.moves, &paths.seeds, &locks.all, &paths.ownership)?;
+    legacy_identifier::migrate(
+        &paths.moves,
+        &paths.seeds,
+        &locks.all,
+        &paths.ownership,
+        || {
+            observe(&slots);
+            pending_slots(&slots)
+        },
+    )?;
     // Shared first, then look: a sign-out that commits after this sees our locks.
     // Every time they are taken again, look again.
     loop {
         if !wait_for(|| locks.key.try_lock_shared()) || !wait_for(|| locks.all.try_lock_shared()) {
             return Err(SIGNING_OUT.into());
         }
-        let Some(wipe) = pending_wipe(&paths.marker).map_err(failed)? else {
+        observe(&slots);
+        // Plain cleanup takes K exclusive plus A shared; erase takes both exclusive.
+        let marker = pending_wipe(&paths.marker).map_err(failed)?;
+        let Some(wipe) = marker.or(pending_slots(&slots)?.then_some(false)) else {
             break;
         };
         // A restarting instance may still be exiting; wait for it to let go.
         locks.all.unlock().map_err(failed)?;
         locks.key.unlock().map_err(failed)?;
-        let mut busy = BUSY;
-        let mut stuck = None;
-        let taken = wait_for(|| {
-            busy = BUSY;
-            locks.key.try_lock().map_err(drop)?;
-            if wipe && locks.all.try_lock().is_err() {
-                busy = BUSY_ALL;
-                // Never wait holding the key lock exclusively: if it can't be
-                // let go, stop trying (`Ok` ends the wait) and fail below.
-                return match locks.key.unlock() {
-                    Ok(()) => Err(()),
-                    Err(error) => {
-                        stuck = Some(error);
-                        Ok(())
-                    }
-                };
-            }
-            Ok(())
-        });
-        if let Some(error) = stuck {
-            return Err(failed(error));
-        }
-        if !taken {
-            return Err(busy.into());
-        }
-        // Read again under exclusive ownership and run only what these locks
-        // cover: another launch may have finished it or committed a wipe since.
-        match pending(&paths.marker)? {
+        cleanup_locks(&locks, wipe)?;
+        // Before anything a sign-out moves or deletes.
+        let available = slots.as_ref().is_some_and(|s| s.cleanup.is_some());
+        locks = settle(&mut slots, locks)?;
+        owned_cleanup |= available && slots.as_ref().is_some_and(|s| s.cleanup.is_none());
+        // Read intent afresh before deciding whether inspection uncertainty
+        // can stop destructive work: a competing finish may have removed it.
+        let current = pending(&paths.marker)?;
+        observe(&slots);
+        // Run only what these locks cover; a newly committed wipe must loop.
+        match current {
             // Now a wipe: let go and loop to take every lock.
             Some(choices) if choices.wipe && !wipe => {}
             Some(choices) => {
+                if h1_unknown.get() && !owned_cleanup {
+                    return Err(H1_UNKNOWN.into());
+                }
                 if choices.wipe {
                     agents_stopped(&paths.ownership)?;
                 }
@@ -399,19 +967,33 @@ pub(crate) fn boot(
             }
             None => {}
         }
-        if wipe {
-            locks.all.unlock().map_err(failed)?;
-        }
+        locks.all.unlock().map_err(failed)?;
         locks.key.unlock().map_err(failed)?;
         handoff();
     }
-    migrate_agents::migrate(paths, &locks)?;
+    observe(&slots);
+    migrate_agents::migrate(paths, &locks, || observe(&slots))?;
+    observe(&slots);
     Ok(Instance {
-        locks: Mutex::new(locks),
+        shared: Arc::new(Shared {
+            locks: Mutex::new(locks),
+            gate: Mutex::new(Gate::default()),
+        }),
+        other_key_lock: paths.other_key_lock.clone(),
         marker: paths.marker.clone(),
         finished: paths.finished.clone(),
         seen: finished(&paths.finished).map_err(failed)?,
-        started: AtomicBool::new(false),
+        h1_unknown: h1_unknown.get(),
+        inventory: slots.as_ref().and_then(|s| s.inventory.map(Path::to_owned)),
+        finish: slots.as_ref().and_then(|s| s.finish.clone()),
+        wait: slots.as_ref().map_or(WAIT, |s| s.wait),
+        continuity: continuity
+            .map(|established| {
+                paths
+                    .inspection_scope(slots.as_ref().and_then(|s| s.inventory))
+                    .map(|scope| (scope, Arc::new(established)))
+            })
+            .transpose()?,
     })
 }
 
@@ -737,30 +1319,47 @@ fn write_marker(path: &Path, choices: Choices) -> std::io::Result<()> {
 /// locks or agents are in an unknown state): Buzz exits natively instead, and
 /// it never reaches the dialog.
 #[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Failure {
     message: String,
     #[serde(skip)]
     fenced: bool,
+    /// This build's own setup is unfinished; offer the explicit recovery.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    finish_setup: bool,
 }
 fn refuse(message: &str) -> Failure {
     Failure {
         message: message.into(),
         fenced: false,
+        finish_setup: false,
     }
 }
 fn fenced() -> Failure {
     Failure {
         message: FENCED.into(),
         fenced: true,
+        finish_setup: false,
     }
 }
 
-/// Revoke paired tools, commit intent, close signing, then run `shutdown`.
-/// Deleting is left to the next launch.
+/// Plugin secret cleanup, which a sign-out journals before its marker.
+struct Journal<'a> {
+    /// Commit this sign-out's cleanup; one that failed may have committed.
+    commit: &'a (dyn Fn() -> Result<(), String> + Sync),
+    /// Whether any committed sign-out still owes cleanup; reads only.
+    pending: &'a (dyn Fn() -> Result<bool, String> + Sync),
+    /// A refusal this journal's scope can't discharge; checked before revoking.
+    admit: &'a (dyn Fn() -> Result<(), String> + Sync),
+}
+
+/// Revoke paired tools, journal plugin cleanup, commit intent, close signing,
+/// then run `shutdown`. Deleting is left to the next launch.
 async fn prepare<V, S>(
     paths: &Paths,
     choices: Choices,
     revoke: impl FnOnce() -> V,
+    journal: Option<&Journal<'_>>,
     close: impl FnOnce(),
     shutdown: impl FnOnce() -> S,
 ) -> Result<(), Failure>
@@ -772,12 +1371,29 @@ where
         eprintln!("buzz: sign out refused: {error}");
         return Err(refuse(LINKED));
     }
-    // Last before the commit, so a refusal above keeps paired tools, and none
-    // outlives the marker, even past a crash.
+    match journal {
+        None => paths.preflight().map_err(|_| refuse(H1_UNKNOWN))?,
+        Some(journal) => (journal.admit)().map_err(|message| refuse(&message))?,
+    }
+    // After every refusal, so a refusal keeps paired tools, and before the
+    // journal: once it may have committed, only fenced failures remain.
     revoke().await?;
+    // A journal is never withdrawn, and one that failed may have committed.
+    if let Some(journal) = journal {
+        (journal.commit)().map_err(|error| {
+            eprintln!("buzz: could not journal sign-out: {error}");
+            fenced()
+        })?;
+    }
+    #[cfg(all(test, unix))]
+    tests::slots::creators::phase("marker");
     write_marker(&paths.marker, choices).map_err(|error| {
         eprintln!("buzz: could not write sign-out marker: {error}");
-        refuse(NOT_PREPARED)
+        if journal.is_some() {
+            fenced()
+        } else {
+            refuse(NOT_PREPARED)
+        }
     })?;
     // Committed: the key is removed at the next launch, so it signs or pairs nothing more.
     close();
@@ -790,10 +1406,68 @@ where
 /// Admit, commit and shut down. A refusal before the marker withdraws; any
 /// fenced failure, before or after it, closes signing and goes to `exit`, never
 /// to the dialog.
+#[allow(clippy::too_many_arguments)] // Paired-tool revocation joins the journaled sign-out path.
 async fn attempt<V, S, E>(
     instance: &Instance,
     paths: &Paths,
     choices: Choices,
+    revoke: impl FnOnce() -> V,
+    journal: Option<&Journal<'_>>,
+    close: impl Fn(),
+    shutdown: impl FnOnce() -> S,
+    exit: impl FnOnce() -> E,
+) -> Result<(), Failure>
+where
+    V: Future<Output = Result<(), Failure>>,
+    S: Future<Output = Result<(), String>>,
+    E: Future<Output = Result<(), Failure>>,
+{
+    if journal.is_none() && instance.h1_unknown() {
+        return Err(refuse(H1_UNKNOWN));
+    }
+    #[cfg(all(test, unix))]
+    tests::slots::creators::phase("begin");
+    let result = match instance.begin(choices, journal) {
+        Ok(()) => {
+            #[cfg(test)]
+            tests::creators::before_commit();
+            prepare(paths, choices, revoke, journal, &close, shutdown)
+                .await
+                .map_err(|failure| {
+                    // N1: keep the exact message + nonfenced mapping coupled to
+                    // prepare's scanner refusal; latch before abort reopens admission.
+                    if failure == refuse(H1_UNKNOWN) {
+                        instance.mark_h1_unknown();
+                    }
+                    if failure.fenced {
+                        failure
+                    } else {
+                        instance.abort(choices, failure, journal)
+                    }
+                })
+        }
+        Err(failure) => Err(failure),
+    };
+    match result {
+        Err(failure) if failure.fenced => {
+            close();
+            exit().await
+        }
+        other => other,
+    }
+}
+
+/// Native journal adapter: borrow begin's closed-phase ownership; never recurse
+/// through ordinary creator admission while current K is exclusive.
+/// Before live-root wiring, distinguish a pre-write busy identity refusal from
+/// a possibly committed journal error; the current conservative error fences.
+#[allow(clippy::too_many_arguments)]
+async fn attempt_native<V, S, E>(
+    instance: &Instance,
+    paths: &Paths,
+    choices: Choices,
+    root: Option<&Path>,
+    identity: &crate::identity::IdentityHost,
     revoke: impl FnOnce() -> V,
     close: impl Fn(),
     shutdown: impl FnOnce() -> S,
@@ -804,25 +1478,82 @@ where
     S: Future<Output = Result<(), String>>,
     E: Future<Output = Result<(), Failure>>,
 {
-    let result = match instance.begin(choices) {
-        Ok(()) => prepare(paths, choices, revoke, &close, shutdown)
-            .await
-            .map_err(|failure| {
-                if failure.fenced {
-                    failure
-                } else {
-                    instance.abort(choices, failure)
-                }
-            }),
-        Err(failure) => Err(failure),
+    // Windows has no plugin secrets in this release. Never establish inventory
+    // or journal there; the no-journal route uses the same read-only predicate.
+    #[cfg(not(unix))]
+    let root = {
+        let _ = root;
+        None::<&Path>
     };
-    match result {
-        Err(failure) if failure.fenced => {
-            close();
-            exit().await
+    if root.is_some() {
+        // Owned requalification of any new peer, before admission closes.
+        instance
+            .requalify_before_sign_out()
+            .map_err(|message| refuse(&message))?;
+        if instance.h1_unknown() {
+            return Err(refuse(H1_UNKNOWN));
         }
-        other => other,
     }
+    // A busy/unread identity is not known absent.
+    let snapshot = if root.is_some() {
+        identity
+            .current_viewer()
+            .map_err(|_| refuse(IDENTITY_UNAVAILABLE))?
+    } else {
+        None
+    };
+    let commit = || {
+        #[cfg(all(test, unix))]
+        tests::slots::creators::phase("commit");
+        instance.inspect_continuity()?;
+        let current = identity.current_viewer()?;
+        if current != snapshot {
+            return Err(SAVING.into());
+        }
+        buzzodz_plugins::secrets::begin_sign_out(
+            root.ok_or(SAVING)?,
+            current.as_deref(),
+            choices.wipe.then_some(paths.app_data.as_path()),
+        )
+    };
+    let pending = || buzzodz_plugins::secrets::sign_out_pending(root.ok_or(SAVING)?);
+    // Closed phase: filesystem-only, so evidence changed since the owned
+    // requalification refuses before revocation. This journal covers only this
+    // build's root; erase refuses rather than wipe homes where the other build
+    // keeps custody.
+    let admit = || {
+        instance.inspect_continuity()?;
+        match &instance.continuity {
+            Some((_, established)) if choices.wipe => {
+                match established.peer_custody_in(&paths.wiped_homes()) {
+                    Ok(false) => Ok(()),
+                    _ => Err(PEER_CUSTODY.to_owned()),
+                }
+            }
+            _ => Ok(()),
+        }
+    };
+    let journal = Journal {
+        commit: &commit,
+        pending: &pending,
+        admit: &admit,
+    };
+    attempt(
+        instance,
+        paths,
+        choices,
+        revoke,
+        root.map(|_| &journal),
+        close,
+        shutdown,
+        exit,
+    )
+    .await
+    .map_err(|mut failure| {
+        failure.finish_setup =
+            !failure.fenced && failure.message == H1_UNKNOWN && instance.setup_unfinished();
+        failure
+    })
 }
 
 /// Tear down as Quit does, however that goes, then explain and exit. Agent
@@ -939,10 +1670,38 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         identity.close();
         pairing.close();
     };
-    attempt(&instance, &paths, choices, revoke, close, shutdown, || {
-        exit_fenced(app.clone())
-    })
+    attempt_native(
+        &instance,
+        &paths,
+        choices,
+        instance.plugin_inventory(),
+        &identity,
+        revoke,
+        close,
+        shutdown,
+        || exit_fenced(app.clone()),
+    )
     .await?;
+    crate::relaunch::request(&app);
+    Ok(())
+}
+
+/// Finish this build's own failed fresh saved-credential setup, then restart:
+/// only the next launch can qualify it and enable saved credentials.
+#[tauri::command]
+pub(crate) async fn finish_credential_setup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), Failure> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .try_state::<Instance>()
+            .ok_or_else(|| SETUP_UNAVAILABLE.to_owned())?
+            .finish_credential_setup()
+    })
+    .await
+    .map_err(|_| refuse(SAVING))?
+    .map_err(|message| refuse(&message))?;
     crate::relaunch::request(&app);
     Ok(())
 }

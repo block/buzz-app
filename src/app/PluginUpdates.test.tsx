@@ -199,6 +199,7 @@ function managedFixture() {
     recoverSettings: vi.fn(async () => configuration),
     reloadPlugin: vi.fn(async () => configuration),
     readModule: vi.fn(async () => ""),
+    retryCredentialCleanup: vi.fn(async () => ({ pending: 0, running: 0 })),
   };
   const manager = createPluginManager(root, { bundled: [], storage });
   return {

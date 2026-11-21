@@ -898,7 +898,11 @@ available and, when it isn't, disables wipe up front with the reason; this holds
 for any Rust debug build, including a debug bundle with a production frontend. A development-build sign-out signs out every
 development build, which share the debug key, and leaves the installed app
 signed in. Wipe is unavailable while
-`BUZZODZ_HOME` moves plugin storage out of app data.
+`BUZZODZ_HOME` moves plugin storage out of app data, and while the other build
+still keeps saved plugin credentials in data it would erase. Either build's plain
+sign-out cleans only its own saved plugin credentials. When the refusal comes from
+this build's own unfinished saved-credential setup, the dialog offers **Finish
+credential setup**, a confirmation that finishes it and restarts Buzz.
 
 Every running instance, debug or release under any identifier, holds two locks
 shared in the user data folder (created first if a first launch finds none)

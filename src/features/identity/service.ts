@@ -256,6 +256,8 @@ export function createIdentity() {
     /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */
     signOut: (choices: { wipe: boolean; removeAgents: boolean }) =>
       invoke<void>("sign_out", choices),
+    /** Finishes this build's unfinished saved-credential setup, then restarts. */
+    finishCredentialSetup: () => invoke<void>("finish_credential_setup"),
     /** The native uploader's status; registers on first read, outside the snapshot. */
     backup,
     dispose() {

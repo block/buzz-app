@@ -815,6 +815,7 @@ export function apply(ctx) {
       recoverSettings: vi.fn(),
       reloadPlugin: vi.fn(),
       readModule: vi.fn(async () => code),
+      retryCredentialCleanup: vi.fn(async () => ({ pending: 0, running: 0 })),
       imports: {
         folder: vi.fn(),
         files: vi.fn(),

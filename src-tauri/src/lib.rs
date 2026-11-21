@@ -13,6 +13,8 @@ use oauth_callback::OAuthCallbackHost;
 #[cfg(test)]
 mod browser_permissions_tests;
 mod pairing;
+#[cfg(test)]
+mod plugin_management_tests;
 mod qr;
 #[cfg(unix)]
 mod quit_signal;
@@ -582,7 +584,7 @@ async fn plugin_import_install(
     imports: tauri::State<'_, Imports>,
     token: String,
     path: String,
-) -> Result<InstallationResult, String> {
+) -> Result<ManagementReply, String> {
     let imports = imports.inner().clone();
     with_manager(manager, move |m| {
         let pending = imports
@@ -592,8 +594,8 @@ async fn plugin_import_install(
         pending
             .as_ref()
             .ok_or("This import preview expired. Choose the source again.")?
-            .install(&m, &token, &path)
-            .map(|catalog| ready(&m, catalog))
+            .install_managed(&m, &token, &path)
+            .and_then(|outcome| management_reply(&m, outcome))
     })
     .await
 }
@@ -617,6 +619,40 @@ fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagementReply {
+    // Preserve ready/catalog/managed for current callers. No recovery/reset
+    // authority is implied when a committed catalog cannot be read.
+    #[serde(flatten)]
+    state: InstallationResult,
+    committed: bool,
+    problem: Option<&'static str>,
+}
+fn management_reply(
+    manager: &Manager,
+    outcome: buzzodz_plugins::ManagementOutcome,
+) -> Result<ManagementReply, String> {
+    let outcome = manager.management_cleanup(outcome);
+    // Until renderer adoption, an uncertain save must not look like success.
+    if !outcome.committed {
+        return Err(outcome
+            .problem
+            .unwrap_or("Plugin change outcome is unknown")
+            .into());
+    }
+    Ok(ManagementReply {
+        state: match outcome.catalog {
+            Some(catalog) => ready(manager, catalog),
+            None => InstallationResult::Recovery {
+                reason: "Plugin change saved; catalog is unavailable".into(),
+                can_reset: false,
+            },
+        },
+        committed: outcome.committed,
+        problem: outcome.problem,
+    })
+}
 // Invalid environment configuration must not prevent the recovery shell from opening.
 struct PluginManager(Result<Manager, String>);
 
@@ -679,11 +715,12 @@ async fn plugin_change(
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
     action: String,
     id: String,
-) -> Result<InstallationResult, String> {
+) -> Result<ManagementReply, String> {
     registrations.retire(&id);
     let plugin = id.clone();
     let result = with_manager(manager, move |m| {
-        m.change(&action, &plugin).map(|catalog| ready(&m, catalog))
+        m.change_managed(&action, &plugin)
+            .and_then(|outcome| management_reply(&m, outcome))
     })
     .await;
     registrations.retire(&id);
@@ -694,15 +731,22 @@ async fn plugin_reload(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
     id: String,
-) -> Result<InstallationResult, String> {
+) -> Result<ManagementReply, String> {
     registrations.retire(&id);
     let plugin = id.clone();
     let result = with_manager(manager, move |m| {
-        m.reload(&plugin).map(|catalog| ready(&m, catalog))
+        m.reload_managed(&plugin)
+            .and_then(|outcome| management_reply(&m, outcome))
     })
     .await;
     registrations.retire(&id);
     result
+}
+#[tauri::command]
+async fn plugin_credential_cleanup_retry(
+    manager: tauri::State<'_, PluginManager>,
+) -> Result<buzzodz_plugins::CleanupStatus, String> {
+    with_manager(manager, |m| m.start_credential_cleanup()).await
 }
 #[tauri::command]
 async fn plugin_module(
@@ -716,9 +760,13 @@ async fn plugin_module(
 async fn plugin_recover(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
-) -> Result<InstallationResult, String> {
+) -> Result<ManagementReply, String> {
     registrations.clear();
-    let result = with_manager(manager, |m| m.recover().map(|catalog| ready(&m, catalog))).await;
+    let result = with_manager(manager, |m| {
+        m.recover_managed()
+            .and_then(|outcome| management_reply(&m, outcome))
+    })
+    .await;
     registrations.clear();
     result
 }
@@ -848,6 +896,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_reload,
         plugin_module,
         plugin_recover,
+        plugin_credential_cleanup_retry,
         plugin_host_run_command,
         plugin_host_call_context,
         plugin_host_request,
@@ -942,7 +991,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_close_owner,
         update_restart,
         sign_out::sign_out,
-        sign_out::sign_out_wipe_refusal
+        sign_out::sign_out_wipe_refusal,
+        sign_out::finish_credential_setup
     ]
 }
 
@@ -978,43 +1028,61 @@ pub fn run() {
     });
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
+    let plugin_secrets: std::sync::Arc<dyn buzzodz_plugins::SecretStore> =
+        std::sync::Arc::new(buzzodz_plugins::secrets::OsStore);
     let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
-        sign_out::boot(
-            &paths,
-            |app_data| {
-                let credentials = buzz_agent_controller::PlatformCredentials::default();
-                let old = app_data.join(sign_out::OLD_AGENTS);
-                if old
-                    .try_exists()
-                    .map_err(|error| format!("check agent registry: {error}"))?
-                {
-                    buzz_agent_controller::delete_local_agent_keys(old, &credentials)?;
-                }
-                // The pending erase runs before the temporary startup migration.
-                for folder in [sign_out::AGENTS, sign_out::migrate_agents::LEGACY] {
-                    buzz_agent_controller::AppAgents::open(
-                        app_data.join(folder).join("identities.json"),
-                    )
-                    .delete_keys(&credentials)?;
-                }
-                Ok(())
-            },
-            || {
-                host_mcp::pairing::revoke(&paths.app_data)?;
-                federated_identity::store::remove_all(federated_identity::store::root()?)?;
-                identity::remove_saved_key()
-            },
-        )
-        .and_then(|instance| {
-            sign_out::forget_signed_out_key(&instance, &paths, identity::remove_current_key)
-                .map(|()| instance)
-        })
-        .unwrap_or_else(|message| sign_out::exit_with(&message))
+        let start = || {
+            let root = paths.plugin_inventory()?;
+            // Native-private enrollment is macOS-only; do not enable other platforms' custody.
+            let slots = if cfg!(target_os = "macos") {
+                Some(paths.plugin_slots(&root, plugin_secrets.clone())?)
+            } else {
+                None
+            };
+            sign_out::boot(
+                &paths,
+                slots,
+                |app_data| {
+                    let credentials = buzz_agent_controller::PlatformCredentials::default();
+                    let old = app_data.join(sign_out::OLD_AGENTS);
+                    if old
+                        .try_exists()
+                        .map_err(|error| format!("check agent registry: {error}"))?
+                    {
+                        buzz_agent_controller::delete_local_agent_keys(old, &credentials)?;
+                    }
+                    // The pending erase runs before the temporary startup migration.
+                    for folder in [sign_out::AGENTS, sign_out::migrate_agents::LEGACY] {
+                        buzz_agent_controller::AppAgents::open(
+                            app_data.join(folder).join("identities.json"),
+                        )
+                        .delete_keys(&credentials)?;
+                    }
+                    Ok(())
+                },
+                || {
+                    host_mcp::pairing::revoke(&paths.app_data)?;
+                    federated_identity::store::remove_all(federated_identity::store::root()?)?;
+                    identity::remove_saved_key()
+                },
+            )
+            .and_then(|instance| {
+                sign_out::forget_signed_out_key(&instance, &paths, identity::remove_current_key)?;
+                Ok(instance)
+            })
+        };
+        start().unwrap_or_else(|message| sign_out::exit_with(&message))
+    });
+    let plugin_manager = Manager::from_env(
+        dirs::data_dir().map(|dir| dir.join(&context.config().identifier)),
+    )
+    .map(|manager| match instance.as_ref() {
+        Some(instance) => instance.configure_plugin_secrets(manager, plugin_secrets),
+        None => manager,
     });
     let federated_identity = federated_identity::FederatedIdentity::new()
         .unwrap_or_else(|message| sign_out::exit_with(&message));
     let identity = IdentityHost::default();
-    let identifier = context.config().identifier.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -1307,9 +1375,7 @@ pub fn run() {
         .manage(DeepLinks::default())
         // Plugin storage lives in this identifier's app data, so development
         // builds keep theirs apart from the installed app.
-        .manage(PluginManager(Manager::from_env(
-            dirs::data_dir().map(|dir| dir.join(&identifier)),
-        )))
+        .manage(PluginManager(plugin_manager))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

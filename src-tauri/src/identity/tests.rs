@@ -979,3 +979,28 @@ async fn managed_consent_commit_is_fenced_by_identity_close_and_never_restores()
             .is_err());
     }
 }
+
+#[test]
+fn current_viewer_is_try_only_nonrestoring_and_distinguishes_known_absence() {
+    let store = Arc::new(Memory::default());
+    let host = IdentityHost(Arc::new(Mutex::new(identity(&store))));
+    assert!(
+        host.current_viewer().is_err(),
+        "Unread is not confirmed absent"
+    );
+    assert_eq!(*store.reads.lock().unwrap(), 0);
+    {
+        let mut identity = host.0.lock().unwrap();
+        assert!(
+            host.current_viewer().is_err(),
+            "does not wait on identity mutex"
+        );
+        identity.state = State::Missing;
+    }
+    assert_eq!(host.current_viewer(), Ok(None));
+    host.0.lock().unwrap().state = State::Ready(fixture());
+    assert_eq!(host.current_viewer(), Ok(Some(fixture().viewer().unwrap())));
+    host.close();
+    assert!(host.current_viewer().is_err());
+    assert_eq!(*store.reads.lock().unwrap(), 0);
+}

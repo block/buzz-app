@@ -1087,6 +1087,16 @@ impl IdentityHost {
         })))
     }
 
+    /// Metadata-held revalidation only: no restore, OS access or mutex wait.
+    pub(crate) fn current_viewer(&self) -> Result<Option<String>> {
+        let identity = self.0.try_lock().map_err(|_| "Identity is busy")?;
+        match &identity.state {
+            State::Ready(key) => key.viewer().map(Some),
+            State::Missing => Ok(None),
+            _ => Err("Identity is unavailable".into()),
+        }
+    }
+
     /// The saved key's public key, or `None` when secure storage confirms none.
     pub(crate) async fn saved_viewer(&self) -> Result<Option<String>> {
         with_identity(self.clone(), Identity::restore).await

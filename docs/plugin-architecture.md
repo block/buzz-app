@@ -3917,3 +3917,119 @@ change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
 
 Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).
+
+## Saved-credential sign-out inspection
+
+The native sign-out owner can inspect a fixed desktop-known scope without
+opening a credential store or calling the manager's mutating read, catalog,
+or cleanup paths. Without an established installation its only affirmation is:
+
+> No H1 evidence found in the completely inspected, declared scope.
+
+This is a completed-scan observation, not an absence guarantee through a later
+marker, migration, or destructive boundary. The scope includes the effective
+`BUZZODZ_HOME` (including an invalid empty/relative value as uncertainty), the
+identifier app-data home, every immediate profile, native-known legacy/move
+endpoints, sign-out trash, seed sources/destinations and partial seeds, and both
+external release/debug inventory candidates. Exact spellings are deduplicated;
+links are not resolved into apparent absence. Arbitrary CLI `--home` locations,
+registry backup-history contents, and in-memory historical snapshots are outside
+this declared discovery scope.
+
+The reader inspects ancestors and types, rejects links/reparse points and read
+or iteration errors, counts every entry up to 1,024 per `profiles` directory,
+and reads one registry at a time through the 8 MiB limit plus one detection byte.
+Any uncertainty means no affirmation, never `missing` or clean. Ordinary launch
+and existing migration/seeding still proceed under their existing rules on all
+platforms; scanner failure alone never vetoes them. A launch-local sticky unknown
+result prevents the callable native count/journal adapters from establishing state
+and prevents a no-journal destructive sign-out from using later clean-looking
+paths as sufficient evidence. Prepare and pending destructive completion inspect
+afresh under their existing ownership. No persistent unknown index or live status
+surface is introduced.
+
+Existing seed behavior can discard partial trees and omit nested links. The
+seed path is selected by the development **identifier**, not a Rust debug-build
+cfg: the standard release identifier does not seed, but a release-compiled binary
+configured with the development identifier can reach it. **Maintainer review:**
+hidden pre-existing H1 evidence may not survive that existing copy/discard path.
+Unknown does not become clean because the later paths look clean; there is no
+traversal exception, repair, reset, or claim that all hidden evidence is preserved.
+
+A public Manager/CLI writer can retain an old v3 snapshot and recreate its home
+by pathname after a completed clean-looking scan, including after a historical
+wipe. Native admission does not exclude that writer. Reinspection then refuses;
+with broken inventory continuity the reappearing generation remains unreadable,
+available cleanup debt is retained, and
+cleanup is unknown. This is fail-closed **reappearance**, not exclusion. Path
+replacement between metadata checks and opens is likewise not a filesystem
+snapshot guarantee. Coherent registry/inventory rollback is not detectable, and
+inventory removal does not prove physical credential deletion.
+
+On macOS the native boot caller selects the existing build-specific SERVICE's
+external inventory beside app-data homes. Before enabling plugin custody it
+qualifies a strict installation record against the fixed OS account
+`installation-continuity-v1`. Fresh qualification requires a complete no-H1 scan
+and positive OS-witness absence, durable ancestry, an uncommitted inventory
+intent, a create-only witness, full scope/intent revalidation, then commit. A
+pre-existing v3/count-only inventory or partial/missing/mismatched pair is never
+automatically adopted or repaired. The stable installation UUID/build/scope
+binding survives sign-out and app-home wipe; it is not a namespace
+membership digest or rollback detector. Changing the declared scope refuses the
+old pair. Typed established observations use the same complete filesystem walker
+and strict registry validation, not root/store availability.
+
+The release and development builds each own one fixed inventory and OS service
+beside the same app-data homes. Fresh, established and sign-out inspection share
+one classification: the other build's inventory qualifies only as a committed
+record with that build's variant, bound to the scope that build declares at its
+fixed root (its own identifier's homes and backup home), and matched by its own
+OS witness. A pair bound elsewhere or to another scope refuses, even with a
+matching witness. The witness read is read-only and outside metadata locks, and
+runs once per peer installation, including for a peer that appears after boot.
+Only a completion-owned native worker reads it: boot qualification, a creator,
+**Finish credential setup** or the requalification before sign-out admission.
+Their caller waits a bounded time; the OS read itself is not cancelled, and the
+worker keeps its lease until the read returns. A timeout leaves custody
+unknown, and a late success changes nothing. Other inspections, including
+sign-out's closed phase, read no witness: a peer not already matched refuses.
+Each v3 registry must then be listed in, and belong to the namespace of, the
+inventory that indexes it, under that inventory's variant; an unlisted one is
+only retired debt. An uncommitted peer, a missing, denied or mismatched peer
+witness, or an unindexed registry stays unknown. On macOS, reading the other
+build's witness can show a Keychain prompt; denying it leaves custody unknown.
+Authority covers this build's inventory only. A plain sign-out journals and
+cleans only its own accounts and never changes the other build's. Erase refuses
+before revoking anything while the other build indexes unretired credentials in
+a home it would wipe, because this build's journal can't discharge them; there is
+no cross-build wipe.
+
+When this build's own fresh setup stopped after its intent, the sign-out refusal
+offers **Finish credential setup**. It applies only to the exact uncommitted
+intent (original installation ID, root, variant and scope), with no listed or
+unlisted namespace, v3 lineage or generation evidence, sign-out journal or count
+anywhere in scope. A positively absent witness gets the original bytes
+create-only; an exactly matching one gets no OS write. It then revalidates the
+whole scope and commits the same record. Anything else refuses without adopting,
+resuming, deleting or overwriting, and never makes a new installation ID. It
+holds the enrollment's completion-owned lease until its OS work actually
+finishes, takes no metadata lock across OS access, and leaves the launch's
+unknown state and unwired Manager as they are. Success restarts Buzz; only the
+next launch's independent qualification enables saved credentials.
+
+Boot attempts readable committed journal cleanup before continuity qualification.
+The bounded-wait native qualification worker retains K/A/other-build ownership
+until actual OS completion even if the launch stops waiting. Count observation
+precedes exposing the store to the Manager; a failed observation disables custody
+for that launch. Sign-out journals the same qualified root before
+its marker. No caller-selected root or credential getter is exposed over IPC.
+This caller wiring is under offline qualification, not installation or live
+Keychain/AppKit/provider acceptance; status/notice UI and complete transport/result
+integration remain separate work.
+
+**Other platforms:** this native-private production custody wiring is macOS-only;
+other desktop hosts retain conservative read-only sign-out inspection without
+selecting a production plugin store or writing its journal/count. Non-macOS execution and target compilation were not available
+locally. Older binaries do not clean H1 items at their own sign-out; newer tracked
+cleanup requires intact evidence and can remain incomplete or unknown after
+evidence loss or denied access.

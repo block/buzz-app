@@ -100,6 +100,7 @@ pub(super) fn migrate(
     seeds: &[PathBuf],
     all: &File,
     ownership: &Path,
+    owed: impl Fn() -> Result<bool, String>,
 ) -> Result<(), String> {
     // Every Buzz, older builds included, holds the all-Buzz lock shared while
     // it runs. Without the lock a scan is only a hint: one that finished the move
@@ -128,6 +129,11 @@ pub(super) fn migrate(
         // An agent still stopping may write its folders; look once more after.
         if !wait_for(|| agents_stopped(ownership)) {
             return Err(AGENT_STOPPING.to_owned());
+        }
+        // A sign-out may have journaled while this launch waited for the lock,
+        // and its cleanup must come first; the next launch settles it.
+        if owed()? {
+            return Err(super::FAILED.to_owned());
         }
         for (old, new) in due(moves)? {
             fs::rename(old, new).map_err(failed)?;

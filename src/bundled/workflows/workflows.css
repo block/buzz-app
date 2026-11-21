@@ -94,6 +94,13 @@
   overflow-wrap: anywhere;
   padding-inline: var(--space-2);
 }
+/* A linked channel name keeps the heading's type and wraps like its text. */
+.workflow-channel-group .buzz-content-header-title > .buzz-button {
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: start;
+  white-space: normal;
+}
 .workflow-channel-group > .buzz-settings-group {
   --settings-group-inset: var(--space-2);
 }

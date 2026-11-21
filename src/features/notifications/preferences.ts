@@ -13,6 +13,9 @@ export const NOTIFICATION_CATEGORIES = [
   "agent",
 ] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+/** A sender choice kept with the category choices: off silences message alerts
+ * (mentions, direct messages, thread replies) whose author is an agent. */
+export const AGENT_MESSAGES = "agent-messages";
 export type NotificationPreferences = Readonly<{
   enabled: boolean;
   notifyWhileViewing: boolean;

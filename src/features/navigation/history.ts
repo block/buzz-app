@@ -13,7 +13,7 @@ export type NavigationEntry = Readonly<{ id: string; target: OpenTarget }>;
 /** Match a logical dialog (including its sections), or exact content visits. */
 export type DismissedVisits =
   | readonly string[]
-  | ((target: OpenTarget) => boolean);
+  | ((target: OpenTarget, entryId: string) => boolean);
 /**
  * Which entries a dismissal retires: the visits it names, and every join
  * dialog presented over one of them, so Forward cannot reopen a closed view
@@ -25,8 +25,8 @@ export function dismissalOf(
 ) {
   const named = (entry: NavigationEntry) =>
     typeof visits === "function"
-      ? visits(entry.target) ||
-        (!!entry.target.join && visits(withoutJoin(entry.target)))
+      ? visits(entry.target, entry.id) ||
+        (!!entry.target.join && visits(withoutJoin(entry.target), entry.id))
       : visits.includes(entry.id);
   const closedViews = new Set(
     entries

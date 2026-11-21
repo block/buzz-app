@@ -40,7 +40,37 @@ and shows the current Bestie's chat; it never reads an old thread in the new DM.
 ⌘F on the page searches this DM, and Search Buzz offers **Search conversation
 with** the Bestie, as they do in any other conversation.
 While that exact DM is promoted, Messages omits its
-ordinary row and clears any old device-local hidden-DM intent. Replacing or
+ordinary row and clears any old device-local hidden-DM intent. A Messages visit
+to the DM, one of its threads or one of its messages, such as a thread tab's
+**In DM** link or **Open in channel** in Activity, a notification, a permalink,
+or the DM or a message chosen in search, resolves in place to this page's visit
+before Messages presents it. On its first presentation, a thread visit opens
+the thread in its pane, which keeps focus, and marks the thread's root in the
+chat history once it is loaded or found in older history, without hiding the
+history or moving focus. The root marked is the one a thread's reader
+verifies for the visit's own message, not the link's thread hint: a hint
+naming an unrelated message never marks that message, even when that
+message's thread is already open and verified, and nothing is sought until
+the reader confirms the linked message's thread. A fresh link to the message
+a retained thread already shows is verified, and marks its root, the same way.
+A reader who scrolls the history or sends from the main composer first has
+moved on, and the root is neither sought nor marked.
+A message visit holds the history until that message
+is found, then scrolls to and focuses it, or opens its thread when it is a
+reply or isn't in history; the tab store records that resolution, so a return
+after this page unmounted reopens the thread, and closing it retires the
+visit by that record rather than by its address. A return with no record, as
+after leaving before history answered or after a reload, decides again before
+it applies the visit. Threads opened here with **View thread**, including
+the shown thread opened again, and Back/Forward returns, leave the history
+where the reader left it. Links in the
+chat into this DM open as this page's own visits. A visit to Forward or
+Members has no Bestie route and stays in Messages, as does a visit that
+Messages had already opened before the promotion was known. The handed-off
+history entry is this page's address from then on: if the plugin is later
+turned off, Back to it reports it unavailable, and if the Bestie changes, it
+is retired like this page's own thread visits rather than reopening the
+now-ordinary DM in Messages. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.
 

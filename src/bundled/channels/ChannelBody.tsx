@@ -24,6 +24,7 @@ export const ChannelBody = memo(function ChannelBody({
   marksRead,
   holding,
   onOpenThread,
+  onReaderIntent,
   navigation,
   onContentReady,
 }: {
@@ -41,6 +42,8 @@ export const ChannelBody = memo(function ChannelBody({
   marksRead?: boolean | undefined;
   /** Show the loading notice instead of the list, as while a message is sought. */
   holding?: boolean | undefined;
+  /** The reader moved in the history: a scroll gesture, key, or press. */
+  onReaderIntent?: (() => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
@@ -138,6 +141,7 @@ export const ChannelBody = memo(function ChannelBody({
           (window.status === "ready" && window.freshness === "cached"))
       }
       {...(onOpenThread ? { onOpenThread } : {})}
+      onReaderIntent={onReaderIntent}
       revealMessageId={revealMessageId}
       openThreadRootId={openThreadRootId}
       inlineTarget={inlineTarget}

@@ -7,7 +7,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
-import type { OpenTarget } from "../../features/navigation/targets";
+import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
 import type { Panels } from "../../features/panels/service";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { matchesEvent } from "../../features/relay/projection";
@@ -21,9 +21,11 @@ import {
   message,
   metadata,
   roster,
+  signed,
   type Key,
 } from "../../features/relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage } from "./ChannelsPage";
 
 // Open in channel: whether the page holds its channel list while it seeks the
@@ -137,14 +139,32 @@ function page(filter: ReadFilter, history: readonly RelayEvent[]) {
  * `root: false`, absent from its history. Alpha's older pages wait for
  * `release()`. A `cached` session has only alpha's saved head until
  * `connect()`. */
-async function channelsPage({ root = true, cached = false } = {}) {
+async function channelsPage({
+  root = true,
+  cached = false,
+  writable = false,
+} = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
   const held: ((error?: Error) => void)[] = [];
+  /** Signs and publishes the writable connection was asked for. */
+  const writes = { signed: 0, published: 0 };
   const transport: ReadTransport = {
     viewer: viewer.pubkey,
     relayAuthor: authority.pubkey,
     media: () => undefined,
+    ...(writable && {
+      writer: {
+        kinds: [9],
+        sign: async (template) => {
+          writes.signed += 1;
+          return signed(viewer, template);
+        },
+        publish: async () => {
+          writes.published += 1;
+        },
+      },
+    }),
     query: async (filters) => {
       const window = filters.find((filter) => filter.top_level);
       if (!window)
@@ -277,6 +297,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
   return {
     session: owner.session,
     held,
+    writes,
     /** Open in channel from the thread's tab. */
     inChannel: (extra: Parameters<typeof target>[1] = {}) =>
       target("alpha", {
@@ -532,4 +553,105 @@ it("Back to the visit seeks again once the channel has dropped the pages it read
       inlineTarget: { messageId: fixture.root.id, signal: back.signal },
     }),
   );
+});
+
+/** A visit to a message link carrying `draft`, keeping its position store
+ * across attempts as history does, and recording what it resolves to. */
+function linkVisit(
+  h: Awaited<ReturnType<typeof channelsPage>>,
+  messageId: string,
+  positions = new Map<string, JsonValue>(),
+  resolved: OpenTarget[] = [],
+  threadRootId?: string,
+) {
+  return (entryId: string, traversal = false) => {
+    const base = h.visit(
+      h.target("alpha", {
+        messageId,
+        ...(threadRootId ? { threadRootId } : {}),
+        draft: "Draft from a link",
+      }),
+      entryId,
+      traversal,
+    );
+    const navigation: PageNavigation = {
+      ...base,
+      position: (key) => positions.get(key) as JsonValue | undefined,
+      savePosition(key, value) {
+        positions.set(key, value);
+      },
+      resolve(target) {
+        resolved.push(target);
+        return true;
+      },
+      forSession: () => navigation,
+    };
+    return navigation;
+  };
+}
+const draftScope = () => `https://relay.test:${fixture.viewer.pubkey}`;
+const composerText = () =>
+  [...document.querySelectorAll("[contenteditable]")].map(
+    (node) => node.textContent,
+  );
+
+it("fills the empty reply composer a message link opens, once per visit", async () => {
+  const h = await channelsPage({ writable: true });
+  const root = fixture.newer[0]?.id ?? "";
+  const key = `draft:alpha:thread:${root}`;
+  const resolved: OpenTarget[] = [];
+  const linked = linkVisit(h, root, new Map(), resolved);
+  h.go(linked("linked"));
+  await vi.waitFor(() => expect(composerText()).toContain("Draft from a link"));
+  expect(readView(draftScope(), key, "")).toBe("Draft from a link");
+  // Nothing is sent, and the draft leaves the visit's address.
+  await act(flush);
+  expect(h.writes).toEqual({ signed: 0, published: 0 });
+  expect(resolved.at(-1)).not.toHaveProperty("draft");
+  expect(resolved.at(-1)).toMatchObject({
+    channelId: "alpha",
+    messageId: root,
+  });
+  // Back to the visit after the draft was sent leaves the composer empty.
+  writeView(draftScope(), key, null);
+  h.go(h.visit(h.target("beta"), "beta"));
+  await vi.waitFor(() => expect(timeline("beta")).not.toBeNull());
+  h.go(linked("linked", true));
+  await vi.waitFor(() => expect(composerText().length).toBeGreaterThan(0));
+  await act(flush);
+  expect(readView(draftScope(), key, null)).toBeNull();
+  expect(composerText()).not.toContain("Draft from a link");
+});
+
+it.each([
+  ["without", false],
+  ["with", true],
+])(
+  "files a reply link's draft %s `thread` under the thread's root",
+  async (_name, named) => {
+    const h = await channelsPage({ writable: true });
+    const root = named ? fixture.root.id : undefined;
+    h.go(linkVisit(h, fixture.reply.id, undefined, undefined, root)("linked"));
+    await vi.waitFor(() =>
+      expect(composerText()).toContain("Draft from a link"),
+    );
+    expect(
+      readView(draftScope(), `draft:alpha:thread:${fixture.root.id}`, ""),
+    ).toBe("Draft from a link");
+    expect(
+      readView(draftScope(), `draft:alpha:thread:${fixture.reply.id}`, null),
+    ).toBeNull();
+  },
+);
+
+it("never replaces a draft someone already wrote", async () => {
+  const h = await channelsPage({ writable: true });
+  const root = fixture.newer[0]?.id ?? "";
+  const key = `draft:alpha:thread:${root}`;
+  writeView(draftScope(), key, "Mine");
+  h.go(linkVisit(h, root)("linked"));
+  await vi.waitFor(() => expect(composerText()).toContain("Mine"));
+  await act(flush);
+  expect(composerText()).not.toContain("Draft from a link");
+  expect(readView(draftScope(), key, "")).toBe("Mine");
 });

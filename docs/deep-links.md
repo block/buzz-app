@@ -19,7 +19,7 @@ The OS ingress accepts the Buzz link forms, plus two OS-only links described
 after this list:
 
 - `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
-- `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
+- `buzz://message?channel=<id>&id=<event>[&thread=<root>][&draft=<text>]`
 - `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
 - `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-artifact-url>&sha256=<64-hex>`
 - `buzz://channel/<id>`
@@ -45,6 +45,15 @@ waiting to open, whether that link arrived with it or earlier.
 again (`identity/sign-in-requests.ts`). Unlike bare `buzz://`, it wins like any
 other latest link: when links arrive together and it is the last, it is the one
 acted on and the others do not open.
+
+A message link's optional `draft` is percent-encoded plain text, 1-2,000 UTF-16
+code units with line breaks and tabs but no other control characters or
+bidirectional overrides; CRLF and CR become LF. Opening the
+link fills the reply composer of the thread it opens (the resolved root's thread)
+only when that composer has no saved draft, and never sends. The draft is applied
+once per visit and then leaves the visit's address. A repeated, blank, oversize or
+malformed draft makes the link invalid. Like the rest of the link, it is not
+authorization.
 
 External authorization links show owner consent. They never grant access on arrival. The [external app protocol](agents.md#external-app-authorization) defines the callback, S256 exchange, scopes, and expiry. Handshake values stay outside navigation history.
 

@@ -866,3 +866,62 @@ test.describe("links to channels the reader hasn't joined", () => {
       await control.click({ trial: true });
   });
 });
+
+// The draft reaches the real reply editor through a resolved visit.
+test("a message link's draft fills an empty reply composer once and is never sent", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const target = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Broadcast reply");
+  const replies = () =>
+    app.report.publications.filter(({ event }) => event.kind === 9).length;
+  const sent = replies();
+  // No `thread`: the draft is filed under the reply's resolved root.
+  await page.evaluate((target) => window.fixtureNavigation.open(target), {
+    version: 1,
+    kind: "conversation",
+    channelId: "alpha",
+    messageId: target.id,
+    draft: "Ship it?\n<b>x</b> **y** @team",
+    scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+  });
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const editor = thread.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await expect(editor).toHaveText("Ship it?\n<b>x</b> **y** @team");
+  // Markup and names stay literal text.
+  await expect(editor.locator("b, strong, a, [data-mention]")).toHaveCount(0);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  const { entry } = await state(page);
+  expect(entry.target).not.toHaveProperty("draft");
+  expect(entry.target.messageId).toBe(target.id);
+  expect(replies()).toBe(sent);
+
+  // Cleared, left and revisited: the link does not refill it.
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  await expect(editor).toHaveText("");
+  await page.evaluate((target) => window.fixtureNavigation.open(target), {
+    version: 1,
+    kind: "conversation",
+    channelId: "beta",
+    scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+  });
+  await expect
+    .poll(async () => (await state(page)).entry.id)
+    .not.toBe(entry.id);
+  await page.evaluate(() => window.fixtureNavigation.back());
+  await expect.poll(async () => (await state(page)).entry.id).toBe(entry.id);
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveText("");
+  expect(replies()).toBe(sent);
+});

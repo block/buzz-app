@@ -828,6 +828,14 @@ Quitting Buzz also turns it off.
   channel. The card still opens the link, unless the channel is private
   to you: then the link and its card don't open anything, and the link can
   still be copied. Once you have access, the link opens again.
+- A message link with a `draft` key, such as
+  `buzz://message?channel=<id>&id=<event>&draft=Ship%20it%3F`, opens the
+  message's thread with that text in the reply composer. Nothing is sent until
+  you choose Send. The text fills the composer only when the thread has no
+  draft of yours, so a link never replaces what you wrote, and it is applied
+  once: going Back to the link later doesn't fill it again. It is plain text of
+  up to 2,000 characters (emoji count as two); a longer or malformed draft
+  makes the link not work.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

@@ -18,7 +18,7 @@ test("a link preview that needs setup draws a card that opens its plugin's Setti
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
   );
   const setups = row.getByRole("button", {
-    name: "Set up Tracker to preview tracker.example",
+    name: "Set up Tracker for previews tracker.example · Open Settings",
     exact: true,
   });
   await expect(setups).toHaveCount(2);

@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { resolveMatch, type Contribution } from "../../plugins/contributions";
 import {
   ContributionBoundary,
@@ -7,10 +13,11 @@ import {
 import type {
   ContributionReader,
   LinkPreviewRenderer,
+  LinkPreviewStatus,
 } from "../conversation/contracts";
 import { useTargetOpener } from "../conversation/opener";
 import { Button } from "../../shared/design-system/ui/Button";
-import { linkPreviewStatus } from "./link-preview-status";
+import { combineStatuses, linkPreviewStatus } from "./link-preview-status";
 import styles from "./LinkPreviews.module.css";
 
 /** A message shows this many cards before the rest fold behind one button. */
@@ -19,6 +26,7 @@ export const FOLD_AFTER = 3;
 const none: readonly Contribution<LinkPreviewRenderer>[] = [];
 const noSubscribe = () => () => {};
 const noSnapshot = () => none;
+const noStatuses = combineStatuses([]);
 
 /** One card, with the host's opener for targets other than its link. */
 function LinkPreviewCard({
@@ -65,55 +73,12 @@ function LinkPreviewSetup({
     <button
       type="button"
       className={styles.setup}
-      aria-label={`Set up ${title} to preview ${host}`}
       onClick={onOpenSettings}
       data-link-preview-setup
     >
-      <span className={styles.setupTitle}>Set up {title} for previews</span>
+      <span className={styles.setupTitle}>Set up {title} for previews</span>{" "}
       <span className={styles.setupDetail}>{host} · Open Settings</span>
     </button>
-  );
-}
-
-function LinkPreviewSlot({
-  url,
-  messageId,
-  registry,
-  renderer,
-  open,
-  onOpenSettings,
-}: {
-  url: string;
-  messageId: string;
-  registry: ContributionReader<LinkPreviewRenderer>;
-  renderer: Contribution<LinkPreviewRenderer>;
-  open(): boolean;
-  onOpenSettings: ((section: string) => void) | undefined;
-}) {
-  const store = linkPreviewStatus(registry, renderer);
-  const status = useSyncExternalStore(store.subscribe, store.get, store.get);
-  if (status === "checking") return null;
-  if (status === "needs-setup") {
-    if (!onOpenSettings || !renderer.settings) return null;
-    const section = `${renderer.pluginId}/${renderer.settings}`;
-    return (
-      <LinkPreviewSetup
-        url={url}
-        title={renderer.title}
-        onOpenSettings={() => {
-          if (registry.snapshot().includes(renderer)) onOpenSettings(section);
-        }}
-      />
-    );
-  }
-  return (
-    <LinkPreviewCard
-      url={url}
-      messageId={messageId}
-      registry={registry}
-      renderer={renderer}
-      open={open}
-    />
   );
 }
 
@@ -144,29 +109,73 @@ export function LinkPreviews({
       live.current = false;
     };
   }, []);
-  const cards = urls.flatMap((url) => {
+  const matched = urls.flatMap((url) => {
     const renderer = resolveMatch(renderers, url);
     return renderer ? [{ url, renderer }] : [];
+  });
+  const distinct = [...new Set(matched.map(({ renderer }) => renderer))];
+  const identity = distinct.map(contributionKey).join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: identity names exactly the registrations in distinct.
+  const statuses = useMemo(
+    () =>
+      registry
+        ? combineStatuses(
+            distinct.map((renderer) => linkPreviewStatus(registry, renderer)),
+          )
+        : noStatuses,
+    [registry, identity],
+  );
+  const snapshot = useSyncExternalStore(
+    statuses.subscribe,
+    statuses.get,
+    statuses.get,
+  );
+  const read = snapshot.split(",");
+  const statusOf = new Map(
+    distinct.map((renderer, index) => [
+      renderer,
+      (read[index] ?? "checking") as LinkPreviewStatus,
+    ]),
+  );
+  const cards = matched.flatMap(({ url, renderer }) => {
+    const status = statusOf.get(renderer) ?? "checking";
+    if (status === "checking") return [];
+    if (status === "needs-setup" && !(onOpenSettings && renderer.settings))
+      return [];
+    return [{ url, renderer, status }];
   });
   if (!registry || !cards.length) return null;
   const shown = open ? cards : cards.slice(0, FOLD_AFTER);
   const hidden = cards.length - shown.length;
   return (
     <div className={styles.previews} data-link-previews>
-      {shown.map(({ url, renderer }) => {
+      {shown.map(({ url, renderer, status }) => {
         const key = contributionKey(renderer);
+        if (status === "needs-setup" && onOpenSettings && renderer.settings) {
+          const section = `${renderer.pluginId}/${renderer.settings}`;
+          return (
+            <LinkPreviewSetup
+              key={`setup:${key}:${url}`}
+              url={url}
+              title={renderer.title}
+              onOpenSettings={() => {
+                if (registry.snapshot().includes(renderer))
+                  onOpenSettings(section);
+              }}
+            />
+          );
+        }
         return (
           <ContributionBoundary
             key={`${key}:${url}`}
             fallback={null}
             resetIdentity={key}
           >
-            <LinkPreviewSlot
+            <LinkPreviewCard
               url={url}
               messageId={messageId}
               registry={registry}
               renderer={renderer}
-              onOpenSettings={onOpenSettings}
               open={() =>
                 live.current && registry.snapshot().includes(renderer)
                   ? onOpenLink(url)

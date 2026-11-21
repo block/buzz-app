@@ -27,8 +27,10 @@ function read(entry: Contribution<LinkPreviewRenderer>): LinkPreviewStatus {
 }
 
 /** One store per registration, shared by every card it draws, so a renderer
- * is asked once rather than once per link. A registration that has left the
- * registry keeps its last answer and is no longer asked or listened to. */
+ * is asked once rather than once per link. It answers `checking` until a
+ * subscription has read the provider, so nothing mounts on a stale answer. A
+ * registration that has left the registry keeps its last answer and is no
+ * longer asked or listened to. */
 export function linkPreviewStatus(
   registry: ContributionReader<LinkPreviewRenderer>,
   entry: Contribution<LinkPreviewRenderer>,
@@ -49,12 +51,11 @@ export function linkPreviewStatus(
   };
   const store: StatusStore = Object.freeze({
     get() {
-      if (current === undefined) current = installed() ? read(entry) : "ready";
-      return current;
+      return stop ? (current ?? "checking") : "checking";
     },
     subscribe(listener: () => void) {
       listeners.add(listener);
-      if (!stop) {
+      if (!stop && installed()) {
         let live = true;
         let unsubscribe: (() => void) | undefined;
         try {
@@ -86,4 +87,18 @@ export function linkPreviewStatus(
   });
   stores.set(entry, store);
   return store;
+}
+
+/** Every store a message's links use, read as one snapshot so the host can
+ * decide which links draw before folding them. */
+export function combineStatuses(stores: readonly StatusStore[]) {
+  return Object.freeze({
+    subscribe(listener: () => void) {
+      const stops = stores.map((store) => store.subscribe(listener));
+      return () => {
+        for (const stopStore of stops) stopStore();
+      };
+    },
+    get: () => stores.map((store) => store.get()).join(","),
+  });
 }

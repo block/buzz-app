@@ -245,7 +245,7 @@ it("draws a setup card that opens the plugin's Settings card while a renderer ne
     />,
   );
   const setups = screen.getAllByRole("button", {
-    name: "Set up Tracker to preview tracker.example",
+    name: "Set up Tracker for previews tracker.example · Open Settings",
   });
   expect(setups).toHaveLength(2);
   expect(Card).not.toHaveBeenCalled();
@@ -351,4 +351,115 @@ it("treats a status that throws as ready", () => {
     />,
   );
   expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
+});
+
+it("folds only the links that draw, and keeps folded links' status live", () => {
+  const state = provider("checking");
+  const urls = [1, 2, 3, 4].map((n) => `https://tracker.example/${n}`);
+  render(
+    <LinkPreviews
+      urls={[...urls, "https://web.example/"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", (url) => url.includes("tracker"), 0, card("t")),
+          state,
+        ),
+        entry("web", () => true, 100, card("web")),
+      ])}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(screen.getByText("web https://web.example/")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /more preview/ })).toBeNull();
+  act(() => state.set("needs-setup"));
+  expect(
+    screen.getAllByRole("button", { name: /^Set up Tracker/ }),
+  ).toHaveLength(3);
+  expect(screen.queryByText("web https://web.example/")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show 2 more previews" }));
+  act(() => state.set("checking"));
+  expect(screen.queryAllByRole("button", { name: /^Set up/ })).toHaveLength(0);
+  expect(screen.getByText("web https://web.example/")).toBeTruthy();
+});
+
+it("draws the setup card again after a ready preview failed to render", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const state = provider("ready");
+  const Broken = () => {
+    throw new Error("broken");
+  };
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Broken),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  act(() => state.set("needs-setup"));
+  expect(
+    screen.getAllByRole("button", { name: /^Set up Tracker/ }),
+  ).toHaveLength(1);
+});
+
+it("mounts no preview on a status read before its subscription", () => {
+  const state = provider("ready");
+  state.subscribe.mockImplementation((listener: () => void) => {
+    state.set("needs-setup");
+    state.listeners.add(listener);
+    return () => state.listeners.delete(listener);
+  });
+  const Card = vi.fn(card("tracker"));
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Card),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(Card).not.toHaveBeenCalled();
+  expect(
+    screen.getAllByRole("button", { name: /^Set up Tracker/ }),
+  ).toHaveLength(1);
+});
+
+it("does not subscribe to a registration that left before its cards mounted", () => {
+  const state = provider("needs-setup");
+  const retired = withStatus(
+    entry("tracker", () => true, 0, card("t")),
+    state,
+  );
+  const registry: ContributionReader<LinkPreviewRenderer> = {
+    snapshot: vi
+      .fn<() => readonly Contribution<LinkPreviewRenderer>[]>()
+      .mockReturnValueOnce([retired])
+      .mockReturnValue([]),
+    subscribe: () => () => {},
+  };
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={registry}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(state.subscribe).not.toHaveBeenCalled();
 });

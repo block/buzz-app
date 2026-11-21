@@ -3187,9 +3187,13 @@ in to a local tool, adds `status()`, `subscribe(listener)` and `settings`, the i
 of a Settings card it registers. `status()` is side-effect free, like a decision
 provider's, and returns `"checking"`, `"ready"` or `"needs-setup"`; a throw or an
 unknown value counts as ready. The host asks once per registration, not per link,
-and listens while any of its cards are mounted. While it is `checking`, its links
-have no card. While it is `needs-setup`, the host draws a compact card for each
-link, named for the renderer and the link's host. Clicking it opens that plugin's
+and listens while any message shows its links, folded or not. Until that listener
+has read the provider, and while it is `checking`, its links have no card and don't
+count toward the fold. While it is `needs-setup`, the host draws a compact card for
+each link, labelled with the renderer's title and the link's host; the visible text
+is its accessible name. The host draws that card outside the plugin's error
+boundary, so a preview that failed to render can still ask for setup later.
+Clicking it opens that plugin's
 Settings card (`plugin/settings`); it passes no message content to the plugin and
 runs nothing, so the person who sent the link can't start setup. When status turns
 `ready`, every card from that renderer mounts at once. A registration that has

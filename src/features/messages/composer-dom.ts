@@ -78,6 +78,19 @@ export function formatBindings(
 ): readonly ComposerFormatBinding[] {
   return [format.binding, ...("aliases" in format ? format.aliases : [])];
 }
+/**
+ * Whether a key press answers to a formatting chord. Shifted digits and Option
+ * letters type layout-specific characters, so those also match by physical key.
+ */
+export const pressesFormat = (
+  binding: ComposerFormatBinding,
+  press: Readonly<{ key: string; code: string; shift: boolean; alt: boolean }>,
+) =>
+  (press.key === binding.key ||
+    press.code === `Digit${binding.key}` ||
+    (press.alt && press.code === `Key${binding.key.toUpperCase()}`)) &&
+  press.shift === binding.shift &&
+  press.alt === !!binding.alt;
 /** Add or edit a link around the selection: Buzz's ⌘K, then Slack's ⌘⇧U. */
 export const linkBindings: readonly ComposerFormatBinding[] = [
   { key: "k", mod: true, shift: false },

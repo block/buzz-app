@@ -145,6 +145,14 @@ impl PreparedImport {
         Ok(self)
     }
     pub fn install(&self, manager: &Manager, token: &str, path: &str) -> Result<Catalog> {
+        self.install_managed(manager, token, path)?.into_catalog()
+    }
+    pub fn install_managed(
+        &self,
+        manager: &Manager,
+        token: &str,
+        path: &str,
+    ) -> Result<crate::ManagementOutcome> {
         if token != self.preview.token {
             return Err("This import preview expired. Choose the source again.".into());
         }
@@ -152,7 +160,7 @@ impl PreparedImport {
             .artifacts
             .get(path)
             .ok_or("Choose a listed plugin folder")?;
-        manager.install_artifact(release, self.source(path)?)
+        manager.install_artifact_managed(release, self.source(path)?)
     }
     /// Installs the plugin at `path` only if `check` allows it under the registry
     /// lock; see `Manager::install_artifact_if`.
@@ -162,7 +170,7 @@ impl PreparedImport {
         path: &str,
         check: impl FnOnce(&crate::Registry) -> Result<Option<bool>>,
         committed: impl FnOnce() -> Result<()>,
-    ) -> Result<bool> {
+    ) -> Result<Option<crate::ManagementOutcome>> {
         let release = self
             .artifacts
             .get(path)

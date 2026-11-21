@@ -217,7 +217,12 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 `disable`, `remove`, and
 `rollback` take a plugin ID. New installs start disabled; updates preserve their
 existing enabled state. `recover` backs up management settings and resets to
-bundled defaults, preserving artifacts for reinstallation. `managed` prints the
+bundled defaults, preserving artifacts for reinstallation. `remove` and
+`recover` exit nonzero when the change's outcome is unknown or another part of a
+saved change failed, such as deleting a removed plugin's files. Saved-credential
+cleanup this CLI can't confirm is only a separate warning and doesn't change the
+exit code; that warning is never a claim of deletion. `cleanup-retry` exits
+nonzero unless cleanup is confirmed complete. `managed` prints the
 [managed plugin policy](managed-plugins.md) and how each recommendation stands.
 `access [URL]` prints the [repository access rules](repository-access.md) and, for a
 URL, the rule, clone URL and agent socket a Git import would use.

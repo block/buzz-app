@@ -249,9 +249,18 @@ fn apply_one(
         Plan::Install => remember(manager, &plugin.id),
         Plan::Update => Ok(()),
     };
-    Ok(prepared
-        .install_if(manager, path, check, record)?
-        .then_some(change))
+    let Some(outcome) = prepared.install_if(manager, path, check, record)? else {
+        return Ok(None);
+    };
+    // An update that retired enrolled credentials hands off to the shared cleanup.
+    let outcome = manager.management_cleanup(outcome);
+    if !outcome.committed {
+        return Err(outcome
+            .problem
+            .unwrap_or("Plugin change outcome is unknown")
+            .into());
+    }
+    Ok(Some(change))
 }
 
 fn read_receipt(manager: &Manager) -> Result<BTreeSet<String>> {
@@ -630,6 +639,7 @@ mod tests {
                 profile: "default".into(),
                 location: String::new(),
                 plugins: vec![plugin],
+                credential_cleanup: None,
             };
             assert_eq!(plan(&url, &catalog), expected);
         }
@@ -648,6 +658,7 @@ mod tests {
                     sha256: "b".repeat(64),
                 })),
             )],
+            credential_cleanup: None,
         };
         assert_eq!(plan(&review, &catalog), None);
     }

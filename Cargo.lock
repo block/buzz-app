@@ -1238,6 +1238,8 @@ dependencies = [
  "tauri",
  "tempfile",
  "url",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

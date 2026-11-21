@@ -272,11 +272,19 @@ test("scaffold builds through pnpm and installs a usable standalone JSX page", a
     assert.equal(rolledBack.status, 0, rolledBack.stderr);
     assert.equal((await installedPlugin()).current, beforeRollback.previous);
     assert.equal((await installedPlugin()).enabled, false);
-    assert.equal(
-      cli("--home", directory, "plugin", "remove", "test.page").status,
-      0,
-    );
+    // The removal saves; cleanup this CLI cannot observe is only a warning.
+    const removed = cli("--home", directory, "plugin", "remove", "test.page");
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.match(removed.stdout, /Removed test\.page/);
+    assert.match(removed.stderr, /^Warning: .*incomplete\/unknown/m);
+    assert.doesNotMatch(removed.stderr, /^Error:/m);
+    assert.doesNotMatch(removed.stdout + removed.stderr, /confirmed complete/);
     assert.equal(await installedPlugin(), undefined);
+    // An explicit retry still fails unless cleanup is confirmed.
+    const retried = cli("--home", directory, "plugin", "cleanup-retry");
+    assert.equal(retried.status, 1);
+    assert.match(retried.stderr, /^Error: .*incomplete\/unknown/m);
+    assert.doesNotMatch(retried.stdout + retried.stderr, /confirmed complete/);
   });
 });
 test("failed source builds preserve the installed revision", async () => {

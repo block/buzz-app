@@ -1,13 +1,16 @@
 use buzzodz_plugins::{
     automatic::Action,
     managed::{Install, Managed, ManagedSource, ManagedState, Update},
-    pack_release, release_manifest, sign_policy, sign_release_saved, valid_id, Catalog, Manager,
-    Manifest, Result,
+    pack_release, release_manifest,
+    secrets::{CleanupStatus, CLEANUP_BUDGET},
+    sign_policy, sign_release_saved, valid_id, Catalog, Manager, Manifest, Result,
 };
 use serde_json::json;
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 const HELP: &str = "buzzodz [--home ABSOLUTE_PATH] [--profile NAME] plugin COMMAND
@@ -21,7 +24,8 @@ Commands:
                            BUZZ_MANAGED_PLUGINS_SIGNING_KEY; writes FILE.sig
   install DIRECTORY        Install a plugin (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
-  list                     List installed pages and their enabled state
+  list                     List pages and aggregate saved-credential cleanup
+  cleanup-retry            Attempt one bounded saved-credential cleanup batch
   managed [--apply]        Show the managed plugin sources policy and its status;
                            --apply first installs and updates its automatic entries
   access [URL]             Show repository access rules and how Git would read URL
@@ -32,6 +36,27 @@ Options:
   --home PATH              Plugin data directory (absolute path)
   --profile NAME           Local profile (default: default)
   --help, -h               Show this help
+
+Saved-credential cleanup:
+  list is metadata-only; it does not prompt secure storage or retry deletion.
+  Aggregate status remains visible after the plugin row has been removed.
+  Pending, running, or unknown cleanup makes list exit nonzero.
+  An unconfigured backend with no tracked history is not observed, not clean.
+  cleanup-retry is explicit; there is no automatic retry or status alias.
+  remove and recover save the plugin change before attempting cleanup.
+  Their mutation output is separate from the saved-credential cleanup result.
+  A saved change exits zero unless the mutation reported a problem; unconfirmed
+  cleanup after it is a separate warning, not confirmed deletion.
+  cleanup-retry exits nonzero unless its batch is confirmed complete.
+  Each attempt waits at most 30 seconds; timeout is not OS cancellation.
+  Process exit or a timed-out wait does not prove credentials were deleted.
+  Durable pending records remain until actual deletion is confirmed.
+  If a native sign-out is unfinished, open Buzz to complete it first.
+  CLI cleanup cannot clear that journal or finish native sign-out itself.
+  CLI management never enrolls credentials or records native boot observations.
+  Arbitrary --home paths are outside the desktop's fixed sign-out scan.
+  That scan does not exclude latent CLI writers or prove maintained absence.
+  Live secure-storage backend selection remains unavailable in this CLI.
 
 The desktop and CLI also read BUZZODZ_HOME and BUZZODZ_PROFILE.
 BUZZ_MANAGED_PLUGINS overrides the managed plugin policy file location.
@@ -118,6 +143,16 @@ fn run() -> Result<()> {
         _ => {}
     }
     let manager = Manager::open(home, &profile, false)?;
+    if let Some(result) = dispatch(
+        &manager,
+        action,
+        rest,
+        &profile,
+        &mut std::io::stdout(),
+        CLEANUP_BUDGET,
+    ) {
+        return result;
+    }
     match (action.as_str(), rest) {
         ("install", [directory]) => {
             let manifest = release_manifest(Path::new(directory))?;
@@ -158,7 +193,6 @@ fn run() -> Result<()> {
             println!("Reloaded {id} in profile {profile}. The running app picks up changed builds automatically.");
         }
         ("reload", _) => return Err("Usage: buzzodz plugin reload ID".into()),
-        ("list", []) => print_catalog(&manager.catalog()?)?,
         ("managed", []) => print_managed(&manager.managed(&manager.catalog()?)),
         ("managed", [flag]) if flag == "--apply" => {
             manager.apply_automatic()?;
@@ -174,16 +208,11 @@ fn run() -> Result<()> {
             );
         }
         ("access", _) => return Err("Usage: buzzodz plugin access [URL]".into()),
-        ("recover", []) => {
-            let catalog = manager.recover()?;
-            println!("Reset profile {profile} to bundled defaults.\nAny previous settings were backed up in {}.\nExternal artifacts remain available for reinstallation.", catalog.location);
-        }
-        ("enable" | "disable" | "remove" | "rollback", [id]) => {
+        ("enable" | "disable" | "rollback", [id]) => {
             manager.change(action, id)?;
             let verb = match action.as_str() {
                 "enable" => "Enabled",
                 "disable" => "Disabled",
-                "remove" => "Removed",
                 _ => "Rolled back",
             };
             println!("{verb} {id} in profile {profile}.");
@@ -197,13 +226,112 @@ fn run() -> Result<()> {
     }
     Ok(())
 }
-fn print_catalog(catalog: &Catalog) -> Result<()> {
-    println!(
+pub(crate) fn dispatch(
+    manager: &Manager,
+    action: &str,
+    rest: &[String],
+    profile: &str,
+    out: &mut dyn Write,
+    budget: Duration,
+) -> Option<Result<()>> {
+    if !matches!(
+        (action, rest),
+        ("list" | "recover" | "cleanup-retry", []) | ("remove", [_])
+    ) {
+        return None;
+    }
+    Some((|| {
+        if action == "list" {
+            print_catalog(&manager.catalog()?, out)?;
+            return print_cleanup(
+                manager
+                    .credential_cleanup_observation()
+                    .map_err(|_| CLEANUP_UNKNOWN)?,
+                out,
+            );
+        }
+        let outcome = match (action, rest) {
+            ("recover", []) => manager.recover_managed()?,
+            ("remove", [id]) => manager.change_managed("remove", id)?,
+            _ => return wait_cleanup(manager, out, budget),
+        };
+        if !outcome.committed {
+            return Err("Plugin change outcome is unknown; refresh before trying again".into());
+        }
+        if action == "remove" {
+            writeln!(out, "Removed {} in profile {profile}.", rest[0])
+                .map_err(|e| e.to_string())?;
+        } else {
+            writeln!(out, "Reset profile {profile} to bundled defaults.")
+                .map_err(|e| e.to_string())?;
+            if let Some(catalog) = &outcome.catalog {
+                writeln!(out, "Any previous settings were backed up in {}.\nExternal artifacts remain available for reinstallation.", catalog.location).map_err(|e| e.to_string())?;
+            }
+        }
+        if let Some(problem) = outcome.problem {
+            writeln!(out, "{problem}").map_err(|e| e.to_string())?;
+        }
+        // The change is saved: cleanup this CLI can't confirm is a separate
+        // warning, never a failed change or a confirmed deletion.
+        if let Err(cleanup) = wait_cleanup(manager, out, budget) {
+            eprintln!("Warning: {cleanup}");
+        }
+        outcome
+            .problem
+            .map_or(Ok(()), |problem| Err(problem.into()))
+    })())
+}
+const CLEANUP_UNKNOWN: &str = "Saved credential cleanup is incomplete/unknown — not confirmed. If a sign-out is still finishing, open Buzz to complete it first.";
+fn wait_cleanup(manager: &Manager, out: &mut dyn Write, budget: Duration) -> Result<()> {
+    let manager = manager.clone();
+    let budget = budget.min(CLEANUP_BUDGET);
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("plugin credential cleanup".into())
+        .spawn(move || {
+            let _ = send.send(
+                manager
+                    .credential_cleanup(budget)
+                    .and_then(|_| manager.credential_cleanup_observation()),
+            );
+        })
+        .map_err(|_| CLEANUP_UNKNOWN)?;
+    // Only the caller wait ends: the worker keeps shared ownership and never prints.
+    let status = receive
+        .recv_timeout(budget)
+        .map_err(|_| CLEANUP_UNKNOWN)?
+        .map_err(|_| CLEANUP_UNKNOWN)?;
+    print_cleanup(Some(status.ok_or(CLEANUP_UNKNOWN)?), out)
+}
+fn print_cleanup(status: Option<CleanupStatus>, out: &mut dyn Write) -> Result<()> {
+    let Some(status) = status else {
+        return writeln!(
+            out,
+            "Saved credential cleanup: not observed (backend unavailable or no history)."
+        )
+        .map_err(|e| e.to_string());
+    };
+    writeln!(
+        out,
+        "Saved credential cleanup — pending: {}, running: {}, unknown: {}",
+        status.pending, status.running, status.unreadable
+    )
+    .map_err(|e| e.to_string())?;
+    if status.unreadable || status.pending != 0 || status.running != 0 {
+        return Err(CLEANUP_UNKNOWN.into());
+    }
+    writeln!(out, "Saved credential cleanup: confirmed complete.").map_err(|e| e.to_string())
+}
+fn print_catalog(catalog: &Catalog, out: &mut dyn Write) -> Result<()> {
+    writeln!(
+        out,
         "Profile: {}\nDirectory: {}\n",
         catalog.profile, catalog.location
-    );
+    )
+    .map_err(|e| e.to_string())?;
     for plugin in &catalog.plugins {
-        println!(
+        writeln!(
+            out,
             "{:<24} {:<10} {:<10} {}",
             plugin.manifest.id,
             if plugin.enabled {
@@ -213,12 +341,14 @@ fn print_catalog(catalog: &Catalog) -> Result<()> {
             },
             plugin.source,
             plugin.manifest.name
-        );
+        )
+        .map_err(|e| e.to_string())?;
         if let Some(error) = &plugin.error {
-            println!("  Problem: {error}");
+            writeln!(out, "  Problem: {error}").map_err(|e| e.to_string())?;
         }
         if plugin.source == "external" {
-            println!(
+            writeln!(
+                out,
                 "  Publisher: {}",
                 plugin
                     .publisher
@@ -228,7 +358,8 @@ fn print_catalog(catalog: &Catalog) -> Result<()> {
                     } else {
                         "unsigned"
                     })
-            );
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
     Ok(())
@@ -402,4 +533,68 @@ fn build(directory: &Path) -> Result<()> {
         return Err("Build did not produce dist/plugin.js".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_unconfigured_home_prints_catalog_without_claiming_observed_completion() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("arbitrary-home");
+        let manager = Manager::open(Some(home), "test", false).unwrap();
+        let mut out = Vec::new();
+        dispatch(&manager, "list", &[], "test", &mut out, Duration::ZERO)
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Profile: test"));
+        assert!(text.contains("buzz.channels"));
+        assert!(text.contains("not observed"));
+        assert!(!text.contains("confirmed complete"));
+    }
+
+    #[test]
+    fn saved_recovery_succeeds_while_unconfirmed_retry_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let mut out = Vec::new();
+        dispatch(&manager, "recover", &[], "test", &mut out, Duration::ZERO)
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Reset profile test"));
+        assert!(!text.contains("confirmed complete"));
+        let mut out = Vec::new();
+        assert_eq!(
+            dispatch(
+                &manager,
+                "cleanup-retry",
+                &[],
+                "test",
+                &mut out,
+                Duration::ZERO
+            )
+            .unwrap(),
+            Err(CLEANUP_UNKNOWN.into())
+        );
+        assert!(!String::from_utf8(out)
+            .unwrap()
+            .contains("confirmed complete"));
+    }
+
+    #[test]
+    fn dispatch_has_no_alias_or_argument_taking_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        for (action, args) in [
+            ("cleanup-status", vec![]),
+            ("cleanup-retry", vec!["id".into()]),
+        ] {
+            let mut out = Vec::new();
+            assert!(dispatch(&manager, action, &args, "test", &mut out, Duration::ZERO).is_none());
+            assert!(out.is_empty());
+        }
+    }
 }

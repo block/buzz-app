@@ -729,6 +729,7 @@ pub(crate) mod tests {
             profile: "test".into(),
             location: "test".into(),
             plugins,
+            credential_cleanup: None,
         }
     }
 

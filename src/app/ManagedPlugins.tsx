@@ -661,11 +661,14 @@ export function ManagedPluginReview({
               ? importLocation(review.preview, review.path)
               : location(entry)}
           </code>
-          <p className="mb-4 mt-1 break-all text-caption text-muted">
+          {/* Hashes break anywhere; the folder note is prose. */}
+          <p
+            className={`mb-4 mt-1 ${"folder" in entry ? "break-words" : "break-all"} text-caption text-muted`}
+          >
             {"url" in entry
               ? `SHA-256: ${entry.sha256}`
               : "folder" in entry
-                ? "Linked folder: anything that can write to it can change this plugin’s code and reload it without another review, as long as the access it asks for stays the same."
+                ? "Edits to the plugin in this folder update live."
                 : `Commit: ${review.preview.commit}`}
           </p>
           {existing?.source === "bundled" ? (

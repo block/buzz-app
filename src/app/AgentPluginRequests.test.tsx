@@ -168,9 +168,12 @@ it("installs a local folder through the folder review, linked to that folder", a
   const dialog = await screen.findByRole("dialog", {
     name: "Review Tasks Plugin access",
   });
-  await within(dialog).findByText(
-    "Linked folder: anything that can write to it can change this plugin’s code and reload it without another review, as long as the access it asks for stays the same.",
+  const note = await within(dialog).findByText(
+    "Edits to the plugin in this folder update live.",
   );
+  // Prose wraps at words; only the path above it breaks anywhere.
+  expect(note).toHaveClass("break-words");
+  expect(note).not.toHaveClass("break-all");
   expect(imports.folder).toHaveBeenCalledExactlyOnceWith("/src/plugins");
   expect(imports.git).not.toHaveBeenCalled();
   // Shows the folder the review read, which is the one that installs.
@@ -209,7 +212,7 @@ it("reviews a folder update from the plugin's saved folder", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Review Tasks" }));
   const dialog = await screen.findByRole("dialog", { name: "Update Tasks" });
   await within(dialog).findByText(
-    "Linked folder: anything that can write to it can change this plugin’s code and reload it without another review, as long as the access it asks for stays the same.",
+    "Edits to the plugin in this folder update live.",
   );
   expect(imports.previewFolder).toHaveBeenCalledExactlyOnceWith(
     "example.tasks",

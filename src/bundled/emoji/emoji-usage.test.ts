@@ -46,13 +46,17 @@ it("seeds one default row below one choice, only into a store without choices", 
   localStorage.setItem("emoji-mart.frequently", JSON.stringify({ smile: 1 }));
   seedEmojiUsage(["+1"], 1);
   expect(stored()).toEqual({ smile: 1 });
-  // A wider picker widens a seeded row, never a row with choices.
+  // A seeded row follows the picker's width; a row with choices never does.
   localStorage.clear();
   seedEmojiUsage(["+1", "grinning"], 1);
   seedEmojiUsage(["+1", "grinning", "kissing_heart"], 3);
   expect(Object.keys(stored())).toEqual(["+1", "grinning", "kissing_heart"]);
-  seedEmojiUsage(["+1"], 1);
-  expect(Object.keys(stored())).toHaveLength(3);
+  seedEmojiUsage(["+1", "grinning", "kissing_heart"], 3);
+  expect(localStorage.getItem("emoji-mart.frequently")).toBe(
+    JSON.stringify({ "+1": 0.75, grinning: 0.5, kissing_heart: 0.25 }),
+  );
+  seedEmojiUsage(["+1", "grinning"], 1);
+  expect(Object.keys(stored())).toEqual(["+1"]);
   localStorage.setItem(
     "emoji-mart.frequently",
     JSON.stringify({ smile: 1, "+1": 0.5 }),

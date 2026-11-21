@@ -19,11 +19,11 @@ function usageId(scope: string, id: string) {
 
 /** Seed Mart's one default row, `perLine` wide, with weights below one choice
  * before Mart reads a store without choices; Mart's own seed would save its
- * defaults as whole choices. A wider picker widens a narrower seeded row. */
+ * defaults as whole choices. A seeded row follows the picker's width. */
 export function seedEmojiUsage(defaults: readonly string[], perLine: number) {
   try {
-    if (!unchosen(localStorage.getItem(STORE), perLine)) return;
     const row = defaults.slice(0, perLine);
+    if (!unchosen(localStorage.getItem(STORE), row.length)) return;
     const seed = Object.fromEntries(
       row.map((id, index) => [id, (row.length - index) / (row.length + 1)]),
     );
@@ -34,15 +34,15 @@ export function seedEmojiUsage(defaults: readonly string[], perLine: number) {
   }
 }
 
-/** Unreadable, or only defaults seeded for a narrower row. */
-function unchosen(stored: string | null, perLine: number) {
+/** Unreadable, or only defaults seeded for another row width. */
+function unchosen(stored: string | null, width: number) {
   try {
     const counts: unknown = JSON.parse(stored || "null");
     if (!counts || typeof counts !== "object" || Array.isArray(counts))
       return true;
     const weights = Object.values(counts);
     return (
-      weights.length < perLine &&
+      weights.length !== width &&
       weights.every((weight) => typeof weight === "number" && weight < 1)
     );
   } catch {

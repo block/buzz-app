@@ -119,7 +119,7 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("a default row first seen in a narrow window fills a wider picker later", async ({
+test("the default row follows the picker's width across reloads", async ({
   page,
 }) => {
   const errors = watchPageErrors(page);
@@ -140,5 +140,9 @@ test("a default row first seen in a narrow window fills a wider picker later", a
   await page.reload();
   await openPicker();
   await expect(frequent).toHaveCount(8);
+  await page.setViewportSize({ width: 240, height: 844 });
+  await page.reload();
+  await openPicker();
+  await expect(frequent).toHaveCount(4);
   expect(errors.unexplained()).toEqual([]);
 });

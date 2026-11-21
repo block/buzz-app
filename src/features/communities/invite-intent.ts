@@ -22,6 +22,31 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/**
+ * First run's claim on an OS invitation, while no identity exists for the join
+ * dialog to act with. The deep-link owner offers each invitation it holds;
+ * first run answers whether it took it, and decides that by its own state.
+ * Registering an answer tells the owner to offer again.
+ */
+function createFirstRunInvites() {
+  let handler: ((invite: InviteLink) => boolean) | undefined;
+  const listeners = new Set<() => void>();
+  return {
+    offer: (invite: InviteLink) => handler?.(invite) ?? false,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    handle(next: (invite: InviteLink) => boolean) {
+      handler = next;
+      for (const listener of [...listeners]) listener();
+      return () => {
+        if (handler === next) handler = undefined;
+      };
+    },
+  };
+}
+
 /** The join dialog's form as last edited in one opening, restored without
  * submitting. The profile is kept only once edited, for its destination;
  * `after` names the join journal entry it was edited after, so a profile the
@@ -87,6 +112,7 @@ export function offeredCommunity(
 
 /** An OS invitation is an intent, never a membership or an authorization. */
 export function createInviteIntent() {
+  const firstRun = createFirstRunInvites();
   // Keyed by the join presentation's visit token.
   const visits = new Map<string, JoinVisitState>();
   const listeners = new Set<() => void>();
@@ -94,6 +120,7 @@ export function createInviteIntent() {
     for (const listener of listeners) listener();
   };
   return {
+    firstRun,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);

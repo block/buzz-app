@@ -5,6 +5,36 @@ import {
   offeredCommunity,
 } from "./invite-intent";
 
+it("offers an invite to first run's current answer, and tells the owner when one registers", () => {
+  const { firstRun, subscribe } = createInviteIntent();
+  const invite = { community: "https://relay.example", code: "x" };
+  const opened = vi.fn();
+  const stopOpened = subscribe(opened);
+  const registered = vi.fn();
+  const stop = firstRun.subscribe(registered);
+  // No first run to ask: the invite stays with whoever holds it.
+  expect(firstRun.offer(invite)).toBe(false);
+  const decline = vi.fn(() => false);
+  const release = firstRun.handle(decline);
+  expect(registered).toHaveBeenCalledTimes(1);
+  expect(firstRun.offer(invite)).toBe(false);
+  expect(decline).toHaveBeenCalledWith(invite);
+  const take = vi.fn(() => true);
+  const releaseTake = firstRun.handle(take);
+  expect(registered).toHaveBeenCalledTimes(2);
+  // A replaced answer's cleanup cannot remove the one that replaced it.
+  release();
+  expect(firstRun.offer(invite)).toBe(true);
+  expect(decline).toHaveBeenCalledTimes(1);
+  // Taking an invite opens nothing for the join dialog.
+  expect(opened).not.toHaveBeenCalled();
+  stopOpened();
+  releaseTake();
+  expect(firstRun.offer(invite)).toBe(false);
+  expect(take).toHaveBeenCalledTimes(1);
+  stop();
+});
+
 it("keeps a join visit's code and connects once", () => {
   const intents = createInviteIntent();
   const listener = vi.fn();

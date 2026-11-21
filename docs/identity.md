@@ -135,6 +135,60 @@ server skips that page: with no first-run Builderlab sign-in to offer, every
 found community opens **Enter your private key**, whose **Back** returns to the
 welcome screen with the address kept.
 
+An invite link opened from outside Buzz gets the same lookup. A `buzz://join`
+invite, or a code-less `buzz://connect` / `buzz://add-community` link
+([deep links](deep-links.md)), that arrives while this device has no identity
+is taken by first run rather than held for the join dialog, which cannot show
+behind the welcome screen. First run takes it only with nothing
+under way: no identity here and none being saved, setup idle, and no sign-in
+waiting on the browser (or, after setup, on the resting page described below). A link that launched the app waits for the saved
+identity to be read; a device that has one keeps the join-dialog path.
+
+A taken link opens the same **Finding community** page as a typed address, with
+the same Cancel, Retry and classified failures, and Cancel returns to the plain
+welcome screen. For a community hosted by this build's Builderlab the lookup
+then shows the invited page (`Invited.tsx`) instead of starting sign-in by
+itself: **You’re invited** for a link with a code, **Join this community**
+without one, a row with the community's icon, name and host (the row **Join
+Community** uses, `FoundCommunityRow.tsx`), one line saying an
+account is needed and that the browser will open and return to Buzz to join,
+and the welcome screen's two account actions in its order (**Create account**
+opens the sign-up form) above **Not now**. The page stays while the browser
+completes the sign-in the person started there; **Open Buzz** from the account
+pages signs in from it too. **Not now** drops the link and any waiting sign-in
+and returns to the plain welcome screen. A sign-in that times out or fails
+shows the usual page, whose **Back** also returns there. Any other found
+community keeps **Connect to your community** (or **Enter your private key**
+in a build without a sign-in server), exactly as for a typed address.
+
+After sign-in the link is carried like a typed invite link: setup lands on
+**Join Community** for its address, or, when the account's saved communities
+open the app on another one first, hands it to the join dialog, and the code
+is claimed only by **Join**. Unlike a typed address, a link never joins at
+once, even where the account's consent would allow it: opening a link claims,
+joins and accepts nothing.
+
+While the lookup, the invited page or a failed sign-in shows, a newer link
+replaces the current one and is looked up afresh, including the same link
+opened again; a link taken over a failed sign-in drops what that sign-in was
+for, as **Back** to the welcome screen does. Once a sign-in is waiting on the
+browser or setup is under way, the same link opened again is consumed and
+changes nothing, so it cannot open the join dialog for a community first run
+then joins; a different link is not taken and waits with the deep-link owner
+for the join dialog, once the app opens. **Connect to your community** and
+**Enter your private key** are pauses of setup, so a different link is not
+taken on them either: it is looked up when **Back** returns to the welcome
+screen. An address typed under **Other options** is unchanged, and still signs
+in at once for a hosted community.
+
+First run also takes a link once setup has finished and it rests on **Join a
+community** (headed *Connect to a community*) with nothing else showing (no lookup, join, profile step, join
+error or **Create a community** page), the place a person reaches by creating
+an account before opening the invite. The link is looked up as an address
+entered there is and shows **Join Community** with its code kept, and it never
+joins at once. Elsewhere after setup, including while a join is in flight, a
+different link goes to the join dialog as above.
+
 Success continues to **Getting ready**, with an animated bee. Detailed operation
 status remains available to screen readers without a visible second line. It first runs **Checking your account**, a real read of the
 Nostr key bound to the signed-in Builderlab account

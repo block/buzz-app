@@ -100,14 +100,16 @@ behavior on the label, so a rename touches copy only.
   label and any `members` it names. The caller is the creator, so an agent's
   key makes a chat its human members see as shared, not their own. It sends no
   message, so no agent turn starts. Only locally hosted agent runs may use
-  `solo_workspace_list` for their host-bound owner's personal workspace IDs and
-  pass an exact `workspace` to `channel_create` with `solo: true`. Include the
-  owner explicitly in `members`; filing never adds members, copies workspace
-  defaults or Canvas, or changes the creator.
+  `workspace_list` for their host-bound owner's workspace IDs and pass an exact
+  `workspace` to `channel_create`. With `solo: true`, include the owner
+  explicitly in `members`. The workspace's default agents join in the create
+  and its Canvas starts the chat, as in **New chat**; filing never changes the
+  creator. See [agents](../agents.md#filing-conversations-in-the-owners-workspaces)
+  for other types and `channel_move`.
   Creation and filing are not atomic. A known refusal before assignment reports
   the created ID and “created, not filed.” After assignment starts, failure reports
-  placement unconfirmed: it may already be durable or pending delivery. Inspect
-  or refresh that chat before **Move to**, never create another. Omitting
+  placement unconfirmed: it may already be durable or pending delivery. Check
+  the sidebar before `channel_move`, never create another. Omitting
   `workspace` preserves creation without filing.
   It cannot check NIP-CL support first, so on a relay that drops the
   label it reports an ordinary private channel instead.

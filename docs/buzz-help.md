@@ -551,13 +551,18 @@ Quitting Buzz also turns it off.
   that represents it.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
-  A locally hosted agent can list your personal workspace IDs with
-  `solo_workspace_list` and explicitly choose one when creating a Solo chat,
-  provided it includes you in the chat’s members. This only files the new chat;
-  it does not copy workspace defaults or Canvas. A known pre-write refusal
-  reports “created, not filed.” A write that cannot be
-  confirmed reports that placement may have completed: inspect or refresh the
-  reported chat before **Move to**, and never create it again.
+  A locally hosted agent can list your sidebar workspaces with `workspace_list`
+  and choose one when it creates a chat, channel or forum, if you can see the
+  result: a Solo chat must include you in its members, and a channel or forum
+  in a workspace must be open. Unless the agent picks a template, the
+  workspace’s defaults apply as from its **New chat** or **New channel**: its
+  default agents and Canvas. A team channel gets only the Canvas instructions,
+  not the folders or worktree settings. A known pre-write refusal reports
+  “created, not filed.” A write that cannot be confirmed reports that placement
+  may have completed: check the sidebar before moving it, and never create it
+  again. The agent can also move any conversation you can see, including a DM,
+  to a workspace with `channel_move`, or unfile it with an empty workspace, as
+  **Move to** does. Chats a plugin manages stay where the plugin puts them.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator. In a Solo chat, including its first
   message, **@** can name anyone in the community. A tagged agent of yours joins

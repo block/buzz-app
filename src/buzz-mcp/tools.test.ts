@@ -2161,13 +2161,16 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
 });
 
+const noDefaults = async () => ({ canvas: "", agents: [] });
+const unmoved = async () => ({ status: "unconfirmed" as const });
+
 it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
   const { client, published } = relay();
   const file = vi.fn(async () => ({ status: "filed" as const }));
   const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
   const prepare = vi.fn(async () => file);
-  client.soloWorkspaces = { list, prepare };
-  expect(await callTool(client, {}, "solo_workspace_list", {})).toBe(
+  client.workspaces = { list, prepare, defaults: noDefaults, move: unmoved };
+  expect(await callTool(client, {}, "workspace_list", {})).toBe(
     JSON.stringify([{ id: "work", name: "Work" }]),
   );
   const answer = await callTool(client, {}, "channel_create", {
@@ -2178,7 +2181,11 @@ it("discovers local workspaces and files only after creating a Solo with explici
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1];
-  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [alice], open: false },
+    id,
+  );
   expect(file).toHaveBeenCalledExactlyOnceWith(id);
   expect(answer).toBe(
     `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
@@ -2196,7 +2203,7 @@ it("rejects unsupported or invalid workspace placement before publication", asyn
     members: [alice],
     workspace: "work",
   };
-  await expect(callTool(client, {}, "solo_workspace_list", {})).rejects.toThrow(
+  await expect(callTool(client, {}, "workspace_list", {})).rejects.toThrow(
     "unavailable on this host",
   );
   await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
@@ -2205,14 +2212,19 @@ it("rejects unsupported or invalid workspace placement before publication", asyn
   const prepare = vi.fn(async () => {
     throw new Error("No such workspace");
   });
-  client.soloWorkspaces = { list: async () => [], prepare };
+  client.workspaces = {
+    list: async () => [],
+    prepare,
+    defaults: noDefaults,
+    move: unmoved,
+  };
   await expect(
     callTool(client, {}, "channel_create", {
       ...args,
       solo: false,
       members: undefined,
     }),
-  ).rejects.toThrow("workspace is for Solo");
+  ).rejects.toThrow("Your owner can't see a private channel");
   await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
     "No such workspace",
   );
@@ -2229,7 +2241,12 @@ it.each([
   const file = vi.fn(async () => {
     throw new Error(message);
   });
-  client.soloWorkspaces = { list: async () => [], prepare: async () => file };
+  client.workspaces = {
+    list: async () => [],
+    prepare: async () => file,
+    defaults: noDefaults,
+    move: unmoved,
+  };
   const answer = await callTool(client, {}, "channel_create", {
     name: "triage",
     visibility: "private",
@@ -2242,7 +2259,7 @@ it.each([
   expect(answer).toContain(
     `workspace placement unconfirmed and may have completed: ${message}`,
   );
-  expect(answer).toContain("do not create another chat");
+  expect(answer).toContain("do not create another");
   expect(published).toHaveLength(1);
   expect(file).toHaveBeenCalledOnce();
 });
@@ -2251,9 +2268,11 @@ it.each(["not-filed", "unconfirmed"] as const)(
   "reports structured placement outcome without repeating create: %s",
   async (status) => {
     const { client, published } = relay();
-    client.soloWorkspaces = {
+    client.workspaces = {
       list: async () => [],
       prepare: async () => async () => ({ status, error: "placement stopped" }),
+      defaults: noDefaults,
+      move: unmoved,
     };
     const answer = await callTool(client, {}, "channel_create", {
       name: "triage",
@@ -2269,7 +2288,7 @@ it.each(["not-filed", "unconfirmed"] as const)(
         : "placement unconfirmed and may have completed",
     );
     if (status === "unconfirmed")
-      expect(answer).toContain("Inspect or refresh");
+      expect(answer).toContain("Check your owner's sidebar");
     expect(published).toHaveLength(1);
   },
 );
@@ -2285,8 +2304,10 @@ it("reports uncertainty after a gated durable placement loses its app lifetime",
     started = resolve;
   });
   let durable = false;
-  client.soloWorkspaces = {
+  client.workspaces = {
     list: async () => [],
+    defaults: noDefaults,
+    move: unmoved,
     prepare: async () => async () => {
       durable = true;
       started();
@@ -2311,8 +2332,168 @@ it("reports uncertainty after a gated durable placement loses its app lifetime",
   const answer = await pending;
   expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
   expect(answer).toContain("placement unconfirmed and may have completed");
-  expect(answer).toContain("Inspect or refresh");
+  expect(answer).toContain("Check your owner's sidebar");
   expect(answer).not.toContain("not filed");
+});
+
+it("files an open channel in a workspace with the workspace's defaults", async () => {
+  const { client, published } = relay();
+  const file = vi.fn(async () => ({ status: "filed" as const }));
+  const prepare = vi.fn(async () => file);
+  const defaults = vi.fn(async () => ({
+    canvas: "# Workspace rules",
+    agents: [alice, me],
+  }));
+  client.workspaces = {
+    list: async () => [],
+    prepare,
+    defaults,
+    move: unmoved,
+  };
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "launch",
+    visibility: "open",
+    type: "forum",
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", true);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [], open: true },
+    id,
+  );
+  expect(published.map(({ kind }) => kind)).toEqual([9007, 40100, 9000]);
+  expect(published[1]?.content).toBe("# Workspace rules");
+  expect(answer).toBe(
+    [
+      `created ${id}`,
+      "filed in workspace work",
+      "started the Canvas",
+      `added ${alice} Alice Smith`,
+    ].join("\n"),
+  );
+});
+
+it("starts a Solo chat in a workspace with its default agents as members", async () => {
+  const { client, published } = relay();
+  const prepare = vi.fn(async () => async () => ({ status: "filed" as const }));
+  const defaults = vi.fn(async () => ({
+    canvas: "~/work notes",
+    agents: [bob],
+  }));
+  client.workspaces = {
+    list: async () => [],
+    prepare,
+    defaults,
+    move: unmoved,
+  };
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", false);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [alice, bob], open: false },
+    id,
+  );
+  expect(
+    published[0]?.tags.flatMap(([key, value]) => (key === "p" ? [value] : [])),
+  ).toEqual([alice, bob]);
+  // Its agents joined in the create; the Canvas starts after.
+  expect(published.map(({ kind }) => kind)).toEqual([9007, 40100]);
+  expect(answer).toContain("filed in workspace work");
+  expect(answer).toContain("started the Canvas");
+});
+
+it("uses a chosen template instead of the workspace's defaults", async () => {
+  const { client, published } = relay();
+  const defaults = vi.fn(async () => ({ canvas: "# Defaults", agents: [] }));
+  client.templates = vi.fn(async () => [
+    { name: "Launch", canvas: "# Plan", agents: [] },
+  ]);
+  client.workspaces = {
+    list: async () => [],
+    prepare: async () => async () => ({ status: "filed" as const }),
+    defaults,
+    move: unmoved,
+  };
+  await callTool(client, {}, "channel_create", {
+    name: "launch",
+    visibility: "open",
+    template: "launch",
+    workspace: "work",
+  });
+  expect(defaults).not.toHaveBeenCalled();
+  expect(published[1]?.content).toBe("# Plan");
+});
+
+it("creates nothing when the workspace's defaults can't load", async () => {
+  const { client, published } = relay();
+  const prepare = vi.fn();
+  client.workspaces = {
+    list: async () => [],
+    prepare,
+    defaults: async () => {
+      throw new Error("This workspace’s default template is unavailable.");
+    },
+    move: unmoved,
+  };
+  await expect(
+    callTool(client, {}, "channel_create", {
+      name: "launch",
+      visibility: "open",
+      workspace: "work",
+    }),
+  ).rejects.toThrow("default template is unavailable");
+  expect(prepare).not.toHaveBeenCalled();
+  expect(published).toEqual([]);
+});
+
+it("moves a conversation to a workspace, or unfiles it", async () => {
+  const { client } = relay();
+  const move = vi.fn(async () => ({ status: "filed" as const }));
+  client.workspaces = {
+    list: async () => [],
+    prepare: vi.fn(),
+    defaults: noDefaults,
+    move,
+  };
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room, workspace: "work" }),
+  ).resolves.toBe(`moved ${room} to workspace work`);
+  await expect(
+    callTool(client, { channel: room }, "channel_move", { workspace: " " }),
+  ).resolves.toBe(`unfiled ${room}`);
+  expect(move.mock.calls).toEqual([
+    [room, "work"],
+    [room, undefined],
+  ]);
+  move.mockResolvedValueOnce({
+    status: "unconfirmed",
+    error: "record full",
+  } as never);
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room, workspace: "work" }),
+  ).resolves.toContain("may not have moved: record full");
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room }),
+  ).rejects.toThrow("workspace must be");
+  move.mockRejectedValueOnce(
+    new Error("Your owner can't see this conversation"),
+  );
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room, workspace: "work" }),
+  ).rejects.toThrow("can't see");
+  delete client.workspaces;
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room, workspace: "work" }),
+  ).rejects.toThrow("unavailable on this host");
 });
 
 it("refuses Solo arguments that do not fit, before publishing", async () => {

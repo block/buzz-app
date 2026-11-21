@@ -339,8 +339,8 @@ export const TOOLS: readonly Tool[] = [
     channel: str,
   }),
   tool(
-    "solo_workspace_list",
-    "List your owner's personal Solo workspace IDs and names on this local host.",
+    "workspace_list",
+    "List your owner's sidebar workspaces on this local host: each one's ID and name.",
     {},
   ),
   tool(
@@ -364,10 +364,22 @@ export const TOOLS: readonly Tool[] = [
       workspace: {
         ...str,
         description:
-          "Solo only, local host: exact ID from solo_workspace_list. Include your owner in members. Placement only; no workspace defaults.",
+          "Local host: exact ID from workspace_list. Your owner must see it: open, or a Solo chat with your owner in members. Without template, applies the workspace's defaults.",
       },
     },
     ["name", "visibility"],
+  ),
+  tool(
+    "channel_move",
+    "Move a conversation your owner can see, of any type, to one of their sidebar workspaces. Local host only.",
+    {
+      channel: { ...str, description: "Default: current." },
+      workspace: {
+        ...str,
+        description: "Exact ID from workspace_list; empty unfiles it.",
+      },
+    },
+    ["workspace"],
   ),
   tool("channel_update", "Change a channel's details.", {
     channel: str,
@@ -1247,12 +1259,26 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   channel_get: (tools, args) => tools.details(target(tools, args)),
-  solo_workspace_list: async ({ client }) => {
-    if (!client.soloWorkspaces)
-      throw new Error("Solo workspaces are unavailable on this host");
-    return JSON.stringify(await client.soloWorkspaces.list());
+  workspace_list: async ({ client }) => {
+    if (!client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    return JSON.stringify(await client.workspaces.list());
   },
   channel_create: (tools, args) => tools.create(args),
+  channel_move: async (tools, args) => {
+    const channel = target(tools, args);
+    if (typeof args.workspace !== "string")
+      throw new Error("workspace must be a workspace ID, or empty to unfile.");
+    const workspace = args.workspace.trim() || undefined;
+    if (!tools.client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    const placement = await tools.client.workspaces.move(channel, workspace);
+    if (placement.status === "filed")
+      return workspace
+        ? `moved ${channel} to workspace ${workspace}`
+        : `unfiled ${channel}`;
+    return `${channel} may not have moved: ${placement.error ?? "unconfirmed"}. Check your owner's sidebar before trying again.`;
+  },
   channel_update: (tools, args) => tools.update(target(tools, args), args),
   channel_join: (tools, args) => lifecycle(tools, args, "join"),
   channel_leave: (tools, args) => lifecycle(tools, args, "leave"),
@@ -2251,15 +2277,49 @@ class Tools {
         : await this.template(required(args, "template"));
     const workspace =
       args.workspace === undefined ? undefined : required(args, "workspace");
-    if (workspace !== undefined && !solo)
-      throw new Error("workspace is for Solo chats.");
-    if (workspace !== undefined && !this.client.soloWorkspaces)
-      throw new Error("Solo workspaces are unavailable on this host");
+    const workspaces = this.client.workspaces;
+    if (workspace !== undefined && !workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    // Only a Solo chat starts with the owner in it; the host checks that.
+    if (workspace !== undefined && args.visibility !== "open" && !solo)
+      throw new Error(
+        "Your owner can't see a private channel filed for them; make it open, or a Solo chat with your owner in members.",
+      );
+    // As New channel or New chat in a workspace: its defaults, unless a
+    // template is chosen. Read first, so they apply or nothing is created.
+    const defaults =
+      workspace !== undefined && !template
+        ? await workspaces?.defaults(workspace, !solo)
+        : undefined;
+    // A Solo chat's agents join in the create, as Buzz starts one.
+    const joining = solo
+      ? [
+          ...new Set([
+            ...members,
+            ...(defaults?.agents ?? []).filter(
+              (key) => key !== this.client.pubkey,
+            ),
+          ]),
+        ]
+      : members;
+    if (joining.length > 32)
+      throw new Error("A Solo chat starts with at most 32 members.");
+    const setup: ChannelTemplate | undefined =
+      template ??
+      (defaults && {
+        name: "workspace defaults",
+        canvas: defaults.canvas,
+        agents: solo ? [] : defaults.agents,
+      });
     const id = crypto.randomUUID();
     const file =
       workspace === undefined
         ? undefined
-        : await this.client.soloWorkspaces?.prepare(workspace, members, id);
+        : await workspaces?.prepare(
+            workspace,
+            { members: joining, open: args.visibility === "open" },
+            id,
+          );
     await this.client.publish({
       kind: 9007,
       content: "",
@@ -2272,20 +2332,20 @@ class Tools {
         ...(ttl ? [["ttl", String(ttl)]] : []),
         // As Buzz starts a Solo chat: the relay adds the `p` members in the create.
         ...(solo ? channelLabelTags([SOLO_LABEL, SOLO_NAMED_LABEL]) : []),
-        ...members.map((key) => ["p", key]),
+        ...joining.map((key) => ["p", key]),
       ],
     });
     const labeled = (now: BuzzEvent | undefined) =>
       !!now && (!solo || soloChannelMetadata(now as RelayEvent));
     const shown = await until(() => this.metadata(id), labeled).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}${members.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}.`;
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${setup ? `; ${template ? "the template was" : "the workspace defaults were"} not applied` : ""}${role === "guest" ? "; join_role was not set" : ""}${joining.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}.`;
     const lines = [`created ${id}`];
     if (!labeled(shown))
       lines.push(
         "The community did not keep the Solo label, so it is an ordinary private channel.",
       );
-    if (members.length) lines.push(...(await this.joined(id, members)));
+    if (joining.length) lines.push(...(await this.joined(id, joining)));
     if (file) {
       try {
         const placement = await file(id);
@@ -2293,16 +2353,16 @@ class Tools {
           placement.status === "filed"
             ? `filed in workspace ${workspace}`
             : placement.status === "not-filed"
-              ? `created, not filed in workspace: ${placement.error}. Use Move to on this chat; do not create another chat.`
-              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Inspect or refresh this chat before Move to; do not create another chat.`,
+              ? `created, not filed in workspace: ${placement.error}. Use channel_move; do not create another.`
+              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Check your owner's sidebar before channel_move; do not create another.`,
         );
       } catch (error) {
         lines.push(
-          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Inspect or refresh this chat before Move to; do not create another chat.`,
+          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Check your owner's sidebar before channel_move; do not create another.`,
         );
       }
     }
-    if (template) lines.push(...(await this.apply(id, template)));
+    if (setup) lines.push(...(await this.apply(id, setup)));
     // Last, so the template's agents join as members, not guests.
     if (role === "guest")
       try {

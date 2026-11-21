@@ -275,7 +275,9 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import { soloChannelMetadata } from "../relay/discovery";
+import { openMetadata } from "../relay/discovery";
+import { prepareSoloMove } from "../channel-navigation/solo-navigation";
+import { loadChatSetup, shareableInstructions } from "../solo/workspace";
 import { channelIdentity } from "../relay/channel-labels";
 import { regionLabels } from "../solo/region-labels";
 import { nameSoloChat } from "./solo-chat-name";
@@ -597,20 +599,45 @@ export type HandoffSource = Readonly<
 >;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
-/** Run-only placement of a just-created Solo; never a general move capability. */
-export type SoloPlacement = Readonly<{
+/** Filing a conversation in one of the owner's workspaces. */
+export type WorkspacePlacement = Readonly<{
   status: "filed" | "not-filed" | "unconfirmed";
   error?: string;
 }>;
-export type SoloWorkspaces = Readonly<{
+/** Who will be in a conversation the agent is about to create. */
+export type WorkspaceAudience = Readonly<{
+  members: readonly string[];
+  open: boolean;
+}>;
+/** A workspace's defaults for a new conversation in it. */
+export type WorkspaceDefaults = Readonly<{
+  canvas: string;
+  agents: readonly string[];
+}>;
+/** Run-only access to the owner's sidebar workspaces, for conversations the
+ * owner can see. */
+export type Workspaces = Readonly<{
   list(
     signal: AbortSignal,
   ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+  /** `shared`: for a team channel, whose Canvas gets only standalone
+   * instructions. */
+  defaults(
+    workspace: string,
+    shared: boolean,
+    signal: AbortSignal,
+  ): Promise<WorkspaceDefaults>;
   prepare(
     workspace: string,
-    members: readonly string[],
+    audience: WorkspaceAudience,
     signal: AbortSignal,
-  ): Promise<(created: RelayEvent) => Promise<SoloPlacement>>;
+  ): Promise<(created: RelayEvent) => Promise<WorkspacePlacement>>;
+  /** Files `id` in `workspace`, or unfiles it without one. */
+  move(
+    id: string,
+    workspace: string | undefined,
+    signal: AbortSignal,
+  ): Promise<WorkspacePlacement>;
 }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
@@ -700,17 +727,27 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
-  /** On a run's handle only: personal workspaces for new Solo chats. */
-  soloWorkspaces?: Readonly<{
+  /** On a run's handle only: the owner's sidebar workspaces. */
+  workspaces?: Readonly<{
     list(
       signal?: AbortSignal,
     ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+    defaults(
+      workspace: string,
+      shared: boolean,
+      signal?: AbortSignal,
+    ): Promise<WorkspaceDefaults>;
     prepare(
       workspace: string,
-      members: readonly string[],
+      audience: WorkspaceAudience,
       channelId: string,
       signal?: AbortSignal,
-    ): Promise<(id: string) => Promise<SoloPlacement>>;
+    ): Promise<(id: string) => Promise<WorkspacePlacement>>;
+    move(
+      id: string,
+      workspace: string | undefined,
+      signal?: AbortSignal,
+    ): Promise<WorkspacePlacement>;
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
@@ -3178,7 +3215,7 @@ export class AgentsService extends Service implements Agents {
           agents: templateAgents(template, this.allTeams(), here),
         }));
       },
-      soloWorkspaces: (agent) => {
+      workspaces: (agent) => {
         if (!this.bindingOf(agent)) return undefined;
         // Each operation acts in the session live when it starts, which a
         // reload replaces; its later reads and writes stay fenced to it.
@@ -3190,6 +3227,8 @@ export class AgentsService extends Service implements Agents {
             );
           return { binding, ...fenced(binding) };
         };
+        const errorText = (error: unknown) =>
+          error instanceof Error ? error.message : String(error);
         const fenced = (binding: Binding) => {
           const check = (signal: AbortSignal) => {
             signal.throwIfAborted();
@@ -3205,7 +3244,7 @@ export class AgentsService extends Service implements Agents {
           const list = async (signal: AbortSignal) => {
             check(signal);
             if (!binding.session.snapshotRead || !binding.session.relayAuthor)
-              throw new Error("Solo workspace authority is unavailable");
+              throw new Error("Workspace authority is unavailable");
             const preferences = binding.session.sidebarPreferences;
             await preferences.refresh();
             check(signal);
@@ -3215,30 +3254,90 @@ export class AgentsService extends Service implements Agents {
               state.cached ||
               !preferences.writable
             )
-              throw new Error(state.error ?? "Solo workspaces are unavailable");
+              throw new Error(state.error ?? "Workspaces are unavailable");
             return (state.data?.sections ?? []).map(({ id, name }) => ({
               id,
               name,
             }));
           };
-          return { check, list };
+          const known = async (workspace: string, signal: AbortSignal) => {
+            if (!(await list(signal)).some(({ id }) => id === workspace))
+              throw new Error("No such workspace; use workspace_list");
+          };
+          /** Relay-owned metadata and roster of `id`, read as the owner. */
+          const conversation = async (id: string, signal: AbortSignal) => {
+            const author = binding.session.relayAuthor ?? "";
+            const events = await binding.session.snapshotRead?.(
+              [
+                {
+                  kinds: [39000, 39002],
+                  authors: [author],
+                  "#d": [id],
+                  limit: 2,
+                  consistency: "strong",
+                },
+              ],
+              { signal },
+            );
+            check(signal);
+            const find = (kind: number) =>
+              events?.find(
+                (event) =>
+                  event.kind === kind &&
+                  event.pubkey === author &&
+                  event.tags.some(
+                    ([key, value]) => key === "d" && value === id,
+                  ),
+              );
+            const metadata = find(39000);
+            const roster = find(39002);
+            const member = (key: string) =>
+              !!roster?.tags.some(
+                ([name, value]) => name === "p" && value === key,
+              );
+            return {
+              metadata,
+              member,
+              // Filed only where the owner's sidebar can list it.
+              visible:
+                !!metadata &&
+                (member(binding.viewer) || openMetadata(metadata)),
+              // A region's chats are placed by the region, as in Move to.
+              regional:
+                !!metadata &&
+                regionLabels(channelIdentity(metadata).labels).length > 0,
+            };
+          };
+          return { check, list, known, conversation };
         };
         return {
           list: async (signal: AbortSignal) => operation().list(signal),
-          prepare: async (workspace, members, signal) => {
-            const { binding, check, list } = operation();
-            if (!members.includes(binding.viewer))
+          defaults: async (workspace, shared, signal) => {
+            const { binding, check, known } = operation();
+            await known(workspace, signal);
+            // As New channel: without saved defaults here, there are none.
+            if (!binding.session.channelKit.available)
+              return { canvas: "", agents: [] };
+            const setup = await loadChatSetup(binding.session, workspace);
+            check(signal);
+            return {
+              // As New channel: only standalone instructions reach a team
+              // channel's Canvas; local paths stay in Solo chats.
+              canvas: shared
+                ? shareableInstructions(setup.canvas)
+                : setup.canvas,
+              agents: setup.agents,
+            };
+          },
+          prepare: async (workspace, audience, signal) => {
+            const { binding, check, known, conversation } = operation();
+            if (!audience.open && !audience.members.includes(binding.viewer))
               throw new Error(
-                "Include your owner in members to file a Solo chat",
+                "Your owner can't see this conversation; make it open, or include your owner in members",
               );
-            if (!(await list(signal)).some(({ id }) => id === workspace))
-              throw new Error(
-                "No such Solo workspace; use solo_workspace_list",
-              );
+            await known(workspace, signal);
             const active = AbortSignal.any([signal, binding.controller.signal]);
             return async (created) => {
-              const errorText = (error: unknown) =>
-                error instanceof Error ? error.message : String(error);
               let id: string | undefined;
               try {
                 check(active);
@@ -3246,60 +3345,22 @@ export class AgentsService extends Service implements Agents {
                 if (
                   created.kind !== 9007 ||
                   created.pubkey !== agent.pubkey ||
-                  !id ||
-                  !created.tags.some(
-                    ([key, value]) => key === "t" && value === "buzz.solo",
-                  ) ||
-                  !created.tags.some(
-                    ([key, value]) => key === "p" && value === binding.viewer,
-                  )
+                  !id
                 )
-                  throw new Error("Not this agent's new Solo chat");
+                  throw new Error("Not this agent's new conversation");
                 // Read relay-owned authority, not an optimistic channel-list entry.
-                const events = await binding.session.snapshotRead?.(
-                  [
-                    {
-                      kinds: [39000, 39002],
-                      authors: [binding.session.relayAuthor ?? ""],
-                      "#d": [id],
-                      limit: 2,
-                      consistency: "strong",
-                    },
-                  ],
-                  { signal: active },
-                );
-                check(active);
-                const metadata = events?.find(
-                  (event) =>
-                    event.kind === 39000 &&
-                    event.pubkey === binding.session.relayAuthor &&
-                    event.tags.some(
-                      ([key, value]) => key === "d" && value === id,
-                    ),
-                );
-                const roster = events?.find(
-                  (event) =>
-                    event.kind === 39002 &&
-                    event.pubkey === binding.session.relayAuthor &&
-                    event.tags.some(
-                      ([key, value]) => key === "d" && value === id,
-                    ),
-                );
+                const found = await conversation(id, active);
                 if (
-                  !metadata ||
-                  !soloChannelMetadata(metadata) ||
-                  regionLabels(channelIdentity(metadata).labels).length > 0 ||
-                  !metadata.tags.some(
+                  !found.metadata ||
+                  found.regional ||
+                  !found.metadata.tags.some(
                     ([key, value]) => key === "P" && value === agent.pubkey,
                   ) ||
-                  ![agent.pubkey, binding.viewer, ...members].every((member) =>
-                    roster?.tags.some(
-                      ([key, value]) => key === "p" && value === member,
-                    ),
-                  )
+                  !found.visible ||
+                  ![agent.pubkey, ...audience.members].every(found.member)
                 )
                   throw new Error(
-                    "New Solo chat creator and members are not confirmed",
+                    "New conversation's creator and members are not confirmed",
                   );
               } catch (error) {
                 return {
@@ -3323,6 +3384,32 @@ export class AgentsService extends Service implements Agents {
                 };
               }
             };
+          },
+          move: async (id, workspace, signal) => {
+            const { binding, check, list, known, conversation } = operation();
+            if (workspace !== undefined) await known(workspace, signal);
+            else await list(signal);
+            const found = await conversation(id, signal);
+            if (!found.visible)
+              throw new Error("Your owner can't see this conversation");
+            const managed = prepareSoloMove(binding.session, id);
+            if (found.regional || managed)
+              throw new Error(managed ?? "This chat is managed by its region.");
+            const active = AbortSignal.any([signal, binding.controller.signal]);
+            try {
+              await binding.session.sidebarPreferences.assign(
+                id,
+                workspace,
+                active,
+              );
+              check(active);
+              return { status: "filed" as const };
+            } catch (error) {
+              return {
+                status: "unconfirmed" as const,
+                error: errorText(error),
+              };
+            }
           },
         };
       },
@@ -4447,7 +4534,7 @@ export class AgentsService extends Service implements Agents {
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
     // Workspace filing is for local turns, not an external app's run authority.
-    const { soloWorkspaces: _, ...external } = run;
+    const { workspaces: _, ...external } = run;
     const { handoff } = external;
     const handle: AgentHandle = {
       ...external,

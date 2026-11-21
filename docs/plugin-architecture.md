@@ -1193,6 +1193,30 @@ plugin to call it in a launch is asked; later calls only log. Views that read
 the setup before it is final, such as whether a harness offers Automatic, see
 the build's. Turning the plugin off stops it answering from the next launch.
 
+A bundled plugin can add **model routes**, such as "Auto Balanced", to a
+harness's Model menu with `ctx.agents.registerModelRouter(router)` (it throws
+for any other plugin, since routers read prompts). `router.routes(harness)`
+answers, per agent type id (`claude-code`, `codex`), with `{routes, initial?,
+automatic?, exclusive?}`: each route has an `id`, a `label`, an optional
+`description` and an optional `fallback: {model, effort?}`. Routes appear
+first in the menu, beside Default, and an agent saves one as its model,
+`route:<id>`. `initial` is the route new Custom agents start on, `automatic`
+the one agents on Automatic use, and `exclusive` hides the harness's other
+models from model menus (an agent's current model stays listed).
+`subscribe(listener)`, optional, says when `routes` may answer differently.
+Before each turn the agent starts while idle in that conversation, Buzz calls
+`router.select({harness, route, agent, prompt, history(), models, signal})`:
+`models` are the harness's own models with their effort levels, and
+`history()` reads up to 20 earlier messages of the thread, once, only if
+asked. It answers `{model, effort?, rationale?}` with one of `models`; the
+turn runs on it as on a per-message pick, and its activity shows the choice
+and rationale. A message that steers a running turn keeps that turn's pick,
+so the session's prompt cache stays warm. A failure, no answer within 30
+seconds, or a model the harness doesn't list runs the route's `fallback`, or
+the recommendation on Automatic. An owner's explicit model pick for a message
+wins over the route, and a saved route whose plugin is off runs on the
+harness's default. Claude Code and Codex support routes.
+
 Bundled plugins also get the building blocks to move agents onto
 Automatic themselves, with their own rules and wording. Each throws for any
 other plugin:

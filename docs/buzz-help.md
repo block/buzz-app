@@ -1496,6 +1496,16 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   where they apply; to choose per message, switch it to **Custom**. A pick
   saved in a Solo chat before it switched is ignored. Builds without a
   recommendation show none of this.
+- Some builds add **Auto** choices, such as **Auto Balanced**, to the Model
+  menu of Claude Code and Codex agents, next to **Default**. An agent on one
+  doesn't use a fixed model: before each new turn in a conversation, the build
+  picks one of the harness's models and a thinking level for that message, and
+  the turn's activity says which and why. Thinking shows **Auto** and can't be
+  changed. A message sent while the agent is still working on that conversation
+  keeps the model it's using. Choosing a model for one message beside Send
+  still wins. Builds can also have Automatic agents use an Auto choice, and
+  start new agents on one. If the build's Auto choices go away, an agent on one
+  shows **Unavailable route** and uses the harness's default model.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab

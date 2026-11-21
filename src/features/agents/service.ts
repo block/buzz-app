@@ -80,6 +80,7 @@ import {
   awaitRecommendation,
   candidatesFor,
   offRecommended,
+  onAutomatic,
   onRecommended,
   pickRecommendedSurely,
   recommendationFinal,
@@ -196,6 +197,16 @@ import {
 } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
+import {
+  type ModelRouter,
+  type RoutedPick,
+  type RouteMessage,
+  routesFor,
+  routeTurn,
+  setModelRouters,
+  type TurnPick,
+  withRoutes,
+} from "./model-routes";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -1609,6 +1620,24 @@ export type ModelSettings = Readonly<{
  * it, and leaving it out keeps it. */
 export type NoteChange = Readonly<{ note?: PluginNote | null }>;
 const MODEL_FIELDS = ["model", "provider", "effort"] as const;
+/** Conversations whose latest routed pick is kept for their steers. */
+const ROUTED_PICKS = 512;
+/** Earlier thread messages a model router may read. */
+const ROUTE_HISTORY = 20;
+/** The most prompt text a model router is given. */
+const ROUTE_PROMPT_CHARS = 16_000;
+/** What a turn asks, as a model router reads it. */
+function promptOf(trigger: Trigger) {
+  const text =
+    trigger.type === "mention" || trigger.type === "watch"
+      ? trigger.event.content
+      : trigger.type === "catch-up"
+        ? trigger.events.map(({ event }) => event.content).join("\n\n")
+        : trigger.type === "timer"
+          ? trigger.timer.prompt
+          : trigger.text;
+  return text.slice(-ROUTE_PROMPT_CHARS);
+}
 export type Agents = {
   readonly invocationSubthreads?: true;
   readonly invocationIntentVersion?: 1;
@@ -1688,6 +1717,12 @@ export type Agents = {
    * answer, a failure, an invalid or late setup keeps the build's. `signal` aborts when the wait ends. Only the first
    * plugin to call it in a launch is asked; later calls are ignored. */
   recommend(source: RecommendedSource): void;
+  /** Bundled plugins only: adds model routes, such as "Auto Balanced", to
+   * harnesses' Model menus, and chooses the model and effort of each turn an
+   * agent on one starts while idle in its conversation (model-routes.ts).
+   * Its `select` is given the turn's prompt, so only the build's own plugins
+   * may route. It lasts while the plugin is on. */
+  registerModelRouter(router: ModelRouter): void;
   // Bundled plugins only, like `recommend`: the building blocks for a plugin
   // that moves agents onto Automatic (plugin-architecture.md).
   /** Whether plugin start-up is over (each plugin started, or failed), the
@@ -2446,6 +2481,14 @@ export class AgentsService extends Service implements Agents {
   }
   private readonly contributions;
   private readonly tabContributions;
+  private readonly modelRouters;
+  /** Each conversation's latest routed pick, which a steer keeps. */
+  private readonly routedPicks = new Map<string, TurnPick>();
+  /** Each registered type's own `models`, before routes are added, by key. */
+  private readonly ownModels = new Map<
+    string,
+    (agent: Agent) => Promise<Models>
+  >();
   private readonly attentionControls;
   private readonly addedTools;
   private readonly operationNames = new Set<string>();
@@ -2618,6 +2661,16 @@ export class AgentsService extends Service implements Agents {
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
+    this.modelRouters = createContributions<ModelRouter>(ctx);
+    ctx.effect(() => {
+      const publish = () => setModelRouters(this.modelRouters.snapshot());
+      const stop = this.modelRouters.subscribe(publish);
+      publish();
+      return () => {
+        stop();
+        setModelRouters([]);
+      };
+    });
     // Agents on Automatic follow this launch's setup once it is final.
     void awaitRecommendation((signal) => this.recommendedAnswer(signal)).then(
       () => {
@@ -2748,6 +2801,8 @@ export class AgentsService extends Service implements Agents {
           nativePlacement,
           pinNativePlacement,
         ),
+      route: (agent, type, trigger, place, pick, signal) =>
+        this.routedPick(agent, type, trigger, place, pick, signal),
       prepareSession: async (agent, type, trigger, placement, signal) => {
         if (
           !type.sessionAdmission ||
@@ -3558,14 +3613,26 @@ export class AgentsService extends Service implements Agents {
     const voice = (type as unknown as AgentType).voice;
     const models = type.models;
     const pluginId = this.ctx.pluginOwner?.id;
+    const own =
+      models &&
+      (async (agent: Agent<Config>) => {
+        await this.checkExecution(agent.key, agent.type);
+        return models(agent);
+      });
+    if (own && pluginId) {
+      const key = `${pluginId}/${type.id}`;
+      this.ownModels.set(key, own as (agent: Agent) => Promise<Models>);
+      this.ctx.effect(() => () => {
+        if (this.ownModels.get(key) === (own as unknown))
+          this.ownModels.delete(key);
+      });
+    }
     this.contributions.register(this.ctx, {
       ...type,
       ...(skillFolders && { skillFolders }),
-      ...(models && {
-        models: async (agent: Agent<Config>) => {
-          await this.checkExecution(agent.key, agent.type);
-          return models(agent);
-        },
+      ...(own && {
+        models: async (agent: Agent<Config>) =>
+          withRoutes(type.id, await own(agent)),
       }),
       ...(voice
         ? {
@@ -3628,6 +3695,109 @@ export class AgentsService extends Service implements Agents {
     }
     this.recommendSource = { plugin, source };
     this.recommendCalled();
+  }
+  registerModelRouter(router: ModelRouter) {
+    this.bundledCaller("registerModelRouter");
+    if (
+      !router ||
+      typeof router.id !== "string" ||
+      typeof router.routes !== "function" ||
+      typeof router.select !== "function" ||
+      (router.subscribe !== undefined && typeof router.subscribe !== "function")
+    )
+      throw new Error("A model router needs an id, routes and select");
+    this.modelRouters.register(this.ctx, router);
+  }
+  /** The pick a turn starts with: `pick`, unless the agent runs on a model
+   * route, whose router chooses unless the turn steers a running one. */
+  private async routedPick(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    pick: TurnPick,
+    signal: AbortSignal,
+  ): Promise<RoutedPick> {
+    const models = this.ownModels.get(type.key) ?? type.models;
+    if (!routesFor(type.id).routes.length || !models) return pick;
+    let offered: Models;
+    try {
+      offered = await models(agent);
+    } catch (error) {
+      console.warn(`Agent type ${type.key} could not list its models`, error);
+      return pick;
+    }
+    const conversation = place && this.sessionPlace(agent, type, place);
+    const key =
+      conversation &&
+      JSON.stringify([
+        agent.key,
+        conversation.channelId,
+        conversation.root ?? "",
+        conversation.community === true,
+      ]);
+    const state = place ? this.sessionState(agent.key, place) : "idle";
+    let history: Promise<readonly RouteMessage[]> | undefined;
+    const routed = await routeTurn({
+      harness: type.id,
+      pick,
+      current: offered.current,
+      automatic: onAutomatic(agent.config, type.id),
+      models: offered.models,
+      busy: state === "active" || state === "compacting",
+      last: key ? this.routedPicks.get(key) : undefined,
+      request: {
+        agent: { pubkey: agent.pubkey, name: agent.name },
+        prompt: promptOf(trigger),
+        history: () =>
+          (history ??= this.routeHistory(agent, trigger, place, signal)),
+      },
+      signal,
+    });
+    if (key && routed.routed && !routed.routed.kept) {
+      this.routedPicks.delete(key);
+      this.routedPicks.set(key, {
+        ...(routed.model ? { model: routed.model } : {}),
+        ...(routed.effort ? { effort: routed.effort } : {}),
+      });
+      if (this.routedPicks.size > ROUTED_PICKS)
+        this.routedPicks.delete(this.routedPicks.keys().next().value as string);
+    }
+    return routed;
+  }
+  /** The thread before a routed turn's message, oldest first: at most
+   * ROUTE_HISTORY messages, read once and only if its router asks. */
+  private async routeHistory(
+    agent: Agent,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    signal: AbortSignal,
+  ): Promise<readonly RouteMessage[]> {
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const root = place?.root;
+    if (!reads || !place || !root) return [];
+    const current = trigger.type === "mention" ? trigger.event.id : undefined;
+    const events = await reads.read(
+      [
+        { ids: [root], "#h": [place.channelId], limit: 1 },
+        {
+          kinds: [9, 40002],
+          "#h": [place.channelId],
+          "#e": [root],
+          limit: ROUTE_HISTORY,
+        },
+      ],
+      signal,
+    );
+    return [...new Map(events.map((event) => [event.id, event])).values()]
+      .filter((event) => event.id !== current)
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-ROUTE_HISTORY)
+      .map((event) => ({
+        pubkey: event.pubkey,
+        content: event.content,
+        createdAt: event.created_at,
+      }));
   }
   /** The calling plugin's id; throws unless it is bundled. */
   private bundledCaller(what: string) {

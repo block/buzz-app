@@ -4221,6 +4221,75 @@ it("passes the model and effort its owner asked for, and no other", async () => 
   ]);
 });
 
+it("asks a model route for an idle turn's model and keeps it for a steer", async () => {
+  let state: "idle" | "active" = "idle";
+  const { service, run, emit, ctx } = await setup({
+    sessionControls: { state: () => state, run: async () => {} },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const select = vi.fn(async () => ({
+    model: "deep",
+    effort: "max",
+    rationale: "Hard task",
+  }));
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  const asked = (id: string, ...tags: string[][]) =>
+    event(id, {
+      pubkey: viewer,
+      tags: [["h", channel], ["p", bot], ["model", bot, "route:auto"], ...tags],
+    });
+  const first = asked("1d1e");
+  emit({ events: [first] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(select).toHaveBeenCalledWith(
+    expect.objectContaining({
+      harness: "echo",
+      route: "auto",
+      models: [
+        expect.objectContaining({ id: "fast" }),
+        expect.objectContaining({ id: "deep" }),
+      ],
+    }),
+  );
+  expect(run.mock.calls[0]?.[0]).toMatchObject({
+    model: "deep",
+    effort: "max",
+  });
+  // The conversation now has a turn running: the next message steers it.
+  state = "active";
+  emit({ events: [asked("57ee", ["e", first.id, "", "reply"])] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[1]?.[0]).toMatchObject({
+    model: "deep",
+    effort: "max",
+  });
+});
+
+it("lists model routes only from bundled plugins", async () => {
+  const { plugin } = await setup();
+  expect(() =>
+    plugin.agents.registerModelRouter({
+      id: "router",
+      routes: () => undefined,
+      select: async () => undefined,
+    }),
+  ).toThrow();
+});
+
 it("ignores the model and effort asked of an agent on Automatic", async () => {
   // A synthetic recommendation for the example type.
   setRuntimeRecommendation({

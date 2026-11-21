@@ -993,10 +993,13 @@ Quitting Buzz also turns it off.
   upload bar names the conversation they are going to, and **Cancel** stops the
   send it names. If a background send fails, its notice names that conversation
   and, when you are elsewhere, can open it (except a huddle). Your message and
-  files are back in that conversation's composer. Do not
-  promise support for every file type or size. Some plugins supply temporary
-  attachment sources that may be released after a confirmed post; keep the posted
-  link for reuse, and do not assume local cleanup will happen automatically. Managed
+  files are back in that conversation's composer. Do not promise support for
+  every file type or size. An image in a message or the viewer that can't load
+  shows "Couldn't load image" and **Retry**; small images show a round Retry
+  button. In a group of images, screen readers hear which image each Retry is
+  for, such as "Retry image 2 of 4". Some plugins supply temporary attachment
+  sources that may be released after a confirmed post; keep the posted link for
+  reuse, and do not assume local cleanup will happen automatically. Managed
   cleanup is strictly a desktop-local behaviour: when an agent sends attachments
   it read from a remote execution target, the post is published normally but no
   local cleanup is triggered and no remote source is deleted.

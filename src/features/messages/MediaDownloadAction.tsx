@@ -20,6 +20,7 @@ export function MediaDownloadAction({
   name = "",
   kind,
   compact = false,
+  disabled = false,
   savedDuration = 4000,
   onFeedbackVisible,
 }: {
@@ -27,6 +28,8 @@ export function MediaDownloadAction({
   name?: string | undefined;
   kind: string;
   compact?: boolean;
+  /** Keeps the control in place while its media can't be downloaded. */
+  disabled?: boolean;
   savedDuration?: number;
   onFeedbackVisible?: ((visible: boolean) => void) | undefined;
 }) {
@@ -38,6 +41,7 @@ export function MediaDownloadAction({
       name={name}
       kind={kind}
       compact={compact}
+      disabled={disabled}
       savedDuration={savedDuration}
       onFeedbackVisible={onFeedbackVisible}
     />
@@ -49,6 +53,7 @@ function NativeMediaDownload({
   name,
   kind,
   compact,
+  disabled,
   savedDuration,
   onFeedbackVisible,
 }: {
@@ -56,6 +61,7 @@ function NativeMediaDownload({
   name: string;
   kind: string;
   compact: boolean;
+  disabled: boolean;
   savedDuration: number;
   onFeedbackVisible?: ((visible: boolean) => void) | undefined;
 }) {
@@ -87,6 +93,7 @@ function NativeMediaDownload({
           state === "failed" ? `Retry download ${kind}` : `Download ${kind}`
         }
         loading={state === "pending"}
+        disabled={disabled}
         onClick={() => {
           setFailureExpired(false);
           void download();

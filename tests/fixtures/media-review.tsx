@@ -137,11 +137,14 @@ const owner = createRelaySession(
         ? "/shell-gradient.png"
         : url === secondPhoto.url
           ? "/bestie.png"
-          : url === photo.url || url === thirdPhoto.url
-            ? gifPreview
-              ? "/tests/fixtures/attachment-media/animated.gif"
-              : "/shell-gradient.png"
-            : "/tests/fixtures/message-gallery/assets/sample.mp4",
+          : url === photo.url &&
+              new URLSearchParams(location.search).has("image-failure")
+            ? "/shell-gradient.png?image-failure"
+            : url === photo.url || url === thirdPhoto.url
+              ? gifPreview
+                ? "/tests/fixtures/attachment-media/animated.gif"
+                : "/shell-gradient.png"
+              : "/tests/fixtures/message-gallery/assets/sample.mp4",
     writer: {
       sign: async (template) => signed(viewer, template),
       publish: async (event) => {

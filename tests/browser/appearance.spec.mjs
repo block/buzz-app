@@ -659,6 +659,106 @@ test("Message width defaults to Narrow, widens the conversation by 50%, and rest
     .toBeLessThanOrEqual(480);
 });
 
+// Browser-only: actual table overflow can change even when its box stays fixed.
+test("message table wrapping updates scrollability and survives reload", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const command = "scan  --all";
+  const prose =
+    "Check the release notes before moving to the next step. ".repeat(6);
+  const columns = Array.from({ length: 12 }, (_, i) => `Component-${i + 1}`);
+  const path =
+    "fixtures/releases/configuration/weekly/checks/latest-manifest.json";
+  const values = [
+    `\`${path}\``,
+    "A-01",
+    ...columns.slice(2).map(() => "Ready"),
+  ];
+  const message = app.append(
+    "primary",
+    "alpha",
+    [
+      "| Step | Notes |",
+      "| --- | --- |",
+      `| \`${command}\` | ${prose.trim()} |`,
+      "",
+      `| ${columns.join(" | ")} |`,
+      `| ${columns.map(() => "---").join(" | ")} |`,
+      `| ${values.join(" | ")} |`,
+    ].join("\n"),
+  );
+  const [description, wide] = [0, 1].map((index) =>
+    page
+      .locator(`[data-message-id="${message.id}"]`)
+      .getByRole("table")
+      .nth(index),
+  );
+  await expect(description).toHaveCSS("white-space", "pre-wrap");
+  await expect(description).toHaveAttribute("data-overflow", "false");
+  const code = description.locator("code");
+  expect(await code.textContent()).toBe(command);
+  await expect(code).toHaveCSS("white-space", "pre-wrap");
+  await expect(wide).toHaveCSS("overflow-x", "scroll");
+  expect(
+    await wide.evaluate((table) => {
+      table.scrollLeft = table.scrollWidth;
+      return table.scrollLeft;
+    }),
+  ).toBeGreaterThan(0);
+
+  // Keep both dimensions fixed so a resize notification cannot mask a stale flag.
+  await description.evaluate((table) => {
+    const { width, height } = table.getBoundingClientRect();
+    table.style.width = `${width}px`;
+    table.style.height = `${height}px`;
+  });
+  const size = () =>
+    description.evaluate((table) => {
+      const { width, height } = table.getBoundingClientRect();
+      return [width, height];
+    });
+  const before = await size();
+  await settings(page);
+  const wrap = settingsDialog(page).getByRole("switch", {
+    name: "Wrap text in message tables",
+    exact: true,
+  });
+  await expect(wrap).toBeChecked();
+  await wrap.focus();
+  await page.keyboard.press("Space");
+  await expect(wrap).not.toBeChecked();
+  await closeSettings(page);
+  await expect(description).toHaveCSS("white-space", "pre");
+  await expect(description).toHaveCSS("overflow-x", "scroll");
+  expect(await size()).toEqual(before);
+
+  await page.reload();
+  await expect(description).toHaveCSS("white-space", "pre");
+  await settings(page);
+  await expect(wrap).not.toBeChecked();
+  await wrap.click();
+  await expect(wrap).toBeChecked();
+  await chooseColorMode(page, "Dark");
+  const increase = button(settingsDialog(page), "Increase interface size");
+  for (let step = 0; step < 5; step += 1) await increase.click();
+  await closeSettings(page);
+  await page.setViewportSize({ width: 960, height: 950 });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "1.5");
+  await expect(description).toHaveCSS("white-space", "pre-wrap");
+  await expect(description).toHaveCSS("overflow-x", "hidden");
+  await expect(wide).toHaveCSS("overflow-x", "scroll");
+  expect(await wide.locator("code").textContent()).toBe(path);
+  expect(
+    await wide.evaluate((table) => {
+      table.scrollLeft = table.scrollWidth;
+      return table.scrollLeft + table.clientWidth;
+    }),
+  ).toBeCloseTo(await wide.evaluate((table) => table.scrollWidth), 0);
+});
+
 test.describe("message width reading position", () => {
   test.use({
     historyCounts: { alpha: 60, beta: 1 },

@@ -160,7 +160,7 @@ second
 - unordered one
 - unordered two
 
-| ${"wide-column-one-".repeat(10)} | ${"wide-column-two-".repeat(10)} | ${"wide-column-three-".repeat(10)} |
+| wide-column-one-${"WideColumnOne".repeat(8)} | wide-column-two-${"WideColumnTwo".repeat(8)} | wide-column-three-${"WideColumnThree".repeat(8)} |
 | --- | --- | --- |
 | one | two | three |
 
@@ -594,12 +594,14 @@ function PortraitVideoFixture() {
   );
 }
 
+const tableConfigPath = `/var/local/${"configuration".repeat(5)}`;
+
 function Fixture() {
   useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [scope, setScope] = useState(forwarded ? owner.session.scope : "fixture"),
     [tableMarkdown, setTableMarkdown] = useState(
-      "| Path | Purpose |\n| --- | --- |\n| `~/.local/share/xyz.block.buzz` | App data and plugin storage |",
+      `| Path | Purpose |\n| --- | --- |\n| \`${tableConfigPath}\` | App data and plugin storage |`,
     ),
     [review, setReview] = useState<Attachment>();
   const reviewTrigger = useRef<HTMLButtonElement>(null);
@@ -618,10 +620,10 @@ function Fixture() {
             status: "ready",
             rows: (
               [
-                // Wider than any message bubble.
+                // The two long path components still overflow after wrapping.
                 [
                   "c",
-                  "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/old` | `~/.local/share/xyz.block.buzz/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
+                  `| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | \`${tableConfigPath}/old\` | \`${tableConfigPath}/new\` |\n| Config | \`~/.config/old\` | \`~/.config/new\` |`,
                 ],
                 // Fits this feed, but not a narrow one.
                 ["d", tableMarkdown],

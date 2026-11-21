@@ -42,7 +42,10 @@ const defaultClasses: CodeClasses = {
  * the ancestors. Observe content too: edits can change scrollWidth without
  * resizing a table at its width cap. Measure on mount because the resize
  * observer's first report arrives after the row's. */
-export function observeTableOverflow(table: HTMLTableElement | null) {
+export function observeTableOverflow(
+  table: HTMLTableElement | null,
+  layoutAttribute?: string,
+) {
   if (!table || typeof ResizeObserver === "undefined") return;
   const update = () => {
     const overflow = String(table.scrollWidth > table.clientWidth);
@@ -57,6 +60,12 @@ export function observeTableOverflow(table: HTMLTableElement | null) {
     characterData: true,
     subtree: true,
   });
+  // A layout preference can change scrollWidth at the same table size.
+  if (layoutAttribute)
+    contentObserver.observe(table.ownerDocument.documentElement, {
+      attributes: true,
+      attributeFilter: [layoutAttribute],
+    });
   return () => {
     observer.disconnect();
     contentObserver.disconnect();

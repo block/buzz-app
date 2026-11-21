@@ -74,6 +74,13 @@
     /* Default spacing remains usable without storage. */
   }
   document.documentElement.dataset.messageDensity = density;
+  try {
+    document.documentElement.dataset.wrapMessageTables = String(
+      localStorage.getItem("buzz-wrap-message-tables.v1") !== "false",
+    );
+  } catch {
+    /* Message tables wrap by default without storage. */
+  }
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

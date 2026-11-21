@@ -111,6 +111,8 @@ it.each([
       error: null,
       messageWidth: "narrow",
       messageWidthError: null,
+      wrapMessageTables: true,
+      wrapMessageTablesError: null,
       fontScale: 1,
       fontError: null,
       accent: "citrus",

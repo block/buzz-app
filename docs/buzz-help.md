@@ -1048,6 +1048,9 @@ Quitting Buzz also turns it off.
 - **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
   Interface**. Narrow is the default; Wide gives messages and the composer
   50% more room when the pane is wide enough. The choice is saved on this device.
+- **Wrap text in message tables** is on by default. Wide tables can still
+  scroll sideways. Turn wrapping off in **Settings → Appearance →
+  Conversations** to keep cells on a single line. The choice is saved on this device.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling

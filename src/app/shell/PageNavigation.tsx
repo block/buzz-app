@@ -43,7 +43,10 @@ export function PageNavigation({
   selected: string;
   /** The open destination when `selected` is the app that lists it. */
   currentPage?: string;
-  onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
+  onSelect(
+    key: string,
+    options?: Pick<NavigationOpenOptions, "focus"> & { resume?: boolean },
+  ): void;
   /** The app dock is a vertical icon tablist; the sidebar lists rows. */
   placement?: "sidebar" | "dock";
   /** Show inactive page previews in this navigation surface on hover-capable devices. */
@@ -60,7 +63,10 @@ export function PageNavigation({
         variant="dock"
         orientation="vertical"
         value={pages.some((page) => page.key === selected) ? selected : null}
-        onValueChange={(key) => onSelect(key, { focus: "preserve" })}
+        // Switching apps returns to where you were in the app you pick.
+        onValueChange={(key) =>
+          onSelect(key, { focus: "preserve", resume: true })
+        }
         // The selected app returns from a page opened in its navigation.
         onReselect={(key) => {
           if (key !== currentPage) onSelect(key, { focus: "preserve" });

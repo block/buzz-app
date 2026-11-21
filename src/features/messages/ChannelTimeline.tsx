@@ -818,9 +818,23 @@ function Timeline({
     !!navigation?.traversal &&
     lostPlace !== navigation.signal &&
     navigation.position(TIMELINE_PLACE) !== undefined;
+  // A visit opened with focus preserved, as the dock opens its apps, keeps the
+  // channel's reading place: its message isn't revealed again. Its own focus
+  // reads "preserve" once it is no longer the open visit, so the first answer
+  // holds.
+  const passive = useRef<{ signal?: AbortSignal; preserve: boolean }>({
+    preserve: false,
+  });
+  if (navigation && passive.current.signal !== navigation.signal)
+    passive.current = {
+      signal: navigation.signal,
+      preserve: navigation.focus === "preserve",
+    };
   const targetId =
     inlineTarget?.messageId ??
-    (navigation?.target.kind === "conversation" && !returning
+    (navigation?.target.kind === "conversation" &&
+    !returning &&
+    !passive.current.preserve
       ? navigation.target.messageId
       : undefined);
   const rows = chronologicalRows;
@@ -1295,6 +1309,23 @@ function Timeline({
     focusesTarget,
     present,
   ]);
+  // A link's visit the dock reopened shows the channel at its own reading
+  // place, so the channel's rows are its presentation.
+  useLayoutEffect(() => {
+    if (
+      !navigation ||
+      navigation.signal.aborted ||
+      !passive.current.preserve ||
+      returning ||
+      navigation.target.kind !== "conversation" ||
+      !navigation.target.messageId ||
+      !rows.length ||
+      presentedVisit.current?.signal === navigation.signal
+    )
+      return;
+    present(navigation);
+    navigation.complete({ status: "opened" });
+  }, [navigation, returning, rows, present]);
   // Leaving a link's visit once it was presented, revealed or returned to, by
   // navigating on or unmounting, records where the reader was for Back/Forward.
   useLayoutEffect(() => {

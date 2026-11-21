@@ -1212,8 +1212,11 @@ function ThreadMessages({
     inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
+    // A visit opened with focus preserved, as the dock opens its apps, leaves
+    // focus where it was.
     focus:
       revealFocus !== false &&
+      (inlineReveal !== undefined || navigation?.focus !== "preserve") &&
       !(
         navigation?.target.kind === "conversation" &&
         navigation.target.panel === "members"

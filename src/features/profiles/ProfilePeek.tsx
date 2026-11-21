@@ -14,8 +14,18 @@ import {
   cloneElement,
   type ReactElement,
   type FocusEvent,
+  type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import {
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+} from "../../shared/design-system/ui/Menu";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { writeClipboardText } from "../../shared/clipboard";
+import { npubEncode } from "nostr-tools/nip19";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import { useMessageDensity } from "../../shared/theme/message-density";
@@ -101,6 +111,10 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
+  // The person's own menu: right-click, the Menu key or Shift+F10 on the avatar.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [messaging, setMessaging] = useState(false);
+  const notify = useToastNotification();
   const compact = useMessageDensity() === "compact";
   const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const [handedOff, setHandedOff] = useState(false);
@@ -134,6 +148,7 @@ export function ProfilePeek({
   const focusRegion = {
     onFocus: () => onFocusChange?.(true),
     onBlur: (event: FocusEvent<HTMLElement>) => {
+      returningFromMenu.current = false;
       const next = event.relatedTarget;
       // Window blur retains the browser's return-focus target.
       if (!next && document.activeElement === event.target) return;
@@ -160,13 +175,33 @@ export function ProfilePeek({
     pubkey,
     viewer,
     agent,
-    enabled: open,
+    // Kept through a menu's Send message, which closes the menu first.
+    enabled: open || menuOpen || messaging,
     onOpened(link) {
       if (!onOpen(link))
         throw new Error("Could not open the conversation. Try again.");
       setOpen(false);
     },
   });
+  // A pointer open leaves focus where it was on close, as message menus do.
+  const menuByPointer = useRef(false);
+  // The menu's return focus is not a fresh request to preview the person.
+  const returningFromMenu = useRef(false);
+  const openMenu = (event: KeyboardEvent | MouseEvent) => {
+    // A touch long-press stays the browser's, as on the message itself.
+    if ((event.nativeEvent as PointerEvent).pointerType === "touch") return;
+    // The avatar's menu, not its message's.
+    event.preventDefault();
+    event.stopPropagation();
+    menuByPointer.current = event.type === "contextmenu";
+    setOpen(false);
+    setMenuOpen(true);
+  };
+  const copyPublicKey = () =>
+    void writeClipboardText(npubEncode(pubkey)).then(
+      () => notify("Public key copied", "success"),
+      () => notify("Couldn’t copy the public key. Try again.", "error"),
+    );
   const openProfile = () => {
     const avatar = document.getElementById(triggerId);
     avatar?.focus();
@@ -181,164 +216,217 @@ export function ProfilePeek({
     }
   };
   return (
-    <PreviewCard
-      trigger={cloneElement(
-        trigger as ReactElement<
+    <>
+      <PreviewCard
+        trigger={cloneElement(
+          trigger as ReactElement<
+            {
+              id?: string;
+              onClick?: () => void;
+              onContextMenu?: (event: MouseEvent) => void;
+              onKeyDown?: (event: KeyboardEvent) => void;
+            } & typeof focusRegion
+          >,
           {
-            id?: string;
-            onClick?: () => void;
-          } & typeof focusRegion
-        >,
-        {
-          id: triggerId,
-          onClick: openProfile,
-          ...focusRegion,
-          onFocus: () => {
-            if (returningFromProfile.current === "pending")
-              returningFromProfile.current = "returned";
-            focusRegion.onFocus();
+            id: triggerId,
+            onClick: openProfile,
+            onContextMenu: openMenu,
+            onKeyDown: (event: KeyboardEvent) => {
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+              )
+                openMenu(event);
+            },
+            ...focusRegion,
+            onFocus: () => {
+              if (returningFromProfile.current === "pending")
+                returningFromProfile.current = "returned";
+              focusRegion.onFocus();
+            },
           },
-        },
-      )}
-      id={previewId}
-      open={open}
-      onOpenChange={(next, details) => {
-        // Crossing an avatar on the active toolbar's safe pointer route must
-        // not put a new preview between the message and its actions. A compact
-        // row reveals its actions anywhere in the row, avatar included, so
-        // there they do not mark a route.
-        const avatar = document.getElementById(triggerId);
-        if (
-          next &&
-          !compact &&
-          details.reason === "trigger-hover" &&
-          document.activeElement !== avatar &&
-          avatar?.closest("[data-actions-revealed]")
-        ) {
-          details.cancel();
-          return;
-        }
-        // Return focus is not a fresh request to preview the same identity.
-        if (next && returningFromProfile.current) {
-          if (
-            returningFromProfile.current === "returned" &&
-            details.reason === "trigger-hover" &&
-            pointerLeft.current
-          ) {
-            returningFromProfile.current = null;
-            setWatchReturnPointer(false);
-          } else {
+        )}
+        id={previewId}
+        open={open}
+        onOpenChange={(next, details) => {
+          const fromMenu = returningFromMenu.current;
+          returningFromMenu.current = false;
+          if (next && fromMenu && details.reason === "trigger-focus") {
             details.cancel();
             return;
           }
-        }
-        if (!next && message.opening && details.reason === "trigger-hover") {
-          details.cancel();
-          return;
-        }
-        if (next) {
-          setHoveredAction(undefined);
-          setHandedOff(false);
-        }
-        setOpen(next);
-      }}
-      side="right"
-      className={[styles.card, handedOff && styles.handedOff]
-        .filter(Boolean)
-        .join(" ")}
-      aria-label={`${name} profile preview`}
-      actionRef={profileButton}
-    >
-      <div className={styles.content} {...focusRegion}>
-        <div className={styles.lockup} data-no-picture={!picture || undefined}>
-          <div className={styles.backdrop}>
-            <ProfileBackdrop src={picture} />
-          </div>
-          <div className={styles.artwork}>
-            <div className={styles.portrait}>
-              <AgentAvatar
-                session={session}
-                agentPubkey={pubkey}
-                channelId={channelId}
-                src={picture}
-                alt=""
-                fallback={name}
-                size="fill"
-                shape={agent ? "squircle" : "circle"}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-            </div>
-          </div>
-          <div className={styles.identity}>
-            <div className={`${styles.name} text-label-sm`}>
-              {agent && <RobotIcon aria-label="Agent" size={14} />}
-              {name}
-            </div>
-            {session && <OtherName session={session} pubkey={pubkey} />}
-            {session && <LocalTime session={session} pubkey={pubkey} />}
-            {session && (
-              <UserStatusDisplay
-                session={session}
-                userId={pubkey}
-                size="caption"
-              />
-            )}
-          </div>
-        </div>
-        <div
-          className={styles.actions}
-          data-hovered-action={hoveredAction}
-          onPointerLeave={() => setHoveredAction(undefined)}
-        >
-          <IconButton
-            ref={profileButton}
-            data-profile-action="profile"
-            onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") setHoveredAction("profile");
-            }}
-            size="sm"
-            shape="round"
-            variant="subtle"
-            aria-label="View profile"
-            onClick={openProfile}
-            icon={
-              <span className={styles.actionContent}>
-                {agent ? <RobotIcon size={16} /> : <UserIcon size={16} />}
-                <span className={styles.actionText} aria-hidden="true">
-                  Profile
-                </span>
-              </span>
+          // Crossing an avatar on the active toolbar's safe pointer route must
+          // not put a new preview between the message and its actions. A compact
+          // row reveals its actions anywhere in the row, avatar included, so
+          // there they do not mark a route.
+          const avatar = document.getElementById(triggerId);
+          if (
+            next &&
+            !compact &&
+            details.reason === "trigger-hover" &&
+            document.activeElement !== avatar &&
+            avatar?.closest("[data-actions-revealed]")
+          ) {
+            details.cancel();
+            return;
+          }
+          // Return focus is not a fresh request to preview the same identity.
+          if (next && returningFromProfile.current) {
+            if (
+              returningFromProfile.current === "returned" &&
+              details.reason === "trigger-hover" &&
+              pointerLeft.current
+            ) {
+              returningFromProfile.current = null;
+              setWatchReturnPointer(false);
+            } else {
+              details.cancel();
+              return;
             }
-          />
-          {message.available && (
+          }
+          if (!next && message.opening && details.reason === "trigger-hover") {
+            details.cancel();
+            return;
+          }
+          if (next) {
+            setHoveredAction(undefined);
+            setHandedOff(false);
+          }
+          setOpen(next);
+        }}
+        side="right"
+        className={[styles.card, handedOff && styles.handedOff]
+          .filter(Boolean)
+          .join(" ")}
+        aria-label={`${name} profile preview`}
+        actionRef={profileButton}
+      >
+        <div className={styles.content} {...focusRegion}>
+          <div
+            className={styles.lockup}
+            data-no-picture={!picture || undefined}
+          >
+            <div className={styles.backdrop}>
+              <ProfileBackdrop src={picture} />
+            </div>
+            <div className={styles.artwork}>
+              <div className={styles.portrait}>
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={pubkey}
+                  channelId={channelId}
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={agent ? "squircle" : "circle"}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+              </div>
+            </div>
+            <div className={styles.identity}>
+              <div className={`${styles.name} text-label-sm`}>
+                {agent && <RobotIcon aria-label="Agent" size={14} />}
+                {name}
+              </div>
+              {session && <OtherName session={session} pubkey={pubkey} />}
+              {session && <LocalTime session={session} pubkey={pubkey} />}
+              {session && (
+                <UserStatusDisplay
+                  session={session}
+                  userId={pubkey}
+                  size="caption"
+                />
+              )}
+            </div>
+          </div>
+          <div
+            className={styles.actions}
+            data-hovered-action={hoveredAction}
+            onPointerLeave={() => setHoveredAction(undefined)}
+          >
             <IconButton
+              ref={profileButton}
+              data-profile-action="profile"
+              onPointerEnter={(event) => {
+                if (event.pointerType !== "touch") setHoveredAction("profile");
+              }}
               size="sm"
               shape="round"
               variant="subtle"
-              data-profile-action="message"
-              onPointerEnter={(event) => {
-                if (event.pointerType !== "touch") setHoveredAction("message");
-              }}
-              aria-label="Message"
-              loading={message.opening}
-              onClick={() => void message.open()}
+              aria-label="View profile"
+              onClick={openProfile}
               icon={
                 <span className={styles.actionContent}>
-                  <ChatCircleIcon size={16} />
+                  {agent ? <RobotIcon size={16} /> : <UserIcon size={16} />}
                   <span className={styles.actionText} aria-hidden="true">
-                    Message
+                    Profile
                   </span>
                 </span>
               }
             />
+            {message.available && (
+              <IconButton
+                size="sm"
+                shape="round"
+                variant="subtle"
+                data-profile-action="message"
+                onPointerEnter={(event) => {
+                  if (event.pointerType !== "touch")
+                    setHoveredAction("message");
+                }}
+                aria-label="Message"
+                loading={message.opening}
+                onClick={() => void message.open()}
+                icon={
+                  <span className={styles.actionContent}>
+                    <ChatCircleIcon size={16} />
+                    <span className={styles.actionText} aria-hidden="true">
+                      Message
+                    </span>
+                  </span>
+                }
+              />
+            )}
+          </div>
+          {message.error && (
+            <p role="alert" className="text-body-sm text-danger">
+              {message.error}
+            </p>
           )}
         </div>
-        {message.error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {message.error}
-          </p>
-        )}
-      </div>
-    </PreviewCard>
+      </PreviewCard>
+      <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+        <MenuPopup
+          aria-label={`${name} actions`}
+          anchor={() => document.getElementById(triggerId)}
+          align="start"
+          finalFocus={() => {
+            if (menuByPointer.current) return false;
+            // ponytail: a close that moves focus elsewhere leaves this set until
+            // the card's next open or the avatar's blur; one focus open is skipped.
+            returningFromMenu.current = true;
+            return document.getElementById(triggerId);
+          }}
+        >
+          <MenuItem onClick={openProfile}>View profile</MenuItem>
+          {message.available && (
+            <MenuItem
+              disabled={message.opening}
+              onClick={() => {
+                setMessaging(true);
+                void message.open().then((error) => {
+                  setMessaging(false);
+                  if (error) notify(error, "error");
+                });
+              }}
+            >
+              Send message
+            </MenuItem>
+          )}
+          <MenuItem onClick={copyPublicKey}>Copy public key</MenuItem>
+        </MenuPopup>
+      </MenuRoot>
+    </>
   );
 }

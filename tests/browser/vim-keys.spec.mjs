@@ -206,3 +206,74 @@ test("leader keys follow Buzz's shortcut when it is rebound", async ({
     page.getByRole("menuitem", { name: "Settings", exact: true }),
   ).not.toHaveAttribute("aria-keyshortcuts");
 });
+
+// Painted selection, the preview card's own Tab and Escape, and Base UI's
+// return focus need a browser; the person menu is unit-tested.
+test("a selection stays visible through its menus, and Tab and j reach people and rows", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await enableVimKeys(page);
+  await nothingFocused(page);
+  const painted = (locator) =>
+    locator.evaluate(
+      (element) => getComputedStyle(element, "::after").content !== "none",
+    );
+  await page.keyboard.press("j");
+  await expect.poll(() => selectedId(page)).not.toBeNull();
+  const newest = await selectedId(page);
+  const message = page.locator(`[data-message-id="${newest}"] > [data-layout]`);
+  await expect(message).toBeFocused();
+  expect(await painted(message)).toBe(true);
+
+  // Tab reaches the message's author; go opens the person's own menu, and
+  // the message stays marked while it is open.
+  await page.keyboard.press("Tab");
+  const avatar = page.getByRole("button", {
+    name: "View Fixture Reader profile",
+  });
+  await expect(avatar).toBeFocused();
+  await page.keyboard.press("g");
+  await page.keyboard.press("o");
+  const actions = page.getByRole("menu", { name: "Fixture Reader actions" });
+  await expect(
+    actions.getByRole("menuitem", { name: "View profile", exact: true }),
+  ).toHaveAttribute("aria-keyshortcuts", "v");
+  expect(await painted(message)).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+  await expect(avatar).toBeFocused();
+  // The menu's return focus does not reopen the person's card, so one Escape
+  // goes back to the message.
+  await page.keyboard.press("Escape");
+  await expect.poll(() => selectedId(page)).toBe(newest);
+  await expect(avatar).not.toBeFocused();
+
+  // The message's own menu returns focus to the message, not its author.
+  await page.keyboard.press("g");
+  await page.keyboard.press("o");
+  await expect(page.getByRole("menu")).toBeVisible();
+  expect(await painted(message)).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(message).toBeFocused();
+  // Focus can reach a just-opened menu late; until then the menu still owns
+  // Escape, and the conversation does not take it as a move to the composer.
+  await page.keyboard.press("g");
+  await page.keyboard.press("o");
+  await expect(page.getByRole("menu")).toBeVisible();
+  await message.focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(message).toBeFocused();
+
+  // j and k step between sidebar rows, which have no arrow keys of their own.
+  await page.keyboard.press("\\");
+  const nav = page.getByRole("navigation", { name: "Subscribed channels" });
+  await expect(nav.getByRole("button", { name: "Alpha" })).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(nav.getByRole("button", { name: "Beta" })).toBeFocused();
+  await page.keyboard.press("k");
+  await expect(nav.getByRole("button", { name: "Alpha" })).toBeFocused();
+});

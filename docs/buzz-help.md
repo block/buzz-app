@@ -431,6 +431,10 @@ Quitting Buzz also turns it off.
   the message. Links keep their own menu; uploaded images and videos have media
   actions. Other media and text you already selected keep the system menu.
   Touch long-press keeps text selection.
+- Right-click the author's avatar, or press Shift+F10 or the Menu key on it, for
+  that person's menu: **View profile**, **Send message** and **Copy public
+  key**. A message selected with the keyboard shows a quiet wash with a bar at
+  its start, and keeps it while focus is on one of its parts or in its menu.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
@@ -1042,9 +1046,10 @@ Quitting Buzz also turns it off.
 - **Vim keys** is an optional plugin, off by default; turn it on in
   **Settings → Plugins**. Then `j`/`k` move between messages and list items
   (with nothing selected, `j` selects the newest message you can see),
-  `gg`/`G` go to the top or bottom, and `go` opens the selected message's or
-  conversation's actions, each with a key that runs it; while it is on, every
-  menu shows those keys. Space starts leader keys and shows what can follow:
+  `gg`/`G` go to the top or bottom, and `go` opens the selected message's,
+  person's or conversation's actions, each with a key that runs it; while it
+  is on, every menu shows those keys. In a selected message, `Tab` moves to
+  its author, links, files and reactions and Escape returns to the message. Space starts leader keys and shows what can follow:
   `Space /` searches where you are, `Space Space` switches conversation and
   `Space s k` opens Settings → Shortcuts. `]b`/`[b` step through
   conversations, `H`/`L` go back and forward, `i` starts typing and Escape

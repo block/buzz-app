@@ -55,8 +55,9 @@ export function useProfileMessage({
     !!viewer &&
     viewer !== pubkey &&
     ready;
+  /** Resolves with the error it shows, or "" when it opened or did not start. */
   async function open() {
-    if (!available || !session || attempt.current || !messageable()) return;
+    if (!available || !session || attempt.current || !messageable()) return "";
     const controller = new AbortController();
     attempt.current = controller;
     setOpening(true);
@@ -65,16 +66,19 @@ export function useProfileMessage({
       const link = await messagePersonLink(session, pubkey, controller.signal);
       if (!controller.signal.aborted) onOpened(link);
     } catch (reason) {
-      if (!controller.signal.aborted)
-        setError(
+      if (!controller.signal.aborted) {
+        const message =
           reason instanceof Error
             ? reason.message
-            : "Could not open the conversation. Try again.",
-        );
+            : "Could not open the conversation. Try again.";
+        setError(message);
+        return message;
+      }
     } finally {
       if (attempt.current === controller) attempt.current = null;
       if (!controller.signal.aborted) setOpening(false);
     }
+    return "";
   }
   return { available, opening, error, open };
 }

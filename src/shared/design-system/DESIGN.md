@@ -956,7 +956,11 @@ Channel and chat sidebar rows whose context menu is visible keep their hover
 treatment through dismissal, without changing the selected destination. Selected
 rows retain their selected treatment. `ContextMenuTrigger` exposes
 `data-context-menu-present` for this visible lifetime, including the exit fade;
-features keep the row's treatment with its existing surface owner.
+features keep the row's treatment with its existing surface owner. A shared
+Menu also marks the element that had focus when it opened with
+`data-menu-origin` while it is mounted (a submenu's parent menu is not
+marked), so a row that opened a list-level menu, such as a keyboard-selected
+message, can keep its selected treatment.
 
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its

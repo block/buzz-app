@@ -26,6 +26,8 @@ import {
   step,
   top,
   typing,
+  messageStops,
+  stepPart,
 } from "./motion";
 import { createPending, SHOW_AFTER_MS } from "./pending";
 import { LEADER, type Sequence, type SequenceGroup } from "./sequences";
@@ -241,6 +243,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
   key("pane-composer", "Focus the message box", control("j"), focusComposer);
   key("pane-messages", "Focus the messages", control("k"), focusMessages);
   key("insert", "Type a message", { key: "i" }, focusComposer);
+  // Within a message: its author, links, files and reactions, then back.
+  key(
+    "next-part",
+    "Next part of the message",
+    { key: "Tab" },
+    () => stepPart(true),
+    { when: () => !!messageStops() },
+  );
+  key(
+    "previous-part",
+    "Previous part of the message",
+    { key: "Tab", shift: true },
+    () => stepPart(false),
+    { when: () => !!messageStops() },
+  );
   key(
     "leave",
     "Leave the field or control",

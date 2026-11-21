@@ -53,9 +53,15 @@ function fixture(ids = ["one", "two", "three"], newest = ids.at(-1)) {
   return { list, composer, controller, box };
 }
 
-function key(list: HTMLElement, name: string, modifiers = {}) {
+function key(
+  list: HTMLElement,
+  name: string,
+  modifiers = {},
+  target: Element | null = document.activeElement,
+) {
   const event = {
     key: name,
+    target,
     altKey: false,
     ctrlKey: false,
     metaKey: false,
@@ -125,6 +131,22 @@ it("returns to the composer on Escape and ignores modified or unselected keys", 
   expect(key(list, "Escape")).toBe(true);
   expect(document.activeElement).toBe(composer);
   expect(key(list, "ArrowUp")).toBe(false);
+});
+
+it("ignores a key that reached the list from elsewhere after focus returned", () => {
+  // A menu in the list's tree returns focus to the message while its Escape
+  // is still bubbling; that Escape closed the menu and must not move on.
+  const { list, box } = fixture();
+  selectNewestMessage(list);
+  const menu = document.createElement("div");
+  list.append(menu);
+  expect(key(list, "Escape", {}, menu)).toBe(false);
+  expect(document.activeElement).toBe(box("three"));
+  // Opening, a menu owns the keys before focus moves into it.
+  box("three")?.setAttribute("data-menu-origin", "");
+  expect(key(list, "Escape")).toBe(false);
+  expect(key(list, "ArrowUp")).toBe(false);
+  expect(document.activeElement).toBe(box("three"));
 });
 
 it("finds the selected message's reaction trigger, preferring its action bar", () => {

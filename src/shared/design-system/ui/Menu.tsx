@@ -8,6 +8,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useRef,
   useState,
   type ComponentProps,
   type ReactNode,
@@ -15,6 +16,38 @@ import {
 
 // null is an ordinary menu; a boolean is a context menu's visible lifetime.
 const ContextMenuPresence = createContext<boolean | null>(null);
+
+/**
+ * Marks what had focus when a menu opened with `data-menu-origin` while the
+ * menu is mounted, so the row it acts on can keep its selected treatment.
+ * A submenu's origin is its parent menu, which is not marked.
+ */
+function useMenuOrigin() {
+  const origin = useRef<HTMLElement | null>(null);
+  const attached = useRef(false);
+  return useCallback((popup: HTMLDivElement | null) => {
+    attached.current = !!popup;
+    if (popup) {
+      const active = popup.ownerDocument.activeElement;
+      if (
+        !origin.current &&
+        active instanceof HTMLElement &&
+        active !== popup.ownerDocument.body &&
+        !active.closest(".buzz-menu-popup")
+      ) {
+        active.setAttribute("data-menu-origin", "");
+        origin.current = active;
+      }
+      return;
+    }
+    // A ref change detaches and reattaches the same popup; keep the origin.
+    queueMicrotask(() => {
+      if (attached.current) return;
+      origin.current?.removeAttribute("data-menu-origin");
+      origin.current = null;
+    });
+  }, []);
+}
 
 export type MenuHandle<Payload = unknown> = BaseMenu.Handle<Payload>;
 /** Connects one MenuRoot to detached MenuTriggers, such as a list's rows. */
@@ -134,12 +167,14 @@ function PositionedPopup({
   const letters = useMenuLetters();
   const { ref: focusRef } = focus;
   const { ref: lettersRef } = letters;
+  const originRef = useMenuOrigin();
   const popupRef = useCallback(
     (element: HTMLDivElement | null) => {
+      originRef(element);
       focusRef(element);
       lettersRef(element);
     },
-    [focusRef, lettersRef],
+    [originRef, focusRef, lettersRef],
   );
   const contextMenu = useContext(ContextMenuPresence) !== null;
   return (

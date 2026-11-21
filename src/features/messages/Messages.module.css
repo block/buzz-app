@@ -3721,25 +3721,38 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   }
 }
 
-/* A keyboard-selected message holds the same wash steady, ringed with the
-   focus colour, without changing the row's layout box. */
+/* A keyboard-selected message: a quiet wash and a focus-coloured bar at its
+   start, without changing the row's layout box. It stays while focus is on
+   one of its parts, such as its author, or in a menu it opened. Standalone
+   selectors: see the :focus-within note above. */
 html[data-keyboard-navigation] .message:focus-visible {
   outline: none;
+}
+html[data-keyboard-navigation] .message:focus-within,
+html[data-keyboard-navigation] .message[data-menu-origin],
+html[data-keyboard-navigation] .message:has([data-menu-origin]) {
   isolation: isolate;
 }
-html[data-keyboard-navigation] .message:focus-visible::after {
+html[data-keyboard-navigation] .message:focus-within::after,
+html[data-keyboard-navigation] .message[data-menu-origin]::after,
+html[data-keyboard-navigation] .message:has([data-menu-origin])::after {
   content: "";
   position: absolute;
   inset-block: 0;
   inset-inline: calc(-1 * var(--space-2));
   z-index: -1;
   border-radius: var(--radius-row);
-  background: var(--surface-message-highlight);
-  box-shadow: inset 0 0 0 2px var(--border-focus);
+  /* The bar: straight, inset from the row's rounded start. */
+  background:
+    linear-gradient(var(--border-focus), var(--border-focus)) var(--space-1)
+    center / 2px calc(100% - var(--space-3)) no-repeat
+    var(--affordance-selected);
   pointer-events: none;
 }
 @media (forced-colors: active) {
-  html[data-keyboard-navigation] .message:focus-visible {
+  html[data-keyboard-navigation] .message:focus-within,
+  html[data-keyboard-navigation] .message[data-menu-origin],
+  html[data-keyboard-navigation] .message:has([data-menu-origin]) {
     outline: 2px solid Highlight;
   }
 }

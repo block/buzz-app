@@ -6,6 +6,7 @@
 import { WHICH_KEY } from "./pending";
 import {
   activeMessageList,
+  focusTarget,
   selectedMessage,
   selectMessage,
 } from "../../features/messages/message-selection";
@@ -129,6 +130,24 @@ export function step(down: boolean) {
     const newest = visibleMessages(topModal() ?? activeMessageList()).at(-1);
     if (newest) return selectMessage(newest);
   }
+  // Sidebar rows are Tab stops without arrow keys; step between them.
+  if (origin && sidebar()?.contains(origin)) {
+    const rows = conversationRows().filter(
+      (row) => row.getClientRects().length,
+    );
+    const after = (row: HTMLElement) =>
+      !!(
+        origin.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    const next = down
+      ? rows.find(after)
+      : rows.filter((row) => row !== origin && !after(row)).at(-1);
+    if (next) {
+      next.scrollIntoView({ block: "nearest" });
+      return focusKeyboardTarget(next);
+    }
+    return;
+  }
   // Past what is rendered, scrolling loads more.
   scroller()?.scrollBy({ top: down ? LINE : -LINE });
 }
@@ -157,8 +176,50 @@ export const halfPage = (down: boolean) =>
     (rows) => rows[Math.floor(rows.length / 2)],
   );
 
-/** Leave a field or control, as Escape leaves insert mode. */
-export const leave = () => focused()?.blur();
+/** Parts of a message that take focus: its author, links, files, reactions. */
+const PART =
+  'a[href], button:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The focused message, then its parts in order; undefined when the focus is
+ * not in a message or it has no parts. Its hover toolbar is left to `go`.
+ */
+export function messageStops() {
+  const origin = focused();
+  const row = origin?.closest<HTMLElement>(ROW);
+  if (!origin || !row || origin.matches(TYPING)) return;
+  const parts = [...row.querySelectorAll<HTMLElement>(PART)].filter(
+    (part) =>
+      part.closest(ROW) === row &&
+      !part.closest('[role="group"]') &&
+      part.getClientRects().length > 0 &&
+      !part.closest(UNAVAILABLE),
+  );
+  return parts.length
+    ? { row, stops: [focusTarget(row), ...parts] }
+    : undefined;
+}
+
+/** Tab / Shift-Tab: the message's next or previous part, wrapping to itself. */
+export function stepPart(forward: boolean) {
+  const found = messageStops();
+  if (!found) return;
+  const { row, stops } = found;
+  const index = Math.max(0, stops.indexOf(focused() as HTMLElement));
+  const next =
+    stops[(index + (forward ? 1 : -1) + stops.length) % stops.length];
+  if (next === stops[0]) selectMessage(row);
+  else focusKeyboardTarget(next);
+}
+
+/** Escape: from a message's part back to the message; else leave the field. */
+export function leave() {
+  const origin = focused();
+  const row = origin?.closest<HTMLElement>(ROW);
+  if (origin && row && !origin.matches(TYPING) && origin !== focusTarget(row))
+    return selectMessage(row);
+  origin?.blur();
+}
 
 export const focusComposer = () => focusKeyboardTarget(composerFocusTarget());
 

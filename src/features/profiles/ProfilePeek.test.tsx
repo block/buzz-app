@@ -18,6 +18,7 @@ import { localAgentsFixture } from "../agents/local-testing";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { newMessageLink } from "../direct-messages/message-person";
+import { npubEncode } from "nostr-tools/nip19";
 import { ProfilePeek } from "./ProfilePeek";
 
 beforeEach(() => {
@@ -295,5 +296,53 @@ it("opens on hover over revealed message actions only in compact density", async
     f.view.unmount();
     f.owner.dispose();
     vi.useRealTimers();
+  }
+});
+
+it("the avatar's Menu key opens the person's own menu, which messages them and copies their key", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const outer = vi.fn();
+  const listen = (event: KeyboardEvent) => outer(event.key);
+  document.addEventListener("keydown", listen);
+  try {
+    f.open.mockResolvedValueOnce("dm-1");
+    screen.getByRole("button", { name: "Avatar" }).focus();
+    await user.keyboard("{ContextMenu}");
+    const menu = await screen.findByRole("menu", { name: "Morgan actions" });
+    // Its message's menu, further up, never sees the key.
+    expect(outer).not.toHaveBeenCalledWith("ContextMenu");
+    expect(
+      screen.getByRole("menuitem", { name: "View profile" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: "Copy public key" }));
+    expect(await navigator.clipboard.readText()).toBe(npubEncode(person));
+    await waitFor(() => expect(menu).not.toBeInTheDocument());
+    // A keyboard open returns focus to the avatar; a pointer open leaves it.
+    const avatar = screen.getByRole("button", { name: "Avatar" });
+    await waitFor(() => expect(avatar).toHaveFocus());
+    avatar.blur();
+    fireEvent.contextMenu(avatar);
+    await screen.findByRole("menu", { name: "Morgan actions" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(avatar).not.toHaveFocus();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Avatar" }));
+    // Closing the menu first must not abandon the conversation it opens.
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Send message" }),
+    );
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(
+      [person],
+      expect.any(AbortSignal),
+    );
+    await waitFor(() =>
+      expect(f.onOpen).toHaveBeenCalledWith("buzz://channel/dm-1"),
+    );
+  } finally {
+    document.removeEventListener("keydown", listen);
+    f.view.unmount();
+    f.owner.dispose();
   }
 });

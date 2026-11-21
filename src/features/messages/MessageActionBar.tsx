@@ -295,15 +295,26 @@ function MessageActionBarControls({
       data-message-id={messageId}
       // The shared popup preserves moved focus; retirement also revokes
       // return-focus ownership, including a retained hidden source row.
-      finalFocus={() =>
-        live.current && !handingOffFocus
-          ? children
-            ? contextFocus.current?.isConnected
-              ? contextFocus.current
-              : false
-            : !openedByPointer
-          : false
-      }
+      finalFocus={() => {
+        if (!live.current || handingOffFocus) return false;
+        if (!children) return !openedByPointer;
+        const target = contextFocus.current;
+        if (!target?.isConnected) return false;
+        // Base UI refines a landing to its first tabbable descendant, which
+        // would move a selected message's focus to its author. Unless the
+        // close moved focus elsewhere, the message takes it back itself.
+        const active = target.ownerDocument.activeElement;
+        if (target.matches("[data-message-id] > [data-layout]")) {
+          if (
+            !active ||
+            active === target.ownerDocument.body ||
+            active.closest(".buzz-menu-popup")
+          )
+            target.focus({ preventScroll: true });
+          return false;
+        }
+        return target;
+      }}
     >
       <AfterMenuClose.Provider
         value={(action) => {

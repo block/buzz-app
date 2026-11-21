@@ -268,7 +268,6 @@ function boundaryFixture({ reading = false } = {}) {
   );
   owners.push(owner);
   const unreadIds = new Set<string>(),
-    forcedIds = new Set<string>(),
     unknownIds = new Set<string>(),
     pendingIds = new Set<string>(),
     ineligibleIds = new Set<string>(),
@@ -329,7 +328,7 @@ function boundaryFixture({ reading = false } = {}) {
           !row.huddle &&
           row.audience !== "agents" &&
           row.authorId !== viewer.pubkey &&
-          (unreadIds.has(row.id) || forcedIds.has(row.id)),
+          unreadIds.has(row.id),
       )
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))[0];
     return {
@@ -390,7 +389,6 @@ function boundaryFixture({ reading = false } = {}) {
             : ("eligible" as const),
         ...(pendingIds.has(id) ? { pending: true } : {}),
         unread: unreadIds.has(id),
-        forced: forcedIds.has(id),
         viewing: false,
         ...(!unreadIds.has(id) && !receiptIds.has(id)
           ? { prefixRead: true as const }
@@ -524,7 +522,6 @@ function boundaryFixture({ reading = false } = {}) {
     tree,
     unread,
     unreadIds,
-    forcedIds,
     unknownIds,
     pendingIds,
     ineligibleIds,
@@ -620,10 +617,8 @@ it("waits for entry and unread evidence before selecting a verified entry bounda
   });
   const firstUnread = h.row(message(h.peer, "c", "First unread message", 4));
   const laterUnread = h.row(message(h.peer, "c", "Later unread message", 5));
-  h.forcedIds.add(own.id);
   h.unreadIds.add(agents.id);
   h.unreadIds.add(firstUnread.id);
-  h.forcedIds.add(firstUnread.id);
   h.unreadIds.add(laterUnread.id);
   const rows = [own, agents, joined, firstUnread, laterUnread];
   const mounted = render(h.tree("c", rows));
@@ -4103,7 +4098,7 @@ it("places no line on an arrival while older unloaded history is unread", async 
     await h.dwell();
     h.catchUp.mockClear();
     // Marked unread elsewhere; catch-up's activity mark never reads it.
-    h.forcedIds.add(older.id);
+    h.unreadIds.add(older.id);
     h.publish();
     setDocumentActive(false);
     const arrival = h.row(message(h.peer, "c", "Arrived while away", 11));

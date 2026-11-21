@@ -4941,7 +4941,7 @@ it("a DM row opened as its thread reads only up to a top-level message it never 
 });
 
 it.each([false, true])(
-  "opening a conversation's tab preserves channel forced-unread intent (left channel: %s)",
+  "opening a conversation's tab preserves a message marked unread elsewhere (left channel: %s)",
   async (leftChannel) => {
     const h = fixture();
     render(h.view);
@@ -4954,11 +4954,15 @@ it.each([false, true])(
     );
     await act(async () => {
       await h.owner.session.unread.enterChannel("room");
-      await h.owner.session.unread.markMessageUnread("room", h.mention.id);
+      await h.owner.session.unread.markUnreadLocal({
+        kind: "message",
+        channelId: "room",
+        messageId: h.mention.id,
+      });
     });
     if (leftChannel) act(() => h.owner.session.unread.leaveChannel("room"));
-    const force = h.journal()?.localUnread["message-force:room"];
-    expect(force).toBeDefined();
+    const mark = h.journal()?.localUnread[`msg:${h.mention.id}`];
+    expect(mark).toBeDefined();
     const thread = rows().find((row) =>
       row.textContent?.includes("A thread update"),
     );
@@ -4976,11 +4980,10 @@ it.each([false, true])(
         "false",
       ),
     );
-    expect(h.journal()?.localUnread["message-force:room"]).toBe(force);
-    if (!leftChannel)
-      expect(
-        h.owner.session.unread.attention("room", h.mention.id).forced,
-      ).toBe(true);
+    expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBe(mark);
+    expect(h.owner.session.unread.attention("room", h.mention.id).unread).toBe(
+      true,
+    );
   },
 );
 

@@ -240,7 +240,14 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   await chooseDefaultSkinTone(page);
   await open(page, app);
-  const event = app.append("primary", "alpha", "Message actions browser check");
+  // A peer's message: your own messages never offer Mark as unread.
+  const event = app.append(
+    "primary",
+    "alpha",
+    "Message actions browser check",
+    true,
+    false,
+  );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );

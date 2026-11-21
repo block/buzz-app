@@ -77,7 +77,6 @@ const session = {
     attention: (_channel: string, id: string) => ({
       status: "eligible" as const,
       unread: Number(id.slice(4)) >= 100,
-      forced: false,
       viewing: false,
     }),
   },

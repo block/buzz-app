@@ -186,8 +186,9 @@ viewport):
   Catch-up uses the same cancellable reading lease.
 - A DM is read whole. Any earned dwell in a DM, on visible rows or at the bottom,
   advances the DM's channel frontier through the newest retained verified message
-  (replies included) and ends a local manual unread on the DM. It writes no
-  `activity:` or per-message marks. Like catch-up, it never uses wall time.
+  (replies included) and ends a local manual unread on the DM and this
+  device's reminders on the messages it reads, except one the visit showed
+  when it was marked unread. It writes no `activity:` or per-message marks. Like catch-up, it never uses wall time.
   A thread reader (`reading(channelId, rootId)`) shows only its thread, so its
   dwell stops the frontier just before the earliest message outside that thread
   that the frontier still leaves unread: a top-level message or a reply in
@@ -332,7 +333,10 @@ timeline and the thread being read, without reading unopened threads' replies.
   root loads takes the thread's mark when the root resolves as that baseline.
   A message marked while a reader shows it is not cleared by that reader's
   display until its visit measures the row away or ends (unmount, retarget,
-  a hidden window or pane); another pane's visit is independent.
+  a hidden window or pane); another pane's visit is independent. Its saved
+  mark counts as reaching the conversation's newest message then, so that
+  visit's own reading of what it already held keeps it; reading a newer
+  arrival advances past it and clears it, as any advance does.
   A thread marked while its pane presents it, whether or not any row fits
   fully on screen, keeps its mark through that visit's catch-ups until the
   visit ends; a later visit's catch-up clears it, and an advance of its mark
@@ -340,6 +344,13 @@ timeline and the thread being read, without reading unopened threads' replies.
   `aria-hidden`, or a viewer's `inert` on the page's top-level elements) only
   pauses reading and the same visit resumes; `[hidden]` anywhere, or `[inert]`
   on the pane or its containers, ends the visit.
+  A message's **Mark as unread** menu action uses it on that one message,
+  never its replies. It is not offered on your own messages or on
+  coordination between agents, which are never unread. A marked DM, mention
+  or reply in a followed thread is attention again: it is in Activity, so the
+  sidebar's Unreads first moves its conversation up, and its row counts it,
+  until you come back and read it. Any other channel message marked unread
+  lights only its own row; it never enters Activity or moves anything.
   On a whole channel, after a complete snapshot, it syncs as
   a version-2 group, and reading the channel clears it on every device; without
   a complete snapshot, or while a peer group is held back, it stays on this
@@ -354,7 +365,8 @@ The sidebar separates ordinary unread from directed attention. Ordinary backlog
 or local manual intent strengthens the channel label; protected attention alone
 retains its dot without bolding a caught-up, unmuted channel. Confirmed-muted channels
 suppress ordinary automatic unread styling and offscreen cues without clearing
-unread evidence; explicit manual unread can still strengthen the label.
+unread evidence; explicit manual unread, including an ordinary message marked
+unread on its own, can still strengthen the label.
 Pending or failed mute changes do not suppress these cues. Muted DMs also suppress
 automatic unread bolding. Confirmed-muted destinations, including DMs and Solo chats,
 do not contribute to “N unread” offscreen counts or avatar previews, even for
@@ -566,39 +578,36 @@ still require retained evidence of their own.
 `markCapturedMessagesRead(messageIds)` is an optional explicit operation for a
 caller that already captured verified message IDs. It records only the eligible
 per-message reads in that set: it does not expand to replies or descendants,
-advance a channel/thread prefix, or include later arrivals. After the saved
-action succeeds, only those IDs' visit-local forced-unread overlays are cleared;
-the shared message-force hint and independent channel, root, and thread marks
+advance a channel/thread prefix, or include later arrivals. It clears only
+those IDs' `msg:` reminders; independent channel, root, and thread marks
 remain. The input is deduplicated, and if any ID is no longer verified,
 accessible, or retained as a readable message, the whole operation rejects
 before saving rather than returning partial results. If local read-state
 retention would need to raise its device-wide floor for these marks, or cannot
 retain a selected message's receipt under the durable
 coverage rules, the save rejects unchanged with `CapturedReadWouldWidenError` or
-`CapturedReadNotRetainedError`. The selected local unread overlays remain in
-place on either rejection. A full journal and reserve can make an exact read
+`CapturedReadNotRetainedError`. The selected reminders remain in place on
+either rejection. A full journal and reserve can make an exact read
 remain unavailable: another accepted read may move the floor without restoring
 capacity, so retrying is not guaranteed to succeed. Callers must not silently
 retry unrelated reads or substitute a broader channel/thread read. If a caller
 offers a broader read as an alternative, it must be a separate explicit user
-choice. A newer shared message-force hint can also fence a save, so retry the
-same explicit set only after preserving that newer intent. Older hosts may omit
+choice. Older hosts may omit
 this capability, so callers must check it before invoking it.
 
 A successful captured read returns one `ReadMutationResult` for the entire
 set. Offer full-action Undo only when both `result.undoScope === "captured-action"`
 and `result.undo` are present. Older hosts may return no handle or an untagged
 saved-marker-only handle: the presence of `undo` alone does not promise receipt
-or visit-overlay restoration. No host-version check is needed. The scope tag is
+restoration. No host-version check is needed. The scope tag is
 omitted whenever the full-action handle is withheld and from the inverse's saved
 result; it does not promise that a returned handle will remain valid.
 
 The tagged `undo` reverses that action's exact device-local receipt and
-retention changes, restores saved `msg:<id>` reminders it cleared, and restores
-only the visit-local forced overlays it actually removed. Already-read and own
-messages stay read unless the action cleared their existing reminder or forced
-overlay. It never rewinds a synced channel/thread prefix, creates a new manual
-reminder for ordinary unread, or changes the shared `message-force:` hint.
+retention changes and restores saved `msg:<id>` reminders it cleared.
+Already-read and own messages stay read unless the action cleared their
+existing reminder. It never rewinds a synced channel/thread prefix or creates
+a new manual reminder for ordinary unread.
 Ordinary unread restored by Undo remains eligible for normal automatic reading.
 These exact receipts are local-only and do not schedule publication or an empty
 flush. Earlier pending publication still proceeds without expiring the handle.
@@ -608,7 +617,7 @@ retention entries changed by that action, and only while those entries and the
 selected messages' read scopes still match the action's saved after-state. A
 later read of any selected message or saved local-unread intent expires the
 handle, even if that later read is subsequently undone or selected only authored
-messages. Unrelated channel reads, forced-unread overlays on other messages,
+messages. Unrelated channel reads, reminders on other messages,
 publication bookkeeping, and unchanged peer receipts carried in an admitted
 coordinate's newer envelope do not expire it on their own. Retention pressure
 can still expire it by moving or removing an inverse entry, exhausting the space
@@ -619,17 +628,11 @@ rather than overwriting newer state. A new read-state owner rotates the opaque
 journal token; ordinary saves in that owner's session preserve it. The
 bounded before-action receipt delta lives only in the returned handle; there is
 no persistent undo history or relay protocol change. A successful handle is
-one-shot. A failed storage transaction leaves receipts and visit overlays
+one-shot. A failed storage transaction leaves receipts and reminders
 unchanged and can be retried with that handle. Invalidation of the selected
-messages or their action validity also expires Undo.
-A queued force-unread intent for any captured ID suppresses the handle if it is
-pending when the result is returned, and rejects an existing handle if it starts
-before the inverse transaction. Overlays are restored only after that transaction
-succeeds and while the original visit still exists. If a visit ends while the
-transaction commits, the durable inverse can succeed without resurrecting the
-ended visit's overlays. Changes during commit return suppress only the affected
-IDs' overlay restoration, not overlays in unaffected captured visits. Consumers
-must tolerate omitted or expired handles.
+messages or their action validity also expires Undo. A Mark as unread on a
+captured ID queued after the read saves before the inverse can run, so it
+expires the handle. Consumers must tolerate omitted or expired handles.
 
 `prepareChannelRead(channelId, rootId?)` captures the channel's existing
 prefix/time cut and owned local-mark keys once. Invoke its returned function to
@@ -642,9 +645,7 @@ incoming replies below a retained canonical root. Each captured reply keeps its 
 message ID and timestamp. It reads no root, other thread, or subsequently loaded
 reply, even one with an older timestamp. It clears the selected thread's local
 mark and captured reply marks; independent channel, root-message and other-thread
-marks remain. The shared message-unread sidebar hint also remains until channel
-open reconciles it: that hint has no subtree ownership, even when this window
-has a forced-message overlay. Per-message receipts stay device-local, as with
+marks remain. Per-message receipts stay device-local, as with
 `markMessageRead`.
 Neither operation acquires or disposes a consumer's reading lease or discovers
 all historical messages/marks.
@@ -674,10 +675,8 @@ only Undo, not the saved read. The thread operation additionally requires its
 captured message evidence to remain valid.
 
 Prepared channel/thread read results may expose an optional `undo` only when
-that action cleared saved local-unread journal markers without clearing a
-covered forced overlay. The handle is also withheld if a force mark for covered
-messages is queued while the read saves. These prefix-read handles restore
-saved reminders only, unlike the exact captured-message inverse above. A direct
+that action cleared saved local-unread journal markers. These prefix-read
+handles restore saved reminders only, unlike the exact captured-message inverse above. A direct
 `markMessageRead()` call does not provide an inverse. Undo runs in a new storage
 transaction and never rewinds or publishes a synced frontier. These conditional
 results do not make every read operation undoable.
@@ -789,8 +788,8 @@ evicted under pressure. Reading an already covered message saves nothing. Only
 frontier-only hints can be pruned; older messages may look unread again. No synthetic
 channel prefix is introduced to fit. Exact captured-message reads reject the whole
 save if any selected message would be absent from retained journal/reserve state and
-above the existing local floor; their caller leaves the selected unread overlays
-unchanged on rejection.
+above the existing local floor; the selected reminders stay unchanged on
+rejection.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.

@@ -174,7 +174,12 @@ it("follows the sidebar row a visit quieted, and keeps manual unread", () => {
   fake.set("a", {
     observedCount: 4,
     attentionCount: 1,
-    row: { observedCount: 0, attentionCount: 0, threadCount: 0 },
+    row: {
+      observedCount: 0,
+      attentionCount: 0,
+      threadCount: 0,
+      markedCount: 0,
+    },
   });
   expect(state()).toEqual({ unread: false, attention: 0 });
   fake.set("a", { observedCount: 0, manual: "local-only" });

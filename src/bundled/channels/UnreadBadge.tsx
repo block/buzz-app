@@ -16,7 +16,8 @@ type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
  * its messages and threads stay unread elsewhere. */
 const shown = (snapshot: UnreadSnapshot) => snapshot.row ?? snapshot;
 
-/** Bold tracks ordinary backlog; protected attention has its own dot. */
+/** Bold tracks ordinary backlog; protected attention has its own dot. An
+ * ordinary message marked unread stays bold under mute. */
 export function ordinaryUnread(
   snapshot: UnreadSnapshot,
   dm: boolean,
@@ -26,6 +27,7 @@ export function ordinaryUnread(
   const count = observedCount ?? 0;
   return (
     snapshot.manual !== "none" ||
+    !!snapshot.row?.markedCount ||
     (!muted && (dm ? count > 0 : count > (attentionCount ?? 0)))
   );
 }

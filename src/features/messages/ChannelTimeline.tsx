@@ -128,7 +128,7 @@ type NewMessageBoundaryBaseline = {
   channelId: string;
   revision?: number;
   messageIds: ReadonlySet<string> | undefined;
-  attention: Map<string, Pick<MessageAttention, "unread" | "forced"> | null>;
+  attention: Map<string, Pick<MessageAttention, "unread"> | null>;
 };
 // Inline message seeks can unmount the timeline without ending its channel visit.
 // Weak keys retain entry evidence only for the existing MessageManagement token.
@@ -600,13 +600,11 @@ function Timeline({
       const previous = baseline.attention.get(row.id);
       if (
         previous !== undefined &&
-        (previous === null ||
-          previous.unread !== attention.unread ||
-          previous.forced !== attention.forced)
+        (previous === null || previous.unread !== attention.unread)
       )
         return { ready: true };
       // Ineligible means no attention category, not that an incoming row is read.
-      if (attention.forced || attention.unread)
+      if (attention.unread)
         return afterRead ? { ready: true, messageId: row.id } : { ready: true };
       if (attention.prefixRead) afterRead = true;
     }
@@ -654,7 +652,7 @@ function Timeline({
           row.id,
           attention.status === "unknown" || attention.pending
             ? null
-            : { unread: attention.unread, forced: attention.forced },
+            : { unread: attention.unread },
         );
     }
     visitBoundaries.set(visitToken, { boundary: newMessageBoundary, baseline });
@@ -704,7 +702,7 @@ function Timeline({
       // Unresolved evidence may never resolve: no line, rather than a hold.
       if (attention.status === "unknown" || attention.pending)
         return { ready: true };
-      if (attention.unread || attention.forced) {
+      if (attention.unread) {
         // Absence at blur is not enough: an older page or a backdated delivery
         // is history, not an arrival. The store must also know of nothing
         // unread before it, which in incomplete history needs its sample.

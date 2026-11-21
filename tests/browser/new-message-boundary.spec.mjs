@@ -380,7 +380,7 @@ appTest(
           return (
             attention.status !== "unknown" &&
             !attention.pending &&
-            (attention.forced || attention.unread)
+            attention.unread
           );
         });
       },

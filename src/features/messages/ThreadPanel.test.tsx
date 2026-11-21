@@ -835,7 +835,6 @@ function unreadReplies(h: ReturnType<typeof messagesHarness>) {
         through === undefined
           ? unread.has(id)
           : (asOf.get(through)?.has(id) ?? false),
-      forced: false,
     }),
     threadReadThrough: () => read.through,
   });

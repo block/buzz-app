@@ -683,60 +683,16 @@ it("rejects an empty edit of a message with original attachments without deletin
   expect(h.publications).toHaveLength(0);
 });
 
-it("reverses an own message force from its menu without changing notification eligibility", async () => {
+it("offers no read state on your own message", async () => {
   const h = await fixture();
-  const target = {
-    kind: "message" as const,
-    channelId: "room",
-    messageId: h.original.id,
-  };
-  const channelTarget = { kind: "channel" as const, channelId: "room" };
-  expect(h.owner.session.unread.snapshot(target).manual).toBe("none");
-  expect(h.owner.session.unread.attention("room", h.original.id)).toMatchObject(
-    {
-      status: "ineligible",
-      unread: false,
-      forced: false,
-    },
-  );
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Mark as unread" }),
-  );
-  await waitFor(() =>
-    expect(
-      h.owner.session.unread.attention("room", h.original.id),
-    ).toMatchObject({
-      status: "ineligible",
-      unread: false,
-      forced: true,
-    }),
-  );
-  expect(h.owner.session.unread.snapshot(target)).toMatchObject({
-    observedCount: 0,
-    manual: "local-only",
-  });
-  expect(h.owner.session.unread.snapshot(channelTarget).manual).toBe(
-    "local-only",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Mark as read" }),
-  );
-  await waitFor(() =>
-    expect(h.owner.session.unread.attention("room", h.original.id).forced).toBe(
-      false,
-    ),
-  );
-  expect(h.owner.session.unread.snapshot(target)).toMatchObject({
-    observedCount: 0,
-    manual: "none",
-  });
-  expect(h.owner.session.unread.snapshot(channelTarget).manual).toBe("none");
-  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
   expect(
-    await screen.findByRole("menuitem", { name: "Mark as unread" }),
+    await screen.findByRole("menuitem", { name: "Edit message" }),
   ).toBeVisible();
-  expect(h.publications).toHaveLength(0);
+  expect(screen.queryByRole("menuitem", { name: "Mark as unread" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Mark as read" })).toBeNull();
+  expect(h.owner.session.unread.attention("room", h.original.id).unread).toBe(
+    false,
+  );
 });
 
 it.each(["member", "guest"] as const)(
@@ -1662,8 +1618,10 @@ it("offers no keyboard unread action on an agents-audience message", async () =>
 });
 
 async function heldUnreadAction(action: "read" | "unread") {
-  const h = await fixture(action === "unread", true);
+  const h = await fixture(false, true);
   cleanup();
+  if (action === "unread")
+    await h.owner.session.unread.markMessageRead("room", h.original.id);
   const result = deferred<void>();
   const mutation = vi.fn(async () => {
     await result.promise;
@@ -1679,7 +1637,7 @@ async function heldUnreadAction(action: "read" | "unread") {
       ...h.owner.session.unread,
       ...(action === "read"
         ? { markMessageRead: mutation }
-        : { markMessageUnread: mutation }),
+        : { markUnreadLocal: mutation }),
     },
   };
   const row = session.channels.window("room").rows[0];
@@ -1699,7 +1657,14 @@ async function heldUnreadAction(action: "read" | "unread") {
   fireEvent.click(
     await screen.findByRole("menuitem", { name: `Mark as ${action}` }),
   );
-  expect(mutation).toHaveBeenCalledExactlyOnceWith("room", row.id);
+  if (action === "read")
+    expect(mutation).toHaveBeenCalledExactlyOnceWith("room", row.id);
+  else
+    expect(mutation).toHaveBeenCalledExactlyOnceWith({
+      kind: "message",
+      channelId: "room",
+      messageId: row.id,
+    });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   return { result, mutation, mounted, surface, session };
 }

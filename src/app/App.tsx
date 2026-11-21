@@ -48,6 +48,7 @@ import {
 } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import { registerAppShortcuts } from "./shortcuts";
+import { installComposerClickFocus } from "./focus-navigation";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
@@ -384,6 +385,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
   );
+  useEffect(installComposerClickFocus, []);
   const workspace = route.workspace;
   const presentation = workspace.page
     ? pagePresentation(workspace.page)

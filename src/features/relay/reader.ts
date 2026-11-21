@@ -13,6 +13,8 @@ export type Priority = "foreground" | "background";
 export type ReadOptions = {
   signal?: AbortSignal;
   priority?: Priority;
+  /** Whether the selected channel is still waiting for this head at admission. */
+  navigation?: (() => boolean) | undefined;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
   /** Replaces the reader's deadline for new work; a joining read keeps the
@@ -42,6 +44,7 @@ export type RelayReader = {
 };
 type ReadValue = readonly RelayEvent[] | AgentLibrary;
 type Consumer = {
+  navigation?: (() => boolean) | undefined;
   resolve(value: ReadValue): void;
   reject(error: unknown): void;
 };
@@ -162,10 +165,15 @@ export function createRelayReader(
       if (active.length >= 3) return;
       const background = active.some((job) => job.priority === "background");
       const queued = [...jobs.values()].filter((job) => !job.running);
+      const navigation = queued.find((job) =>
+        [...job.consumers].some((consumer) => consumer.navigation?.()),
+      );
       const job =
+        navigation ??
         queued.find((job) => job.priority === "foreground") ??
         (!background ? queued[0] : undefined);
       if (!job) return;
+      if (job === navigation) job.priority = "foreground";
       job.running = true;
       job.queued();
       job.fetched = profiling.start("read.fetch", job.id);
@@ -246,6 +254,7 @@ export function createRelayReader(
     {
       signal,
       priority = "foreground",
+      navigation,
       fresh = false,
       deadlineMs = timeoutMs,
     }: ReadOptions = {},
@@ -355,6 +364,7 @@ export function createRelayReader(
     return new Promise<ReadValue>((resolve, reject) => {
       const release = () => signal?.removeEventListener("abort", abort);
       const consumer: Consumer = {
+        navigation,
         resolve(events) {
           release();
           resolve(events);

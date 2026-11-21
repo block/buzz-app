@@ -731,7 +731,11 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
             if coordinate == "channel-filter" {
-                if let Some(windows) = data.get("activeWindowSeconds") {
+                // Active's and Unreads' windows share one shape.
+                for windows in ["activeWindowSeconds", "unreadsWindowSeconds"]
+                    .iter()
+                    .filter_map(|field| data.get(*field))
+                {
                     let windows = windows.as_object().ok_or_else(invalid)?;
                     if windows.len() > choice_limit
                         || windows.iter().any(|(group, value)| {

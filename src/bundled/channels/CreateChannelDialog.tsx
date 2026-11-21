@@ -403,7 +403,9 @@ function OpenCreateChannelDialog({
                     />{" "}
                   </>
                 ) : null}
-                {starred ? "Starred" : (destination?.name ?? "saved workspace")}
+                {starred
+                  ? "Favorites"
+                  : (destination?.name ?? "saved workspace")}
               </>
             )}
           </span>

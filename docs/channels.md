@@ -149,28 +149,23 @@ writer selects the admission contract by the event's `d` coordinate. The
 sidebar coordinates must match what the sidebar signer produces, and recipe
 coordinates must satisfy the recipe contract.
 
-Enabled sidebar pages such as Activity stay fixed above the scrolling conversation
-list. When the pinned rows run out of vertical space, scroll their area to see
-the rest. The conversation sections default to **Solo**, **Starred**,
-workspaces, **Team** (channels and forums), and **Direct messages**. After an
-upgrade from the separate Solo and Team sidebars, the previous Solo workspaces come first,
-then **Solo**, **Starred**, the previous Team workspaces and **Team**.
-Reorder them by dragging their headings or using **Move up** and **Move down**.
-The saved order syncs with workspace placement.
+The sidebar defaults to **Plugins** (apps and sidebar pages such as Activity),
+**Solo**, **Favorites**, personal workspaces, **Team** (channels and forums),
+and **Direct messages**. After an upgrade from the separate Solo and Team
+sidebars, the previous Solo workspaces come first, then **Solo**,
+**Favorites**, the previous Team workspaces and **Team**. Each section is its
+own card. Reorder cards by dragging
+their header or using **Move up** and **Move down**. The saved order syncs with
+workspace placement. Double-click a workspace's header to rename it in place.
+A card shows its first ten rows; drag its bottom edge to show more or fewer, or
+double-click the edge (or press Enter on it) to show every row and back. Rows
+past a card's edge are skipped by the keyboard until the card shows them.
 
-**Solo** and the workspaces listed in the legacy Solo record start capped at
-their newest 7 rows. **Show more** reveals the next hidden rows, up to 10;
-**Show fewer** returns to 7. Other sections, including workspaces created after
-the upgrade, start fully listed and offer **Show fewer** past 7 rows. The open
-chat, unread chats and chats an agent is working in stay listed past the cap.
-Limits are device-local view state; a Solo workspace's starting limit is saved
-there once the legacy Solo record has been read, with any step v1.0.5 saved.
-
-Drag a chat, channel, forum or DM into any workspace, into Starred, or back to
-its home section. The row’s **Move to…** menu offers the same destinations.
-Moving out of Starred clears the star. The drop target above the first
-workspace opens **Move to new workspace**. **New workspace** in the creation
-menu uses the same settings form and leaves existing placements in place.
+Drag a chat, channel, forum or DM into any workspace, into Favorites, or back
+to its home section. The row’s **Move to…** menu offers the same destinations.
+Moving out of Favorites clears the star. **New workspace** in the creation
+menu leaves existing placements in place and starts no chat in the new
+workspace.
 
 Each workspace heading has a compact creation control. Its arrow opens
 **New chat**, **New channel**, and **New DM**. The last choice becomes that
@@ -183,29 +178,13 @@ repeat that action. Collapsed section keys and sidebar scroll remain separate, s
 They survive page switches in the same mounted sidebar, are saved when that
 sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
-palette; legacy sidebar filters are ignored. Each section's ellipsis menu offers
-**Filter → All, Unreads, Active**. Unreads shows channels with observed or
-manually marked unread messages or unread thread activity. Muted channels with
-retained unread backlog remain eligible even when their ordinary sidebar cues
-are quiet: mute does not mark messages read. Active opens the compact
-**Active in the last** dialog with 1-, 7-, 30-, and 90-day text-only radio tiles
-in two columns.
-Apply saves the selected rolling window and activates the filter;
-Cancel leaves the saved choice unchanged. The dialog retains its draft after a
-failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until their activity is read. Activity applies in one update when a read finishes; a read that fails partway still applies what it read, and channels it did not reach stay available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
-separate kind-30078 `channel-workspace-filter` record. They leave saved sorting and section
-membership unchanged; earlier device-only filter choices are ignored, not automatically published.
-Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
-The currently open channel remains visible in its section regardless of its filter,
-however it was opened. Navigating away removes that exception. When a filter hides
-channels, the **Filter** submenu appends those eligible channels below its three
-options and a separator, in the existing section order. Choosing a Solo chat
-opens the chat and preserves the section's disclosure. Choosing another channel
-opens both the section and channel. The filter stays in place. Choices reuse
-the sidebar's channel-type icons, unread emphasis, attention/thread dots and working-agent
-indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
-their header and menu so the filter can be changed or a hidden row opened.
-Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups
+palette. Cards don't filter: each card lists every conversation filed in it.
+Its ellipsis menu offers **Sort** (**Recent** or **A–Z**, plus **Unreads
+first**) and **Layout**. The card's height decides how many rows show; drag its
+bottom edge, or double-click it to show every row. Rows past the edge that
+need you are counted in the card's "N unread" badge. Account preferences saved
+by older apps may still hold card filters; they are never read, so such a card
+shows everything, sorted. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
@@ -245,25 +224,19 @@ conversation content and unmount when leaving Messages.
 
 ## Sidebar sort persistence
 
-Each sidebar section can independently select **A–Z** (the default) or **Recent**.
+Each sidebar section can independently select **Recent** or **A–Z**. An unsaved section reads as A–Z, so older
+A–Z choices keep working; Solo reads as Recent and always saves its choice.
+Nothing switches a section to Recent on its own.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
 kind-30078 `channel-workspace-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
 A–Z writes a null register and removes that group's legacy override.
-Filters use the same bounded group-register shape in a separate `channel-workspace-filter`
-coordinate: Unreads is `unreads`, Active is `active`, and All
-writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
-stores each group’s duration in whole-day seconds; absence means 30 days. The
-Active dialog offers 1, 3, 7, 30 and 90 days. Presets
-and custom values share this representation. Apply publishes mode and duration
-in one encrypted update, and both hosts confirm both values on readback. Other
-modes preserve the last duration; section removal clears it. Older fixed-window
-clients still read `active` as 30 days until upgraded. Keeping this record separate leaves older clients'
-sort records unchanged. Both hosts validate, encrypt, publish and confirm filter
-writes through the existing preference queue. The UI projects pending choices,
-rolls back a failed save, and offers explicit Retry/Dismiss; a confirmed full read
-is required before writes. Removing a saved section resets its filter before
-removing the section. A saved startup copy is display-only until relay reads recover.
-Like sorting, this is whole-record last-write-wins; another client sees changes
+Sorting is the only saved view choice. Older apps also saved card filters in
+separate `channel-filter` and `channel-workspace-filter` records. This app never
+queries, replays, decodes or writes them, and their arrival never triggers a
+reread, so an unreadable one cannot break loading and an older app's record
+stays intact. Sort writes go through the existing preference queue, and a confirmed
+full read is required before writes. A saved startup copy is display-only until
+relay reads recover. Like sorting, this is whole-record last-write-wins; another client sees changes
 when it loads or refreshes preferences, without a new automatic reconciliation loop.
 
 Workspaces use a compact encrypted `channel-workspaces` record with sections,
@@ -290,8 +263,8 @@ The relay selects one whole record when same-account writers race, so
 confirmation can precede a later replacement of the same edit.
 
 A cold load or uncached reconnect gap starts three preference reads in parallel,
-with seven filters total. If the unified sort or filter is absent, a fourth
-read requests the missing legacy coordinates with one or two more filters.
+with six filters total. If the unified sort is absent, a fourth read requests
+the legacy `channel-sort` with one more filter.
 These counts are before scheduler caching and coalescing. A continuous
 reconnect does not force a preference reread.
 
@@ -1792,7 +1765,7 @@ terminal, which keeps Escape and Option+Arrow for the shell.
   Solo chats and team rows alike. As in Slack, plain Option+Up/Down steps from the
   composer only while its draft is empty; with text it moves the caret by paragraph
   instead. `conversation-rows.ts` scans the rendered sidebar order after workspace
-  placement, sorting and filters. It skips collapsed sections. A
+  placement and sorting. It skips collapsed sections. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.
   Plain stepping does not wrap, and at either end it does nothing; unread stepping

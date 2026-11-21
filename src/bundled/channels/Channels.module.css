@@ -271,47 +271,29 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
-.createSectionSlot + .channelSection {
-  margin-top: 0;
+/* On the tint, a section is its own card (its surface is Panel's). Cards keep
+   their content height, let drop lines into the gap, and sit a small gap apart. */
+[data-sidebar-cards] .channelSection[data-sidebar-card] {
+  height: auto;
+  overflow: visible;
+  /* Titles and rows start 16px in, clear of the card's round corners. */
+  padding: var(--space-1) var(--space-2);
+  --affordance-panel-hover: var(--affordance-sidebar-hover);
 }
-.createSectionHitArea {
-  position: absolute;
-  inset: calc(-1 * var(--sidebar-section-gap)) 0 0;
-  pointer-events: none;
-}
-.createSectionReveal {
-  overflow: hidden;
-}
-.createSectionDrop {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  /* Match the avatar uploader's compact 80px drop area at the default scale. */
-  min-height: calc(5 * var(--space-4));
-  margin-bottom: var(--space-4);
-  padding: var(--space-2);
-  border: 2px solid transparent;
-  border-radius: var(--radius-control);
-  background: var(--surface-inset);
-  color: var(--text-subtle);
-  text-align: center;
-  transition: background-color var(--duration-state) var(--easing-state);
-}
-.createSectionDrop > svg {
-  flex-shrink: 0;
-}
-.createSectionDrop[data-drop-target] {
-  border-color: var(--text-standard);
-  border-style: dashed;
-  background: var(--affordance-subtle-hover);
-  color: var(--text-standard);
+/* Every card, Favorites included, sits the same gap from the one before it,
+   tighter than the panel gap around the app's edge. */
+[data-sidebar-cards] .channelSection {
+  --sidebar-section-gap: var(--space-1);
+  /* Cards slide smoothly to open a landing gap. */
+  transition: translate var(--duration-fast) var(--easing-state);
 }
 @media (prefers-reduced-motion: reduce) {
-  .createSectionDrop {
+  [data-sidebar-cards] .channelSection {
     transition: none;
   }
+}
+[data-sidebar-cards] .channelSection[data-sidebar-card][data-drop-target] {
+  border-radius: var(--radius-container);
 }
 [data-channel-dragging],
 .channelSection[data-section-dragging] {
@@ -335,6 +317,47 @@
   bottom: calc(var(--space-2) * -1);
   transform: translateY(50%);
 }
+/* Between cards the line sits in the middle of the gap. */
+[data-sidebar-cards] .channelSection[data-drop-edge="before"]::before {
+  top: calc(var(--sidebar-section-gap) / -2);
+}
+[data-sidebar-cards] .channelSection[data-drop-edge="after"]::before {
+  bottom: calc(var(--sidebar-section-gap) / -2);
+}
+/* A card the list can measure draws its landing line from the list instead
+   (CardDropLine): the cards below the gap slide down to give it room. */
+[data-sidebar-cards] .channelSection[data-drop-line]::before {
+  content: none;
+}
+[data-sidebar-cards] [data-drop-shift] {
+  translate: 0 var(--space-2);
+}
+/* A moved card's header, drawn as a collapsed card around the header's own
+   box (the overlay takes the header's size); it lifts with the panel shadow. */
+.cardDragOverlay {
+  block-size: calc(100% + 2 * var(--space-1));
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2));
+  cursor: grabbing;
+}
+.cardDragHeader {
+  padding: var(--space-1) var(--space-2);
+}
+.cardDropLine {
+  position: fixed;
+  z-index: 1;
+  block-size: var(--space-4);
+  pointer-events: none;
+}
+.cardDropLine::before {
+  content: "";
+  position: absolute;
+  inset-inline: var(--space-3);
+  top: 50%;
+  height: calc(var(--space-1) / 2 + 1px);
+  border-radius: var(--radius-pill);
+  background: var(--border-accent);
+  transform: translateY(-50%);
+}
 .channelDragOverlay {
   display: flex;
   align-items: center;
@@ -356,15 +379,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The highlighted destination replaces the preview while it accepts the drop. */
-body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
-  visibility: hidden;
-}
 /* The heading row is the design system's NavigationSectionHeading; this module
    keeps only the section's own label content and unread emphasis. */
 .sectionLabel {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+}
+.sectionNameEditor {
+  flex: 1 1 auto;
   min-width: 0;
 }
 .sectionTitle {
@@ -373,11 +396,11 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   overflow: hidden;
   white-space: nowrap;
 }
-/* Collapsed headings stand in for their hidden rows, using the same unread
-   evidence as the sidebar edge cues. Muted destinations stay quiet. */
+/* Collapsed headings stand in for their hidden rows: bold for backlog or for
+   anything that needs you. Muted destinations stay quiet. */
 .channelSection:has(
     > .sectionContent
-      :is([data-channel-unread], [data-channel-activity]):not(
+      :is([data-channel-unread], [data-channel-needs-you]):not(
         [data-channel-muted]
       )
   )
@@ -406,6 +429,9 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   place-items: center;
   color: var(--text-subtle);
   transition: transform 160ms ease-out;
+  /* Decorative: a click lands on the summary itself, so WebKit's Tab starts
+     from the heading rather than from the icon inside it. */
+  pointer-events: none;
 }
 details:not([open]) > summary .sectionChevron {
   transform: rotate(-90deg);
@@ -802,8 +828,8 @@ html[data-keyboard-navigation]
   align-items: center;
   gap: var(--space-2);
 }
-.priorityDot,
-.threadActivityDot {
+/* A conversation that needs you: a DM, a mention or a followed reply. */
+.needsYouDot {
   display: block;
   margin-inline-start: auto;
   flex-shrink: 0;
@@ -811,9 +837,6 @@ html[data-keyboard-navigation]
   height: 0.375rem;
   border-radius: 50%;
   background: var(--affordance-prominent-mark);
-}
-.threadActivityDot {
-  cursor: help;
 }
 .activityStale {
   margin: 0;
@@ -1025,9 +1048,7 @@ html[data-keyboard-navigation]
 [class~="buzz-sidebar-navigation"] [data-selected] .typing > span {
   background: currentColor;
 }
-[class~="buzz-sidebar-navigation"]
-  [data-selected]
-  :is(.priorityDot, .threadActivityDot) {
+[class~="buzz-sidebar-navigation"] [data-selected] .needsYouDot {
   background: var(--text-row-selected);
 }
 
@@ -1045,39 +1066,98 @@ html[data-keyboard-navigation]
   min-width: 0;
 }
 
-/* Show more and Show fewer are text actions sharing one row below a capped
-   section, which spans the row fill. Like ChannelSidebarRow, Show more's caret
-   and label sit on the row icons and titles, and Show fewer ends where trailing
-   content ends, 8px inside the fill. Show more fills the space between them, so
-   the inner edges need little padding: at the 220px minimum the two labels
-   leave only about 9px between them. */
-.sectionShowMore {
+/* A card shows every row until its grip is moved, and clips the rest; dragging
+   down reveals them. Its own formatting context keeps the last row's margin
+   inside the full height. */
+.cardRows {
+  display: flow-root;
+  /* Clip, not hidden: rows past the edge can never be scrolled into view
+     inside the card, by focus or otherwise. */
+  overflow: clip;
+}
+/* A cut-short card feathers its last visible row into the surface, beside the
+   grip's "more below" bar, with the shared scroll fade. */
+.cardRows:has([data-card-clipped]) {
+  mask-image: var(--scroll-fade-end);
+}
+/* Holds the rows and the line for unread past the edge. */
+/* A card shown as icons: every row as an identity tile, wrapping. */
+.cardTiles {
+  padding-block: var(--space-half);
+}
+.cardBody {
+  display: flow-root;
+}
+/* Unread that waits on you past the edge: its own centered line under the last row
+   that shows, so it reads as the card's, not a row's. It only comes and goes
+   as the card settles, never mid-drag. */
+.cardWaiting {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
-}
-.sectionShowMore > [data-show-more-expand] {
-  --space-row-gap: calc(var(--space-1) + var(--space-half));
-  flex: 1;
-  width: auto;
-  min-width: 0;
-  padding-inline: calc(
-      var(--space-2) +
-      var(--space-half) -
-      var(--channel-row-fill-start, 0%)
-    )
-    0;
-}
-.sectionShowMore > [data-show-more-fold] {
-  flex: 0 0 auto;
-  width: auto;
-  padding-inline: var(--space-1) var(--space-2);
-}
-.sectionShowMoreIcon {
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
-  width: var(--space-5);
-  flex: 0 0 var(--space-5);
+  padding-block-start: var(--space-half);
+}
+/* Releases and key steps settle onto a whole row; the drag itself follows the
+   pointer exactly. */
+.cardRows:not([data-resizing]) {
+  transition: max-height var(--duration-fast) var(--easing-enter);
+}
+/* The grip sits in the card's bottom edge and appears on hover. */
+.cardResize {
+  position: relative;
+  height: var(--space-2);
+  margin: 0 0 calc(-1 * var(--space-1));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  /* An open hand at rest, a closed one while dragging, like the card grab. */
+  cursor: grab;
+  touch-action: none;
+}
+.cardResize[data-resizing] {
+  cursor: grabbing;
+}
+.cardResize::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3.5rem;
+  height: 0.1875rem;
+  border-radius: var(--radius-pill);
+  background: var(--border-focus);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scaleX(calc(40 / 56));
+  transition:
+    background-color var(--duration-fast) var(--easing-state),
+    opacity var(--duration-fast) var(--easing-state),
+    transform var(--duration-fast) var(--easing-enter);
+}
+/* A card with rows past its edge keeps a quiet handle at rest; hover, focus or
+   a drag darken it. A card showing every row hides it until then. */
+.cardResize[data-more]::after {
+  background: var(--border-standard);
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .cardResize:hover::after {
+    background: var(--border-focus);
+    opacity: 1;
+    transform: translate(-50%, -50%) scaleX(1);
+  }
+}
+.cardResize:focus-visible::after,
+.cardResize[data-resizing]::after {
+  background: var(--border-focus);
+  opacity: 1;
+  transform: translate(-50%, -50%) scaleX(1);
+}
+.cardResize:focus-visible {
+  outline: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cardRows:not([data-resizing]),
+  .cardResize::after {
+    transition: none;
+  }
 }

@@ -412,7 +412,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Show a quiet item count, such as drafts, at the end of a navigation row.",
     behavior:
       "Image role with an exact spoken count; caps the visible number at 99+. Not interactive.",
-    variants: ["single digit", "multiple digits", "capped", "selected row"],
+    variants: [
+      "single digit",
+      "multiple digits",
+      "capped",
+      "selected row",
+      "corner",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

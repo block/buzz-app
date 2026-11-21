@@ -5,6 +5,8 @@ type PanelProps<T extends ElementType> = {
   children?: ReactNode;
   joined?: boolean;
   shape?: "panel" | "capsule" | "card";
+  /** No edge: the fill alone separates it from the window's tint. */
+  flat?: boolean;
 } & Omit<ComponentProps<T>, "as" | "children" | "className">;
 
 /**
@@ -29,6 +31,7 @@ export function Panel<T extends ElementType = "section">({
   children,
   joined,
   shape = "panel",
+  flat,
   ...props
 }: PanelProps<T>) {
   const Component = as ?? "section";
@@ -38,6 +41,7 @@ export function Panel<T extends ElementType = "section">({
       data-buzz-surface=""
       data-joined={joined || undefined}
       data-shape={shape}
+      data-flat={flat || undefined}
       className="panel"
     >
       {children}

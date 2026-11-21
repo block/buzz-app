@@ -1,7 +1,14 @@
 /** The sidebar's navigation landmark, which scopes every scan below. */
 export const CONVERSATION_LIST_LABEL = "Subscribed channels";
-/** What a row shows when it has unread messages or thread activity. */
-export const UNREAD_MARKERS = "[data-channel-unread], [data-channel-activity]";
+/** What a row carries while it needs you (see `needsYou` in the relay inbox):
+ * a DM, a mention of you or a reply in a thread you follow, unmuted. Ordinary
+ * channel backlog is not among them; it only makes the row bold. */
+export const NEEDS_YOU = "[data-channel-needs-you]";
+
+/** Whether a row needs you. Every scan over rendered rows asks this. */
+export function needsYou(row: Element) {
+  return row.querySelector(NEEDS_YOU) !== null;
+}
 
 /** Team rows and Solo rows carry different id attributes; both are buttons. */
 const ROWS = "button[data-channel-id], button[data-solo-channel-id]";
@@ -53,9 +60,7 @@ export function adjacentConversation(
       : rows;
   const nearest = (from: HTMLButtonElement[]) => {
     const eligible = from.filter(
-      (row) =>
-        rowId(row) !== currentId &&
-        (!unreadOnly || !!row.querySelector(UNREAD_MARKERS)),
+      (row) => rowId(row) !== currentId && (!unreadOnly || needsYou(row)),
     );
     return direction === "next" ? eligible[0] : eligible[eligible.length - 1];
   };

@@ -162,7 +162,12 @@ export function PageNavigation({
         label={label}
         title={page.preview && previewed(page) ? undefined : label}
         variant="row"
-        trailing={badge}
+        trailing={
+          <>
+            {badge}
+            <BestieUnreadBadge pageKey={page.key} />
+          </>
+        }
         icon={<span className="shell-page-icon">{pageIcon}</span>}
       />
     );

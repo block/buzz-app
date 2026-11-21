@@ -1,15 +1,13 @@
 import {
   editSidebarSort,
-  editSidebarFilter,
   validSidebarSort,
-  validSidebarFilter,
 } from "../src/features/relay/sidebar-edits.ts";
 import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
+import { defaultSidebarSort } from "../src/features/relay/sidebar-sort.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
   WORKSPACE_SORT_COORDINATE,
-  WORKSPACE_FILTER_COORDINATE,
 } from "../src/features/relay/sidebar-preferences.ts";
 import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
 
@@ -18,16 +16,6 @@ export const {
   prepare: prepareSidebarSort,
   mutate: mutateSidebarSort,
 } = sectionChoice("channel-sort", validSidebarSort, editSidebarSort, "sort");
-export const {
-  assertIntent: assertSidebarFilterIntent,
-  prepare: prepareSidebarFilter,
-  mutate: mutateSidebarFilter,
-} = sectionChoice(
-  "channel-filter",
-  validSidebarFilter,
-  editSidebarFilter,
-  "filters",
-);
 
 export const { mutate: mutateWorkspaceSort } = sectionChoice(
   "channel-sort",
@@ -36,15 +24,8 @@ export const { mutate: mutateWorkspaceSort } = sectionChoice(
   "sort",
   WORKSPACE_SORT_COORDINATE,
 );
-export const { mutate: mutateWorkspaceFilter } = sectionChoice(
-  "channel-filter",
-  validSidebarFilter,
-  editSidebarFilter,
-  "filters",
-  WORKSPACE_FILTER_COORDINATE,
-);
 
-// Both section choices use the same bounded encrypted read/edit/confirm contract.
+// The section sort choice's bounded encrypted read/edit/confirm contract.
 function sectionChoice(
   coordinate,
   validIntent,
@@ -52,15 +33,14 @@ function sectionChoice(
   field,
   wire = coordinate,
 ) {
-  const label = field === "sort" ? "sort" : "filter";
+  const label = field;
   const project = (blob, sectionIds) =>
     projectSidebarPreferences(
       undefined,
       undefined,
       undefined,
-      field === "sort" ? blob : undefined,
+      blob,
       sectionIds,
-      field === "filters" ? blob : undefined,
       wire !== coordinate,
     );
 
@@ -72,20 +52,9 @@ function sectionChoice(
       typeof intent.group !== "string" ||
       !Array.isArray(intent.sectionIds) ||
       intent.sectionIds.some((id) => typeof id !== "string") ||
-      !validIntent(
-        intent.group,
-        intent.mode,
-        intent.sectionIds,
-        intent.activeWindowSeconds,
-      ) ||
+      !validIntent(intent.group, intent.mode, intent.sectionIds) ||
       Object.keys(intent).some(
-        (key) =>
-          ![
-            "group",
-            "mode",
-            "sectionIds",
-            ...(field === "filters" ? ["activeWindowSeconds"] : []),
-          ].includes(key),
+        (key) => !["group", "mode", "sectionIds"].includes(key),
       )
     )
       throw new Error(`Invalid sidebar ${label} intent`);
@@ -140,17 +109,11 @@ function sectionChoice(
       intent.group,
       intent.mode,
       now,
-      field === "filters" ? intent.activeWindowSeconds : undefined,
     );
     const projected = project(blob, intent.sectionIds);
     if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");
-    const result = {
-      groups: projected[field] ?? {},
-      ...(field === "filters"
-        ? { activeWindowSeconds: projected.activeWindowSeconds ?? {} }
-        : {}),
-    };
+    const result = { groups: projected[field] ?? {} };
     if (blob === current.blob) return result;
     const key = nip44.v2.utils.getConversationKey(secret, viewer);
     let content;
@@ -183,13 +146,7 @@ function sectionChoice(
         ? await readHead(coordinate)
         : current;
     const draft = prepare(base, intent, secret);
-    const result = (value) =>
-      field === "filters"
-        ? {
-            filters: value.groups,
-            activeWindowSeconds: value.activeWindowSeconds,
-          }
-        : value.groups;
+    const result = (value) => value.groups;
     if (!draft.event) return result(draft);
     await publish(draft.event);
     // This checks only the requested group now, not whether the whole-blob write
@@ -207,7 +164,8 @@ function sectionChoice(
         : prepare(heads, intent, secret);
     if (
       field === "sort"
-        ? (confirmation.groups[intent.group] ?? "alpha") !== intent.mode
+        ? (confirmation.groups[intent.group] ??
+            defaultSidebarSort(intent.group)) !== intent.mode
         : confirmation.event
     )
       throw new Error(

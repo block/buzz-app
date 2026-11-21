@@ -41,7 +41,12 @@ async function pull(page, from, to) {
   if (!start || !end) throw new Error("Missing workspace header");
   await page.mouse.move(start.x + 12, start.y + start.height / 2);
   await page.mouse.down();
-  await page.mouse.move(end.x + 12, end.y + end.height / 2, { steps: 8 });
+  // The target header's middle is the tie between its two sides: aim at the
+  // half facing the way the card moves.
+  const toward = end.y < start.y ? 0.25 : 0.75;
+  await page.mouse.move(end.x + 12, end.y + end.height * toward, {
+    steps: 8,
+  });
 }
 
 // Pointer activation, collision geometry, click suppression and the signed

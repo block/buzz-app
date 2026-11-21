@@ -286,11 +286,6 @@ function AppShellContent({
       : null;
     return content;
   }, [pages, selected, sidebar, onSelect, creationInNavigation]);
-  const dockPages = orderPages(
-    pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
-    "dock",
-  );
-  const selectedDockPage = dockPages.some((page) => page.key === owner);
   return (
     <div
       data-shell-tone={tone}
@@ -367,24 +362,6 @@ function AppShellContent({
         >
           <div className="shell-actions-fixed">
             {launchers}
-            <WindowControls />
-          </div>
-        </div>
-      </header>
-
-      <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
-          <div className="shell-dock-pages">
-            <PageNavigation
-              pages={dockPages}
-              selected={owner}
-              currentPage={selected}
-              onSelect={onSelect}
-              placement="dock"
-              previews
-            />
-          </div>
-          <div className="shell-community-switcher">
             <CommunityPicker
               communities={communities}
               unreads={communityUnreads}
@@ -410,8 +387,12 @@ function AppShellContent({
                 onSelect("settings", section ? { section } : undefined)
               }
             />
+            <WindowControls />
           </div>
-        </nav>
+        </div>
+      </header>
+
+      <div className="shell-workspace">
         <div
           ref={workspaceRef}
           className="shell-dialog-frame"
@@ -421,77 +402,67 @@ function AppShellContent({
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
           <div className="relative flex min-h-0 min-w-0 flex-1">
-            <Panel as="div" joined>
-              <div className="shell-content">
-                <div
-                  id="shell-navigation"
-                  hidden={!hasNavigation}
-                  className="shell-navigation"
-                  data-sidebar-collapsible={
-                    (collapsibleSidebar && !narrow) || undefined
+            <div className="shell-content">
+              <div
+                id="shell-navigation"
+                hidden={!hasNavigation}
+                className="shell-navigation"
+                data-sidebar-collapsible={
+                  (collapsibleSidebar && !narrow) || undefined
+                }
+                data-sidebar-open={visibleSidebar || undefined}
+                aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+                inert={(collapsibleSidebar || narrow) && !visibleSidebar}
+                data-expanded={navigationOpen}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Escape" &&
+                    !event.shiftKey &&
+                    navigationOpen &&
+                    !event.defaultPrevented
+                  ) {
+                    // Closing the drawer consumes Escape, so it marks nothing read.
+                    event.preventDefault();
+                    setNavigationOpen(false);
+                    navigationToggle.current?.focus();
                   }
-                  data-sidebar-open={visibleSidebar || undefined}
-                  aria-hidden={
-                    (collapsibleSidebar || narrow) && !visibleSidebar
-                  }
-                  inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-                  data-expanded={navigationOpen}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Escape" &&
-                      !event.shiftKey &&
-                      navigationOpen &&
-                      !event.defaultPrevented
-                    ) {
-                      // Closing the drawer consumes Escape, so it marks nothing read.
-                      event.preventDefault();
-                      setNavigationOpen(false);
-                      navigationToggle.current?.focus();
-                    }
-                  }}
-                >
-                  <div className="shell-navigation-content">{navigation}</div>
-                </div>
-                <main
-                  id="main-content"
-                  tabIndex={-1}
-                  className="min-h-0 min-w-0 flex-1"
-                >
-                  <Panel as="div" joined>
-                    <PanelFrame scope={connection.scope} companion={companion}>
+                }}
+              >
+                <div className="shell-navigation-content">{navigation}</div>
+              </div>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className="min-h-0 min-w-0 flex-1"
+              >
+                {/* The conversation floats as its own card; the sidebar
+                      sits beside it on the window's tint. */}
+                <Panel as="div" flat>
+                  <PanelFrame scope={connection.scope} companion={companion}>
+                    <div
+                      id={`shell-page-${owner}`}
+                      className={
+                        fillsWorkspace
+                          ? "buzz-tabs-panel h-full min-h-0"
+                          : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                      }
+                    >
                       <div
-                        id={`shell-page-${owner}`}
-                        {...(selectedDockPage
-                          ? {
-                              role: "tabpanel",
-                              "data-focus-inset": "",
-                              "aria-labelledby": `shell-page-${owner}-tab`,
-                              tabIndex: 0,
-                            }
-                          : {})}
                         className={
                           fillsWorkspace
-                            ? "buzz-tabs-panel h-full min-h-0"
-                            : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                            ? "h-full min-h-0"
+                            : "mx-auto w-full max-w-4xl"
                         }
                       >
-                        <div
-                          className={
-                            fillsWorkspace
-                              ? "h-full min-h-0"
-                              : "mx-auto w-full max-w-4xl"
-                          }
-                        >
-                          <OpenCommunitySwitcher value={openSwitcher}>
-                            {children}
-                          </OpenCommunitySwitcher>
-                        </div>
+                        <OpenCommunitySwitcher value={openSwitcher}>
+                          {children}
+                        </OpenCommunitySwitcher>
                       </div>
-                    </PanelFrame>
-                  </Panel>
-                </main>
-              </div>
-            </Panel>
+                    </div>
+                  </PanelFrame>
+                </Panel>
+              </main>
+            </div>
           </div>
         </div>
       </div>

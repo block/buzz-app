@@ -200,7 +200,7 @@ test.describe("thread activity", () => {
     await expect(alpha.locator("[data-channel-unread-title]")).toHaveCount(0);
     await expect(alpha.locator("[data-channel-activity]")).toHaveCount(1);
     const summary = section.locator("summary");
-    const title = summary.getByText("Starred", { exact: true });
+    const title = summary.getByText("Favorites", { exact: true });
     await summary.click();
     await expect(title).toHaveCSS("font-weight", "600");
     await expect(alpha).toBeHidden();

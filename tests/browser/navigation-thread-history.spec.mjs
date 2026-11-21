@@ -903,12 +903,11 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     .get("primary/alpha")
     .find((row) => row.content.startsWith("Thread root"));
   const main = page.locator("[data-main-workspace]");
-  const topbar = page.getByRole("navigation", { name: "Apps dock" });
-  const messages = topbar.getByRole("tab", {
-    name: "Messages",
-    exact: true,
-  });
-  const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
+  // Messages is no longer a tab: the window header's Back button returns to it.
+  const messages = page.getByRole("button", { name: "Go back", exact: true });
+  const projects = page
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Workflows", exact: true });
   const inbox = activityRow(page);
   for (const leave of [inbox, projects]) {
     await page
@@ -921,13 +920,17 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     await leave.click();
     await messages.focus();
     await messages.press("Enter");
+    // Back returns to the visit that held the retained thread.
     await expect(
-      main.getByRole("tab", { name: "Alpha", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+      main.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
     await messages.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(resolve)),
     );
     await expect(messages).toBeFocused();
+    // Back restored the retained thread; return to the conversation so the
+    // next pass can open its thread again.
+    await main.getByRole("tab", { name: "Alpha", exact: true }).click();
   }
 });
 

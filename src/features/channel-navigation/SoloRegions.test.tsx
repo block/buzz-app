@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { InboxItem } from "../relay/inbox";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -2071,9 +2072,9 @@ it("withholds every chat menu for a cached conversation", async () => {
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
-it.each(["priority", "activity"] as const)(
-  "the Unread part carries %s evidence inside the source's link",
-  async (indicator) => {
+it.each(["mention", "thread reply"] as const)(
+  "the Unread part carries a %s that needs you inside the source's link, as one status",
+  async (kind) => {
     const h = fixture();
     const unread = {
       ...h.session.unread.snapshot({ kind: "channel", channelId: "shared" }),
@@ -2081,28 +2082,25 @@ it.each(["priority", "activity"] as const)(
       observedCount: 1,
       attentionCount: 1,
     };
-    const activity = {
-      ...h.session.unread.activity("shared"),
-      items:
-        indicator === "activity"
-          ? [
-              {
-                channelId: "shared",
-                rootId: "thread",
-                latestMessageId: "reply",
-                authorId: "agent",
-                createdAt: 1,
-                preview: "Needs review",
-                unreadCount: 1,
-              },
-            ]
-          : [],
+    // Activity holds the mention, or the reply in a thread you follow.
+    const inbox = {
+      status: "ready" as const,
+      freshness: "observed" as const,
+      items: [
+        {
+          channelId: "shared",
+          unreadCount: 1,
+          manual: false,
+          mentioned: kind === "mention",
+          thread: kind === "thread reply",
+        } as InboxItem,
+      ],
     };
     Object.assign(h.session, {
       unread: {
         ...h.session.unread,
         snapshot: () => unread,
-        activity: () => activity,
+        inbox: () => inbox,
       },
     });
     await h.register({
@@ -2110,14 +2108,13 @@ it.each(["priority", "activity"] as const)(
     });
     mount(h);
     const row = screen.getByRole("button", { name: /^Shared/ });
-    expect(row).toContainElement(
-      screen.getByRole("img", { name: /^1 observed unread messages/ }),
-    );
-    const dot = row.querySelector(`[data-channel-${indicator}]`);
-    expect(dot).toBeInTheDocument();
-    if (indicator === "priority")
-      expect(dot).toHaveAttribute("aria-hidden", "true");
-    else expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
+    // Needing you names the row once, in place of the observed count.
+    const status = screen.getByRole("img", { name: "1 unread" });
+    expect(row).toContainElement(status);
+    expect(within(row).getAllByRole("img", { name: /unread/ })).toHaveLength(1);
+    const cue = row.querySelector("[data-channel-needs-you]");
+    expect(cue).toBeInTheDocument();
+    expect(cue).toHaveAttribute("aria-hidden", "true");
   },
 );
 
@@ -2675,6 +2672,11 @@ it.each([false, true])(
       observedCount: 1,
       attentionCount: 0,
     };
+    const mutedInbox = {
+      status: "ready" as const,
+      freshness: "observed" as const,
+      items: [{ channelId: "owned", unreadCount: 1 } as InboxItem],
+    };
     const preferences = h.session.sidebarPreferences.snapshot();
     Object.assign(h.session, {
       sidebarPreferences: {
@@ -2684,7 +2686,12 @@ it.each([false, true])(
           data: { ...preferences.data, muted: ["owned"] },
         }),
       },
-      unread: { ...h.session.unread, snapshot: () => unread },
+      unread: {
+        ...h.session.unread,
+        snapshot: () => unread,
+        // Activity holds a mention, but the muted row never needs you.
+        inbox: () => mutedInbox,
+      },
     });
     if (!recovery)
       await h.register({
@@ -2695,17 +2702,22 @@ it.each([false, true])(
     expect(
       within(row).getByRole("img", { name: /^1 observed unread messages/ }),
     ).toBeInTheDocument();
-    expect(row.querySelector("[data-channel-priority]")).toBeNull();
+    expect(row.querySelector("[data-channel-needs-you]")).toBeNull();
   },
 );
 
-it("keeps a visible priority cue on a muted Solo recovery destination", () => {
+it("keeps unread evidence but no needs-you cue on a muted Solo recovery destination", () => {
   const h = fixture();
   const unread = {
     ...h.session.unread.snapshot({ kind: "channel", channelId: "owned" }),
     manual: "none" as const,
     observedCount: 1,
     attentionCount: 1,
+  };
+  const inbox = {
+    status: "ready" as const,
+    freshness: "observed" as const,
+    items: [{ channelId: "owned", unreadCount: 1 } as InboxItem],
   };
   const preferences = h.session.sidebarPreferences.snapshot();
   Object.assign(h.session, {
@@ -2716,11 +2728,18 @@ it("keeps a visible priority cue on a muted Solo recovery destination", () => {
         data: { ...preferences.data, muted: ["owned"] },
       }),
     },
-    unread: { ...h.session.unread, snapshot: () => unread },
+    unread: {
+      ...h.session.unread,
+      snapshot: () => unread,
+      inbox: () => inbox,
+    },
   });
   mount(h);
   const row = screen.getByRole("button", { name: /^Owned/ });
-  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  expect(row.querySelector("[data-channel-needs-you]")).toBeNull();
+  expect(
+    within(row).getByRole("img", { name: /^1 observed unread messages/ }),
+  ).toBeInTheDocument();
 });
 
 it("keeps native rename and selection with a source-owned destination", async () => {

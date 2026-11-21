@@ -1021,9 +1021,10 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
-navigation. Its optional `placement` chooses `"sidebar"` (the default), a row in the
-Messages sidebar that keeps Messages selected, or `"dock"`, an app in the left dock.
-`"topbar"` and `"toolbar"` predate the dock and remain accepted aliases for `"dock"`.
+navigation as a row in the Messages sidebar's Plugins card, which keeps Messages
+selected. Its optional `placement` (`"sidebar"`, the default, or `"dock"`, with the
+older aliases `"topbar"` and `"toolbar"`) is still accepted, but there is no
+separate dock any more: every placement shows in the Plugins card.
 Pages without `primary: true` remain search/deep-link-only even with a placement.
 The host owns ordering, active state, responsive overflow and navigation history;
 plugins do not supply header React or a second navigation stack. Placement is fixed

@@ -174,7 +174,7 @@ function ScopedSidebar({
           </div>
         </div>
       )}
-      {props.children && !restriction && (
+      {props.children && !inventory && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
@@ -183,6 +183,7 @@ function ScopedSidebar({
     <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
       {session && inventory ? (
         <ChannelInventory
+          pages={props.children}
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}
@@ -264,6 +265,7 @@ function ScopedSidebar({
                       <props.Frame
                         scope={scope}
                         resizable
+                        cards
                         label="Sidebar"
                         header={header}
                         footer={footer}

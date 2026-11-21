@@ -61,15 +61,15 @@ test.describe("section removal", () => {
     await expect(row).toHaveCount(1);
     await expect
       .poll(() => app.report.sidebarPublications?.length ?? 0)
-      .toBe(3);
+      .toBe(2);
     const reset = app.report.sidebarPublications[0];
     expect(reset.coordinate).toBe("channel-workspace-sort");
     expect(reset.blob.meta.g[`section:${id}`][2]).toBeNull();
     expect(reset.blob.groups).toEqual({ channels: "recent" });
-    const filterReset = app.report.sidebarPublications[1];
-    expect(filterReset.coordinate).toBe("channel-workspace-filter");
-    expect(filterReset.blob.meta.g[`section:${id}`][2]).toBeNull();
-    expect(filterReset.blob.groups).toEqual({});
+    // Older apps' card filter records are never written.
+    expect(
+      app.report.sidebarPublications.map(({ coordinate }) => coordinate),
+    ).toEqual(["channel-workspace-sort", "channel-workspaces"]);
     const { coordinate, blob } = app.report.sidebarPublications.at(-1);
     expect(coordinate).toBe("channel-workspaces");
     expect(blob.removedSections).toContain(id);

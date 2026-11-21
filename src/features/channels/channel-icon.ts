@@ -11,6 +11,22 @@ export type ChannelLabel = Pick<
   "name" | "private" | "channelType"
 >;
 
+const channelSurfaces = [
+  "categorical-purple",
+  "categorical-blue",
+  "categorical-green",
+  "categorical-amber",
+] as const;
+
+/** A channel name keeps the same identity fill wherever it's drawn. */
+export function channelAvatarSurface(name: string) {
+  const initial = name.trim().replace(/^#+/, "").trim().toUpperCase();
+  return (
+    channelSurfaces[(initial.codePointAt(0) ?? 0) % channelSurfaces.length] ??
+    "categorical-purple"
+  );
+}
+
 /** Ordinary channel visibility chooses its icon, as the sidebar shows it;
  * callers retain non-channel type icons. */
 export function channelIcon(

@@ -1,6 +1,11 @@
 import { defineIcon } from "./createDecorativeIcon";
 import TablerMenuIcon from "@tabler/icons-react/dist/esm/icons/IconMenu2.mjs";
 export const MenuIcon = defineIcon("tabler", TablerMenuIcon);
+import TablerGripHorizontalIcon from "@tabler/icons-react/dist/esm/icons/IconGripHorizontal.mjs";
+export const GripHorizontalIcon = defineIcon(
+  "tabler",
+  TablerGripHorizontalIcon,
+);
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { BlockLogoArtwork } from "./BlockLogo";

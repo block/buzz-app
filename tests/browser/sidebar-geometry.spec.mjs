@@ -202,17 +202,20 @@ const newOptions = (page) =>
     exact: true,
   });
 
-// Solo's New chat action stays in its heading at every scale.
+// Solo's New chat action stays in its heading at every scale: after the label
+// on its row, or, where it would cover the label, on its own row below.
 function controlsAgainstHeading(button) {
   const heading = button.closest(".navigation-section-heading");
   const summary = heading.querySelector("summary").getBoundingClientRect();
   const control = button.getBoundingClientRect();
   const box = heading.getBoundingClientRect();
   const center = (rect) => rect.top + rect.height / 2;
+  const below = control.top >= summary.bottom - 0.5;
   return {
-    afterHeadingLabel: control.left >= summary.right - 0.5,
-    centered: Math.abs(center(control) - center(box)) < 1,
-    withinHeading: control.right <= box.right + 0.5,
+    afterHeadingLabel: below || control.left >= summary.right - 0.5,
+    centered: below || Math.abs(center(control) - center(box)) < 1,
+    withinHeading:
+      control.right <= box.right + 0.5 && control.bottom <= box.bottom + 0.5,
   };
 }
 
@@ -300,19 +303,22 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
       .poll(() =>
         drafts.evaluate((row) => {
           const firstSection = document.querySelector(
-            '[aria-label="Subscribed channels"] [data-sidebar-section]',
+            '[aria-label="Subscribed channels"] [data-sidebar-section]:not([data-sidebar-section="pages"])',
           );
           if (!firstSection) return undefined;
+          // Page rows live in the Plugins card; cards sit one panel gap (0.5rem) apart.
+          const card = row.closest("[data-sidebar-card]");
+          if (!card) return undefined;
           const gap =
             firstSection.getBoundingClientRect().top -
-            row.getBoundingClientRect().bottom;
+            card.getBoundingClientRect().bottom;
           const rem = parseFloat(
             getComputedStyle(document.documentElement).fontSize,
           );
           return Math.round((gap / rem) * 64) / 64;
         }),
       )
-      .toBe(1);
+      .toBe(0.5);
     await create.focus();
     await expect
       .poll(() => create.evaluate(controlsAgainstHeading))
@@ -339,6 +345,8 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
         row.evaluate((element) => element.getBoundingClientRect().top),
       ),
     );
+  // Activity and Drafts & sent sit in the Plugins card, so they scroll away
+  // with the cards instead of staying pinned above them.
   const before = await positions();
   await list.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -346,9 +354,12 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
   await expect
     .poll(() => list.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
-  await expect.poll(positions).toEqual(before);
+  const scrolled = await list.evaluate((element) => element.scrollTop);
+  await expect.poll(positions).toEqual(before.map((top) => top - scrolled));
 
   await page.setViewportSize({ width: 900, height: 400 });
+  // The row kept focus while it scrolled away; focusing it again reveals it.
+  await rows.last().blur();
   await rows.last().focus();
   await expect(rows.last()).toBeInViewport();
   const starred = list.locator('[data-sidebar-section="starred"] summary');
@@ -358,7 +369,7 @@ test("the Drafts & sent row shares channel rows' columns and inset without movin
 
 // The case above only exercises the scrollbar gutter where the engine happens
 // to reserve one. This case runs where scrollbars take space and requires it.
-test("beside a classic scrollbar, page and channel rows share the rail insets and the header controls stay put", {
+test("where scrollbars take space, page and channel rows share the rail insets and the header controls stay put", {
   tag: "@classic-scrollbars",
 }, async ({ page, app }) => {
   test.skip(
@@ -370,10 +381,12 @@ test("beside a classic scrollbar, page and channel rows share the rail insets an
   const gutter = await page
     .getByRole("navigation", { name: "Subscribed channels", exact: true })
     .evaluate((list) => list.offsetWidth - list.clientWidth);
+  // Cards hide the scrollbar, so a classic scrollbar must take no room beside
+  // them and the rows keep the inset the cards give them.
   expect(
     gutter,
-    "the channel list's scrollbar gutter must take space",
-  ).toBeGreaterThan(0);
+    "the card list's scrollbar must take no space beside the cards",
+  ).toBe(0);
   await expect
     .poll(() => drafts.evaluate(columnsAgainstChannelRow))
     .toMatchObject({ start: 0, trailing: 0, end: 0 });
@@ -781,4 +794,38 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
     );
   });
   expect(placed).toBe(true);
+});
+
+test("sidebar cards meet the conversation's top and sit one even gap apart", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  for (const [width, scale] of [
+    [1440, 1],
+    [900, 2],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await setAppearance(page, "light", scale);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const main = document.getElementById("main-content");
+          const cards = [
+            ...document.querySelectorAll(
+              "[data-sidebar-cards] [data-sidebar-card]",
+            ),
+          ].map((card) => card.getBoundingClientRect());
+          if (!main || cards.length < 2) return undefined;
+          const gaps = cards
+            .slice(1)
+            .map((card, index) => Math.round(card.top - cards[index].bottom));
+          return {
+            top: Math.round(cards[0].top - main.getBoundingClientRect().top),
+            gaps: [...new Set(gaps)].length,
+          };
+        }),
+      )
+      .toEqual({ top: 0, gaps: 1 });
+  }
 });

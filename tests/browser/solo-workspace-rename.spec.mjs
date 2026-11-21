@@ -82,10 +82,6 @@ test("workspace settings rename preserves filing in ordinary and composed headin
           exact: true,
         }),
       ).toHaveCount(0);
-      if (!composed)
-        await expect(
-          page.getByRole("menuitem", { name: "Filter", exact: true }),
-        ).toBeVisible();
       await expect(
         page.getByRole("menuitem", { name: "Rename workspace", exact: true }),
       ).toHaveCount(0);
@@ -156,6 +152,8 @@ test("workspace settings rename preserves filing in ordinary and composed headin
     await page.reload();
     if (composed) await show.click();
     await expect(title()).toBeVisible();
+    // The clock now follows the signed 2026 publications, past Alpha's 2023
+    // activity, so show the new card's whole roster rather than its 30 days.
     await expect(
       sidebar
         .locator(`[data-sidebar-section="group:${id}"]`)

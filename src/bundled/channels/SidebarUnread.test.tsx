@@ -9,13 +9,18 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { SidebarUnread, type UnreadDmPreview } from "./SidebarUnread";
+import {
+  SidebarUnread,
+  type UnreadDmPreview,
+  unreadPreviews,
+} from "./SidebarUnread";
 import { SidebarSection } from "./SidebarSection";
 import { UnreadBadge } from "./UnreadBadge";
 import {
   createRelaySession,
   type RelaySession,
 } from "../../features/relay/session";
+import type { InboxItem } from "../../features/relay/inbox";
 
 // Controlled geometry tests the production projection, not browser layout.
 // Real scrolling, clipping and collapsed-section geometry remain browser checks.
@@ -82,7 +87,7 @@ function row(id: string, top: number, onClick = vi.fn()) {
     >
       {id}
       <span data-channel-unread="" />
-      <span data-channel-activity="" />
+      <span data-channel-needs-you="" aria-hidden="true" />
     </button>
   );
 }
@@ -130,6 +135,7 @@ it("reveals the heading for an unread chat in a closed Solo workspace", async ()
           >
             Solo chat
             <span data-channel-unread="" />
+            <span data-channel-needs-you="" aria-hidden="true" />
           </button>
         </SidebarSection>
       </SidebarUnread>
@@ -237,6 +243,50 @@ it("counts each destination once and suppresses any with a partly visible copy",
   fireEvent.click(pill);
   await measure();
   expect(screen.getAllByRole("button", { name: "duplicate" })[0]).toHaveFocus();
+});
+
+it("leads to a card's badge for rows past its edge, and skips cards without one", async () => {
+  render(
+    <SidebarUnread>
+      <div data-card-body="">
+        <div data-card-row="" data-card-clipped="">
+          {row("clipped", 380)}
+        </div>
+        <span data-card-waiting="">
+          <button type="button" data-top={360}>
+            badge
+          </button>
+        </span>
+      </div>
+      <div data-card-body="">
+        <div data-card-row="" data-card-clipped="">
+          {row("no-badge", 420)}
+        </div>
+      </div>
+    </SidebarUnread>,
+  );
+  await measure();
+  const pill = screen.getByRole("button", {
+    name: "1 unread conversation below",
+  });
+  fireEvent.click(pill);
+  await measure();
+  expect(screen.getByRole("button", { name: "badge" })).toHaveFocus();
+});
+
+it("gives ordinary channel backlog no cue", async () => {
+  render(
+    <SidebarUnread>
+      <button type="button" data-channel-id="plain" data-top={340}>
+        plain
+        <span data-channel-unread="" data-priority="false" />
+      </button>
+    </SidebarUnread>,
+  );
+  await measure();
+  expect(
+    screen.queryByRole("button", { name: /unread conversation/ }),
+  ).toBeNull();
 });
 
 it("refreshes artwork and shapes without waiting for geometry or adding unread state", async () => {
@@ -362,6 +412,12 @@ it.each([
           ]
         : [],
     };
+    // Activity counts this conversation, so it waits on you.
+    const inbox = {
+      status: "ready" as const,
+      freshness: "observed" as const,
+      items: [{ channelId: "muted", unreadCount: 1 } as InboxItem],
+    };
     let muted = false;
     const listeners = new Set<() => void>();
     const session: RelaySession = {
@@ -370,6 +426,7 @@ it.each([
         ...base.unread,
         snapshot: () => snapshot,
         activity: () => activity,
+        inbox: () => inbox,
       },
       sidebarPreferences: {
         ...base.sidebarPreferences,
@@ -406,6 +463,11 @@ it.each([
         </SidebarUnread>,
       );
       await measure();
+      const needs = () =>
+        document.querySelector(
+          '[data-channel-id="muted"] [data-channel-needs-you]',
+        );
+      expect(needs()).not.toBeNull();
       expect(
         screen.getByRole("button", { name: "2 unread conversations below" }),
       ).toBeInTheDocument();
@@ -417,6 +479,7 @@ it.each([
       expect(
         screen.getByRole("button", { name: "1 unread conversation below" }),
       ).toBeInTheDocument();
+      expect(needs()).toBeNull();
       expect(session.unread.snapshot(target)).toBe(snapshot);
       expect(session.unread.activity("muted")).toBe(activity);
       await act(async () => {
@@ -424,6 +487,7 @@ it.each([
         for (const listener of listeners) listener();
       });
       await measure();
+      expect(needs()).not.toBeNull();
       expect(
         screen.getByRole("button", { name: "2 unread conversations below" }),
       ).toBeInTheDocument();
@@ -433,3 +497,20 @@ it.each([
     }
   },
 );
+
+it("shows faces only for 1:1 DMs", () => {
+  const dm = {
+    id: "dm",
+    name: "Alice",
+    channelType: "dm",
+    participants: ["alice"],
+  };
+  const group = { ...dm, id: "group", participants: ["alice", "bob"] };
+  const room = { id: "room", name: "room", channelType: "stream" };
+  const previews = unreadPreviews(
+    [dm, group, room] as unknown as Parameters<typeof unreadPreviews>[0],
+    new Map([["alice", { name: "Alice" }]]),
+    undefined,
+  );
+  expect([...previews.keys()]).toEqual(["dm"]);
+});

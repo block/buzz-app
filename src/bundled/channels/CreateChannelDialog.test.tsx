@@ -551,7 +551,7 @@ it.each(["work", "", "starred"])(
     );
     const title =
       initialGroup === "starred"
-        ? "Create a channel in Starred"
+        ? "Create a channel in Favorites"
         : initialGroup
           ? "Create a channel in Work"
           : "Create a channel";

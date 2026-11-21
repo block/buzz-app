@@ -12,9 +12,11 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { CONVERSATION_LIST_LABEL, UNREAD_MARKERS } from "./conversation-rows";
+import { CONVERSATION_LIST_LABEL, NEEDS_YOU } from "./conversation-rows";
 import { sidebarScrollAnchor } from "./sidebar-scroll-anchor";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 
 export type UnreadDmPreview = {
   name: string;
@@ -22,10 +24,33 @@ export type UnreadDmPreview = {
   isAgent?: boolean | undefined;
 };
 
+type PreviewProfile = Pick<Profile, "name" | "picture" | "isAgent">;
+
+/** The face unread cues show for each 1:1 DM: its person, matching the row
+ * you're looking for. Other conversations still count, without a face. */
+export function unreadPreviews(
+  channels: readonly ChannelSummary[],
+  dmProfiles: ReadonlyMap<string, PreviewProfile>,
+  media: Parameters<typeof avatarMedia>[1],
+) {
+  const previews = new Map<string, UnreadDmPreview>();
+  for (const channel of channels) {
+    if (channel.channelType !== "dm" || channel.participants?.length !== 1)
+      continue;
+    const profile = dmProfiles.get(channel.participants[0] ?? "");
+    previews.set(channel.id, {
+      name: channel.name,
+      src: avatarMedia(profile?.picture, media),
+      isAgent: profile?.isAgent,
+    });
+  }
+  return previews;
+}
+
 type EdgeTarget = {
+  /** The row to reveal, or the card's badge when the row is past its edge. */
   row: HTMLButtonElement;
   channelId: string;
-  attention: boolean;
 };
 type Edges = { above: EdgeTarget[]; below: EdgeTarget[] };
 
@@ -36,9 +61,8 @@ function unreadEdges(list: HTMLElement): Edges {
   const viewport = list.getBoundingClientRect();
   if (!list.clientHeight || !viewport.width) return edges;
   const rows = new Set<HTMLButtonElement>();
-  for (const marker of list.querySelectorAll(UNREAD_MARKERS)) {
-    // Muting keeps unread evidence but excludes it from scroll notifications.
-    if (marker.hasAttribute("data-channel-muted")) continue;
+  // Only conversations that need you earn a cue; ordinary backlog stays bold.
+  for (const marker of list.querySelectorAll(NEEDS_YOU)) {
     const row = marker.closest("button");
     if (row) rows.add(row);
   }
@@ -49,14 +73,19 @@ function unreadEdges(list: HTMLElement): Edges {
     const closed = row
       .closest("[data-sidebar-section]")
       ?.querySelector("details:not([open])");
-    const anchor = closed?.querySelector("summary") ?? row;
+    // A row past a resized card's edge can't be scrolled to; the card's badge
+    // stands in for it, so the cue leads there.
+    const clipped = !closed && row.closest("[data-card-clipped]") !== null;
+    const badge = clipped
+      ? row
+          .closest("[data-card-body]")
+          ?.querySelector<HTMLButtonElement>("[data-card-waiting] button")
+      : undefined;
+    if (clipped && !badge) continue;
+    const anchor = closed?.querySelector("summary") ?? badge ?? row;
     const rect = anchor.getBoundingClientRect();
     if (!rect.height || !rect.width) continue;
-    const attention =
-      row.getAttribute("data-channel-type") === "dm" ||
-      row.querySelector('[data-priority="true"]') !== null ||
-      row.querySelector("[data-channel-activity]") !== null;
-    const target = { row, channelId, attention };
+    const target = { row: badge ?? row, channelId };
     if (rect.bottom <= viewport.top) edges.above.push(target);
     else if (rect.top >= viewport.top + list.clientHeight)
       edges.below.push(target);
@@ -121,8 +150,7 @@ export function SidebarUnread({
             previous[edge].every(
               (target, i) =>
                 target.row === next[edge][i]?.row &&
-                target.channelId === next[edge][i]?.channelId &&
-                target.attention === next[edge][i]?.attention,
+                target.channelId === next[edge][i]?.channelId,
             ),
         )
           ? previous
@@ -156,6 +184,7 @@ export function SidebarUnread({
           2 * Math.max(center - actionRect.right, actionRect.left - center) -
           2 * gap;
         cue.removeAttribute("data-preview-limit");
+        upper.removeAttribute("data-preview-limit");
         if (actionRect.width > 0 && cue.offsetWidth > available) {
           // Try the widest option first and drop the farthest avatars first.
           const previews = cue.querySelectorAll("[data-unread-dm]").length;
@@ -198,6 +227,21 @@ export function SidebarUnread({
               cue.dataset.shareActionRow = "stacked";
               upper.dataset.shareActionRow = "stacked";
             }
+          }
+        }
+        // The count outranks faces: drop the farthest faces before it clips.
+        for (const edge of [upper, cue]) {
+          const label = edge.querySelector(`.${styles.unreadEdgeLabel}`);
+          if (!label) continue;
+          const shown =
+            Number(edge.dataset.previewLimit) ||
+            edge.querySelectorAll("[data-unread-dm]").length;
+          for (
+            let limit = shown - 1;
+            limit >= 0 && label.scrollWidth > label.clientWidth;
+            limit--
+          ) {
+            edge.dataset.previewLimit = String(limit);
           }
         }
       });
@@ -245,13 +289,11 @@ export function SidebarUnread({
         "inert",
         "style",
         "class",
-        "data-channel-unread",
-        "data-channel-muted",
-        "data-channel-activity",
+        "data-channel-needs-you",
         "data-channel-type",
         "data-channel-id",
-        "data-priority",
         "data-moving",
+        "data-card-clipped",
       ],
     });
     if (cue && upper && action) {
@@ -287,6 +329,7 @@ export function SidebarUnread({
       }
       cue?.removeAttribute("data-lifted");
       cue?.removeAttribute("data-preview-limit");
+      upper?.removeAttribute("data-preview-limit");
     };
   }, [list, floatingAction, adjustScrollAnchor, captureScrollAnchor]);
   const reveal = (edge: keyof Edges) => {
@@ -328,25 +371,20 @@ export function SidebarUnread({
       })
       .slice(0, 3);
     const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
-    // Spend the strong fill only when a DM, a mention of you or a thread
-    // reply waits past this edge; ordinary unread uses the quiet gray fill.
-    const attention = edges[edge].some((target) => target.attention);
     return (
       <div
         ref={edge === "below" ? lowerCue : upperCue}
         className={styles.unreadEdge}
         data-edge={edge}
         key={edge}
-        data-attention={attention}
         data-visible={count > 0}
         inert={count === 0}
         aria-hidden={count === 0}
       >
         <Button
-          variant={attention ? "prominent" : "subtle"}
+          variant="prominent"
           aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}
           data-edge={edge}
-          data-attention={attention}
           size="xs"
           shape="capsule"
           type="button"

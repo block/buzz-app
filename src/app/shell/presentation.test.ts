@@ -157,10 +157,11 @@ test.each([undefined, "dock"] as const)(
 test.each([
   [undefined, "sidebar"],
   ["sidebar", "sidebar"],
-  ["dock", "dock"],
-  // Pre-dock names stay accepted and resolve to the dock.
-  ["topbar", "dock"],
-  ["toolbar", "dock"],
+  // There is no separate dock: every requested placement lists the app in
+  // the Messages sidebar's Plugins card.
+  ["dock", "sidebar"],
+  ["topbar", "sidebar"],
+  ["toolbar", "sidebar"],
 ] as const)("a plugin's %s placement resolves to %s", (placement, expected) => {
   expect(
     pagePlacement({
@@ -194,9 +195,9 @@ describe("navigation owner", () => {
     ["example.sidebar/main", messages.key],
     ["example.listed/main", messages.key],
     ["example.own-sidebar/main", messages.key],
-    // External dock apps own themselves.
-    ["example.header/main", "example.header/main"],
-    ["example.tools/main", "example.tools/main"],
+    // Apps that asked for the retired dock are listed there too.
+    ["example.header/main", messages.key],
+    ["example.tools/main", messages.key],
     // Destinations without a navigation entry select nothing in the dock.
     ["example.linked/main", "example.linked/main"],
     ["settings", "settings"],

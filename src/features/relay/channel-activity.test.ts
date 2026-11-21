@@ -3,6 +3,7 @@ import {
   createChannelActivity,
   CHANNEL_ACTIVITY_KINDS,
 } from "./channel-activity";
+import { ReadError } from "./errors";
 import { flush, keypair, message, signed } from "./testing";
 
 const forumActivity = (
@@ -292,5 +293,22 @@ it("retains known inactivity through refresh failure, prunes removed rows and re
   expect(activity.known("new")).toBe(true);
   activity.clear();
   expect(activity.known("new")).toBe(false);
+  activity.dispose();
+});
+
+it("marks a failure relay recovery can clear, and only while it shows", async () => {
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  const unreachable = activity.refresh(["room"]);
+  take(wire.pending).reject(new TypeError("Load failed"));
+  await expect(unreachable).rejects.toThrow("Load failed");
+  expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(true);
+  const denied = activity.refresh(["room"]);
+  expect(activity.transient()).toBe(false);
+  take(wire.pending).reject(new ReadError("denied", "Not a member"));
+  await expect(denied).rejects.toThrow("Not a member");
+  expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(false);
   activity.dispose();
 });

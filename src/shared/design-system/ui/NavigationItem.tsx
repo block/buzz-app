@@ -48,7 +48,8 @@ export function NavigationItem({
   /** Transient picker focus; persistent navigation selection stays separate. */
   highlighted?: boolean;
   inset?: boolean;
-  variant?: "row" | "pill" | "option" | "search" | "text";
+  /** `avatar` is an identity tile: its label stays the accessible name only. */
+  variant?: "row" | "pill" | "option" | "search" | "text" | "avatar";
   /** Stacked labels grow the row without clipping its primary target. */
   multiline?: boolean;
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {

@@ -470,7 +470,7 @@ test.describe("sidebar actions in the header", () => {
     move = await openMove();
     const saved = page.waitForResponse("**/sidebar-star");
     await move
-      .getByRole("menuitemradio", { name: "Starred", exact: true })
+      .getByRole("menuitemradio", { name: "Favorites", exact: true })
       .click();
     await saved;
     await expect(menu).toHaveCount(0);

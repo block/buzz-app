@@ -287,18 +287,18 @@ test("pointer completion animates surviving rows in a scrolled list", async ({
   ).toBe(true);
 });
 
-// Only a browser can detect the dock wrapper clipping a badge's text or bubble.
+// Only a browser can detect a sidebar row clipping a badge's text or bubble.
 // Use the real plugin contribution inside PageNavigation, not a copied count.
-test("due reminder counts fit the dock at every supported text size", async ({
+test("due reminder counts fit the sidebar row at every supported text size", async ({
   page,
 }) => {
   const { unexplained } = watchPageErrors(page);
   for (const count of [0, 1, 12, 125]) {
-    await page.goto(`${url}?dock&count=${count}`);
-    const tab = page.getByRole("tab", { name: /Reminders/ });
-    const badge = tab.getByRole("img", { name: `${count} due`, exact: true });
+    await page.goto(`${url}?rows&count=${count}`);
+    const row = page.getByRole("button", { name: /Reminders/ });
+    const badge = row.getByRole("img", { name: `${count} due`, exact: true });
     if (!count) {
-      await expect(tab).toBeVisible();
+      await expect(row).toBeVisible();
       await expect(badge).toHaveCount(0);
       continue;
     }
@@ -317,31 +317,31 @@ test("due reminder counts fit the dock at every supported text size", async ({
           );
           const geometry = await badge.evaluate((el) => {
             const rect = el.getBoundingClientRect();
-            const wrapper = el
-              .closest(".buzz-tabs-badge")
+            const row = el.closest("button").getBoundingClientRect();
+            const icon = el
+              .closest("button")
+              .querySelector("svg")
               .getBoundingClientRect();
-            const tab = el.closest('[role="tab"]');
-            const tile = tab.getBoundingClientRect();
-            const icon = tab.querySelector("svg").getBoundingClientRect();
-            const scrollport = el
-              .closest(".shell-dock-pages")
+            const label = [...el.closest("button").querySelectorAll("span")]
+              .find((span) => span.textContent === "Reminders")
               .getBoundingClientRect();
+            const scrollport = el.closest("nav").getBoundingClientRect();
             const range = document.createRange();
             range.selectNodeContents(el);
             const text = range.getBoundingClientRect();
             return {
               bubbleFits:
-                rect.left >= wrapper.left &&
-                rect.right <= wrapper.right &&
-                rect.top >= wrapper.top &&
-                rect.bottom <= wrapper.bottom,
+                rect.left >= row.left &&
+                rect.right <= row.right &&
+                rect.top >= row.top &&
+                rect.bottom <= row.bottom,
               textFits:
-                text.left >= wrapper.left &&
-                text.right <= wrapper.right &&
-                text.top >= wrapper.top &&
-                text.bottom <= wrapper.bottom,
-              outsideCorner: rect.top < tile.top && rect.right > tile.right,
-              clearOfIcon: rect.bottom <= icon.top || rect.left >= icon.right,
+                text.left >= rect.left &&
+                text.right <= rect.right &&
+                text.top >= rect.top &&
+                text.bottom <= rect.bottom,
+              clearOfIcon: rect.left >= icon.right,
+              clearOfLabel: rect.left >= label.right,
               insideScrollport:
                 rect.left >= scrollport.left &&
                 rect.right <= scrollport.right &&
@@ -349,7 +349,7 @@ test("due reminder counts fit the dock at every supported text size", async ({
                 rect.bottom <= scrollport.bottom,
               overflow: el.scrollWidth - el.clientWidth,
               fontSize: Number.parseFloat(getComputedStyle(el).fontSize),
-              tileWidth: tile.width,
+              rowHeight: row.height,
               background: getComputedStyle(el).backgroundColor,
             };
           });
@@ -358,25 +358,24 @@ test("due reminder counts fit the dock at every supported text size", async ({
             `${count}, ${width}, ${mode}, ${font}`,
           ).toBe(true);
           expect(geometry.textFits).toBe(true);
-          expect(geometry.outsideCorner).toBe(true);
           expect(geometry.clearOfIcon).toBe(true);
+          expect(geometry.clearOfLabel).toBe(true);
           expect(geometry.insideScrollport).toBe(true);
           expect(geometry.overflow).toBe(0);
-          expect(geometry.fontSize).toBeLessThan(geometry.tileWidth / 2);
+          expect(geometry.fontSize).toBeLessThan(geometry.rowHeight / 2);
           expect(geometry.background).not.toBe("rgba(0, 0, 0, 0)");
         }
       }
     }
-    // A corner badge must not intercept the tab's pointer or keyboard action.
-    await page.goto(`${url}?dock&count=${count}&inactive`);
-    await expect(tab).toHaveAttribute("aria-selected", "false");
-    const tile = await tab.boundingBox();
-    await tab.click({ position: { x: tile.width - 2, y: 2 } });
-    await expect(tab).toHaveAttribute("aria-selected", "true");
+    // A badge must not intercept the row's pointer or keyboard action.
+    await page.goto(`${url}?rows&count=${count}&inactive`);
+    await expect(row).not.toHaveAttribute("aria-current");
+    await badge.click();
+    await expect(row).toHaveAttribute("aria-current", "page");
     await page.reload();
-    await tab.focus();
+    await row.focus();
     await page.keyboard.press("Enter");
-    await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expect(row).toHaveAttribute("aria-current", "page");
   }
   expect(unexplained()).toEqual([]);
 });

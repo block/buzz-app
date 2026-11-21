@@ -41,6 +41,12 @@ export const outsider = "b".repeat(64);
 export const viewer = "c".repeat(64);
 export const root = "d".repeat(64);
 export const scope = `https://relay.test:${viewer}`;
+const emptyInbox = Object.freeze({
+  status: "ready" as const,
+  items: [],
+  freshness: "unknown" as const,
+});
+
 export function fixture(
   combined = false,
   canCreate = false,
@@ -123,7 +129,15 @@ export function fixture(
   };
   const preferences = {
     status: "ready" as const,
-    data: { sections: [], assignments: {}, starred: [], muted: [] },
+    // Fixture activity is near the epoch, so keep every Solo chat listed
+    // rather than the default last 30 days.
+    data: {
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      filters: { solo: "all" as const },
+    },
   };
   const choices = {
     ...base.agentChoices.snapshot(),
@@ -187,6 +201,9 @@ export function fixture(
       },
       subscribe: (_target, listener) => subscribe(listener),
       activity: () => threads,
+      // Like the real store, the same snapshot until the inbox changes.
+      inbox: () => emptyInbox,
+      subscribeInbox: () => () => {},
       subscribeActivity: (_id, listener) => subscribe(listener),
       markThrough,
     },

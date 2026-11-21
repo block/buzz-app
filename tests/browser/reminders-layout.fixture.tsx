@@ -25,7 +25,7 @@ import "../../src/shared/styles/globals.css";
 const params = new URLSearchParams(location.search);
 const width = Number(params.get("width")) || 900;
 const demo = params.has("demo");
-const dock = params.has("dock");
+const dock = params.has("rows");
 if (dock) {
   document.documentElement.dataset.colorMode = params.get("theme") ?? "dark";
   document.documentElement.dataset.accent = "bee";
@@ -214,15 +214,12 @@ function DockPreview() {
   );
   return (
     <div className="shell-background flex h-screen pt-2">
-      <nav aria-label="Apps dock" className="shell-side-dock">
-        <div className="shell-dock-pages">
-          <PageNavigation
-            pages={pages}
-            selected={selected}
-            onSelect={select}
-            placement="dock"
-          />
-        </div>
+      <nav
+        aria-label="Pages"
+        className="flex flex-col"
+        style={{ width: 260, padding: 8 }}
+      >
+        <PageNavigation pages={pages} selected={selected} onSelect={select} />
       </nav>
       <main className="flex-1 bg-panel" />
     </div>

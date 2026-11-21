@@ -387,8 +387,8 @@ describe("device-local startup", () => {
   );
 
   it.each([false, true])(
-    "keeps viewer layout across a real channel revocation without restoring denied content (saved duration: %s)",
-    async (withWindow) => {
+    "keeps viewer layout across a real channel revocation without restoring denied content (older saved filter: %s)",
+    async (withFilter) => {
       const storage = disk();
       const participant = keypair();
       const alpha = [
@@ -399,12 +399,13 @@ describe("device-local startup", () => {
         roster(relay, "beta", [viewer.pubkey]),
         metadata(relay, "beta", "Beta"),
       ];
-      const layout = {
-        ...preferences,
-        starred: ["beta"],
-        ...(withWindow
+      const layout = { ...preferences, starred: ["beta"] };
+      // A startup copy saved by an older app may still carry card filters.
+      const saved = {
+        ...layout,
+        ...(withFilter
           ? {
-              filters: { "section:work": "active" as const },
+              filters: { "section:work": "active" },
               activeWindowSeconds: { "section:work": 14 * 86400 },
             }
           : {}),
@@ -415,7 +416,7 @@ describe("device-local startup", () => {
           relayAuthor: relay.pubkey,
           events: [...alpha, ...beta],
         },
-        preferences: { savedAt: Date.now(), data: layout },
+        preferences: { savedAt: Date.now(), data: saved },
       });
       await storage.writeProfiles?.([
         profile(participant, { name: "Alpha-only participant" }),
@@ -445,9 +446,7 @@ describe("device-local startup", () => {
       );
       expect(storage.clear).not.toHaveBeenCalled();
       expect(await storage.read()).toEqual([]);
-      expect((await storage.readStartup?.())?.preferences?.data).toEqual(
-        layout,
-      );
+      expect((await storage.readStartup?.())?.preferences?.data).toEqual(saved);
       const next = setup(storage, true);
       await next.owner.restore();
       // A profile is a global relay event; losing a channel does not drop it.

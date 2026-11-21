@@ -8,7 +8,7 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { InboxItem } from "../../features/relay/inbox";
+import { hasUnread, type InboxItem } from "../../features/relay/inbox";
 import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
 import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
@@ -45,8 +45,7 @@ const rowPreview = (content: string) => {
   return text;
 };
 
-export const hasUnread = (item: InboxItem) =>
-  item.unreadCount > 0 || item.manual;
+export { hasUnread };
 
 /** What a preview shows instead of a body whose stored edits or deletions are
  * not settled yet, or undefined when none of `ids` is incomplete. */

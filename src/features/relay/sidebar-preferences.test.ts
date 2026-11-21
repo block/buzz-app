@@ -19,6 +19,7 @@ import {
 import { keypair, signed, scriptedTransport, flush, roster } from "./testing";
 import type { LiveCallbacks } from "./live";
 import { ReadError } from "./errors";
+import type { ReadFilter } from "./events";
 
 const groups = {
   version: 1,
@@ -219,9 +220,10 @@ it("reads legacy preferences through the production session, transport, and boun
         "channel-stars",
         "channel-mutes",
         "channel-sort",
-        "channel-filter",
       ]),
     );
+    expect(reads).not.toContain("channel-filter");
+    expect(reads).not.toContain("channel-workspace-filter");
     result = [
       ...records,
       encrypted("channel-mutes", {
@@ -723,88 +725,23 @@ it("writer reconciliation cannot join an older in-flight preference read", async
   );
 });
 
-it("admits only the complete bounded sidebar batch beyond the normal reader limit", async () => {
-  const { SIDEBAR_COORDINATES, isSidebarPreferencesBatch } = await import(
-    "./sidebar-preferences"
+it("never reads an older app's card filter records", async () => {
+  const read = vi.fn(async () => []);
+  const decode = vi.fn(async () => expected);
+  const signal = new AbortController().signal;
+  await readSidebarPreferences({ read }, "viewer", decode, signal);
+  await readSidebarPreferences(
+    { read },
+    "viewer",
+    decode,
+    signal,
+    undefined,
+    true,
   );
-  const filters = SIDEBAR_COORDINATES.map((coordinate) => ({
-    kinds: [30078],
-    authors: ["viewer"],
-    "#d": [coordinate],
-    limit: 1,
-  }));
-  expect(isSidebarPreferencesBatch(filters)).toBe(true);
-  expect(
-    isSidebarPreferencesBatch(
-      filters.map((filter) => ({ ...filter, consistency: "strong" })),
-    ),
-  ).toBe(true);
-  expect(
-    isSidebarPreferencesBatch(
-      filters.map((filter) => ({
-        ...filter,
-        consistency: "weak",
-      })) as unknown as typeof filters,
-    ),
-  ).toBe(false);
-  expect(
-    isSidebarPreferencesBatch(
-      filters.map((filter) => ({
-        ...filter,
-        consistency: true,
-      })) as unknown as typeof filters,
-    ),
-  ).toBe(false);
-  expect(isSidebarPreferencesBatch(filters.slice(1))).toBe(false);
-  expect(
-    isSidebarPreferencesBatch([
-      ...filters.slice(0, 4),
-      filters[0] as (typeof filters)[number],
-    ]),
-  ).toBe(false);
-  for (const changed of [
-    { limit: 2 },
-    { kinds: [9] },
-    { authors: ["other"] },
-    { "#d": ["unknown"] },
-    { since: 1 },
-  ])
-    expect(
-      isSidebarPreferencesBatch([
-        { ...(filters[0] as (typeof filters)[number]), ...changed },
-        ...filters.slice(1),
-      ]),
-    ).toBe(false);
-});
-
-it("projects bounded optional activity windows without changing legacy mode decoding", () => {
-  const project = (activeWindowSeconds?: unknown) =>
-    projectSidebarPreferences(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      ["work"],
-      { version: 1, groups: { channels: "active" }, activeWindowSeconds },
-    );
-  expect(project().filters).toEqual({ channels: "active" });
-  expect(project().activeWindowSeconds).toEqual({});
-  expect(
-    project({
-      channels: 604800,
-      "section:work": 31536000,
-      "section:removed": 86400,
-    }).activeWindowSeconds,
-  ).toEqual({ channels: 604800, "section:work": 31536000 });
-  for (const value of [0, -86400, 86401, 1.5, "604800", null, 31622400])
-    expect(() => project({ channels: value })).toThrow(
-      "Invalid sidebar activity window",
-    );
-  expect(() =>
-    project(
-      Object.fromEntries(
-        Array.from({ length: 105 }, (_, i) => [`section:${i}`, 86400]),
-      ),
-    ),
-  ).toThrow("Invalid sidebar activity window");
+  const coordinates = (read.mock.calls as unknown as [ReadFilter[]][]).flatMap(
+    ([filters]) => filters.flatMap((filter) => filter["#d"] ?? []),
+  );
+  expect(coordinates).toContain("channel-sort");
+  expect(coordinates).not.toContain("channel-filter");
+  expect(coordinates).not.toContain("channel-workspace-filter");
 });

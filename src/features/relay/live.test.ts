@@ -6680,6 +6680,13 @@ it("subscribes to own sidebar coordinates alongside read state and verifies deli
         matchesEvent({ ...event, tags: [["d", "other"]] }, filter),
       ),
     ).toBe(false);
+    // Older apps' card filters are retired: never replayed.
+    for (const d of ["channel-filter", "channel-workspace-filter"])
+      expect(
+        filtersOf(route).some((filter) =>
+          matchesEvent({ ...event, tags: [["d", d]] }, filter),
+        ),
+      ).toBe(false);
     const readState = signed(h.key, {
       kind: 30078,
       created_at: event.created_at,
@@ -6749,6 +6756,23 @@ it("delivers a canonical sidebar event through the emitted wire into the real se
       );
     assert.exists(route);
     await h.first.receive(["EOSE", route[1]]);
+    // An older app's card filter record changes nothing here: no new read.
+    h.callbacks.receive(
+      ["channel-filter", "channel-workspace-filter"].map((d) =>
+        signed(h.key, {
+          kind: 30078,
+          created_at: event.created_at + 1,
+          content: "unreadable",
+          tags: [
+            ["d", d],
+            ["t", d],
+          ],
+        }),
+      ),
+      { phase: "live" },
+    );
+    await owner.session.sidebarPreferences.ensure();
+    expect(read).toHaveBeenCalledTimes(1);
     decode.mockResolvedValueOnce({
       ...data,
       assignments: { alpha: "work", gamma: "work" },
@@ -6765,7 +6789,6 @@ it("delivers a canonical sidebar event through the emitted wire into the real se
         "channel-stars",
         "channel-mutes",
         "channel-sort",
-        "channel-filter",
       ].map((coordinate) => ({
         kinds: [30078],
         authors: [h.key.pubkey],

@@ -256,32 +256,6 @@
 .organizedRow {
   position: relative;
 }
-.organizedRow [data-channel-activity] {
-  position: absolute;
-  inset-inline-end: calc(
-    (var(--session-action-size) - 0.375rem) /
-    2 +
-    var(--session-trailing-end)
-  );
-  top: 50%;
-  transform: translateY(-50%);
-  margin: 0;
-  pointer-events: none;
-}
-.organizedRow:is(
-    :hover,
-    [data-context-menu-present],
-    :has(:focus-visible),
-    :has([aria-expanded="true"][aria-haspopup="menu"])
-  )
-  [data-channel-activity] {
-  opacity: 0;
-}
-@media (hover: none) {
-  .organizedRow [data-channel-activity] {
-    opacity: 0;
-  }
-}
 
 /* Working flows in the row, so the title reserves exactly the pill. */
 .organizedRow [class~="navigation-item-trailing"] {
@@ -307,8 +281,7 @@
   color: var(--text-row-selected-subtle);
 }
 
-/* Pointer rows show one trailing occupant at rest: working, then thread
-   activity, then Shared. On hover, focus or open, Shared stays in place as the
+/* Pointer rows show one trailing occupant at rest: working, then Shared. On hover, focus or open, Shared stays in place as the
    access control and the menu takes the slot before it. Nothing reserves
    title width unless it is visible. Touch keeps status and the menu side by
    side in the flow above. */
@@ -320,21 +293,10 @@
     inset-inline-end: var(--session-trailing-end);
     margin: 0;
   }
-  /* Separate rules: the build wraps a list of :has() selectors in :is(), and
-     WebKit restyles the whole document for each change under a non-subject
-     :has() inside :is(). */
-  .organizedRow:has([data-channel-activity]) [data-solo-shared] {
-    opacity: 0;
-  }
-  .organizedRow:has([data-solo-working-indicator]:not(:empty))
-    :is([data-channel-activity], [data-solo-shared]) {
-    opacity: 0;
-  }
   /* Hidden Shared takes no clicks or focus meant for what shows instead. */
-  .organizedRow:has(
-    [data-channel-activity],
-    [data-solo-working-indicator]:not(:empty)
-  ) [data-solo-shared] {
+  .organizedRow:has([data-solo-working-indicator]:not(:empty))
+  [data-solo-shared] {
+    opacity: 0;
     visibility: hidden;
   }
   /* Shared never moves under the pointer; the menu opens beside it. */
@@ -354,7 +316,7 @@
     );
   }
   .sidebarContents
-    .organizedRow:has([data-channel-activity], [data-solo-shared])
+    .organizedRow:has([data-solo-shared])
     > div
     > [data-variant="row"] {
     padding-inline-end: calc(

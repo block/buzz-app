@@ -904,7 +904,7 @@
   /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
   --corner-row: 1rem;
   --corner-control: 1.25rem;
-  --corner-container: 1.5rem;
+  --corner-container: 1rem;
   --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 

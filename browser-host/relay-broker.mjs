@@ -1,9 +1,7 @@
 import {
-  isSidebarPreferencesBatch,
   decodeLegacyWorkspaceEnvelope,
   WORKSPACE_COORDINATE,
   WORKSPACE_SORT_COORDINATE,
-  WORKSPACE_FILTER_COORDINATE,
 } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -22,8 +20,6 @@ import { prepareMedia } from "./media-preparation.mjs";
 import {
   assertSidebarSortIntent,
   mutateWorkspaceSort,
-  assertSidebarFilterIntent,
-  mutateWorkspaceFilter,
 } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
@@ -774,9 +770,7 @@ export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
-    (filters.length <= MAX_FILTERS ||
-      isWorkflowDefinitionBatch(filters) ||
-      isSidebarPreferencesBatch(filters)) &&
+    (filters.length <= MAX_FILTERS || isWorkflowDefinitionBatch(filters)) &&
     filters.every(
       (filter) =>
         filter &&
@@ -1421,7 +1415,6 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-section-rename",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
-              "/api/relay/sidebar-filter",
               "/api/relay/sidebar-mute",
             ].includes(route) &&
             req.method === "POST"
@@ -1452,11 +1445,6 @@ export function relayBrokerPlugin({
                 assertSidebarStarIntent,
                 mutateSidebarStar,
               ],
-              "/api/relay/sidebar-filter": [
-                WORKSPACE_FILTER_COORDINATE,
-                assertSidebarFilterIntent,
-                mutateWorkspaceFilter,
-              ],
               "/api/relay/sidebar-sort": [
                 WORKSPACE_SORT_COORDINATE,
                 assertSidebarSortIntent,
@@ -1468,11 +1456,9 @@ export function relayBrokerPlugin({
                 mutateSidebarMute,
               ],
             }[route];
-            const sorting =
-              coordinate === WORKSPACE_SORT_COORDINATE ||
-              coordinate === WORKSPACE_FILTER_COORDINATE;
+            const sorting = coordinate === WORKSPACE_SORT_COORDINATE;
             const muting = coordinate === "channel-mutes";
-            // Sort, filter and order intents carry the workspace roster.
+            // Sort and order intents carry the workspace roster.
             const listing =
               sorting || route === "/api/relay/sidebar-section-order";
             const workspace = coordinate === WORKSPACE_COORDINATE;
@@ -1624,14 +1610,7 @@ export function relayBrokerPlugin({
                   publishEvent,
                   legacy,
                 );
-                return coordinate === WORKSPACE_FILTER_COORDINATE
-                  ? {
-                      groups: result.filters,
-                      activeWindowSeconds: result.activeWindowSeconds,
-                    }
-                  : sorting
-                    ? { groups: result }
-                    : result;
+                return sorting ? { groups: result } : result;
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1748,7 +1727,6 @@ export function relayBrokerPlugin({
               sidebarPreferences: true,
               sidebarWorkspaceMigration: true,
               sidebarSortWrites: true,
-              sidebarFilterWrites: true,
               channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,

@@ -27,7 +27,10 @@ async function pull(page, from, to) {
   const end = await header(page, to).boundingBox();
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
   await page.mouse.down();
-  await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, {
+  // The target header's middle is the tie between its two sides: aim at the
+  // half facing the way the card moves.
+  const toward = end.y < start.y ? 0.25 : 0.75;
+  await page.mouse.move(end.x + end.width / 2, end.y + end.height * toward, {
     steps: 8,
   });
 }
@@ -60,7 +63,9 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   // A cancelled drag shows its landing edge, then leaves everything unchanged.
   await pull(page, "laptop", "work");
   await expect(laptop).toHaveAttribute("data-section-dragging");
-  await expect(page.locator('[class*="channelDragOverlay"]')).toHaveCSS(
+  // Cards keep their state while one moves.
+  await expect(work.locator("details")).toHaveAttribute("open");
+  await expect(page.locator('[class*="cardDragOverlay"]')).toHaveCSS(
     "translate",
     "none",
   );
@@ -79,7 +84,10 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   const y = own.y + own.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.mouse.move(x, y - 40, { steps: 4 });
+  // The pointer's half of the neighbour's header decides the side, so aim at
+  // the upper half of the header above: its insertion edge is "before" it.
+  const above = await header(page, "missing").boundingBox();
+  await page.mouse.move(x, above.y + above.height / 4, { steps: 4 });
   await expect(laptop).toHaveAttribute("data-section-dragging");
   await expect(
     page.locator('[data-sidebar-section="group:missing"]'),
@@ -333,7 +341,9 @@ test("group landing edge follows list order when text size changes during a drag
   // At enlarged text sizes, grab the header's leading edge, clear of its actions.
   await page.mouse.move(initial.x + 12, initial.y + initial.height / 2);
   await page.mouse.down();
-  await page.mouse.move(enlarged.x + 12, enlarged.y + enlarged.height / 2, {
+  // An empty card's header center is its center, where either side is a
+  // sub-pixel tie; the lower part of the header is unambiguously after.
+  await page.mouse.move(enlarged.x + 12, enlarged.y + enlarged.height * 0.75, {
     steps: 8,
   });
   await expect(missing).toHaveAttribute("data-drop-edge", "after");
@@ -358,7 +368,7 @@ test("group landing edge follows list order when text size changes during a drag
   expect(initial.y).toBeGreaterThan(target.y);
   await page.mouse.move(
     target.x + target.width / 2,
-    target.y + target.height / 2,
+    target.y + target.height * 0.75,
   );
   await expect(missing).toHaveAttribute("data-drop-edge", "after");
   await page.mouse.up();

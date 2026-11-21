@@ -1,4 +1,8 @@
-import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
+import {
+  defaultSidebarSort,
+  isSidebarSortMode,
+  type SidebarSortMode,
+} from "./sidebar-sort.ts";
 import type { SidebarGroups } from "./sidebar-preferences.ts";
 
 export const MAX_WORKSPACES = 200;
@@ -7,7 +11,7 @@ export const MAX_WORKSPACE_ASSIGNMENTS = 2000;
 /** Section and section-choice registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
 type Tree = { [key: string]: Tree | SidebarRegister };
-type Coordinate = "channel-sections" | "channel-sort" | "channel-filter";
+type Coordinate = "channel-sections" | "channel-sort";
 const legacyDevice = "0".repeat(16);
 let device: string | undefined;
 const object = (value: unknown): Record<string, unknown> => {
@@ -82,14 +86,7 @@ function metadata(
   if (coordinate !== "channel-sections")
     return {
       g: map(data.g === undefined ? {} : data.g, 264, (v) =>
-        register(
-          v,
-          (v) =>
-            v === null ||
-            (coordinate === "channel-filter"
-              ? v === "unreads" || v === "active"
-              : v === "alpha" || v === "recent"),
-        ),
+        register(v, (v) => v === null || v === "alpha" || v === "recent"),
       ),
     };
   return {
@@ -181,11 +178,7 @@ function importLegacy(
     return {
       g: Object.fromEntries(
         Object.entries(object(value.groups))
-          .filter(([, v]) =>
-            coordinate === "channel-filter"
-              ? v === "unreads" || v === "active"
-              : v === "alpha" || v === "recent",
-          )
+          .filter(([, v]) => v === "alpha" || v === "recent")
           .map(([key, v]) => [key, stamp(v)]),
       ),
     };
@@ -574,9 +567,11 @@ export function editSidebarSortRecord(
       : current;
   // Older A–Z writers tombstone with null and skip equal values. A distinct
   // alpha anchor lets their explicit choice supersede the plugin binding.
+  // Recent is always written explicitly; A–Z keeps the null tombstone, and
+  // Solo always keeps its choice.
   const anchor = plugin
     ? "alpha"
-    : group === "solo" || mode === "recent"
+    : group === "solo" || mode !== defaultSidebarSort(group)
       ? mode
       : null;
   const next = editSidebarRecord(

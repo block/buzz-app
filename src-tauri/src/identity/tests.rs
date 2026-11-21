@@ -777,13 +777,21 @@ async fn sidebar_filter_signer_checks_projection_modes_and_coordinate() {
         json!("604800"),
         json!(null),
     ] {
-        let mut invalid = payload.clone();
-        invalid["activeWindowSeconds"]["channels"] = seconds;
-        assert!(host
-            .sign_sidebar("channel-filter".into(), invalid, 100)
-            .await
-            .is_err());
+        for field in ["activeWindowSeconds", "unreadsWindowSeconds"] {
+            let mut invalid = payload.clone();
+            invalid[field] = json!({ "channels": seconds.clone() });
+            assert!(host
+                .sign_sidebar("channel-filter".into(), invalid, 100)
+                .await
+                .is_err());
+        }
     }
+    let mut unreads = payload.clone();
+    unreads["unreadsWindowSeconds"] = json!({"channels": 86400});
+    assert!(host
+        .sign_sidebar("channel-filter".into(), unreads, 100)
+        .await
+        .is_ok());
     for invalid in [
         json!({"version":1,"groups":{"channels":"recent"}}),
         json!({"version":1,"groups":{},"meta":payload["meta"]}),

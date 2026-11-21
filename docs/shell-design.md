@@ -44,9 +44,10 @@ semantic tokens, UI authoring rules and the local component reference.
   Messages comes first, then Inbox, Reminders and Bestie; other contributed pages
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
-  activation/re-enable order. Primary pages choose `sidebar` (default, a row in
-  the Messages sidebar) or `dock` (an app in the left dock) placement for
-  contributed pages. `topbar` and `toolbar` are accepted aliases for `dock`.
+  activation/re-enable order. Every primary page is a row in the Messages
+  sidebar's **Plugins** card, which stays visible during Focus. The `dock`
+  placement and its `topbar` and `toolbar` aliases are still accepted and now
+  place the page in the Plugins card too; there is no separate dock.
   The bundled `MessagesSidebar` supplies the conversation sidebar: a capsule All / Solo / Team
   filter above one shared scrollport, Solo projects and chats above Team's channel
   sections, one relay-recovery notice, and the connection fallback. The filter
@@ -120,8 +121,8 @@ semantic tokens, UI authoring rules and the local component reference.
   No required launch marker depends on that absent context. Settings retains its
   existing modal presentation; migrating it to a replacement context is deferred.
   Page buttons use shared navigation rows and focus the main region on selection.
-  When pinned page rows run out of vertical space, their area scrolls so the
-  conversation list stays reachable.
+  Page rows sit in the sidebar's Plugins card and scroll with the rest of the
+  sidebar.
   At widths up to 650px, Messages and pages with a sidebar contribution collapse
   navigation behind the header’s Show navigation button to preserve readable
   content at 200% text size. The 220px disclosure overlays content, supports
@@ -150,9 +151,9 @@ semantic tokens, UI authoring rules and the local component reference.
   Sidebar page links retain their exact route and focus main content when
   selected. Dock destinations never become companion launchers.
   The shell owns one joined Panel around navigation and page content. The shell
-  body uses `--space-panel-gap` minus `--space-half` on its inline edges and the
-  full `--space-panel-gap` below. When the dock is present, it supplies the
-  leading space. Nested Panels keep their opaque fill and clipping but drop
+  body uses `--space-panel-gap` (8px) on its inline edges and below. Inside it,
+  the sidebar's cards sit 4px (`--space-1`) from each other and from the page,
+  tighter than the edge gap. Nested Panels keep their opaque fill and clipping but drop
   individual borders, radii, and shadows. Layout owners add one-pixel semantic
   dividers. Document pages scroll inside the remaining viewport.
 - `SettingsSidebar.tsx` composes shared SidebarNavigation with

@@ -47,13 +47,14 @@ it("gives every bundled page to the app whose navigation lists it", async () => 
     // Pages listed in the Messages sidebar keep Messages selected.
     "buzz.drafts-and-sent/drafts-sent": messages,
     "buzz.inbox/inbox": messages,
-    // Dock apps own themselves.
-    "buzz.bestie/bestie": "buzz.bestie/bestie",
-    "buzz.reminders/reminders": "buzz.reminders/reminders",
-    "buzz.agents/agents": "buzz.agents/agents",
-    "buzz.workflows/workflows": "buzz.workflows/workflows",
-    "buzz.relay-notes/notes": "buzz.relay-notes/notes",
-    // An unlisted destination selects nothing in the dock.
+    // Apps are rows in the Messages sidebar, so Messages stays selected and
+    // its sidebar stays visible.
+    "buzz.bestie/bestie": messages,
+    "buzz.reminders/reminders": messages,
+    "buzz.agents/agents": messages,
+    "buzz.workflows/workflows": messages,
+    "buzz.relay-notes/notes": messages,
+    // An unlisted destination still owns itself.
     "buzz.repos/repos": "buzz.repos/repos",
   });
 });

@@ -10,3 +10,14 @@
   border-radius: var(--radius-row);
   background: var(--surface-panel);
 }
+
+/* Inside a card shown as icons, rows are tiles that wrap onto as many
+   tile-wide columns as fit. Leftover width spreads evenly between the columns,
+   so the first and last columns meet the card's inset on both sides; a short
+   last row keeps to the columns above it. The gap is the minimum spacing. */
+[data-card-display="icons"] .rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--size-control-lg));
+  justify-content: space-between;
+  gap: var(--space-half);
+}

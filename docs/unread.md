@@ -8,6 +8,25 @@ and the existing reader/live routes carry both. Disabling Channels does not eras
 accepted intent. `src/plugins/author.ts` exports the types through the existing
 host-matched author preview, not a cross-version SDK or plugin sandbox.
 
+## Needs you
+
+A conversation **needs you** when Activity has it unread: a DM, a mention of
+you, or a reply in a thread you follow, including one marked unread. Ordinary
+channel backlog never needs you; it only makes a row bold, the quiet
+"something's new" signal.
+
+`needsYou(inbox, channelId)` in `src/features/relay/inbox.ts` answers it as
+`{ waiting, count }`: the count sums the unread messages of that channel's
+unread Activity conversations, with at least one for a conversation marked
+unread with nothing counted. `useNeedsYou(session, channelId)` reads it and
+stays quiet while the conversation is muted; `needsYouChannels(inbox)` lists
+them for ordering. Each is cached per inbox snapshot.
+
+Every sidebar unread cue reads this, and nothing else: the row's dot, an icon
+tile's corner count, **Unreads first**, a cropped card's `N unread`, the
+floating `N unread` cues and Next unread. A row that needs you carries
+`data-channel-needs-you`, which the rendered-row scans look for. Don't recount.
+
 ## Consumer contract
 
 ```ts
@@ -115,8 +134,8 @@ viewport):
   Receipts stay on this device, like `msg:` marks, so another device relights
   attention rows; the channel cut syncs. The channel snapshot's `row` counts
   (`observedCount`, `attentionCount`, `threadCount`) leave out what the row
-  has seen. The sidebar row, its floating unread cues, the sidebar
-  **Unreads** filter and the Dock indicator follow `row`. Thread dots,
+  has seen. The sidebar row's bold and the Dock indicator follow `row`.
+  Thread dots,
   Activity, the channel activity popover, unread-first search, the **New
   messages** divider, mark-read menus and every `observedCount` keep the
   unread. Explicit unread intent omits `row`, so the row shows the whole
@@ -350,36 +369,27 @@ timeline and the thread being read, without reading unopened threads' replies.
   and retries pending publication. `ReadMutationResult.durability === "saved"`
   means the local transaction committed, not that the relay accepted it.
 
-The sidebar separates ordinary unread from directed attention. Ordinary backlog
-or local manual intent strengthens the channel label; protected attention alone
-retains its dot without bolding a caught-up, unmuted channel. Confirmed-muted channels
-suppress ordinary automatic unread styling and offscreen cues without clearing
-unread evidence; explicit manual unread can still strengthen the label.
-Pending or failed mute changes do not suppress these cues. Muted DMs also suppress
-automatic unread bolding. Confirmed-muted destinations, including DMs and Solo chats,
-do not contribute to “N unread” offscreen counts or avatar previews, even for
-mentions, manual unread or thread replies. Muted
-channel and DM sidebar rows show a crossed-out bell immediately after their names,
-even with no unread activity. They hide all unread dots, including
-thread activity dots. Mentions and thread activity remain available through the row's activity
-popover, and their counts remain accessible to assistive technology. Unmute restores
-the dots from retained unread evidence. The promoted Bestie DM also hides muted
-unread dots; its label follows the same mute rule.
-Solo chat labels strengthen for any observed unread message, including mentions,
-broadcasts and relevant replies, even when muted, so Solo rows omit the attention dot.
-Ordinary unread renders no row marker. Unmuted DMs, mentions and relevant thread
-replies add one accent dot; a broadcast from a thread the viewer is not part of
-only strengthens the label, like a top-level post. Non-DM row numerals are
-omitted and DM avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:
-its hover/focus/click popover groups unread replies by canonical thread root and
-opens the existing thread panel. Above the threads it lists unread top-level messages that
-mention the viewer, newest first; a mention opens at its message and is read like any
-visit. A reply's mention stays under its thread; DMs and broadcasts list no
-mentions. A row with only mentions keeps its priority dot, names them to
-assistive technology ("1 unread mention") and still opens the popover; with
-threads, the dot's label counts both ("1 unread mention, 1 unread thread").
-Overlapping priority, mention and thread activity never produce duplicate dots.
-Merely revealing the popover does not acknowledge a mention or reply.
+The sidebar separates ordinary unread from what needs you (see **Needs you**).
+Ordinary backlog or local manual intent strengthens the channel label and never
+adds a dot, a count, an order or an offscreen cue. A conversation that needs you
+adds one accent dot, or a corner count on an icon tile. A broadcast from a thread the viewer is not part of
+only strengthens the label, like a top-level post. Confirmed-muted
+conversations, including DMs and Solo chats, never need you: they show no dot or
+count and take no part in ordering or offscreen cues, without clearing unread
+evidence; explicit manual unread can still strengthen the label. Pending or
+failed mute changes do not suppress these cues. Muted DMs also suppress
+automatic unread bolding. Muted channel and DM sidebar rows show a crossed-out
+bell immediately after their names, even with no unread activity. Mentions and
+thread activity remain available through the row's activity popover. The
+promoted Bestie DM follows the same mute rule.
+Solo chat labels strengthen for any observed unread message, so a Solo row that
+needs you names it to assistive technology without a dot.
+The row's activity popover groups unread replies by canonical thread root and
+opens the existing thread panel. Above the threads it lists unread top-level
+messages that mention the viewer, newest first; a mention opens at its message
+and is read like any visit. A reply's mention stays under its thread; DMs and
+broadcasts list no mentions. Merely revealing the popover does not acknowledge
+a mention or reply.
 While Activity is still checking a mention's stored edits and deletions, its row
 shows "Preview updating…" instead of the text, or "Preview unavailable. Retry
 activity." if the check failed, as on the Activity page.
@@ -391,8 +401,8 @@ no notification, feed, or exact-count service here.
 
 When unread rows are outside the sidebar's scroll viewport, floating `N unread`
 buttons reveal the nearest destination in that direction. The number counts distinct
-offscreen conversations with observed unread state, not messages or an exact
-community total. Any visible copy of a conversation excludes it from that edge.
+offscreen conversations that need you, not messages or an exact community
+total. Any visible copy of a conversation excludes it from that edge.
 Both directions preview up to three eligible one-to-one DM avatars, nearest-first,
 with overlapping artwork and no additional overflow chip. Group/self DMs still count
 but do not borrow one participant's avatar. Previews reuse the sidebar's existing
@@ -403,7 +413,7 @@ The controls use shared prominent buttons with an inverse surface, with
 interruptible tooltip-style transitions and reduced-motion support. Hidden cues
 remain inert during exit. They share 12px corners with Jump to latest, including
 their backing surfaces. Thread-only rows participate.
-The controls measure existing rendered badges/dots—no extra unread
+The controls measure rendered rows' needs-you markers—no extra unread
 subscriptions or relay reads just to show them. Search-filtered rows do not
 participate. Collapsed sections use the summary's position and expand when revealed.
 A partly visible row is not outside the fold. Activation scrolls and focuses the

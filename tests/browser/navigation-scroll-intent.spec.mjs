@@ -20,10 +20,16 @@ for (const cachedStartup of [false, true]) {
       page,
       app,
     }) => {
+      // Cards clip at ten rows, so the list only scrolls in a short window.
+      await page.setViewportSize({ width: 1440, height: 480 });
       await open(page, app);
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });
+      const furthest = () =>
+        sidebar.evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        );
       // Establish both the settled roster and preferences before saving the
       // warm layout that this journey optionally restores on startup.
       await expect(
@@ -38,10 +44,13 @@ for (const cachedStartup of [false, true]) {
       });
       await expect(panel).not.toHaveAttribute("aria-busy", "true");
       // Save a nonzero position, then cold-load that community with preferences held.
-      await sidebar.evaluate((element) => {
-        element.scrollTop = 900;
+      const bottom = await furthest();
+      expect(bottom).toBeGreaterThan(100);
+      const saved = Math.floor(bottom / 2);
+      await sidebar.evaluate((element, top) => {
+        element.scrollTop = top;
         element.dispatchEvent(new Event("scroll"));
-      });
+      }, saved);
       await selectCommunity(page, "Personal space");
       await expect(communitySwitcher(page, "Personal space")).toBeVisible();
       // Preserve delayed-first-layout coverage on a genuine cold launch too.
@@ -92,7 +101,7 @@ for (const cachedStartup of [false, true]) {
         // network refresh. Subsequent user intent must still win over that refresh.
         await expect
           .poll(() => sidebar.evaluate((element) => element.scrollTop))
-          .toBe(cachedStartup ? 900 : 0);
+          .toBe(cachedStartup ? saved : 0);
         if (action === "scroll event pending") {
           // Model compositor movement visible before the main-thread scroll
           // callback. The restoration must inspect the current position too.
@@ -113,13 +122,13 @@ for (const cachedStartup of [false, true]) {
         }
         if (action !== "untouched") {
           await sidebar.hover({ position: { x: 10, y: 100 } });
-          await page.mouse.wheel(0, cachedStartup ? 900 : 1800);
+          await page.mouse.wheel(0, bottom);
           await expect
             .poll(() => sidebar.evaluate((element) => element.scrollTop))
-            .toBe(1800);
+            .toBe(bottom);
         }
         if (action === "returned to top") {
-          await page.mouse.wheel(0, -1800);
+          await page.mouse.wheel(0, -bottom);
           await expect
             .poll(() => sidebar.evaluate((element) => element.scrollTop))
             .toBe(0);
@@ -139,10 +148,10 @@ for (const cachedStartup of [false, true]) {
           .poll(() => sidebar.evaluate((element) => element.scrollTop))
           .toBe(
             action === "untouched"
-              ? 900
+              ? saved
               : action === "returned to top"
                 ? 0
-                : 1800,
+                : bottom,
           );
         expect(await sidebar.boundingBox()).toEqual(beforeRefresh);
       } finally {

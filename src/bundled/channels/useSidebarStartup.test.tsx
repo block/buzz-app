@@ -184,15 +184,21 @@ it("caps cold presentation waiting after authorization without needing optional 
   expect(screen.getByTestId("updating")).toHaveTextContent("true");
 });
 
-it("does not wait for activity in A–Z or treat failed preferences as an endless load", async () => {
+it("waits for default Recent activity but does not treat failed preferences as an endless load", async () => {
   const h = fixture();
   h.names();
   h.resolve();
+  const view = render(
+    <View session={h.session} prefs={{ status: "error", error: "offline" }} />,
+  );
+  await act(async () => {});
+  expect(screen.queryByRole("button")).toBeNull();
   await act(async () => {
-    render(
+    view.rerender(
       <View
         session={h.session}
         prefs={{ status: "error", error: "offline" }}
+        value={{ ...list, activityStatus: "ready" }}
       />,
     );
   });

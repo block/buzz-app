@@ -783,7 +783,9 @@ it("keeps the same unsent conversation and companion panel through Settings sect
     ).toBe(editor);
     expect(editor).toHaveTextContent("Keep this draft behind Settings");
   };
-  const communities = screen.getByRole("navigation", { name: "Communities" });
+  const communities = screen.getByRole("button", {
+    name: /^Community switcher: /,
+  });
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
   const modal = await screen.findByRole("dialog", { name: "Settings" });
@@ -792,8 +794,10 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const workspace = frame?.parentElement;
   expect(workspace).toContainElement(composing);
   expect(workspace).toContainElement(panel);
-  // The dock remains in the workspace alongside the Settings frame.
-  expect(workspace).toContainElement(communities);
+  // The header's community switcher stays mounted behind the modal, outside
+  // the workspace that holds the Settings frame.
+  expect(communities).toBeInTheDocument();
+  expect(workspace).not.toContainElement(communities);
   expect(modal.closest('[aria-hidden="true"], [inert]')).toBeNull();
   await waitFor(() =>
     expect(modal).toContainElement(document.activeElement as HTMLElement),

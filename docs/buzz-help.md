@@ -610,7 +610,7 @@ Quitting Buzz also turns it off.
 - **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear
   in **Solo**, **Team** (channels and forums), or **Direct messages**. Reorder
-  any section, including **Starred**, by dragging its heading or using **Move up** and
+  any section, including **Favorites**, by dragging its heading or using **Move up** and
   **Move down** in its **…** menu. Escape cancels a drag.
   The arrow beside a workspace’s creation icon offers **New chat**, **New channel**
   and **New DM**. The last choice becomes that workspace’s icon and primary action.
@@ -624,9 +624,10 @@ Quitting Buzz also turns it off.
   instructions to the shared Canvas** to share ordinary instructions with
   everyone who can view the channel’s Canvas. Folders and worktree settings
   stay in the workspace.
-  In the standard sidebar, use **Filter → Active in the last** from the
-  workspace’s **…** menu to show recent conversations. Open older conversations
-  from **Filter**, or choose **All** to show them in the sidebar again.
+  In the standard sidebar, use **Sort** in the workspace’s **…** menu to order
+  conversations by **Recent** or **A–Z**, and turn on **Unreads first** to keep
+  unread conversations at the top. Drag the card’s bottom edge to choose how
+  many rows it shows, or double-click it to show every conversation.
   Plugins can add tasks, Lead conversations and workspace actions.
   When starting a chat, type **#** to choose a workspace and load its settings.
   Folders are optional unless **Work in a new worktree** is on. An agent that
@@ -716,7 +717,7 @@ Quitting Buzz also turns it off.
 - **Mark as unread** on a thread you have open keeps it unread while you stay
   in it. Reading to the bottom on a later visit, or marking it read, clears it.
 - **Communities** have their own channels, people, and agents. Switch with
-  the community switcher at the bottom of the dock; in **Personal space**,
+  the community switcher at the right of the top bar; in **Personal space**,
   Messages offers **Choose a community**, which opens it. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -1144,20 +1145,17 @@ Quitting Buzz also turns it off.
   name in the header to open membership management. Other header actions remain
   on the right. Compact avatars sit before the name on the left; Solo chats show
   the included agents.
-- **App navigation**: use the left dock to switch apps. Bestie is first,
-  followed by Messages and the other apps. Activity and other enabled sidebar
-  pages stay at the top of the Messages sidebar while you scroll conversations.
-  Scroll the pinned area if the window is too short to show every page.
-  Community and profile controls sit at the bottom of the dock. Search stays
+- **App navigation**: apps and sidebar pages such as Activity are rows in the
+  sidebar's **Plugins** card, which you can move like any other card.
+  Community and profile controls sit at the right of the top bar. Search stays
   wide in the top bar.
-  Messages shows your workspaces, Starred and unfiled conversations together.
+  Messages shows your workspaces, Favorites and unfiled conversations together.
   Other apps can provide their own sidebar. Pages listed in the Messages
-  sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
-  Messages sidebar stays open unless the page provides its own sidebar, which
-  replaces it.
-  The sidebar and message pane share one surface with a persistent divider;
-  panel headers also have bottom hairlines. Dock icons stay still, highlight
-  on hover, and show instant labels to their right. Bestie uses your
+  sidebar, such as the Drafts & sent plugin, keep the Messages sidebar open.
+  The Messages sidebar stays open unless the page provides its own sidebar,
+  which replaces it. The Plugins card stays during Focus.
+  The sidebar's cards and the conversation float as separate cards on the
+  window's tinted background, without dividing lines. Bestie uses your
   configured avatar.
   The floating **New options** button at the end of the sidebar list opens
   **New chat**, **New channel**, **New DM** and **New workspace**. **Cmd/Ctrl+N**
@@ -1235,15 +1233,11 @@ Quitting Buzz also turns it off.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
-- **Sidebar sections** default to **Solo**, **Starred**, your workspaces,
-  **Team**, then **Direct messages**. After an upgrade from the
-  separate Solo and Team sidebars, Buzz keeps their order: workspaces from the
-  previous Solo sidebar, **Solo**, **Starred**, workspaces from the previous
+- **Sidebar sections** default to **Plugins**, **Solo**, **Favorites**, your
+  workspaces, **Team**, then **Direct messages**. After an upgrade
+  from the separate Solo and Team sidebars, Buzz keeps their order: workspaces
+  from the previous Solo sidebar, **Solo**, **Favorites**, workspaces from the previous
   Team sidebar, then **Team**. A saved section order takes precedence.
-  **Solo** and workspaces from the previous Solo sidebar list their newest 7
-  chats; **Show more** reveals up to 10 more and **Show fewer** returns to 7.
-  Other sections start fully listed and offer **Show fewer** past 7 rows. These
-  choices are saved on this device only.
   Sections collapse independently through their headings. Buzz
   remembers collapsed sections for each community and identity. Unread messages
   or thread replies highlight the headings of collapsed sections. Muted
@@ -1253,12 +1247,13 @@ Quitting Buzz also turns it off.
   **Remove emoji** in the picker to clear it. Changes require writable saved
   sidebar preferences.
 - **Moving conversations** works by dragging or choosing **Move to…** from the
-  row’s menu. Workspaces and **Starred** accept any type. Unfiled conversations
+  row’s menu. Workspaces and **Favorites** accept any type. Unfiled conversations
   return to the home for their type: **Solo** for chats, **Team** for channels
   and forums, or **Direct messages**.
-- Saved workspaces, stars, mutes, sorting and filters update while connected in
-  hosts that support saved sidebar preferences. Moving a starred conversation
-  to a workspace or home section from the sidebar clears its star.
+- Saved workspaces, Favorites, mutes and sorting update while connected in
+  hosts that support saved sidebar preferences. Moving a conversation out of
+  Favorites to a workspace or home section from the sidebar removes it from
+  Favorites.
 - **Plugin channel rows**: a plugin can open a channel from its Solo row and keep
   that row selected. The sidebar then keeps its scroll position and open
   sections. When a plugin is explicitly disabled, its existing chats appear as
@@ -1588,7 +1583,7 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   availability, and does not prove the agent is ready or running. The settings
   below can deliberately add memory guidance, channel membership, and check-ins.
 - When the optional **Bestie** plugin is on, the saved choice also opens the
-  agent's DM from the first position in the left Apps dock, using the agent's
+  agent's DM from its row in the sidebar's **Plugins** card, using the agent's
   name and avatar. The Messages sidebar omits the duplicate Bestie row. Bestie
   uses the same conversation tabs as Messages: threads open beside the chat (or
   in the main pane, following your thread placement setting), and can be moved,

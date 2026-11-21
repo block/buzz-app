@@ -165,6 +165,9 @@ test("a unified Solo row describes and opens shared access", async ({
       "--buzz-text-scale",
       String(scale),
     );
+    // The cards' inset leaves the default width too narrow for this row's
+    // badge, action and title at 200%; the widest sidebar holds them all.
+    await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
     await page.mouse.move(0, 0);
     await shared.blur();
     await action.blur();

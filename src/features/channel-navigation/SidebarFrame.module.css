@@ -23,6 +23,10 @@
   padding: var(--space-3) 0 0;
   min-width: 0;
 }
+/* A header with nothing in it takes no room. */
+.sidebarFilter:empty {
+  display: none;
+}
 .sidebarBody {
   display: flex;
   flex-direction: column;
@@ -93,6 +97,15 @@
       var(--channel-row-fill-start)
     )
     var(--space-2);
+}
+/* Text-only rows keep their label clear of the pill's rounded
+   edge. The label's design-system class is matched by attribute so the module
+   doesn't scope it. */
+.channelList
+[data-variant="row"]:has(> [class~="navigation-item-label"]:first-child),
+.sidebarFilter
+  [data-variant="row"]:has(> [class~="navigation-item-label"]:first-child) {
+  padding-inline-start: var(--space-3);
 }
 .channelList [data-variant="row"][data-inset],
 .sidebarFilter [data-variant="row"][data-inset] {
@@ -202,4 +215,38 @@
     var(--sidebar-floating-action-clearance) +
     var(--space-3)
   );
+}
+/* Cards: the sidebar has no surface of its own. Its sections are Panels (see
+   `.panel` in components.css) on the window's tint, and the controls around
+   them use the tint's quiet fills, as the header's do. */
+.cards {
+  height: 100%;
+  min-height: 0;
+  --affordance-panel-hover: var(--affordance-backdrop-hover);
+}
+/* Cards line up with the conversation: their tops meet, and they sit a panel
+   gap from the window's edge and from the conversation. */
+/* Nothing above the first card adds space, so its top always meets the
+   conversation's. */
+.cards .sidebar .sidebarFilter {
+  padding-block-start: 0;
+}
+/* Cards space themselves; the list's row gap would add to every card gap, and
+   twice around the hidden new-workspace slot. */
+.cards .sidebar .channelListContent {
+  gap: 0;
+}
+/* The shell already keeps a panel gap on both sides of the sidebar. */
+.cards .sidebar {
+  --sidebar-padding-inline: 0px;
+  --sidebar-padding-end: 0px;
+}
+/* Cards scroll without a visible scrollbar. */
+.cards .sidebar .channelList {
+  padding-block-start: 0;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+.cards .sidebar .channelList::-webkit-scrollbar {
+  display: none;
 }

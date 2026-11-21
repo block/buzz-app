@@ -1,8 +1,6 @@
 import { isSidebarSortMode } from "./sidebar-sort.ts";
 import {
   projectSidebarPreferences,
-  validActiveWindow,
-  DEFAULT_ACTIVE_WINDOW_SECONDS,
   HOME_SIDEBAR_SECTIONS,
   MAX_WORKSPACES,
   MAX_WORKSPACE_ASSIGNMENTS,
@@ -12,7 +10,6 @@ import {
   type SidebarSectionEdit,
   type SidebarGroups,
   type SidebarSortMode,
-  type SidebarFilterMode,
 } from "./sidebar-preferences.ts";
 import {
   editSidebarRecord,
@@ -96,7 +93,6 @@ export function editSidebarSectionOrder(
       throw new Error("Invalid workspace section order");
     const groups = projectSidebarPreferences(
       current,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -208,22 +204,6 @@ export function validSidebarSort(
   );
 }
 
-export function validSidebarFilter(
-  group: string,
-  mode: SidebarFilterMode,
-  sectionIds: readonly string[],
-  activeWindowSeconds?: number | null,
-): boolean {
-  return (
-    ["all", "unreads", "active"].includes(mode) &&
-    (activeWindowSeconds === undefined ||
-      (activeWindowSeconds === null
-        ? mode === "all"
-        : mode === "active" && validActiveWindow(activeWindowSeconds))) &&
-    validSidebarSort(group, "alpha", sectionIds)
-  );
-}
-
 // Pure edits of validated, projected heads. Hosts retain validation, signing,
 // publication, readback and serialization; these functions never perform I/O.
 export function editSidebarAssignment(
@@ -303,7 +283,6 @@ export function editSidebarAssignment(
       undefined,
       undefined,
       undefined,
-      undefined,
       true,
     ),
   );
@@ -321,35 +300,6 @@ export function editSidebarSort(
   now = Date.now(),
 ): Record<string, unknown> {
   return editSidebarSortRecord(current, createdAt, group, mode, now);
-}
-
-export function editSidebarFilter(
-  current: Record<string, unknown>,
-  createdAt: number,
-  group: string,
-  mode: SidebarFilterMode,
-  now = Date.now(),
-  activeWindowSeconds?: number | null,
-): Record<string, unknown> {
-  const windows = {
-    ...(current.activeWindowSeconds as Record<string, number> | undefined),
-  };
-  const previous = windows[group] ?? DEFAULT_ACTIVE_WINDOW_SECONDS;
-  const changed =
-    activeWindowSeconds === null
-      ? Object.hasOwn(windows, group)
-      : activeWindowSeconds !== undefined && previous !== activeWindowSeconds;
-  if (activeWindowSeconds === null) delete windows[group];
-  else if (activeWindowSeconds !== undefined)
-    windows[group] = activeWindowSeconds;
-  const next = editSidebarRecord(
-    "channel-filter",
-    current,
-    createdAt,
-    [[["g", group], mode === "all" ? null : mode]],
-    now,
-  );
-  return changed ? { ...next, activeWindowSeconds: windows } : next;
 }
 
 export function editSidebarToggle(

@@ -103,8 +103,9 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   await close.click();
   await expect(dock).toHaveCount(0);
 
-  // The hit target starts at the seam; the painted capsule stays centered on it.
-  // This keeps the scrollbar and sidebar actions clear of the resize target.
+  // The hit target starts at the conversation card's edge, after the panel gap
+  // that separates it from the sidebar; the painted capsule stays centered on
+  // it. This keeps the sidebar's scrollbar and actions clear of the target.
   const navigation = page.getByRole("navigation", {
     name: "Subscribed channels",
   });
@@ -114,13 +115,23 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
     .getByRole("complementary", { name: "Sidebar", exact: true })
     .boundingBox();
   const mainBounds = await page.locator("#main-content > .panel").boundingBox();
-  expect(mainBounds.x).toBeCloseTo(sidebarBounds.x + sidebarBounds.width);
+  const gap = await page
+    .locator(".shell-content")
+    .evaluate(
+      (element) =>
+        Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--space-panel-gap"),
+        ) *
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
+  expect(mainBounds.x).toBeCloseTo(sidebarBounds.x + sidebarBounds.width + gap);
   const railCenter = resizeBounds.x;
-  expect(railCenter).toBeCloseTo(
-    (sidebarBounds.x + sidebarBounds.width + mainBounds.x) / 2,
+  expect(railCenter).toBeCloseTo(mainBounds.x);
+  // The scrollport reaches the sidebar's edge, a panel gap before the target.
+  expect(scrollBounds.x + scrollBounds.width).toBeCloseTo(
+    sidebarBounds.x + sidebarBounds.width,
   );
-  // The scrollport extends through the trailing inset to the resize seam.
-  expect(railCenter - (scrollBounds.x + scrollBounds.width)).toBeCloseTo(0);
+  expect(railCenter - (scrollBounds.x + scrollBounds.width)).toBeCloseTo(gap);
   const capsuleCenter = await resize.evaluate(
     (el) =>
       el.getBoundingClientRect().left +

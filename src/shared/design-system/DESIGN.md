@@ -681,7 +681,7 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell joins sidebar navigation and the main content workspace into one surface beside the app dock. The sidebar resize grip sits on their shared `border-standard` seam. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (24px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
+- **Panels:** the shell joins sidebar navigation and the main content workspace into one surface beside the app dock. The sidebar resize grip sits on their shared `border-standard` seam. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use `surface-inset-subtle` for a quieter reading pane, such as a search preview: it mixes the panel and inset surfaces equally in both modes. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
 - **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state. The one exception to the solid shell is a backdrop a plugin explicitly registers ([shell backdrops](../../../docs/plugin-architecture.md#shell-backdrops)); the default shell has none. A backdrop may cover the dots and gutters only. Panes stay opaque, and the host keeps solid `bg-app` beneath each header control group and the app dock so their ink, fills and focus rings keep this background's contrast. The host shows no backdrop under reduced motion, reduced transparency or forced colors.
 - **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
@@ -691,7 +691,7 @@ Use the surface that matches the content and its position in the interface.
 ### Floating surfaces
 
 Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
-mode-aware fill, 8px backdrop blur, 24px `radius-container` corners,
+mode-aware fill, 8px backdrop blur, 16px `radius-container` corners,
 and shared lift. The elevation recipe supplies a crisp contour, contact shadow,
 and ambient shadow in light mode, and a quiet white contour in dark mode. A
 transparent 1px border preserves inset geometry without doubling the contour. `popover-surface` composes this same recipe for feature-owned
@@ -782,9 +782,9 @@ The shell uses a vertical `Tabs variant="dock"` rail on the left, ordered
 Bestie, Inbox, then the normal app order. Wide search stays centered in the top
 bar and fills the available space between controls at compact widths. Creation
 sits beside the sidebar scope filters; Cmd/Ctrl+N opens it only where the app
-has a creation sidebar. The sidebar and detail pane share one joined surface; the
-resize seam is a persistent `border-standard` hairline. Layout and overflow
-remain shell-owned.
+has a creation sidebar. The sidebar sits on the window's tint, a panel gap from
+the detail pane's own `Panel`, with no hairline between them; its quiet fills
+are the backdrop fills the header uses. Layout and overflow remain shell-owned.
 
 Use `Tabs variant="capsule"` for outlined filters with no filled track and a
 wrapping trailing action, as in Hosted Communities. `Header align="end"`
@@ -1252,7 +1252,7 @@ for identity choices, retaining human/agent shapes.
 PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
 spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem
 width and 16px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
-hover treatment for short action lists. Content and wide popovers retain 24px corners.
+hover treatment for short action lists. Content and wide popovers retain 16px `radius-container` corners.
 Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as
@@ -1651,9 +1651,7 @@ Selected rows can expand without painting the entire branch in the accent color.
 Its `text` variant is a text-only row action, such as a capped list's Show
 more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
-focus. Use it where a fill would read as another destination. A capped list
-puts both on one line: **Show more**, with a leading caret, on the row icons and
-titles, and **Show fewer** at the end, ending where row trailing content ends.
+focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
 an identity's full npub. Focus opens every preview at once, so immediate Tab
@@ -2201,6 +2199,9 @@ button (beneath horizontal docks); badges overlay the tile. CountBadge uses a co
 corner capsule straddling the top-right edge, with `surface-dock-count` and
 `text-dock-count` keeping dark fill and readable accent ink in both modes. The
 shell scrollport preserves gutter space for the full capsule and focus ring.
+Outside the dock, `placement="corner"` gives CountBadge the same dark capsule
+for an identity tile's top-right corner, ringed in the panel surface. Avatar's
+`statusBadgeSize="small"` shrinks presence where that count leads.
 A tile with a page preview shows its label on keyboard focus and while its preview is closed.
 Up/Down arrow keys move focus in the side dock without selecting; Enter, Space or
 pointer selection changes the page while focus stays on its tab. Horizontal dock

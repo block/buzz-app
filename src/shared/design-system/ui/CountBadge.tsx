@@ -9,16 +9,20 @@ const MAX_VISIBLE = 99;
 export function CountBadge({
   count,
   label,
+  placement = "row",
 }: {
   count: number;
   /** Spoken description, such as "5 drafts". */
   label: string;
+  /** `corner` overlays an identity tile's top-right corner in a dark capsule. */
+  placement?: "row" | "corner";
 }) {
   if (count <= 0) return null;
   return (
     <span
       data-buzz-ui=""
       className="buzz-count-badge"
+      data-placement={placement === "row" ? undefined : placement}
       role="img"
       aria-label={label}
     >

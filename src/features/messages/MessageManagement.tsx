@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership";
 import {
   BellIcon,
   BellSlashIcon,
@@ -265,7 +266,7 @@ export function MessageManagement({
       channel &&
       !channel.cached &&
       session.viewer &&
-      channel.members?.includes(session.viewer)
+      viewerMember(channel, session.viewer)
         ? channel.id
         : undefined,
   );

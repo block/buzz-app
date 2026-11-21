@@ -464,3 +464,60 @@ it("gives large reads their own deadline; a joining read keeps it", async () => 
   await failures;
   expect(wire.signal?.aborted).toBe(true);
 });
+
+it("schedules compact snapshots in the existing lanes with independent cancellation and fresh attempts", async () => {
+  const { MEMBERSHIP_TYPES, MembershipUnsupported } = await import(
+    "./membership-snapshot"
+  );
+  const scripted = scriptedTransport("viewer", "relay");
+  const calls: {
+    signal: AbortSignal;
+    resolve(value: never): void;
+    reject(error: unknown): void;
+  }[] = [];
+  const owner = createRelayReader({
+    ...scripted.transport,
+    readMembershipSnapshot: (_types, signal) =>
+      new Promise((resolve, reject) => {
+        calls.push({ signal, resolve, reject });
+      }),
+  });
+  owners.push(owner);
+  const snapshot = owner.reader.readMembershipSnapshot;
+  expect(snapshot).toBeDefined();
+  const controller = new AbortController();
+  const first = snapshot?.(MEMBERSHIP_TYPES, {
+    signal: controller.signal,
+    priority: "background",
+  });
+  const firstError = expect(first).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  const second = snapshot?.(MEMBERSHIP_TYPES, { priority: "background" });
+  const secondError = expect(second).rejects.toBeInstanceOf(
+    MembershipUnsupported,
+  );
+  const fresh = snapshot?.(MEMBERSHIP_TYPES, {
+    fresh: true,
+    priority: "background",
+  });
+  const freshError = expect(fresh).rejects.toBeInstanceOf(
+    MembershipUnsupported,
+  );
+  const foreground = owner.reader.read(filter("foreground"));
+  expect(calls).toHaveLength(1);
+  expect(scripted.pending).toHaveLength(1);
+  controller.abort();
+  await firstError;
+  expect(calls[0]?.signal.aborted).toBe(true);
+  // The second request was made during the first attempt, so cancellation of
+  // that older attempt must leave a new generation queued and runnable.
+  expect(calls).toHaveLength(2);
+  calls[0]?.reject(new MembershipUnsupported());
+  calls[1]?.reject(new MembershipUnsupported());
+  await secondError;
+  await vi.waitFor(() => expect(calls).toHaveLength(3));
+  calls[2]?.reject(new MembershipUnsupported());
+  scripted.next().respond([]);
+  await Promise.all([freshError, foreground]);
+});

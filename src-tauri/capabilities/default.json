@@ -70,6 +70,7 @@
     "allow-relay-publish-thread-follows",
     "allow-relay-http",
     "allow-relay-http-cancel",
+    "allow-relay-membership-snapshot",
     "allow-relay-verify-signatures",
     "allow-relay-workflow-runs",
     "allow-relay-admin-discover",

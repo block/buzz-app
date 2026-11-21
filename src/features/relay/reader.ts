@@ -1,3 +1,7 @@
+import {
+  MEMBERSHIP_TYPES,
+  type MembershipSnapshot,
+} from "./membership-snapshot";
 import { isSidebarPreferencesBatch } from "./sidebar-preferences";
 import { isWorkflowDefinitionBatch } from "../workflows/queries";
 import { verifyThreadWindows } from "./thread-window";
@@ -25,6 +29,10 @@ export type ReadOptions = {
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
+  readMembershipSnapshot?(
+    types?: readonly string[],
+    options?: ReadOptions,
+  ): Promise<MembershipSnapshot>;
   readStateSnapshot?(options?: ReadOptions): Promise<readonly RelayEvent[]>;
   /** One page of the relay's name-only profile search (see
    * `ReadTransport.searchProfiles`), under the same deadline and cancellation
@@ -40,7 +48,7 @@ export type RelayReader = {
     options?: ReadOptions,
   ): Promise<readonly RelayEvent[]>;
 };
-type ReadValue = readonly RelayEvent[] | AgentLibrary;
+type ReadValue = readonly RelayEvent[] | AgentLibrary | MembershipSnapshot;
 type Consumer = {
   resolve(value: ReadValue): void;
   reject(error: unknown): void;
@@ -58,6 +66,7 @@ type Job = {
   running: boolean;
   snapshot: boolean;
   library: boolean;
+  membership?: readonly string[];
   /** Set for a name-only profile search; `filters` then hold the equivalent
    * NIP-50 filter, so invalidation treats both searches alike. */
   profiles?: { query: string; limit: number; page: number };
@@ -171,6 +180,19 @@ export function createRelayReader(
       job.fetched = profiling.start("read.fetch", job.id);
       // Catch synchronous adapter failures as well as rejected promises.
       try {
+        if (job.membership) {
+          if (!transport.readMembershipSnapshot)
+            throw new Error("Membership snapshots unavailable");
+          void transport
+            .readMembershipSnapshot(
+              job.membership,
+              job.controller.signal,
+              job.priority,
+            )
+            .then((snapshot) => finish(job, snapshot))
+            .catch((error) => failed(job, error));
+          continue;
+        }
         if (job.library) {
           if (!transport.readAgentLibrary)
             throw new Error("Local agent library unavailable");
@@ -243,6 +265,14 @@ export function createRelayReader(
   ): Promise<AgentLibrary>;
   function read(
     filters: readonly ReadFilter[],
+    options: ReadOptions,
+    snapshot: false,
+    profiles: undefined,
+    library: false,
+    membership: readonly string[],
+  ): Promise<MembershipSnapshot>;
+  function read(
+    filters: readonly ReadFilter[],
     {
       signal,
       priority = "foreground",
@@ -252,6 +282,7 @@ export function createRelayReader(
     snapshot = false,
     profiles?: Job["profiles"],
     library = false,
+    membership?: readonly string[],
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
     if (!transport)
@@ -261,7 +292,7 @@ export function createRelayReader(
     let key: string;
     try {
       if (
-        (!filters.length && !library) ||
+        (!filters.length && !library && !membership) ||
         (filters.length > 4 &&
           !isWorkflowDefinitionBatch(filters) &&
           !isSidebarPreferencesBatch(filters))
@@ -310,6 +341,7 @@ export function createRelayReader(
     }
     const requestFilters = JSON.parse(key);
     if (library) key = "agent-library";
+    if (membership) key = `membership-snapshot:${JSON.stringify(membership)}`;
     if (snapshot) {
       if (!transport.readStateSnapshot)
         return Promise.reject(
@@ -337,6 +369,7 @@ export function createRelayReader(
         running: false,
         snapshot,
         library,
+        ...(membership ? { membership: [...membership] } : {}),
         ...(profiles ? { profiles } : {}),
         timer: setTimeout(
           () =>
@@ -376,6 +409,23 @@ export function createRelayReader(
   }
   const reader: RelayReader = Object.freeze({
     read,
+    ...(transport?.readMembershipSnapshot
+      ? {
+          readMembershipSnapshot: (
+            types: readonly string[] = MEMBERSHIP_TYPES,
+            options?: ReadOptions,
+          ) =>
+            read(
+              [],
+              // A later hint must never join an attempt dispatched before it.
+              { ...options, fresh: true, deadlineMs: LARGE_READ_DEADLINE_MS },
+              false,
+              undefined,
+              false,
+              types,
+            ),
+        }
+      : {}),
     readStateSnapshot: (options?: ReadOptions) =>
       read(
         [{ kinds: [30078], authors: [transport?.viewer ?? ""], limit: 500 }],

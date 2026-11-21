@@ -2332,5 +2332,6 @@ Plugins can add actions to your avatar menu. Profile-related actions may appear 
 Desktop toast notifications appear at the top right, 12px from the top on Mac and below the app headers on Windows/Linux. Hover the stack to
 expand it and pause timed notifications; F6 focuses notifications for keyboard
 access. Tab and Shift+Tab also expand the stack, which stays expanded while it
-contains keyboard focus. Dismissible notices show their close button on hover or keyboard focus.
+contains keyboard focus. While a dialog such as Settings is open, F6 reaches a
+plugin's notice that asks you to choose, and F6 again returns to the dialog. Dismissible notices show their close button on hover or keyboard focus.
 Recovery notices remain until resolved or dismissed where allowed.

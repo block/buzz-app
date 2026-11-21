@@ -2352,7 +2352,7 @@ it("puts the actual channel or DM source below the sender without category tags"
   if (!dmRow || !mentionRow) throw new Error("Expected DM and channel rows");
   const dmSource = dmRow.querySelector("[data-inbox-source]");
   const channelSource = mentionRow.querySelector("[data-inbox-source]");
-  expect(dmSource).toHaveTextContent("DM · Alice");
+  expect(dmSource).toHaveTextContent(/^DM$/);
   expect(channelSource).toHaveTextContent("#Design");
   expect(
     within(dmRow).getByText("Alice", { selector: "strong" }),
@@ -2378,7 +2378,7 @@ it("puts the actual channel or DM source below the sender without category tags"
     );
   }
   expect(
-    within(dmRow).getByRole("button", { name: "Open Alice in DM · Alice" }),
+    within(dmRow).getByRole("button", { name: "Open Alice in DM" }),
   ).toBeInTheDocument();
   await chooseFilter("DMs");
   expect(rows()).toHaveLength(1);
@@ -3478,9 +3478,7 @@ it("does not accept a second row selection while its explicit read is pending", 
   );
   const release = h.holdSave();
   try {
-    fireEvent.click(
-      screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Open Alice in DM" }));
     await waitFor(() => expect(h.saveStarted()).toBe(true));
     const other = rows().find((row) =>
       row.textContent?.includes("Please review this"),
@@ -4603,9 +4601,7 @@ it("opens a DM row's whole conversation in a tab", async () => {
   const h = fixture({ withDm: true });
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(3));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in DM" }));
   const tab = await screen.findByRole("region", {
     name: "Conversation in Alice",
   });
@@ -4640,9 +4636,7 @@ function seedDm(
         .inbox()
         .items.find((item) => item.channelId === "dm-room"),
     open: () =>
-      fireEvent.click(
-        screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-      ),
+      fireEvent.click(screen.getByRole("button", { name: "Open Alice in DM" })),
   };
 }
 /** jsdom has no layout or window focus. Lays out thread history alone, each
@@ -4916,7 +4910,9 @@ it("a DM row opened as its thread reads only up to a top-level message it never 
   const dm = seedDm(h, [root, reply]);
   render(h.view);
   const shown = () =>
-    rows().find((row) => row.textContent?.includes("DM · Alice"))?.textContent;
+    rows().find(
+      (row) => row.querySelector("[data-inbox-source]")?.textContent === "DM",
+    )?.textContent;
   await waitFor(() => expect(shown()).toContain("A DM thread reply"));
   expect(dm.row()?.threadOnly).toBe(true);
   // Alice's top-level message reaches the unread owner after the row's last
@@ -5423,11 +5419,7 @@ it.each(["solo", "dm", "thread"] as const)(
       name: /Alice reacted with heart/,
     });
     const context = within(row).getByText(
-      kind === "dm"
-        ? "in DM with Alice"
-        : kind === "solo"
-          ? "in Design"
-          : "in #Design",
+      kind === "dm" ? "in DM" : kind === "solo" ? "in Design" : "in #Design",
     );
     const preview = within(row).getByText("My acknowledged message");
     expect(

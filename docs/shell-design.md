@@ -486,8 +486,10 @@ there at the same message, beside its root, which the channel timeline reveals
 and marks even beyond its newest page. The current channel's own threads do not
 offer it.
 A thread that offers it also names its conversation above its original message,
-as Inbox rows do (`#channel` or `DM · names`); that name is a link that does
-the same.
+as `#channel` or `DM · names`; that name is a link that does the same. Inbox
+conversation rows use the same name, and reaction rows say `in #channel` or
+`in DM with names`; a one-to-one DM's row from its other member leaves the
+names out, as `DM` or `in DM`.
 Shift+F10 on a focused tab opens the same
 menu. Hiding the pane remains separate from closing its tabs. It also hides a
 launcher's side panel without closing it: the launcher reads pressed only while

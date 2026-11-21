@@ -3945,8 +3945,8 @@ and `RegisteredShortcut`. This is a host-matched preview: older hosts without th
 runtime feature negotiation. Multi-key chord sequences and command palettes are
 outside this initial contract.
 
-Users can rebind any registered shortcut in Settings → Shortcuts without plugin
-changes. The page lists host bindings and every active plugin contribution from the
+Users can rebind registered shortcuts in Settings → Shortcuts without plugin
+changes, except the ones the desktop shell owns. The page lists host bindings and every active plugin contribution from the
 dispatcher's own `hostSnapshot`/`snapshot` registries, grouped by owner, so it
 cannot drift from what fires. Overrides live in the host-owned device-local
 `buzz-shortcut-bindings.v1` preference, keyed by the registry identity the
@@ -3960,12 +3960,15 @@ restores every alias. On Apple platforms a binding may add Control (`ctrl`) besi
 Command, as in ⌃⌘A Archive chat; elsewhere Control is `mod`, so a `ctrl`
 binding never matches there and capture never records one. Host chords stay reserved: the page refuses to assign a chord
 that another listed shortcut already uses, host or plugin, refuses the copy, cut,
-paste and select-all chords (and close-window/quit in the desktop build) because a
-match would prevent their default everywhere, and warns when a chord is one the
+paste and select-all chords (and in the desktop build close-window, quit, tab
+switching and, on Mac, ⌘,) because a match would prevent their default
+everywhere, and warns when a chord is one the
 message editor handles locally. A conflict can still appear after capture, for
 example when a plugin that was disabled at the time is re-enabled with the same
 default or a new plugin ships one; the dispatcher then resolves it silently, so
-each affected row shows an "Also used by …" line naming the others. A malformed
+each affected row shows an "Also used by …" line naming the others. On Mac the
+**Buzz → Settings…** menu item owns ⌘,, so Open Settings is shown as reserved; an
+override saved before that keeps working beside ⌘,, and its row lists both. A malformed
 stored override falls back to the registered default rather than stopping
 dispatch. `formatBinding` in
 `features/shortcuts/format.ts` renders any `KeyBinding` for the current platform;

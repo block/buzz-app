@@ -1033,8 +1033,9 @@ Quitting Buzz also turns it off.
   lines it lacks. Turn on **Show full content** to read a version as written.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
-  you change most of them and also shows the fixed message-formatting keys. In
-  an empty composer, Up selects a message unless **Edit last message with Up Arrow**
+  you change most of them and also shows the fixed ones: message formatting
+  and, in the desktop app, ⌘, on Mac or Close tab and tab switching on Windows
+  and Linux. In an empty composer, Up selects a message unless **Edit last message with Up Arrow**
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
   U marks it unread, and Delete deletes your own message.
   With message text selected, Q quotes it into the draft.

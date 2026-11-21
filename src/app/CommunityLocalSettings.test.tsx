@@ -197,7 +197,7 @@ it("clears this community's cached data, reports a failure inline, and allows re
   expect(await screen.findByText("Cache cleared.")).toBeVisible();
 });
 
-it("shows saved image space against the shared limit and measures again after clearing", async () => {
+it("shows the space this community's saved data uses and measures again after clearing", async () => {
   const MB = 1024 * 1024;
   mediaUsage.mockResolvedValueOnce({
     community: 14 * MB,
@@ -205,9 +205,7 @@ it("shows saved image space against the shared limit and measures again after cl
     budget: 256 * MB,
   });
   const { user, communities } = await setup();
-  expect(
-    await screen.findByText(/Saved images: 14 MB of 256 MB\./),
-  ).toBeVisible();
+  expect(await screen.findByText(/Uses 14 MB on this device\./)).toBeVisible();
   expect(mediaUsage).toHaveBeenCalledWith(origin);
   vi.spyOn(communities.relay, "clearCache").mockResolvedValueOnce();
   mediaUsage.mockResolvedValueOnce({
@@ -216,11 +214,7 @@ it("shows saved image space against the shared limit and measures again after cl
     budget: 256 * MB,
   });
   await user.click(screen.getByRole("button", { name: "Clear cache" }));
-  expect(
-    await screen.findByText(
-      /Saved images: 0 MB here, 3 MB of 256 MB across communities\./,
-    ),
-  ).toBeVisible();
+  expect(await screen.findByText(/Uses 0 MB on this device\./)).toBeVisible();
 });
 
 it("saves the lifetime new Solo chats start with for this community and account only", async () => {

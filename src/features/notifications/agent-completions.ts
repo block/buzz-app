@@ -91,7 +91,21 @@ export function isViewingCompletedWork(
   );
 }
 
-/** One completion observer over the app-owned local work lifecycle. */
+type Seen = Readonly<{
+  state: LocalWorkState;
+  solo: boolean;
+  startedAt: number;
+  /** A quiet `done` whose message was still being published. */
+  awaiting?: true;
+}>;
+
+/** A quiet `done` Solo run with a message still awaiting acknowledgement. */
+const awaitingReply = (work: LocalWork) =>
+  work.state === "done" && !!work.soloChat && !work.posted && !!work.publishing;
+
+/** One completion observer over the app-owned local work lifecycle. A run that
+ * ends in error always alerts; one that ends done alerts only once it has
+ * posted here, so a wake that ended quietly makes no sound. */
 export function bindAgentCompletionNotifications(
   activity: LocalAgentSource,
   options: {
@@ -102,25 +116,39 @@ export function bindAgentCompletionNotifications(
     foreground(work: LocalWork, target: OpenTarget): void;
   },
 ) {
+  const seen = (work: LocalWork, awaiting = false): Seen => ({
+    state: work.state,
+    solo: !!work.soloChat,
+    startedAt: work.startedAt,
+    ...(awaiting ? { awaiting: true } : {}),
+  });
+  // Binding again mid-run keeps waiting for a reply already in flight.
   let previous = new Map(
     activity
       .work()
-      .map(
-        (work) =>
-          [keyOf(work), { state: work.state, solo: !!work.soloChat }] as const,
-      ),
+      .map((work) => [keyOf(work), seen(work, awaitingReply(work))] as const),
   );
   let disposed = false;
   const stop = activity.subscribeWork(() => {
-    const next = new Map<string, { state: LocalWorkState; solo: boolean }>();
+    const next = new Map<string, Seen>();
     for (const work of activity.work()) {
       const key = keyOf(work);
       const before = previous.get(key);
-      next.set(key, { state: work.state, solo: !!work.soloChat });
+      next.set(key, seen(work));
       const completedNow =
         (running(before?.state) && completed(work.state)) ||
         (!before?.solo && !!work.soloChat && completed(work.state));
-      if (!completedNow || !work.soloChat) continue;
+      // A publication can be acknowledged after its run ends: a quiet done
+      // waits for the messages still in flight before deciding.
+      const stillAwaiting =
+        before?.awaiting &&
+        before.startedAt === work.startedAt &&
+        work.state === "done";
+      if (!(completedNow || stillAwaiting) || !work.soloChat) continue;
+      if (work.state === "done" && !work.posted) {
+        if (work.publishing) next.set(key, seen(work, true));
+        continue;
+      }
       const target = options.target(work);
       if (!target) continue;
       const present = (focused: boolean) => {

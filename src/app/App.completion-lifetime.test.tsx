@@ -100,7 +100,12 @@ it("observes live Solo completions through community restoration without replayi
     screen.getByRole("status", { name: "Opening Buzz" }),
   ).toBeInTheDocument();
 
-  act(() => live.finish({ ok: true }));
+  act(() => {
+    const sent = live.sending("Done");
+    live.reply("live-reply");
+    sent(true);
+    live.finish({ ok: true });
+  });
   expect(await screen.findByText("Agent is done in Live chat")).toBeVisible();
   expect(screen.queryByText(/Old chat/)).not.toBeInTheDocument();
 

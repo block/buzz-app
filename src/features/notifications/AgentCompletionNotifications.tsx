@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppServices } from "../../app/services";
@@ -23,7 +23,9 @@ export function AgentCompletionNotifications({
     "agentActivity" | "agents" | "navigation" | "notifications"
   >;
 }) {
-  const notify = useToastNotification();
+  // The toast function is new each render, so the binding lasts as long as
+  // its services rather than restarting on every render.
+  const notify = useEffectEvent(useToastNotification());
   useEffect(
     () =>
       bindAgentCompletionNotifications(services.agentActivity, {
@@ -66,7 +68,7 @@ export function AgentCompletionNotifications({
           );
         },
       }),
-    [notify, services],
+    [services],
   );
   return null;
 }

@@ -13,7 +13,8 @@ computer that answer you right in the conversation.
 
 Download the latest release from [buzz.xyz](https://buzz.xyz) or view
 [all releases](https://github.com/block/buzz-app/releases). Available for
-macOS, Windows and Linux.
+macOS, Windows and Linux. On macOS, drag Buzz to Applications; if you open it
+from the disk image instead, Buzz offers to move itself there.
 
 ### 2. Set up your identity
 

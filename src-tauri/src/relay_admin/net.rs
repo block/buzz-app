@@ -62,6 +62,7 @@ impl Net {
             .port_or_known_default()
             .ok_or("Invalid admin origin")?;
         let mut builder = reqwest::Client::builder()
+            .user_agent(crate::relay::user_agent())
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))

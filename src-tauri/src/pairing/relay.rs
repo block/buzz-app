@@ -79,6 +79,7 @@ fn advertised(origin: &Url, document: &serde_json::Value) -> Result<Url, String>
 }
 pub(super) async fn discover(origin: &Url) -> Result<Url, String> {
     let client = reqwest::Client::builder()
+        .user_agent(crate::relay::user_agent())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(8))
         .build()

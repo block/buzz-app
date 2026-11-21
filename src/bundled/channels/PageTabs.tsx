@@ -499,32 +499,41 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  toolbar: !!workspace?.actions?.length && (
-                    <MenuRoot>
-                      <MenuTrigger
-                        render={
-                          <IconButton
-                            hint="familiar"
-                            size="sm"
-                            aria-label="Conversation actions"
-                            title="Conversation actions"
-                            icon={
-                              <DotsThreeIcon size="1rem" aria-hidden="true" />
+                  toolbar: (workspace?.headerActions ||
+                    !!workspace?.actions?.length) && (
+                    <>
+                      {workspace?.headerActions}
+                      {!!workspace?.actions?.length && (
+                        <MenuRoot>
+                          <MenuTrigger
+                            render={
+                              <IconButton
+                                hint="familiar"
+                                size="sm"
+                                aria-label="Conversation actions"
+                                title="Conversation actions"
+                                icon={
+                                  <DotsThreeIcon
+                                    size="1rem"
+                                    aria-hidden="true"
+                                  />
+                                }
+                              />
                             }
                           />
-                        }
-                      />
-                      <MenuPopup align="end">
-                        {workspace.actions.map((action) => (
-                          <MenuItem
-                            key={action.label}
-                            onClick={() => action.run()}
-                          >
-                            {action.label}
-                          </MenuItem>
-                        ))}
-                      </MenuPopup>
-                    </MenuRoot>
+                          <MenuPopup align="end">
+                            {workspace.actions.map((action) => (
+                              <MenuItem
+                                key={action.label}
+                                onClick={() => action.run()}
+                              >
+                                {action.label}
+                              </MenuItem>
+                            ))}
+                          </MenuPopup>
+                        </MenuRoot>
+                      )}
+                    </>
                   ),
                   actions: workspace?.actions,
                   content: workspace ? (

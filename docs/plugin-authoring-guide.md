@@ -317,7 +317,7 @@ Add `"host"` to `inject`, then:
   Check that it exists before use. Channels supplies it through
   `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
   Set the page's `layout` to `"workspace"`. Pass
-  `{ id, session, scope, target, label, intro?, actions?, detail?, latestRequest? }`.
+  `{ id, session, scope, target, label, intro?, headerActions?, actions?, detail?, latestRequest? }`.
   Set `target` to `{ channelId, threadId?, subthreadId?, messageId? }`. Omit
   `threadId` for the channel timeline. Supply a thread ID to show the thread.
   Add `subthreadId` to show and compose within a branch of that thread.
@@ -327,6 +327,10 @@ Add `"host"` to `inject`, then:
   the signal to that opening. Omit it on Back or Forward. An aborted signal is
   ignored, and an explicit `target.messageId` takes precedence.
   `intro` supplies content at the start of history. It scrolls with the messages.
+  `headerActions` renders in the main tab's toolbar, before the three-dot menu,
+  when `ctx.conversation.workspaceSlots?.headerActions === true`; an older host
+  ignores it. Use compact icon buttons with an `aria-label` and `title`, and set
+  `aria-pressed` or `aria-expanded` on a toggle.
   `actions` supplies
   entries in the header's three-dot menu and the tab's context menu, with
   `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel

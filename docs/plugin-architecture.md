@@ -3361,6 +3361,14 @@ The tab workspace belongs to Channels, which supplies it with
 slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads
 it at render and falls back to its own layout.
 
+`conversation.ui.Workspace` comes from the same provider. Its optional props
+grow over time, so `conversation.workspaceSlots` names each one this host
+renders as `true`. An older host lacks the flag, or the whole object, and
+ignores the prop.
+With `workspaceSlots.headerActions`, `headerActions` renders in the main tab's
+toolbar, before the conversation actions menu, while that tab is selected. The
+page owns those controls and their pressed, expanded and badge states.
+
 `open({ channelId, messageId })` opens the conversation at that message. The
 shared `useMessageOpening` reader waits for verified history (cached rows
 decide nothing), reads older pages until the message loads (at most 25 pages

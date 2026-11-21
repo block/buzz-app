@@ -516,6 +516,8 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Controls in the main tab's toolbar, before the actions menu. */
+  headerActions?: ReactNode;
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

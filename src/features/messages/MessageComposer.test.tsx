@@ -11314,6 +11314,44 @@ it("reads a tagged name's profile before deciding it is an agent the DM adds", a
   expect(h.session.profiles.ensure).toHaveBeenCalledWith([first.pubkey]);
 });
 
+it("keeps the draft when a DM send cannot read who its tags are", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  vi.mocked(h.session.profiles.ensure).mockImplementation(
+    async (_ids, priority) => {
+      if (!priority) throw new Error("offline");
+    },
+  );
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not check who you mentioned.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(add).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
+it("reads a tagged name's profile even when only its verified name is known", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  // A verified name alone says nothing about being an agent.
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  vi.mocked(h.session.profiles.ensure).mockImplementation(
+    async (_ids, priority) => {
+      if (!priority)
+        h.setProfiles(
+          new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
+        );
+    },
+  );
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Honey is not in this DM.",
+  );
+});
+
 it("adds no agent tagged in the relay's moderation DM", async () => {
   const relay = "e".repeat(64);
   const add = vi.fn(async () => "channel");

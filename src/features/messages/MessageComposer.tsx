@@ -3514,16 +3514,19 @@ function Composer({
           );
           if (dm && missing.length) {
             // Only agents join a DM from a tag; outside people become
-            // references without a prompt. A name picked from the directory
-            // may not have its profile here yet, and it says who is an agent.
-            const profiles = session.profiles.snapshot();
-            const unread = missing
-              .map((person) => person.pubkey)
-              .filter((key) => !profiles.has(key));
-            if (addsAgents && unread.length) {
+            // references without a prompt. Each tag's profile says which it
+            // is, as it did in the chooser; without it the send stops rather
+            // than guess, since an agent sent as a reference hears nothing.
+            if (addsAgents) {
               setSending(true);
               setError(undefined);
-              await session.profiles.ensure(unread).catch(() => {});
+              await session.profiles
+                .ensure(missing.map((person) => person.pubkey))
+                .catch(() => {
+                  throw new Error(
+                    "Could not check who you mentioned. Your draft is kept. Retry.",
+                  );
+                });
               attempt.signal.throwIfAborted();
             }
             references = missing

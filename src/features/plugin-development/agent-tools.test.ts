@@ -439,6 +439,7 @@ it("turns the plugin back on when a disable lands late in the real manager", asy
       changePlugin,
       recoverSettings: async () => stored(),
       readModule: async () => "",
+      readContent: async () => ({ readme: null, iconPng: null, iconJpg: null }),
       reloadPlugin: async () => stored(),
     },
   });

@@ -769,6 +769,7 @@ it("opens Buzz message and channel links in the app, naming a raw channel link",
     scope,
     channelId: "release",
     messageId: root,
+    messageLink: true,
   });
   await user.click(within(reader).getByRole("link", { name: "#Release" }));
   expect(open).toHaveBeenLastCalledWith({

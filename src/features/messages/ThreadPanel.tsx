@@ -64,6 +64,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { useMessageLinkOffer } from "./use-message-link-offer";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -984,6 +985,26 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  const verifiedRoot = useCallback(() => {
+    const { rootVerified, root, target, targetStatus } = view.snapshot();
+    if (!rootVerified || !root || root.delivery || root.threadRootId)
+      return undefined;
+    if (root.id === messageId) return root.id;
+    if (
+      targetStatus === "ready" &&
+      target?.id === messageId &&
+      target.threadRootId === root.id &&
+      !target.delivery
+    )
+      return root.id;
+  }, [view, messageId]);
+  const offeringLink = useMessageLinkOffer(
+    active ? navigation : undefined,
+    verifiedRoot,
+    (snapshot.status === "loading" && snapshot.targetStatus === "ready") ||
+      ((snapshot.status === "loading" || snapshot.resumed) &&
+        snapshot.root?.id === messageId),
+  );
   // Ordinary opens are positioned, not revealed; so is a return to a saved place.
   const positionedVisit = rootTarget || returning;
   // Reopening an already-shown thread selects nothing new, so its reader needs
@@ -1226,7 +1247,9 @@ function ThreadMessages({
     messageId,
     signal: active ? revealSignal : undefined,
     ready:
-      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+      !offeringLink &&
+      snapshot.targetStatus === "ready" &&
+      snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
@@ -1448,7 +1471,7 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (!element || navigation?.signal.aborted) return;
+    if (!element || navigation?.signal.aborted || offeringLink) return;
     // Restored background tabs and returning visits verify their target without
     // revealing it.
     if (
@@ -1719,6 +1742,7 @@ function ThreadMessages({
     navigation,
     routePending,
     rootTarget,
+    offeringLink,
     returning,
     revealed,
     selectedOffset,

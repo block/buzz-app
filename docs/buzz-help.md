@@ -828,6 +828,8 @@ Quitting Buzz also turns it off.
   channel. The card still opens the link, unless the channel is private
   to you: then the link and its card don't open anything, and the link can
   still be copied. Once you have access, the link opens again.
+- **Message links** open the message in Channels by default. An enabled plugin
+  can open a message it recognizes in its own page after Buzz checks access.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

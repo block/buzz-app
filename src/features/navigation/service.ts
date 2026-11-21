@@ -47,6 +47,22 @@ export type PageNavigation = Readonly<{
     result: Extract<OpenResult, { status: "opened" | "failed" }>,
   ): boolean;
 }>;
+type MessageLinkOffer = (
+  threadRootId: string,
+  stillVerified: () => boolean,
+  signal: AbortSignal,
+) => Promise<void>;
+type OfferSource = {
+  available(): boolean;
+  remaining(): number;
+  run: MessageLinkOffer;
+};
+const messageLinkOffers = new WeakMap<PageNavigation, OfferSource>();
+/** Only the bundled conversation readers receive a session-bound offer. */
+export function messageLinkOffer(request: PageNavigation | undefined) {
+  const offer = request && messageLinkOffers.get(request);
+  return offer?.available() ? offer : undefined;
+}
 declare module "@deepseek-ai/cordis" {
   interface Context {
     navigation: Navigation;
@@ -82,6 +98,7 @@ export function provideNavigation(
       attempt: OpenAttempt,
       owner: PresentationOwner,
       retainWhileCovered = false,
+      messageLink?: OfferSource,
     ) {
       let active = attempt;
       let suspended = false;
@@ -173,6 +190,7 @@ export function provideNavigation(
             };
           },
         },
+        messageLink,
       );
       return {
         ...presentation,
@@ -207,6 +225,7 @@ export type PresentationOwner = {
 function bindPresentation(
   parent: Omit<PageNavigation, "forSession">,
   owner: PresentationOwner,
+  messageLink?: OfferSource,
 ) {
   const lifetime = new AbortController();
   const sessions = new WeakMap<
@@ -262,6 +281,17 @@ function bindPresentation(
         },
         subscribe: relay.subscribe,
       });
+      if (messageLink)
+        messageLinkOffers.set(bound.request, {
+          available: messageLink.available,
+          remaining: messageLink.remaining,
+          run: (root, verified, signal) =>
+            messageLink.run(
+              root,
+              verified,
+              AbortSignal.any([bound.request.signal, signal]),
+            ),
+        });
       connections.set(connection, bound.request);
       return bound.request;
     },

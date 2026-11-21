@@ -75,6 +75,7 @@ it("binds message and channel links to the selected community and viewer", () =>
       channelId: "general",
       messageId: message,
       threadRootId: root,
+      messageLink: true,
     },
   });
   expect(deepLinkStep("buzz://channel/general", client)).toEqual({
@@ -97,6 +98,7 @@ it("binds message and channel links to the selected community and viewer", () =>
       scope: { viewer, communityOrigin: origin },
       channelId: "general",
       messageId: message,
+      messageLink: true,
     },
   });
 });
@@ -668,6 +670,7 @@ it("opens an OS message link carrying unknown query parameters as the bound conv
       channelId: "general",
       messageId: message,
       threadRootId: root,
+      messageLink: true,
     })}`,
   ]);
   expect(t.host.fail).not.toHaveBeenCalled();
@@ -678,6 +681,7 @@ it("opens an OS message link carrying unknown query parameters as the bound conv
     channelId: "general",
     messageId: message,
     threadRootId: root,
+    messageLink: true,
   });
   t.stop();
 });
@@ -694,6 +698,7 @@ it("opens the latest intent from a burst without presenting superseded destinati
       channelId: "general",
       messageId: message,
       threadRootId: root,
+      messageLink: true,
     })}`,
   ]);
   t.stop();

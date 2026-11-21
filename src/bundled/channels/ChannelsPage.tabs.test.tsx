@@ -425,9 +425,10 @@ it.each([
       expect(tabs.result.current.tabs).toHaveLength(2);
       act(() => host.navigation.forward());
       present();
-      expect(host.navigation.snapshot().entry.target).toEqual(
-        target("beta", link === "message" ? destination.id : undefined),
-      );
+      expect(host.navigation.snapshot().entry.target).toEqual({
+        ...target("beta", link === "message" ? destination.id : undefined),
+        ...(link === "message" && { messageLink: true }),
+      });
     }
     host.dispose();
   },

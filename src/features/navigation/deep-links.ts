@@ -125,6 +125,8 @@ export function deepLinkStep(
           communityOrigin: communityDestination(client.selected).url,
         },
         ...destination,
+        ...(link.format === "legacy" &&
+          link.messageId && { messageLink: true }),
       }),
     };
   } catch {

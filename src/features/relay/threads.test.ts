@@ -523,6 +523,28 @@ it("leaves an earlier resume in place once a retarget selects a reply", async ()
   expect(selected.resume()).toBe("keep");
 });
 
+it("retains the displayed root but withdraws its proof across an unverified stream gap", async () => {
+  const rows = [root, first];
+  const thread = direct(rows);
+  await thread.view.refresh();
+  const read = thread.view.snapshot();
+  expect(read.rootVerified).toBe(true);
+
+  thread.stale();
+  expect(thread.view.snapshot().root).toBe(read.root);
+  expect(thread.view.snapshot().rootVerified).toBeUndefined();
+  // Proven replay continuity can reuse evidence without querying the root again.
+  rows.shift();
+  await thread.established(true);
+  expect(thread.view.snapshot().rootVerified).toBe(true);
+
+  thread.stale();
+  await thread.established();
+  expect(thread.view.snapshot().rootVerified).toBeUndefined();
+  expect(thread.view.snapshot().root).toBeUndefined();
+  thread.view.dispose();
+});
+
 it("drops a resumed row its repair does not read again", async () => {
   const resume = await closed();
   // The relay omits a deleted row, and its deletion with it.

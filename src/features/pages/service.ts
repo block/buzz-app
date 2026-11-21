@@ -6,6 +6,14 @@ import {
   type Contribution,
 } from "../../plugins/contributions.ts";
 import { isBundledOwner } from "../../plugins/provenance";
+import type { JsonValue, NavigationScope } from "../navigation/targets";
+
+type AdmittedMessageLink = Readonly<{
+  scope: NavigationScope;
+  channelId: string;
+  messageId: string;
+  threadRootId: string;
+}>;
 
 export type PageProps = {
   companion?: ReactNode | undefined;
@@ -41,7 +49,12 @@ export type Page = Readonly<{
   /** Opt in to versioned page routes. Validation is synchronous and side-effect-free. */
   route?: Readonly<{
     version: number;
-    validate(params: import("../navigation/targets").JsonValue): boolean;
+    validate(params: JsonValue): boolean;
+    /** Offer this page's route params for a verified Buzz message link. */
+    resolveMessageLink?(
+      link: AdmittedMessageLink,
+      signal: AbortSignal,
+    ): JsonValue | undefined | Promise<JsonValue | undefined>;
   }>;
   /** This page acknowledges its own domain reveal rather than just successful mounting. */
   handlesNavigation?: boolean;
@@ -153,7 +166,9 @@ export class PagesService extends Service implements Pages {
       page.route &&
       (!Number.isSafeInteger(page.route.version) ||
         page.route.version < 1 ||
-        typeof page.route.validate !== "function")
+        typeof page.route.validate !== "function" ||
+        (page.route.resolveMessageLink !== undefined &&
+          typeof page.route.resolveMessageLink !== "function"))
     )
       throw new Error("Invalid page route contract");
     this.contributions.register(

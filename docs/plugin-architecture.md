@@ -3042,6 +3042,25 @@ the caller's deadline. These are trusted-plugin lifecycle fences, not a sandbox.
 into versioned route parameters. These are host-matched preview types through
 `@buzz/author`, not a cross-version runtime compatibility promise.
 
+A page with a versioned route may also declare `route.resolveMessageLink(link, signal)`.
+Buzz calls it after the live connection admits the channel and verifies the message
+and its thread root. `link` contains `scope`, `channelId`, `messageId` and
+`threadRootId`. For a top-level message, both message IDs are the same. Return the
+page's JSON route params, synchronously or asynchronously. Return `undefined` to
+decline. Buzz sets the page identity and keeps the link's scope. It bounds and
+validates the params with `route.validate` before presenting the page.
+
+Buzz considers active pages in contribution-key order for up to one second,
+leaving time for Channels to reveal the message before the visit expires.
+Honor the signal when the visit, reader selection or session changes, the page
+is removed, or the budget ends. If root evidence is slow or no page supplies a
+valid route, Buzz reveals the message in Channels. The visit keeps the original
+link address. Back and Forward check access and resolve the message again.
+Returning from Settings resumes an ordinary Channels visit. If Settings covered
+a contributed destination, Buzz checks its link again and keeps the workspace's
+local state if the same page and route return. The page still owns access to its
+own domain data.
+
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 Messages recognize the Buzz link forms `buzz://channel/<id>`,
 `buzz://channel/<id>/<event>`,
@@ -3321,7 +3340,6 @@ community/viewer scope; retargeting disposes the old thread and its modal. As in
 Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
-Exact message links still navigate to Channels rather than the page's route.
 
 `conversation.ui.Conversation({ session, scope, channelId, channelName?, threadId?, children })`
 gives a page's own `ui.Message` rows and `ui.Composer` for one channel the host

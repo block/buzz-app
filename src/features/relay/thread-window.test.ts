@@ -1069,6 +1069,69 @@ it("stops an exact view's overlapped window when the root is missing", async () 
   release();
 });
 
+it.each([true, false])(
+  "publishes live root proof without revealing a new root before the strict window (root already visible: %s)",
+  async (rootVisible) => {
+    const row = reply(0);
+    let admitRoot!: () => void;
+    const rootAdmitted = new Promise<void>((resolve) => {
+      admitRoot = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const thread = createThreadView({
+      channelId: channel,
+      messageId: row.id,
+      relayAuthor: relay.pubkey,
+      reader: {
+        async read([filter]) {
+          assert.exists(filter);
+          if (filter.ids?.includes(row.id)) return [row];
+          if (filter.ids?.includes(root.id)) {
+            if (rootVisible) thread.receive([root]);
+            return [root];
+          }
+          if (!filter.thread_window) return [];
+          await held;
+          return [row, bounds(filter)];
+        },
+      },
+      seed: undefined,
+      local: undefined,
+      exact: true,
+      canAccess: () => true,
+      visible: (events) => events,
+      notify: () => {},
+      admit(events) {
+        if (events.some((event) => event.id === root.id)) admitRoot();
+        return events;
+      },
+    });
+    const { view } = thread;
+    const loading = view.refresh();
+    try {
+      await rootAdmitted;
+      expect(view.snapshot()).toMatchObject({
+        status: "loading",
+        root: rootVisible ? { id: root.id } : undefined,
+        rootVerified: rootVisible ? true : undefined,
+        target: { id: row.id },
+        targetStatus: "ready",
+      });
+    } finally {
+      release();
+      await loading;
+    }
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      root: { id: root.id },
+      rootVerified: true,
+    });
+  },
+);
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;

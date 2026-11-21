@@ -37,6 +37,7 @@ import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
 import { AppOverlays } from "../features/pages/AppOverlays";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
+  Activity,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -304,16 +305,34 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     settingsTraversal.current = undefined;
     setConfirmSettingsDiscard(false);
   }
+  const workspace = route.workspace;
   const settingsFocus = useRef<HTMLElement | null>(null);
+  const settingsOpeningFocus = useRef<HTMLElement | null>(null);
+  const parkedFocus = useRef<{ key: string; element: HTMLElement }>(undefined);
+  const parkedKey = workspace.parked?.key;
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);
   const settingsReturnEntry = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
-    if (!settings) workspaceEntry.current = route.state.entry.id;
-    else if (!wasSettings.current)
+    const entryId = route.state.entry.id;
+    if (!settings) {
+      if (
+        wasSettings.current &&
+        parkedKey &&
+        entryId === settingsReturnEntry.current &&
+        settingsOpeningFocus.current
+      )
+        parkedFocus.current = {
+          key: parkedKey,
+          element: settingsOpeningFocus.current,
+        };
+      workspaceEntry.current = entryId;
+    } else if (!wasSettings.current) {
       settingsReturnEntry.current = workspaceEntry.current;
+      settingsOpeningFocus.current = settingsFocus.current;
+    }
     wasSettings.current = settings;
-  }, [settings, route.state.entry.id]);
+  }, [settings, parkedKey, route.state.entry.id]);
   useEffect(() => {
     const remember = (event: FocusEvent) => {
       if (
@@ -384,7 +403,51 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
   );
-  const workspace = route.workspace;
+  const sidebarOwner = navigationOwner(route.pages, workspace.selected);
+  useLayoutEffect(() => {
+    if (parkedKey) return;
+    const restore = parkedFocus.current;
+    parkedFocus.current = undefined;
+    if (!restore || restore.key !== workspace.key) return;
+    const frame = requestAnimationFrame(() => {
+      // The shell can focus its temporary page panel during the return.
+      const active = document.activeElement;
+      if (
+        restore.element.isConnected &&
+        (active === document.body ||
+          active?.id === "main-content" ||
+          active?.id === `shell-page-${sidebarOwner}`)
+      )
+        restore.element.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [parkedKey, sidebarOwner, workspace.key]);
+  const workspacePages = [
+    ...(workspace.parked && workspace.parked.key !== workspace.key
+      ? [
+          {
+            page: workspace.parked.page,
+            key: workspace.parked.key,
+            retained: workspace.parked.request,
+            fromSettings: workspace.parked.fromSettings,
+            projected: true,
+            current: false,
+          },
+        ]
+      : []),
+    ...(workspace.page
+      ? [
+          {
+            page: workspace.page,
+            key: workspace.key,
+            retained: workspace.restoring?.request,
+            fromSettings: workspace.restoring?.fromSettings,
+            projected: workspace.projected,
+            current: true,
+          },
+        ]
+      : []),
+  ];
   const presentation = workspace.page
     ? pagePresentation(workspace.page)
     : shellPresentation.settings;
@@ -423,11 +486,14 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         reason: "timeout",
       });
   }, [services, keptTimeout, drawsLoading]);
-  const pageOwnsCompanion =
-    !!workspace.page?.companion &&
-    (settings
-      ? !!workspace.request
-      : !route.failure && !route.waiting && !failedPage);
+  const companionPageKey = workspace.parked?.page.companion
+    ? workspace.parked.key
+    : workspace.page?.companion &&
+        (settings
+          ? !!workspace.request
+          : !route.failure && !route.waiting && !failedPage)
+      ? workspace.key
+      : undefined;
   // A registration lookup does not admit the target's parameters and scope.
   const pageSidebarReady =
     startup === "ready" &&
@@ -451,7 +517,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     services.sidebarSections.contextSubscribe,
     services.sidebarSections.contextSnapshot,
   );
-  const sidebarOwner = navigationOwner(route.pages, workspace.selected);
   const sidebarAvailable =
     !!workspace.page?.sidebar ||
     !!resolveSidebarContext(sidebarContexts, conversationTarget, sidebarOwner);
@@ -812,7 +877,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             </>
           }
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
-          companion={pageOwnsCompanion ? undefined : companion}
+          companion={companionPageKey ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}
           navigationAttempt={workspace.attempt}
@@ -847,25 +912,57 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             settings ? null : (
               opening
             )
-          ) : workspace.page ? (
-            <Presented
-              store={route.presented}
-              resolve={route.workspaceRequestFor}
-            >
-              {(request) =>
-                workspace.page && (
-                  <PageView
-                    page={workspace.page}
-                    navigation={request}
-                    companion={pageOwnsCompanion ? companion : undefined}
-                    companionOpening={
-                      pageOwnsCompanion ? launcher.opening : undefined
-                    }
-                  />
-                )
-              }
-            </Presented>
-          ) : null}
+          ) : (
+            workspacePages.map(
+              ({ page, key, retained, fromSettings, projected, current }) => (
+                <Presented
+                  key={key}
+                  store={route.presented}
+                  resolve={
+                    current ? route.workspaceRequestFor : () => undefined
+                  }
+                >
+                  {(request) => {
+                    const hidden = !!retained && !request;
+                    // Continue the Settings cover during readmission. Suspending
+                    // the workspace here would restart its exact-message reveal.
+                    const covered = hidden && fromSettings;
+                    const view = (
+                      <PageView
+                        page={page}
+                        navigation={request ?? retained}
+                        companion={
+                          key === companionPageKey ? companion : undefined
+                        }
+                        companionOpening={
+                          key === companionPageKey
+                            ? launcher.opening
+                            : undefined
+                        }
+                      />
+                    );
+                    return (
+                      <Activity
+                        mode={hidden && !covered ? "hidden" : "visible"}
+                      >
+                        {projected ? (
+                          <div
+                            className={covered ? undefined : "contents"}
+                            hidden={covered}
+                            inert={covered}
+                          >
+                            {view}
+                          </div>
+                        ) : (
+                          view
+                        )}
+                      </Activity>
+                    );
+                  }}
+                </Presented>
+              ),
+            )
+          )}
         </AppShell>
         <Dialog
           // The inert launch surface would swallow the modal's initial focus.
@@ -912,11 +1009,17 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             const returning =
               services.navigation.snapshot().entry.id ===
               settingsReturnEntry.current;
-            return returning &&
-              settingsFocus.current?.isConnected &&
-              settingsFocus.current !== document.body
-              ? settingsFocus.current
-              : (document.getElementById("main-content") ?? false);
+            const previous = parkedKey
+              ? settingsOpeningFocus.current
+              : settingsFocus.current;
+            if (
+              returning &&
+              previous?.isConnected &&
+              previous !== document.body
+            ) {
+              if (!parkedKey || previous.checkVisibility?.()) return previous;
+            }
+            return document.getElementById("main-content") ?? false;
           }}
         >
           <div id="settings-content" className="h-full" tabIndex={-1}>

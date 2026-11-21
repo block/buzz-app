@@ -92,6 +92,10 @@ test("sidebar headings keep readable space and compact disclosure targets at enl
               const gap = Number.parseFloat(
                 getComputedStyle(element).columnGap,
               );
+              const isTeam = element.getAttribute("aria-label") === "Team";
+              const caretGap = isTeam
+                ? label.left - chevron.right
+                : chevron.left - label.right;
               return {
                 readable: title.clientWidth >= 2 * root,
                 singleLine:
@@ -100,12 +104,11 @@ test("sidebar headings keep readable space and compact disclosure targets at enl
                 compact:
                   Math.abs(frame.height - disclosure.height) < 1 &&
                   frame.height <= 2.5 * root,
-                adjacent: Math.abs(chevron.left - label.right - gap) < 1,
+                adjacent: Math.abs(caretGap - gap) < 1,
                 fullTarget:
                   disclosure.left === slot.left &&
                   disclosure.right === slot.right &&
-                  (element.getAttribute("aria-label") !== "Team" ||
-                    Math.abs(slot.right - frame.right) < 0.5) &&
+                  (!isTeam || Math.abs(slot.right - frame.right) < 0.5) &&
                   getComputedStyle(header.lastElementChild).pointerEvents ===
                     "none",
                 actionsContained:

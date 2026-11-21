@@ -51,7 +51,7 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishNotSent, PublishRejected } from "./outbox";
+import { OLD_EVENT_NOT_FOUND, PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
 import {
@@ -112,6 +112,9 @@ export const nativeWriteKinds = [
   30178,
   30315,
   40003,
+  // Pin commands: NIP-PM is not advertised; a relay without it refuses them.
+  40010,
+  40011,
   40100,
   42000,
   45010,
@@ -1077,7 +1080,7 @@ export async function connectNativeTransport(
     },
     writer: {
       ...writer,
-      kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
+      kinds: [...nativeWriteKinds, ...(creation ? [9007] : [])],
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.
@@ -1095,9 +1098,7 @@ export async function connectNativeTransport(
             signal,
           );
           if (found.some((value) => value.id === event.id)) return "";
-          throw new PublishRejected(
-            "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
-          );
+          throw new PublishRejected(OLD_EVENT_NOT_FOUND);
         }
         return (await writer.publish(event, signal)) ?? "";
       },

@@ -1927,7 +1927,7 @@ export function subscribeRelayTraffic(
         const destination =
           tags.length === 1
             ? tags[0]?.[1]
-            : !tags.length && [39000, 39002].includes(incoming.kind)
+            : !tags.length && [39000, 39002, 30623].includes(incoming.kind)
               ? incoming.tags.find(([name]) => name === "d")?.[1]
               : undefined;
         const channelId =

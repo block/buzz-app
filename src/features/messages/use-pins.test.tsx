@@ -1,0 +1,190 @@
+// @vitest-environment jsdom
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import type { EventData, ReadFilter } from "../relay/events";
+import type { LiveListener } from "../relay/incoming";
+import type { PinSource } from "../relay/pins";
+import { usePinnedMessages, usePinnedRows } from "./use-pins";
+
+afterEach(cleanup);
+
+const relay = "a".repeat(64),
+  author = "c".repeat(64);
+const one = "1".repeat(64),
+  two = "2".repeat(64);
+const message = (id: string, content = id.slice(0, 1)): EventData => ({
+  id,
+  pubkey: author,
+  created_at: 100,
+  kind: 9,
+  tags: [["h", "c"]],
+  content,
+});
+
+function source(
+  read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
+) {
+  const listeners = new Set<LiveListener>();
+  const value: PinSource = {
+    relayAuthor: relay,
+    read: vi.fn(read),
+    async readPage(filters, settings) {
+      const events = await value.read(filters, settings);
+      return { events, relayCount: events.length };
+    },
+    subscribeLive(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    live: {
+      snapshot: () => ({ heads: [] }),
+      subscribe: () => () => {},
+    },
+  };
+  const deliver = (events: EventData[]) => {
+    for (const listener of listeners)
+      listener({ events } as unknown as Parameters<LiveListener>[0]);
+  };
+  return { value, deliver };
+}
+
+it("reads a failed list once however often its readers render", async () => {
+  const s = source(async () => {
+    throw new Error("offline");
+  });
+  const { result, rerender } = renderHook(() =>
+    usePinnedMessages(s.value, "c"),
+  );
+  await waitFor(() => expect(result.current.status).toBe("error"));
+  for (let index = 0; index < 5; index++) rerender();
+  await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(s.value.read).toHaveBeenCalledTimes(1);
+});
+
+const idsRead = (s: ReturnType<typeof source>) =>
+  vi
+    .mocked(s.value.read)
+    .mock.calls.flatMap(([[filter]]) => (filter?.ids ? [filter.ids] : []));
+
+it("reads only pins it has not loaded when the list changes", async () => {
+  let fail = false;
+  const s = source(async ([filter]) => {
+    if (fail) throw new Error("offline");
+    return filter?.ids ? filter.ids.map((id) => message(id)) : [];
+  });
+  const { result, rerender } = renderHook(
+    ({ ids }) => usePinnedRows(s.value, "c", ids),
+    { initialProps: { ids: [one] } },
+  );
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  rerender({ ids: [two, one] });
+  await waitFor(() =>
+    expect(result.current.rows.map((row) => row.id)).toEqual([two, one]),
+  );
+  // An unpin reads nothing.
+  rerender({ ids: [one] });
+  expect(result.current.rows.map((row) => row.id)).toEqual([one]);
+  expect(idsRead(s)).toEqual([[one], [two]]);
+  // A pin that fails to load keeps the rows already shown.
+  fail = true;
+  rerender({ ids: [two, one] });
+  await waitFor(() => expect(result.current.status).toBe("error"));
+  expect(result.current.rows.map((row) => row.id)).toEqual([one]);
+});
+
+it("reloads only the pin an edit or a withdrawn edit names", async () => {
+  vi.useFakeTimers();
+  try {
+    const editId = "e".repeat(64);
+    let content = "before";
+    const s = source(async ([filter]) => {
+      if (filter?.ids) return filter.ids.map((id) => message(id));
+      return content === "before" || !filter?.["#e"]?.includes(one)
+        ? []
+        : [
+            {
+              ...message(editId, content),
+              kind: 40003,
+              created_at: 101,
+              tags: [
+                ["h", "c"],
+                ["e", one],
+              ],
+            },
+          ];
+    });
+    const { result } = renderHook(() =>
+      usePinnedRows(s.value, "c", [one, two]),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.status).toBe("ready");
+    content = "after";
+    const edit = {
+      ...message("f".repeat(64)),
+      kind: 40003,
+      tags: [["e", one]],
+    };
+    // A burst of edits is one read of the pin they name.
+    act(() => s.deliver([edit]));
+    act(() => s.deliver([edit]));
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.rows[0]?.content).toBe("after");
+    expect(idsRead(s)).toEqual([[one, two], [one]]);
+    // An edit of another message, or a deletion of anything but a loaded
+    // edit, reads nothing.
+    const deletion = (target: string) => ({
+      ...message("9".repeat(64)),
+      kind: 5,
+      tags: [
+        ["h", "c"],
+        ["e", target],
+      ],
+    });
+    act(() =>
+      s.deliver([
+        { ...edit, tags: [["e", "3".repeat(64)]] },
+        deletion("4".repeat(64)),
+      ]),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(idsRead(s)).toHaveLength(2);
+    content = "before";
+    act(() => s.deliver([deletion(editId)]));
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(result.current.rows[0]?.content).toBe("1");
+    expect(idsRead(s)).toEqual([[one, two], [one], [one]]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("holds triggers that arrive during a read for one read after it", async () => {
+  const gates: (() => void)[] = [];
+  const s = source(async ([filter]) => {
+    if (filter?.ids) await new Promise<void>((resolve) => gates.push(resolve));
+    return filter?.ids ? filter.ids.map((id) => message(id)) : [];
+  });
+  const { result, rerender } = renderHook(
+    ({ attempt }) => usePinnedRows(s.value, "c", [one, two], attempt),
+    { initialProps: { attempt: 0 } },
+  );
+  await waitFor(() => expect(gates).toHaveLength(1));
+  rerender({ attempt: 1 });
+  act(() =>
+    s.deliver([
+      { ...message("f".repeat(64)), kind: 40003, tags: [["e", one]] },
+    ]),
+  );
+  try {
+    expect(gates).toHaveLength(1);
+  } finally {
+    act(() => gates.shift()?.());
+  }
+  await waitFor(() => expect(gates).toHaveLength(1));
+  act(() => gates.shift()?.());
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  expect(idsRead(s)).toEqual([
+    [one, two],
+    [one, two],
+  ]);
+});

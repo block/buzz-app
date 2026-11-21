@@ -84,6 +84,28 @@ it("matches the grouped invitation wording and keeps pronouns grammatical", () =
     membershipDescription([row("1", removed(pinky, wes))], profiles, wes).text,
   ).toBe("You were removed by Pinky");
 });
+it("keeps each pin notice apart from membership runs", () => {
+  const pinned = (actor: string): MembershipChange => ({
+    type: "message_pinned",
+    actor,
+    target: actor,
+  });
+  const notice = row("2", pinned(pinky));
+  const rows = [
+    row("1", joined(wes, pinky)),
+    notice,
+    row("3", pinned(brain)),
+    row("4", joined(wes, brain)),
+  ];
+  expect(membershipRows(rows).map((r) => r.id)).toEqual(["1", "2", "3", "4"]);
+  expect(membershipDescription([notice], profiles, wes)).toMatchObject({
+    text: "Pinky pinned a message",
+    parts: [{ id: pinky, text: "Pinky" }, { text: " pinned a message" }],
+  });
+  expect(
+    membershipDescription([row("5", pinned(wes))], profiles, wes).text,
+  ).toBe("You pinned a message");
+});
 it("groups removals without attributing a removal to the wrong actor", () => {
   const rows = [row("3", removed(wes, pinky)), row("4", removed(brain, wes))];
   expect(membershipRows(rows).map((r) => r.id)).toEqual(["4"]);

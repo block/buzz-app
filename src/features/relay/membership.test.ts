@@ -34,6 +34,40 @@ const addition = (target = pinky.pubkey, time = 20) =>
 const end = () =>
   bounds(relay, "a", "head", { has_more: false, next_cursor: null });
 
+it("admits a relay-signed pin notice for one message, attributed to the pinner", () => {
+  const target = "d".repeat(64);
+  const pin = activity({
+    type: "message_pinned",
+    actor: viewer.pubkey,
+    target_event_id: target,
+  });
+  const [row] = foldMessages("a", relay.pubkey, [pin]);
+  expect(row?.membership).toEqual({
+    type: "message_pinned",
+    actor: viewer.pubkey,
+    target: viewer.pubkey,
+  });
+  expect(
+    foldMessages("a", relay.pubkey, [
+      activity({ type: "message_pinned", actor: viewer.pubkey }),
+      activity({
+        type: "message_pinned",
+        actor: viewer.pubkey,
+        target_event_id: "fake",
+      }),
+      activity(
+        {
+          type: "message_pinned",
+          actor: viewer.pubkey,
+          target_event_id: target,
+        },
+        20,
+        viewer,
+      ),
+    ]).filter((r) => r.membership),
+  ).toEqual([]);
+});
+
 it("admits only recognized, channel-scoped relay-authored membership payloads", () => {
   const joined = addition();
   const left = activity({ type: "member_left", actor: pinky.pubkey });

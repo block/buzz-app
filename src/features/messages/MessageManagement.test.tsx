@@ -33,10 +33,13 @@ import { createRelaySession } from "../relay/session";
 import { followUpRecovery } from "./follow-up-storage";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import {
+  OLD_EVENT_NOT_FOUND,
   PublishRejected,
   type OutboxStorage,
   type OutgoingEvent,
 } from "../relay/outbox";
+import { EXPIRED_PIN_RECOVERY, UNSUPPORTED_PIN_RECOVERY } from "../relay/pins";
+import { acceptPublish } from "../relay/transport";
 import {
   keypair,
   message,
@@ -83,7 +86,13 @@ async function fixture(
   {
     outboxStorage = { load: () => [], save() {} },
     viewer = keypair(),
-  }: { outboxStorage?: OutboxStorage; viewer?: Key } = {},
+    pins,
+  }: {
+    outboxStorage?: OutboxStorage;
+    viewer?: Key;
+    /** With a relay that supports pins, the ids its list names. */
+    pins?: (original: RelayEvent) => string[];
+  } = {},
 ) {
   let role = viewerRole,
     rosterTime = 1700000000;
@@ -208,6 +217,15 @@ async function fixture(
               ],
             }),
           ];
+        if (pins && filter.kinds?.includes(30623))
+          return [
+            signed(relay, {
+              kind: 30623,
+              content: "",
+              created_at: 1700000000,
+              tags: [["d", "room"], ...pins(original).map((id) => ["e", id])],
+            }),
+          ];
         if (filter.kinds?.includes(0))
           return [
             ...(originalMention && filter.authors?.includes(peer.pubkey)
@@ -229,7 +247,7 @@ async function fixture(
         return [];
       },
       writer: {
-        kinds: [9, 40003, 5],
+        kinds: [9, 40003, 5, ...(pins ? [40010, 40011] : [])],
         async sign(template) {
           return signed(viewer, template);
         },
@@ -820,6 +838,158 @@ const savedFollows = () =>
   Object.keys(localStorage)
     .filter((key) => key.startsWith("buzz.thread-follows.v1:"))
     .map((key) => localStorage.getItem(key));
+
+it("pins from the message menu, and offers unpin for a pinned message", async () => {
+  const h = await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      pins: () => [],
+    },
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Pin to channel" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const { event } = h.publication(0);
+  expect(event.kind).toBe(40010);
+  expect(event.content).toBe("");
+  expect(event.tags.filter(([name]) => name !== "client-id")).toEqual([
+    ["h", "room"],
+    ["e", h.original.id],
+  ]);
+  cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
+  await fixture(
+    false,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      pins: (original) => [original.id],
+    },
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Unpin from channel" }),
+  ).toBeInTheDocument();
+});
+
+it.each([
+  [
+    "the relay",
+    // As the transport reports the relay's refusal.
+    () =>
+      acceptPublish(
+        Response.json(
+          { error: "invalid: event timestamp too far from server time" },
+          { status: 400 },
+        ),
+        "pin",
+      ),
+  ],
+  [
+    "this device",
+    () => Promise.reject(new PublishRejected(OLD_EVENT_NOT_FOUND)),
+  ],
+])(
+  "resends an unanswered pin as itself, then stops when %s refuses it as too old and reads the list again",
+  async (_, refusal) => {
+    let listReads = 0;
+    const h = await fixture(
+      false,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      {
+        pins: () => {
+          listReads++;
+          return [];
+        },
+      },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Pin to channel" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    // No answer: the outcome is unknown, and Retry sends the same event.
+    await act(async () =>
+      h.publication(0).result.reject(new Error("Connection lost")),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Retry message update" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(2));
+    expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+    const reads = listReads;
+    await act(async () =>
+      h
+        .publication(1)
+        .result.reject(await refusal().catch((error: unknown) => error)),
+    );
+    expect(await screen.findByText(EXPIRED_PIN_RECOVERY)).toBeInTheDocument();
+    // Still unknown: the refusal does not say whether the pin was applied.
+    expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("unknown");
+    await waitFor(() => expect(listReads).toBe(reads + 1));
+    expect(
+      screen.queryByRole("button", { name: "Retry message update" }),
+    ).toBeNull();
+    expect(screen.queryByText(/Retry sends/)).toBeNull();
+    expect(h.publications).toHaveLength(2);
+  },
+);
+
+it("says a community without pins refused one, and offers no retry", async () => {
+  const h = await fixture(
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    "member",
+    { pins: () => [] },
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Pin to channel" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const refusal = await acceptPublish(
+    Response.json({ error: "restricted: unknown event kind" }, { status: 400 }),
+    "pin",
+  ).catch((error: unknown) => error);
+  await act(async () => h.publication(0).result.reject(refusal));
+  expect(await screen.findByText(UNSUPPORTED_PIN_RECOVERY)).toBeInTheDocument();
+  expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
+  expect(
+    screen.queryByRole("button", { name: "Retry message update" }),
+  ).toBeNull();
+  expect(h.publications).toHaveLength(1);
+});
+
+it("offers no pin action when the host cannot send pin commands", async () => {
+  await fixture(false);
+  await screen.findByRole("menuitem", { name: "Follow thread" });
+  expect(screen.queryByRole("menuitem", { name: /pin/i })).toBeNull();
+});
 
 it("follows a thread without replying and keeps the saved choice", async () => {
   localStorage.clear();

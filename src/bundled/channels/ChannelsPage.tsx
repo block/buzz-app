@@ -2180,6 +2180,7 @@ function ChannelWorkspace({
           outbox={queries.outbox}
           profiling={queries.profiling}
           memberAdditions={queries.memberAdditions}
+          pins={queries}
         />
       ) : (
         <RelayTimings profiling={queries.profiling} />

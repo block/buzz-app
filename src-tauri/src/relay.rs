@@ -466,6 +466,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         {
             return Err("Invalid agent presence".into());
         }
+    } else if matches!(event.kind, 40010 | 40011) {
+        if !valid_pin_command(event) {
+            return Err("Invalid pin command".into());
+        }
     } else if matches!(event.kind, 9030..=9032) {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());
@@ -594,6 +598,26 @@ fn valid_reaction_deletion(event: &EventTemplate) -> bool {
             .tags
             .iter()
             .any(|tag| tag[0] == "e" && hex_key(&tag[1]))
+}
+
+/** A pin (40010) or unpin (40011): one channel and one message, as the
+ * broker's `validPinCommand`; the relay decides who may pin what. */
+fn valid_pin_command(event: &EventTemplate) -> bool {
+    let tag = |name: &str| {
+        event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some(name))
+            .collect::<Vec<_>>()
+    };
+    event.content.is_empty()
+        && event
+            .tags
+            .iter()
+            .all(|tag| tag.len() == 2 && matches!(tag[0].as_str(), "h" | "e" | "client-id"))
+        && matches!(tag("h").as_slice(), [h] if !h[1].is_empty() && h[1].len() <= 256)
+        && matches!(tag("e").as_slice(), [e] if hex_key(&e[1]))
+        && tag("client-id").len() <= 1
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */

@@ -1106,6 +1106,12 @@ it("advertises purpose-bound channel capabilities and gates creation on NIP-29",
   );
 });
 
+it("offers pin commands without an advertisement", async () => {
+  expect((await connectNativeTransport(community)).writer?.kinds).toEqual(
+    expect.arrayContaining([40010, 40011]),
+  );
+});
+
 it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.channelLifecycle);

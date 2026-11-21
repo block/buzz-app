@@ -13,6 +13,8 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { isBatchAddition } from "../../features/channel-members/members";
 import { soloAdminSetup } from "../../features/relay/solo-admins";
+import { refusedPinCommand, type PinSource } from "../../features/relay/pins";
+import { RefusedPin } from "../../features/messages/RefusedPin";
 
 /** A batch names everyone its Retry re-adds. */
 function additionLabel(tags: readonly (readonly string[])[]) {
@@ -27,10 +29,13 @@ export function OutboxStatus({
   outbox,
   profiling,
   memberAdditions,
+  pins,
 }: {
   outbox: Outbox;
   profiling: RelayProfiler;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
+  /** Reads a pin list again after its command is refused as too old. */
+  pins?: PinSource | undefined;
 }) {
   const operations = useSyncExternalStore(
     outbox.subscribe,
@@ -93,6 +98,7 @@ export function OutboxStatus({
             {!isWorkflowOperation(item.event) &&
               !item.guarded &&
               !item.held &&
+              !refusedPinCommand(item) &&
               (item.delivery === "failed" ||
                 item.delivery === "unknown" ||
                 // A kept batch still names someone unsettled.
@@ -160,6 +166,9 @@ export function OutboxStatus({
               (item.delivery === "failed" || item.delivery === "unknown") && (
                 <span>{HELD_RETRY_REFUSED}</span>
               )}{" "}
+            {refusedPinCommand(item) && (
+              <RefusedPin source={pins} item={item} />
+            )}{" "}
             {(!item.setup || item.abandonSetup || item.delivery === "failed") &&
               item.delivery !== "sending" && (
                 <Button

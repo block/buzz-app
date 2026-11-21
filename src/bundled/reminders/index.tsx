@@ -14,7 +14,7 @@ import {
   nowSeconds,
   pendingMessageIds,
 } from "./model";
-import { RemindDialog } from "./RemindDialog";
+import { RemindDialog, ReminderEditor } from "./RemindDialog";
 import { RemindersPage } from "./RemindersPage";
 import styles from "./Reminders.module.css";
 import { noState, noSubscribe, scopeOf, useReminders } from "./react";
@@ -237,12 +237,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return <CountBadge count={due} label={`${due} due`} />;
   }
 
+  ctx.pages.registerOverlay({
+    id: "new-reminder",
+    component: () => (
+      <ReminderEditor relay={relay} navigator={ctx.navigation} />
+    ),
+  });
   ctx.pages.register({
     id: "reminders",
     title: "Reminders",
     layout: "workspace",
     primary: true,
     badge: Badge,
+    route: { version: 1, validate: (params) => params === "new" },
     component: () => (
       <RemindersPage
         relay={relay}

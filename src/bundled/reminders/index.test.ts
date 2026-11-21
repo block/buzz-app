@@ -91,7 +91,7 @@ function mount(notifications?: unknown) {
       },
     },
     notifications: notifications ?? { register: () => ({ submit }) },
-    pages: { register: vi.fn() },
+    pages: { register: vi.fn(), registerOverlay: vi.fn() },
     navigation: {},
     conversation: { registerMessageAction: vi.fn() },
     effect: (body: () => () => void) => void stop.push(body()),
@@ -693,7 +693,7 @@ async function launch(options: Launch) {
     categories: { "buzz.reminders/reminders": options.category ?? true },
   });
   ctx.provide("relay", connection as never);
-  ctx.provide("pages", { register() {} } as never);
+  ctx.provide("pages", { register() {}, registerOverlay() {} } as never);
   ctx.provide("conversation", { registerMessageAction() {} } as never);
   owner.session.channels.ensureList();
   const shape = options.roster ?? "one";

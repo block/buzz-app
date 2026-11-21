@@ -16,6 +16,7 @@ async function bundledPages() {
     if (!Array.isArray(module.inject) || !module.inject.includes("pages"))
       continue;
     const registry = {
+      registerOverlay() {},
       register: (registered: Page) =>
         pages.push({
           ...registered,

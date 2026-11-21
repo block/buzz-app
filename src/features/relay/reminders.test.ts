@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import type { ReadFilter, RelayEvent } from "./events";
 import {
   createReminders,
@@ -101,6 +101,7 @@ const wire = (
 
 function harness(history: RelayEvent[] = []) {
   const signed: ReminderIntent[] = [];
+  const published: RelayEvent[] = [];
   let fail = false;
   let query = () => Promise.resolve(history);
   const model = createReminders({
@@ -111,26 +112,37 @@ function harness(history: RelayEvent[] = []) {
         events.map((e) => ({ eventId: e.id, content: JSON.parse(e.content) })),
       sign: async (intent) => {
         signed.push(intent);
-        return wire(
-          `e${signed.length}`,
-          intent.createdAt,
-          intent.content.status,
-          intent.d,
-        );
+        return {
+          ...wire(
+            `e${signed.length}`,
+            intent.createdAt,
+            intent.content.status,
+            intent.d,
+          ),
+          tags: [
+            ["d", intent.d],
+            intent.notBefore === undefined
+              ? ["expiration", String(intent.expiration)]
+              : ["not_before", String(intent.notBefore)],
+          ],
+          content: JSON.stringify(intent.content),
+        } as RelayEvent;
       },
     },
     query: () => query(),
-    publish: async () => {
+    publish: async (event) => {
       await Promise.resolve();
       if (fail) {
         fail = false;
         throw new Error("rejected");
       }
+      published.push(event);
     },
   });
   return {
     model,
     signed,
+    published,
     failNextPublish() {
       fail = true;
     },
@@ -145,6 +157,50 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("reminder writes and reconciliation", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("publishes and restores a text-only reminder and keeps its text across updates", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 100_000 });
+    const { model, published, signed } = harness();
+    await expect(
+      model.capability.create(undefined, 300, " \n "),
+    ).rejects.toThrow("Reminder text is required");
+    expect(signed).toHaveLength(0);
+    await model.capability.create(
+      undefined,
+      300,
+      "  Renew insurance\nFriday  ",
+    );
+    expect(published).toHaveLength(1);
+    expect(signed[0]?.content).toStrictEqual({
+      note: "Renew insurance\nFriday",
+      status: "pending",
+    });
+
+    const restored = harness(published).model.capability;
+    await restored.refresh();
+    const [reminder] = restored.snapshot().reminders;
+    assert(reminder);
+    expect(reminder).toEqual({
+      id: signed[0]?.d,
+      eventId: "e1",
+      createdAt: 100,
+      notBefore: 300,
+      note: "Renew insurance\nFriday",
+      status: "pending",
+    });
+    await model.capability.snooze(reminder.id, 700);
+    expect(model.capability.snapshot().reminders).toEqual([
+      { ...reminder, eventId: "e2", createdAt: 101, notBefore: 700 },
+    ]);
+    await model.capability.complete(reminder.id);
+    const [finished] = model.capability.snapshot().reminders;
+    expect(finished).toMatchObject({
+      id: reminder.id,
+      note: reminder.note,
+      status: "done",
+    });
+    expect(finished).not.toHaveProperty("notBefore");
+  });
 
   it("keeps the relay's winner whichever order versions arrive in", async () => {
     for (const order of [

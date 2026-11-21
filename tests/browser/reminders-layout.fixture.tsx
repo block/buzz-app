@@ -1,8 +1,13 @@
 import { apply as applyReminders } from "../../src/bundled/reminders";
 import { PageNavigation } from "../../src/app/shell/PageNavigation";
 import type { Page, RegisteredPage } from "../../src/features/pages/service";
-import { useState } from "react";
-import { RemindDialog } from "../../src/bundled/reminders/RemindDialog";
+import { useState, useSyncExternalStore } from "react";
+import {
+  RemindDialog,
+  ReminderEditor,
+} from "../../src/bundled/reminders/RemindDialog";
+import { createNavigationController } from "../../src/features/navigation/controller";
+import { createBrowserHistory } from "../../src/features/navigation/browser-history";
 import type { ChannelMessage } from "../../src/features/relay/contracts";
 import type { RelaySession } from "../../src/features/relay/session";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -37,6 +42,21 @@ document.documentElement.classList.toggle(
 );
 if (params.has("large")) document.documentElement.style.fontSize = "200%";
 const viewer = "a".repeat(64);
+const controller = createNavigationController(createBrowserHistory(window));
+const navigation = controller.navigation;
+navigation.subscribe(() => {
+  const current = navigation.snapshot();
+  if (current.status === "opening")
+    controller.complete(current.attempt, { status: "opened" });
+});
+if (navigation.snapshot().entry.target.kind === "home")
+  void navigation.open({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.reminders",
+    pageId: "reminders",
+    scope: { communityOrigin: "https://community.example", viewer },
+  });
 const now = Math.floor(Date.now() / 1000);
 const target = (id: string) => ({
   eventId: id.repeat(64),
@@ -182,6 +202,7 @@ if (dock) {
   applyReminders({
     relay,
     pages: {
+      registerOverlay() {},
       register(page: Page) {
         pages.push({
           ...page,
@@ -235,6 +256,10 @@ function Preview() {
   const [dialog, setDialog] = useState<ReminderTarget>();
   const [source, setSource] = useState<ReminderTarget>();
   const [conversation, setConversation] = useState(false);
+  const { entry } = useSyncExternalStore(
+    navigation.subscribe,
+    navigation.snapshot,
+  );
   return (
     <div className="flex flex-col" style={{ width, height: "100vh" }}>
       {demo && (
@@ -302,31 +327,39 @@ function Preview() {
           </div>
         </Dialog>
       )}
+      <ReminderEditor relay={relay} navigator={navigation} />
       <div className="min-h-0 flex-1">
-        <RemindersPage
-          relay={relay}
-          navigator={
-            {
-              open: async (link) => {
-                const message =
-                  link.kind === "conversation"
-                    ? state.reminders.find((item) =>
-                        link.messageId
-                          ? item.target?.eventId === link.messageId
-                          : item.target?.channelId === link.channelId,
-                      )?.target
-                    : undefined;
-                if (!message) return { status: "failed", reason: "not-found" };
-                setConversation(
-                  link.kind === "conversation" && !link.messageId,
-                );
-                setSource(message);
-                return { status: "opened" };
-              },
-            } as Navigation
-          }
-          clock={{ subscribe: () => () => {}, read: () => now }}
-        />
+        {entry.target.kind === "page" ? (
+          <RemindersPage
+            relay={relay}
+            navigator={
+              {
+                ...navigation,
+                open: async (link) => {
+                  if (link.kind === "page") return navigation.open(link);
+                  const message =
+                    link.kind === "conversation"
+                      ? state.reminders.find((item) =>
+                          link.messageId
+                            ? item.target?.eventId === link.messageId
+                            : item.target?.channelId === link.channelId,
+                        )?.target
+                      : undefined;
+                  if (!message)
+                    return { status: "failed", reason: "not-found" };
+                  setConversation(
+                    link.kind === "conversation" && !link.messageId,
+                  );
+                  setSource(message);
+                  return { status: "opened" };
+                },
+              } as Navigation
+            }
+            clock={{ subscribe: () => () => {}, read: () => now }}
+          />
+        ) : (
+          <p>Fixture home</p>
+        )}
       </div>
     </div>
   );

@@ -233,6 +233,62 @@ test("completion preserves section alignment and avatar opens its conversation",
   expect(errors).toEqual([]);
 });
 
+test("native history restores the reminder draft, explicit dismissal retires it, and saved lines stay distinct", async ({
+  page,
+}) => {
+  await page.goto(`${url}?width=900&demo`);
+  const open = page.getByRole("button", { name: "New reminder" });
+  const dialog = page.getByRole("dialog", { name: "New reminder" });
+  const note = dialog.getByRole("textbox", { name: "Reminder text" });
+  await open.click();
+  await note.fill("Renew insurance\nReview deductible");
+  await page.goBack();
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText("Fixture home", { exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(open).toBeVisible();
+  await page.goForward();
+  await expect(note).toHaveValue("Renew insurance\nReview deductible");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByText("Fixture home", { exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(open).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await open.click();
+  await expect(note).toHaveValue("");
+  await note.fill("Renew insurance\nReview deductible");
+  await dialog
+    .getByRole("button", { name: "Set reminder", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  const saved = page.getByText("Renew insurance Review deductible", {
+    exact: true,
+  });
+  await expect(saved).toBeVisible();
+  expect(
+    await saved.evaluate((el) => {
+      const range = document.createRange();
+      const text = el.firstChild;
+      const newline = text.textContent.indexOf("\n");
+      range.setStart(text, 0);
+      range.setEnd(text, newline);
+      const first = range.getBoundingClientRect();
+      range.setStart(text, newline + 1);
+      range.setEnd(text, text.length);
+      return range.getBoundingClientRect().top > first.top;
+    }),
+  ).toBe(true);
+  await page.goBack();
+  await expect(page.getByText("Fixture home", { exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(open).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+});
+
 test("pointer completion animates surviving rows in a scrolled list", async ({
   page,
 }) => {

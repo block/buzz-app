@@ -1,4 +1,3 @@
-import { withTimeout } from "../../plugins/timeout";
 import type { Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 
@@ -58,6 +57,10 @@ export type AgentHookDispatchOptions = Readonly<{
   milliseconds: number;
   /** Label native output using the registered owner, independently of payload. */
   compose?(output: unknown, pluginId: string): unknown;
+  /** Joins composed responses that only add context into one, in hook order;
+   * undefined when any of them does more. Such responses don't end dispatch,
+   * so every plugin's context reaches the agent. */
+  join?(outputs: readonly unknown[]): unknown;
 }>;
 
 /** Adapters supply native response acceptance and an event-wide time budget. */
@@ -68,27 +71,59 @@ export function dispatchAgentHooks(
   accepts: (output: unknown) => boolean,
   milliseconds: number,
   compose?: AgentHookDispatchOptions["compose"],
+  join?: AgentHookDispatchOptions["join"],
 ): Promise<unknown> {
   const deadline = Date.now() + milliseconds;
   const message = "Agent hook dispatch timed out";
-  return withTimeout(
-    (async () => {
-      const errors: unknown[] = [];
-      for (const hook of hooks) {
-        if (Date.now() >= deadline) throw new Error(message);
-        try {
-          const output = await hook.run(input, context);
-          if (accepts(output))
-            return compose ? compose(output, hook.pluginId) : output;
-        } catch (error) {
-          console.warn("Agent hook failed", hook.id, error);
-          errors.push(error);
-        }
+  // Responses that only add context, kept while later callbacks run.
+  const joined: unknown[] = [];
+  // The callback running now, or the next one to start.
+  let next = 0;
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A policy callback that never ran or answered must not vanish silently
+  // behind context that arrived in time.
+  const deliverGathered = () => {
+    expired = true;
+    console.warn(
+      "Agent hook dispatch timed out; delivering context gathered so far",
+      hooks.slice(next).map((hook) => hook.id),
+    );
+    return join?.(joined);
+  };
+  const dispatch = (async () => {
+    const errors: unknown[] = [];
+    for (const [index, hook] of hooks.entries()) {
+      next = index;
+      if (expired) return undefined;
+      if (Date.now() >= deadline) {
+        if (joined.length) return deliverGathered();
+        throw new Error(message);
       }
-      if (errors.length) throw errors[0];
-      return undefined;
-    })(),
-    message,
-    milliseconds,
-  );
+      try {
+        const output = await hook.run(input, context);
+        if (!accepts(output)) continue;
+        const composed = compose ? compose(output, hook.pluginId) : output;
+        // The first response that does more than add context wins, as before.
+        if (join?.([...joined, composed]) === undefined) return composed;
+        joined.push(composed);
+      } catch (error) {
+        console.warn("Agent hook failed", hook.id, error);
+        errors.push(error);
+      }
+    }
+    if (joined.length) return join?.(joined);
+    if (errors.length) throw errors[0];
+    return undefined;
+  })();
+  // Context already gathered is delivered at the deadline; otherwise the
+  // dispatch fails, as a callback that never answers would make it.
+  const timeout = new Promise<unknown>((resolve, reject) => {
+    timer = setTimeout(
+      () =>
+        joined.length ? resolve(deliverGathered()) : reject(new Error(message)),
+      milliseconds,
+    );
+  });
+  return Promise.race([dispatch, timeout]).finally(() => clearTimeout(timer));
 }

@@ -18,24 +18,77 @@
   overflow-wrap: anywhere;
 }
 
-.instructions[data-collapsed] {
-  max-height: calc(var(--space-8) * 4);
-  overflow: hidden;
-}
-
-.instructions[data-collapsed]::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: calc(var(--space-5) * 2);
-  background: linear-gradient(to bottom, transparent, var(--surface-inset));
-  pointer-events: none;
-}
-.instructionsAction {
+/* Search, creator and sort sit above the grid they filter. */
+.toolbar {
   display: flex;
-  margin-top: var(--space-3);
+  flex-wrap: wrap;
+  /* The search field's label is hidden; the others' sit above them. */
+  align-items: flex-end;
+  gap: var(--space-2);
 }
-.instructionsAction > * {
-  flex: 1;
+.search {
+  flex: 0 1 18rem;
+  min-width: 10rem;
+}
+/* Wide enough for a full name; its list matches this width. */
+.creator {
+  flex: 0 1 16rem;
+  min-width: 12rem;
+}
+.creator > * {
+  width: 100%;
+}
+.gold {
+  display: inline-flex;
+  color: var(--affordance-accent-prominent);
+}
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* Listings carry an excerpt and counts, so they take wider tracks. */
+.grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+}
+.listing {
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding-top: var(--space-8);
+}
+/* Search matches pop like find on screen, not the shared underline. */
+.listing mark,
+.marked mark {
+  background-color: var(--surface-find-match);
+  color: var(--text-on-find-match);
+  text-decoration: none;
+  box-decoration-break: clone;
+}
+.excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+/* Import and star at the start, More at the end. */
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: stretch;
+  margin-top: auto;
+}
+.more {
+  margin-inline-start: auto;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }

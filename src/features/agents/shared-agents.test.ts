@@ -35,6 +35,9 @@ it("lists the newest head per owner and slug", () => {
   expect(agents).toEqual([
     {
       id: `${owner}:helper`,
+      d: "helper",
+      event: "b".repeat(64),
+      createdAt: 3,
       name: "New",
       owner,
       model: "m",

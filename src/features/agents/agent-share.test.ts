@@ -214,6 +214,9 @@ it("publishes a catalog entry the marketplace lists as it was shared", () => {
   expect(sharedAgents([event])).toEqual([
     {
       id: `${owner}:${pubkey}`,
+      d: pubkey,
+      event: "1".repeat(64),
+      createdAt: 10,
       name: "Ada",
       owner,
       model: "echo-1",

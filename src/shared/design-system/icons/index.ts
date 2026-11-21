@@ -96,6 +96,8 @@ import TablerSettingsAiIcon from "@tabler/icons-react/dist/esm/icons/IconSetting
 export const SettingsAiIcon = defineIcon("tabler", TablerSettingsAiIcon);
 import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
 export const StarFilledIcon = defineIcon("tabler", TablerStarFilledIcon);
+import TablerStarIcon from "@tabler/icons-react/dist/esm/icons/IconStar.mjs";
+export const StarIcon = defineIcon("tabler", TablerStarIcon);
 import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mjs";
 export const BrowserIcon = defineIcon("tabler", TablerBrowserIcon);
 import TablerCalendarIcon from "@tabler/icons-react/dist/esm/icons/IconCalendar.mjs";

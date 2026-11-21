@@ -213,6 +213,7 @@ export function AgentsPage({
   const [sharedSelection, setSharedSelection] =
     useState<SharedAgentSelection>();
   const sharedTrigger = useRef<HTMLButtonElement | null>(null);
+  const [sharedWords, setSharedWords] = useState<readonly string[]>([]);
   const shared =
     connection.status === "ready" &&
     sharedSelection?.session === connection.session
@@ -684,6 +685,7 @@ export function AgentsPage({
           agent,
           session: connection.session,
           community: connection.origin,
+          viewer: connection.viewer,
         });
       },
     };
@@ -838,11 +840,17 @@ export function AgentsPage({
           ) : tab === "marketplace" ? (
             <AgentBrowse
               relay={relay}
+              agents={agents}
+              types={runnable}
+              onImported={leaveListing}
+              onOpen={(agent) => browse(agent.pubkey, leaveListing)}
+              openSettings={openSettings}
               selectedId={shared?.agent.id}
               onSelect={(selection, trigger) => {
                 sharedTrigger.current = trigger;
                 setSharedSelection(selection);
               }}
+              onSearch={setSharedWords}
             />
           ) : (
             <Teams
@@ -927,6 +935,7 @@ export function AgentsPage({
                       <SharedAgentPanel
                         key={shared.agent.id}
                         selection={shared}
+                        words={sharedWords}
                         agents={agents}
                         types={runnable}
                         onImported={leaveListing}

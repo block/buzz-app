@@ -238,6 +238,183 @@ it.each(["during", "after", "reconnect"])(
   },
 );
 
+it("a retired snapshot paces the next read from its settlement, after the broker's admission", async () => {
+  const h = setup();
+  const lane = createApiAdmission();
+  let releaseTransit!: () => void;
+  const transit = new Promise<void>((resolve) => {
+    releaseTransit = resolve;
+  });
+  const skipped = vi.fn();
+  let first = true;
+  // Like fetch: an abort settles locally at once, but a sent request still
+  // reaches the broker, which starts its five-second gate on admission.
+  h.read.mockImplementation((authors, signal) => {
+    const remote = (async () => {
+      if (first) {
+        first = false;
+        await transit;
+      }
+      const release = lane.tryPresence();
+      if (!release) {
+        skipped();
+        return null;
+      }
+      release();
+      return new Map(authors.map((author) => [author, "online" as const]));
+    })();
+    return new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+      remote.then(resolve, reject);
+    });
+  });
+  try {
+    h.owner.subscribe(key(3), () => {});
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.read).toHaveBeenCalledOnce();
+    h.owner.subscribe(key(4), () => {});
+    h.owner.connected(false);
+    h.owner.connected(true);
+    await vi.advanceTimersByTimeAsync(50);
+    releaseTransit();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(h.read).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(skipped).not.toHaveBeenCalled();
+    expect(h.owner.status(key(4))).toBe("online");
+  } finally {
+    releaseTransit();
+    h.owner.dispose();
+  }
+});
+
+it("disposal cancels a retired read, so its late refusal cannot reach a successor session", async () => {
+  const refusals = new Set<() => void>();
+  const old = setup();
+  let refuse!: () => void;
+  let signal!: AbortSignal;
+  // Like native reads: a cancel stops the request, and a refusal that does
+  // arrive is reported to every session for the same origin.
+  old.read.mockImplementationOnce(
+    (_authors, owned) =>
+      new Promise((_resolve, reject) => {
+        signal = owned;
+        refuse = () => {
+          if (owned.aborted) return;
+          for (const listener of refusals) listener();
+          reject(new Error("403"));
+        };
+        owned.addEventListener("abort", () => reject(owned.reason), {
+          once: true,
+        });
+      }),
+  );
+  const listener = vi.fn();
+  old.owner.subscribe(key(3), listener);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(old.read).toHaveBeenCalledOnce();
+  // A refusal elsewhere denies access, then the session is replaced.
+  old.owner.clear();
+  expect(signal.aborted).toBe(false);
+  old.owner.dispose();
+  expect(signal.aborted).toBe(true);
+  const successor = vi.fn();
+  refusals.add(successor);
+  listener.mockClear();
+  refuse();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(successor).not.toHaveBeenCalled();
+  expect(listener).not.toHaveBeenCalled();
+  expect(old.read).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["held", false],
+  ["retired", true],
+])(
+  "leaving a community cancels its %s read, so the shared broker slot passes to the next community",
+  async (_name, retired) => {
+    const a = setup();
+    const b = setup();
+    let flight = false;
+    let signal!: AbortSignal;
+    // Like the development broker: one presence read in flight across all
+    // communities; a read that meets a held slot gets 204 (null).
+    a.read.mockImplementationOnce(
+      (_authors, owned) =>
+        new Promise((_resolve, reject) => {
+          signal = owned;
+          flight = true;
+          owned.addEventListener(
+            "abort",
+            () => {
+              flight = false;
+              reject(owned.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    b.read.mockImplementation(async (authors) =>
+      flight ? null : new Map(authors.map((author) => [author, "online"])),
+    );
+    const leave = a.owner.subscribe(key(3), () => {});
+    await vi.advanceTimersByTimeAsync(100);
+    expect(a.read).toHaveBeenCalledOnce();
+    if (retired) a.owner.clear();
+    leave();
+    expect(signal.aborted).toBe(true);
+    b.owner.subscribe(key(4), () => {});
+    await vi.advanceTimersByTimeAsync(100);
+    expect(b.read).toHaveBeenCalledOnce();
+    expect(b.owner.status(key(4))).toBe("online");
+    a.owner.dispose();
+    b.owner.dispose();
+  },
+);
+
+it("hiding a tab cancels its read, so the shared broker slot passes to a visible tab", async () => {
+  const hidden = setup();
+  const visible = setup();
+  let flight = false;
+  let signal!: AbortSignal;
+  // Like the development broker: one presence read in flight across all
+  // tabs; a read that meets a held slot gets 204 (null).
+  hidden.read.mockImplementationOnce(
+    (_authors, owned) =>
+      new Promise((_resolve, reject) => {
+        signal = owned;
+        flight = true;
+        owned.addEventListener(
+          "abort",
+          () => {
+            flight = false;
+            reject(owned.reason);
+          },
+          { once: true },
+        );
+      }),
+  );
+  visible.read.mockImplementation(async (authors) =>
+    flight ? null : new Map(authors.map((author) => [author, "online"])),
+  );
+  hidden.owner.subscribe(key(3), () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(hidden.read).toHaveBeenCalledOnce();
+  hidden.hide();
+  expect(signal.aborted).toBe(true);
+  visible.owner.subscribe(key(4), () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(visible.read).toHaveBeenCalledOnce();
+  expect(visible.owner.status(key(4))).toBe("online");
+  hidden.owner.dispose();
+  visible.owner.dispose();
+});
+
 it("local skips expire evidence; network failures enforce a minute delay even for new demand", async () => {
   const h = setup();
   h.owner.subscribe(key(3), () => {});

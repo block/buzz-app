@@ -109,9 +109,39 @@ checks, not that an OS banner was displayed or read.
   does not replay cancelled alerts. Existing shown OS banners are not withdrawn.
   Hosts without preference decoding retain existing notification behavior; this
   slice adds no native preference adapter or automatic cross-device synchronization.
-- Permission is requested explicitly from Settings where a browser needs a user
-  gesture. A fresh pending candidate is reconsidered after Allow; a newer off
-  choice still wins. Observable API errors are reported, never auto-retried.
+- Permission can be requested explicitly from Settings, the only place a
+  browser asks because it needs a user gesture. On macOS that request works
+  only while the system has never been asked. A fresh pending candidate is
+  reconsidered after Allow; a newer off choice still wins. Observable API errors
+  are reported, never auto-retried. After a request that fails or goes
+  unanswered, Buzz reads the status again, so Delivery shows what the system
+  now reports and stops offering a request the system will not show.
+- On macOS, Buzz sends the system permission request on its own once the person
+  is in the app with at least one community and the launch screen has gone. It
+  is sent only while the Buzz window is visible and focused; otherwise it waits
+  for the next time the window gains focus. It is also not sent while Desktop
+  alerts are off, and then waits for a focus after they are turned back on.
+  The conditions are checked when the request is sent, not when the person
+  first arrived: after the last community is removed, nothing is sent until
+  the person is in the app with a community again.
+  This automatic request is sent at most once per device install, for every
+  account, and never when the system reports any status other than not yet
+  asked or when Buzz cannot record on the device that it asked. An alert never
+  sends it. An unanswered automatic request is not reported, retried or
+  repeated. **Allow notifications** does not depend on it.
+- A candidate that arrives while the system has not been asked yet, or while a
+  permission request is unanswered, is held. It is shown if permission is
+  allowed while it is still fresh and is dropped when the request is declined.
+  A request that ends without an answer also ends the hold. The native wait
+  for an answer gives up after 60 seconds, and the candidate then follows the
+  status the system reports: macOS reports denied, so it is dropped at once.
+  Permission allowed after that point applies to later candidates only and
+  brings no dropped candidate back. A failed request that leaves the status
+  at not yet asked keeps the candidate held.
+- macOS shows its permission prompt once. It reports an unanswered request as
+  denied (observed on macOS 27), so the system itself separates never asked
+  from asked and ignored, and neither the automatic nor the in-app request can
+  ask again. Notifications are then turned on in macOS System Settings.
 - Running-session dedup is bounded to 2,048 source identities/two minutes; pending
   candidates are capped at 128. Browser presentation retains at most 128 active
   alerts, closing the oldest before retiring its callback. Desktop retains at most
@@ -177,9 +207,10 @@ focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
 On macOS the native authorization state is read from the same
-`UNUserNotificationCenter` settings as Dock permission. Explicit Allow requests
-Alert, Sound and Badge on a fresh identity only; prior denials and disabled
-interactions remain system-controlled. Windows and Linux continue to report
+`UNUserNotificationCenter` settings as Dock permission. Explicit Allow and the
+one automatic request on entering the app ask for Alert, Sound and Badge on a
+fresh identity only; prior denials and disabled interactions remain
+system-controlled. Windows and Linux continue to report
 unknown banner permission. Settings on those platforms omits ineffective
 permission controls. The bridge accepts submission before waiting for
 interaction: acceptance is **not** proof that a visible banner appeared. No
@@ -250,7 +281,10 @@ Badge alone when an already Authorized identity reports NotSupported. Startup,
 focus, and **Check Dock permission** only read settings; they never register or
 repair permissions. Denied authorization and explicitly Disabled badges are never
 re-requested. macOS System Settings controls badge opt-out. Errors withhold the dot
-and are shown; a later focus or explicit check can retry a failed read.
+and are shown; a later focus or explicit check can retry a failed read. When a
+banner permission request settles, the badge setting is read again, after any
+read already under way, so an answer given with Buzz in front reaches the dot
+without another focus.
 
 This permission capability requires an actual macOS `.app` bundle. Unbundled
 `tauri dev` never calls UserNotifications or borrows Terminal's badge permission.
@@ -271,4 +305,35 @@ These checks do not prove a visible Dock badge. Native macOS acceptance must
 exercise startup/arrival/read clearing, account/community/access changes, reload
 and exit under an isolated packaged identity. First permission, explicit
 missing-badge setup, deny/disable and legacy-banner interaction also need native
-acceptance. Distribution signing and packaged account support remain separate work.
+acceptance. So does the automatic request on entering the app, on a fresh
+identity with a community and a signed bundle. An earlier unanswered run is
+done (macOS 27, isolated identity, Buzz in the background, the request sent by
+an arriving alert as Buzz then did): the request showed the system banner,
+which left the screen when Buzz quit; the status read denied while the banner
+was unanswered, after the native 60-second wait timed out and after a relaunch;
+and a second request after the relaunch returned denied at once with no banner.
+Still to run, in priority order:
+
+1. Whether macOS System Settings lists Buzz after an unanswered or declined
+   prompt, and whether switching it on there restores alerts without a
+   relaunch.
+2. A normal frontmost launch: the banner appears without a click in the window.
+3. A launch in the background, with the window closed, and across a lock and
+   unlock: nothing is asked until Buzz is brought forward, and the banner
+   appears then.
+4. A macOS Focus and screen sharing: whether the banner is shown, and whether
+   it can be answered later from Notification Center.
+5. Allow and Don't Allow at entry, each followed by an alert and a relaunch.
+   With Allow, an alert sent while the banner is still up appears afterwards,
+   and the Dock indicator works during the first period away.
+6. The oldest supported macOS: the denied-while-unanswered status was measured
+   on macOS 27 only.
+7. A banner answered with Allow after the native 60-second wait: whether macOS
+   still accepts the answer, and what the status then reads. Buzz has dropped
+   the held alerts by then, so only later alerts would appear.
+8. How often a Dock badge read is still under way when the banner is answered.
+   The ordering is covered by tests against a modelled native boundary only.
+
+A development build's first launch can inherit the installed app's record that
+this device was already asked, so clear that record before an acceptance run.
+Distribution signing and packaged account support remain separate work.

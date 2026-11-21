@@ -13,6 +13,28 @@ export type PairRequest = {
   expiresIn: number;
 };
 
+export type SignRequest = {
+  id: string;
+  /** The paired tool's id, as listed by `listPairedTools`. */
+  pairing: string;
+  client: string;
+  relay: string;
+  kind: number;
+  tags: string[][];
+  expiresIn: number;
+  /** How long "window" lets the same tool sign the same kind unasked. */
+  windowSeconds: number;
+};
+
+export type SignAnswer = "deny" | "once" | "window";
+
+/** A remembered approval: the tool signs this kind unasked until `until`. */
+export type SignWindow = {
+  kind: number;
+  /** Unix seconds. */
+  until: number;
+};
+
 export type PairedTool = {
   id: string;
   client: string;
@@ -21,6 +43,8 @@ export type PairedTool = {
   created: number;
   lastUsed: number;
   expires: number;
+  /** Unexpired remembered approvals. */
+  windows: SignWindow[];
 };
 
 export const answerPairing = (id: string, approve: boolean) =>
@@ -52,6 +76,17 @@ const destinationUrl = (id: string) => {
 export const setPairingPrompt = (mounted: boolean) =>
   invoke<void>("credential_pair_prompt", { mounted });
 
+export const answerSigning = (id: string, answer: SignAnswer) =>
+  invoke<void>("credential_sign_answer", { id, answer });
+
+/** Tells native a signing prompt began or stopped listening; while none
+ * listens, native refuses a sensitive kind at once instead of asking nobody. */
+export const setSigningPrompt = (mounted: boolean) =>
+  invoke<void>("credential_sign_prompt", { mounted });
+
+export const stopSigningWindow = (pairing: string, kind: number) =>
+  invoke<void>("credential_sign_window_stop", { id: pairing, kind });
+
 export const listPairedTools = () =>
   invoke<PairedTool[]>("credential_pairings_list");
 
@@ -63,6 +98,8 @@ export const revokePairedTool = (id: string) =>
 export function onPairingEvents(on: {
   request?(request: PairRequest): void;
   closed?(id: string): void;
+  signRequest?(request: SignRequest): void;
+  signClosed?(id: string): void;
   changed?(): void;
   ready?(): void;
 }) {
@@ -74,6 +111,14 @@ export function onPairingEvents(on: {
     on.closed &&
       listen<string>("credential-pair-closed", (event) =>
         on.closed?.(event.payload),
+      ),
+    on.signRequest &&
+      listen<SignRequest>("credential-sign-request", (event) =>
+        on.signRequest?.(event.payload),
+      ),
+    on.signClosed &&
+      listen<string>("credential-sign-closed", (event) =>
+        on.signClosed?.(event.payload),
       ),
     on.changed && listen("credential-pairings-changed", () => on.changed?.()),
   ];

@@ -4,11 +4,14 @@
 use super::keychain::{Keychain, Lease, LEASED};
 use super::{digest, unix_now, Failure};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
+
+mod approval;
+pub(crate) use approval::{Answer, SignRequest};
 
 /// How long a request waits for the human.
 pub(crate) const APPROVAL: Duration = Duration::from_secs(120);
@@ -52,6 +55,8 @@ pub(crate) struct Listed {
     created: u64,
     last_used: u64,
     expires: u64,
+    /// Kinds it may have signed without asking, for now.
+    windows: Vec<approval::Listed>,
 }
 
 /// What the page is told.
@@ -70,8 +75,12 @@ pub(crate) enum Notice {
     Ask(Request),
     /// The request with this id is over: answered, expired or abandoned.
     Closed(String),
-    /// The list changed.
+    /// The list changed, or a kind's window began or ended.
     Changed,
+    /// Ask the human to approve one signature.
+    SignAsk(SignRequest),
+    /// The signature request with this id is over.
+    SignClosed(String),
 }
 pub(crate) type Notify = Arc<dyn Fn(Notice) + Send + Sync>;
 
@@ -117,6 +126,22 @@ struct State {
     generation: u64,
     /// A revoke-all is not yet saved: nothing acts until it is.
     owed: bool,
+    /// The signature waiting for the human.
+    signing: Option<approval::Pending>,
+    /// Signature prompts the page has listening, as [`State::prompts`].
+    sign_prompts: usize,
+    sign_asked: VecDeque<Instant>,
+    /// Kinds a pairing may have signed without asking, until they lapse.
+    windows: Vec<approval::Window>,
+    /// Bumped by every page load: an answer heard before it begins no window.
+    sign_epoch: u64,
+    /// When each pairing was last asked, for its own share of the asks.
+    sign_asked_by: HashMap<String, VecDeque<Instant>>,
+    /// Until when a pairing that was declined, or not answered, may not ask.
+    sign_cooldowns: HashMap<String, Instant>,
+    /// Requests from each pairing that ended with no yes since its last yes,
+    /// and when the wait after the last one ends.
+    sign_strikes: HashMap<String, (u32, Instant)>,
     /// The NIP-FI retirements already revoked for (see [`Pairings::follow`]).
     retirements: u64,
     /// Sign-outs and changes of account recorded but not yet over; see
@@ -164,6 +189,7 @@ impl Pairings {
     /// mid-save holds the write lock and, on seeing its community gone,
     /// removes its record before releasing it.
     pub(crate) async fn set_communities(&self, communities: Vec<String>) {
+        let ended;
         {
             let mut saved = self
                 .communities
@@ -176,7 +202,22 @@ impl Pairings {
                     state.pending = None;
                 }
             }
+            if state
+                .signing
+                .as_ref()
+                .is_some_and(|pending| !is_saved(&communities, &pending.relay))
+            {
+                state.signing = None;
+            }
+            let before = state.windows.len();
+            state
+                .windows
+                .retain(|window| is_saved(&communities, &window.relay));
+            ended = state.windows.len() != before;
             *saved = Some(communities);
+        }
+        if ended {
+            (self.notify)(Notice::Changed);
         }
         drop(self.write.lock().await);
     }
@@ -600,21 +641,32 @@ impl Pairings {
         };
     }
     /// A new page has mounted no prompt yet, and never heard a request still
-    /// waiting: dropping its sender declines it, as the old page's unmount
-    /// would have.
+    /// waiting: dropping its sender closes it, as the old page's unmount
+    /// would have. Every window ends, since none is shown until it mounts.
     pub(crate) fn page_load(&self) {
         let mut state = self.state();
         state.prompts = 0;
         state.pending = None;
+        state.sign_prompts = 0;
+        state.signing = None;
+        state.sign_epoch += 1;
+        let ended = !state.windows.is_empty();
+        state.windows.clear();
+        drop(state);
+        if ended {
+            (self.notify)(Notice::Changed);
+        }
     }
 
     pub(crate) async fn list(&self) -> Result<Vec<Listed>, String> {
         self.settled().await?;
+        let now = unix_now().map_err(|failure| failure.message)?;
         Ok(self
             .loaded()
             .await?
             .into_iter()
             .map(|record| Listed {
+                windows: self.windows_of(&record.id, now),
                 expires: record.last_used + DISUSE,
                 id: record.id,
                 client: record.client,
@@ -625,8 +677,10 @@ impl Pairings {
             .collect())
     }
 
-    /// Revokes one pairing, once its deletion is saved.
+    /// Revokes one pairing, once its deletion is saved. Its windows and any
+    /// signature it waits on end first, even if the deletion fails.
     pub(crate) async fn revoke(&self, id: &str) -> Result<(), String> {
+        self.forget(id);
         self.mutate(|records| {
             records.retain(|record| record.id != id);
             Some(())
@@ -674,8 +728,10 @@ impl Pairings {
     fn fence(&self, state: &mut State) {
         state.generation += 1;
         state.owed = true;
-        // Dropping the sender declines the open prompt.
+        // Dropping the senders declines the open prompts.
         state.pending = None;
+        state.signing = None;
+        state.windows.clear();
     }
 
     /// Revokes every pairing, from now, once the NIP-FI session reports a

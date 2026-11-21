@@ -10,7 +10,15 @@ const PROOF_WINDOW: u64 = 60;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
     Sign,
+    /// Signed only once the human approves it; refused for a caller nobody
+    /// can be asked for.
+    Ask,
     Deny(String),
+}
+
+/// Why a sensitive kind is refused to a caller the human is not asked for.
+pub(super) fn unasked(kind: u16) -> String {
+    format!("Kind {kind} can't be signed by a local tool; use Buzz")
 }
 
 const NIP42_AUTH: u16 = 22242;
@@ -54,6 +62,26 @@ pub(super) const SENSITIVE: &[u16] = &[
     41011, 45011, 46030, 46031,
 ];
 
+/// Sensitive kinds approved only once at a time: what they do is destructive,
+/// grants privilege or is hard to undo, and names one target, so a window
+/// for the kind would allow far more than the target the human saw.
+/// Deletions (5, 9005), member additions and removals (9000, 9001), channel
+/// edits, which can open a private channel (9002), channel deletion (9008),
+/// bans, unbans, timeouts and their ends (9040–9043), report resolutions,
+/// which can ban, kick or delete (9044), leaving the community (28936),
+/// agent and team management (30175–30177, 30179), workflow authority and
+/// step decisions (30620, 46030, 46031), DM additions (41011) and artifact
+/// removal (45011).
+pub(super) const ONCE_ONLY: &[u16] = &[
+    5, 9000, 9001, 9002, 9005, 9008, 9040, 9041, 9042, 9043, 9044, 28936, 30175, 30176, 30177,
+    30179, 30620, 41011, 45011, 46030, 46031,
+];
+
+/// Whether the human may allow a sensitive `kind` for a while, not just once.
+pub(super) fn windowable(kind: u16) -> bool {
+    !ONCE_ONLY.contains(&kind)
+}
+
 /// Known kinds that no local caller has signed: relay-authored events and
 /// overlays (8000–8003, 13534, 13535, 39000–39009, 40901, 40902, 44100, 44101,
 /// 46001–46012, 48001, 48104), relay membership admin commands (9030–9033),
@@ -95,9 +123,7 @@ pub(super) fn classify(
     if ORDINARY.contains(&kind) {
         Verdict::Sign
     } else if SENSITIVE.contains(&kind) {
-        Verdict::Deny(format!(
-            "Kind {kind} can't be signed by a local tool; use Buzz"
-        ))
+        Verdict::Ask
     } else {
         Verdict::Deny(format!("Kind {kind} is not signed for local callers"))
     }

@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
-import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import {
+  SettingsGroup,
+  SettingsGroupExpand,
+} from "../shared/design-system/ui/SettingsGroup";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import { LockIcon } from "../shared/design-system/icons";
 import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
+import { describeSignature } from "../features/credential-pairing/describe-signature";
 import {
   listPairedTools,
   onPairingEvents,
   revokePairedTool,
+  stopSigningWindow,
   type PairedTool,
 } from "../features/credential-pairing/service";
+import { formatItemTimestamp } from "../shared/datetime";
 
 const date = (seconds: number) =>
   new Date(seconds * 1000).toLocaleDateString(undefined, {
@@ -117,6 +123,11 @@ export function SecuritySettings({
    * target before the row leaves the DOM, so it is chosen when the revoke
    * succeeds. */
   const landing = useRef<HTMLElement | null>(null);
+  /** A remembered approval being stopped, as `pairing:kind`. */
+  const [stopping, setStopping] = useState<string | null>(null);
+  const [stopError, setStopError] = useState("");
+  /** Moves when a remembered approval runs out, so its row leaves unprompted. */
+  const [now, setNow] = useState(() => Date.now());
   const refresh = useCallback(async () => {
     try {
       setTools(await listPairedTools());
@@ -130,6 +141,31 @@ export function SecuritySettings({
     void refresh();
     return onPairingEvents({ changed: () => void refresh() });
   }, [refresh]);
+  useEffect(() => {
+    const ends = (tools ?? [])
+      .flatMap((tool) => tool.windows.map((w) => w.until * 1000))
+      .filter((end) => end > now);
+    if (ends.length === 0) return;
+    const timer = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(0, Math.min(...ends) - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [tools, now]);
+  const stop = async (tool: PairedTool, kind: number) => {
+    setStopping(`${tool.id}:${kind}`);
+    setStopError("");
+    try {
+      await stopSigningWindow(tool.id, kind);
+      await refresh();
+      // Its Stop is gone; the tool's Revoke keeps focus off body.
+      revokes.current.get(tool.id)?.focus();
+    } catch (reason) {
+      setStopError(String(reason));
+    } finally {
+      setStopping(null);
+    }
+  };
   const dismiss = () => {
     setConfirming(null);
     setRevokeError("");
@@ -177,6 +213,7 @@ export function SecuritySettings({
         title="Paired command-line tools"
       />
       {alert(error)}
+      {alert(stopError)}
       {tools?.length === 0 ? (
         <EmptyState
           icon={<LockIcon />}
@@ -186,28 +223,51 @@ export function SecuritySettings({
       ) : (
         tools && (
           <SettingsGroup>
-            {tools.map((tool) => (
-              <PreferenceRow
-                key={tool.id}
-                title={tool.client}
-                subtitle={`${tool.relay} · Paired ${date(tool.created)} · Last used ${date(tool.lastUsed)} · Expires ${date(tool.expires)} unless used`}
-                trailing={
-                  <Button
-                    ref={(button) => {
-                      if (button) revokes.current.set(tool.id, button);
-                      else revokes.current.delete(tool.id);
-                    }}
-                    onClick={() => {
-                      landing.current = null;
-                      setRevokeError("");
-                      setConfirming(tool);
-                    }}
-                  >
-                    Revoke
-                  </Button>
-                }
-              />
-            ))}
+            {tools.map((tool) => {
+              const windows = tool.windows.filter((w) => w.until * 1000 > now);
+              return (
+                <Fragment key={tool.id}>
+                  <PreferenceRow
+                    title={tool.client}
+                    subtitle={`${tool.relay} · Paired ${date(tool.created)} · Last used ${date(tool.lastUsed)} · Expires ${date(tool.expires)} unless used`}
+                    trailing={
+                      <Button
+                        ref={(button) => {
+                          if (button) revokes.current.set(tool.id, button);
+                          else revokes.current.delete(tool.id);
+                        }}
+                        onClick={() => {
+                          landing.current = null;
+                          setRevokeError("");
+                          setConfirming(tool);
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    }
+                  />
+                  {windows.length > 0 && (
+                    <SettingsGroupExpand open>
+                      {windows.map((w) => (
+                        <PreferenceRow
+                          key={w.kind}
+                          title={`Can ${describeSignature(w.kind, []).ability} until ${formatItemTimestamp(w.until, { withTime: true })}`}
+                          trailing={
+                            <Button
+                              loading={stopping === `${tool.id}:${w.kind}`}
+                              disabled={stopping !== null}
+                              onClick={() => void stop(tool, w.kind)}
+                            >
+                              Stop
+                            </Button>
+                          }
+                        />
+                      ))}
+                    </SettingsGroupExpand>
+                  )}
+                </Fragment>
+              );
+            })}
           </SettingsGroup>
         )
       )}

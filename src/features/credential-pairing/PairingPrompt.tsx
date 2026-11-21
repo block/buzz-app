@@ -91,7 +91,7 @@ export function PairingPrompt({
           <strong>{request.relay}</strong>
         </>
       }
-      description="It can post and read as you. It can’t change your profile, contacts or memberships."
+      description="It can post and read as you. Buzz asks you before it changes your profile, contacts or memberships."
       initialFocus={deny}
       onClose={() => answer(false)}
       actions={

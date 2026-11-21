@@ -756,6 +756,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         credential_service::credential_pair_prompt,
         credential_service::credential_pairings_list,
         credential_service::credential_pairing_revoke,
+        credential_service::credential_sign_answer,
+        credential_service::credential_sign_prompt,
+        credential_service::credential_sign_window_stop,
         window_state::onboarding_preserve_window,
         huddle_window_reset_incoming,
         huddle_window_open,
@@ -1440,6 +1443,13 @@ fn credential_notice<R: tauri::Runtime>(
         }
         Notice::Closed(id) => app.emit_to("main", "credential-pair-closed", id),
         Notice::Changed => app.emit_to("main", "credential-pairings-changed", ()),
+        Notice::SignAsk(request) => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+            }
+            app.emit_to("main", "credential-sign-request", request)
+        }
+        Notice::SignClosed(id) => app.emit_to("main", "credential-sign-closed", id),
     };
 }
 

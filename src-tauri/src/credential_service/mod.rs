@@ -10,7 +10,9 @@
 //!   the agent's incarnation from binding time and the owner's retirements from
 //!   issue time, on arrival and again before its result is returned.
 //! - Every signature passes the contract's operation policy ([`policy`]).
-//!   Sensitive kinds are refused (`denied`): there is no approval prompt.
+//!   An agent's sensitive kinds are refused (`denied`); a paired tool's wait
+//!   for the human to approve each one in Buzz, or to allow its kind for a
+//!   while ([`pairing`]).
 //! - It binds only `127.0.0.1`. `Host` must name the bound address, a request
 //!   that sends `Origin` (a web page) is refused, and nothing is logged.
 //! - Windows has no transport in version 1, so no token is issued there.
@@ -637,19 +639,24 @@ impl CredentialService {
     }
 }
 
-/// Whether the operation policy lets a caller bound to `relay` have `event`
-/// signed. Sensitive kinds are refused outright: there is no approval prompt.
+/// Whether the operation policy lets an agent bound to `relay` have `event`
+/// signed. An agent's sensitive kinds are refused: its owner is never asked.
 fn permitted(event: &Unsigned, relay: &str) -> Result<(), Failure> {
-    match policy::classify(
+    match verdict(event, relay)? {
+        policy::Verdict::Sign => Ok(()),
+        policy::Verdict::Ask => Err(Failure::new("denied", &policy::unasked(event.kind))),
+        policy::Verdict::Deny(reason) => Err(Failure::new("denied", &reason)),
+    }
+}
+
+fn verdict(event: &Unsigned, relay: &str) -> Result<policy::Verdict, Failure> {
+    Ok(policy::classify(
         event.kind,
         &event.tags,
         event.created_at,
         unix_now()?,
         relay,
-    ) {
-        policy::Verdict::Sign => Ok(()),
-        policy::Verdict::Deny(reason) => Err(Failure::new("denied", &reason)),
-    }
+    ))
 }
 
 /// Evidence is handed out only for the relay the token acts on.
@@ -923,6 +930,30 @@ pub(crate) async fn credential_pairing_communities(
 #[tauri::command]
 pub(crate) fn credential_pair_prompt(service: tauri::State<'_, CredentialService>, mounted: bool) {
     service.0.pairings.prompt(mounted);
+}
+
+#[tauri::command]
+pub(crate) fn credential_sign_answer(
+    service: tauri::State<'_, CredentialService>,
+    id: String,
+    answer: pairing::Answer,
+) {
+    service.0.pairings.answer_signature(&id, answer);
+}
+
+/// The page's signature prompt began (`mounted`) or stopped listening.
+#[tauri::command]
+pub(crate) fn credential_sign_prompt(service: tauri::State<'_, CredentialService>, mounted: bool) {
+    service.0.pairings.sign_prompt(mounted);
+}
+
+#[tauri::command]
+pub(crate) fn credential_sign_window_stop(
+    service: tauri::State<'_, CredentialService>,
+    id: String,
+    kind: u16,
+) {
+    service.0.pairings.stop_window(&id, kind);
 }
 
 #[tauri::command]

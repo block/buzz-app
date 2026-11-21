@@ -368,11 +368,23 @@ you; select **Allow** only when you ran the command. Buzz pairs only for a
 community you've joined in Buzz, and otherwise tells the tool so without
 asking. Until you've finished signing in or setting up Buzz, it refuses
 pairing; finish, then run the command again. Once allowed, the tool can post,
-read and use your sign-in through Buzz, and your key stays in Buzz. It can't
-edit your profile, delete, or manage members, agents or moderation: do those
-in Buzz.
-**Settings → Security** lists paired tools. **Revoke** asks first, then stops one
-until you pair it again. Signing out revokes all of them, and a pairing unused
+read and use your sign-in through Buzz, and your key stays in Buzz. Before
+it edits your profile, deletes, joins or leaves, or manages members, agents,
+workflows or moderation, Buzz asks you. The request names the tool and the
+action, including any settings it changes. Select **Deny**, **Allow once**, or
+allow that action from that tool for 5 minutes. Deleting, editing a channel,
+adding or removing members, banning or unbanning, setting or ending timeouts,
+resolving reports, leaving the community, and managing agents or workflow
+approvals are only ever allowed once. Buzz asks only while it is open and you
+are signed in. A request that waits 2 minutes with no answer is refused. A
+tool waits 30 seconds before it can ask again after you deny it, nobody
+answers, or it drops its request. Each one in a row doubles the wait, up to 8
+minutes. The count starts over when you allow a request, or when 10 minutes
+pass after a wait ends without one. Reloading Buzz or removing the community ends what you allowed.
+Agents that Buzz runs are never asked for these actions: do those in Buzz.
+**Settings → Security** lists paired tools and, under each one, the actions
+it is allowed for now and until when; **Stop** ends one early. **Revoke** asks
+first, then stops one until you pair it again, and ends its allowed actions. Signing out revokes all of them, and a pairing unused
 for 30 days expires. If your sign-in expires, paired tools keep their pairing
 and are asked to sign in again in Buzz.
 

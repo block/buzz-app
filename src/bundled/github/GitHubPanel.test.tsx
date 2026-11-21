@@ -620,7 +620,9 @@ it("reads a private pull request with gh as one checklist, without the public AP
   expect(
     screen.queryByRole("button", { name: /merge/i }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText("Read with your gh sign-in.")).toBeInTheDocument();
+  expect(
+    screen.queryByText("Read with your gh sign-in."),
+  ).not.toBeInTheDocument();
   expect(screen.getByText("Changes").parentElement).toHaveTextContent(
     "+3 / −1",
   );

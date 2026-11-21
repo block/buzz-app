@@ -7,6 +7,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,6 +65,8 @@ import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { createPanelMemory, type PanelMemory } from "./panel-memory";
 import { PullFiles } from "./PullFiles";
+import { createPrComments, type PrComments } from "./pr-comments";
+import { PrFiles } from "./PrFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
 
@@ -74,6 +77,7 @@ export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
   const diff = gitHubDiff(ctx.host);
+  const comments = createPrComments(ctx.host);
   // A pull request's state is nobody's community's: one store serves every
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
@@ -104,6 +108,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {...props}
           gh={gh}
           diff={diff}
+          comments={comments}
           states={states}
           memory={memory}
           {...(channelId && {
@@ -336,6 +341,7 @@ export function GitHubPanel({
   context,
   gh,
   diff,
+  comments,
   states: shared,
   memory: sharedMemory,
   chatLink,
@@ -351,6 +357,7 @@ export function GitHubPanel({
   /** The person's `gh`, where the app can run it. */
   gh?: GitHubCli | undefined;
   diff?: GitHubDiff | undefined;
+  comments?: PrComments | undefined;
   /** The plugin's pull request store; a panel alone keeps its own. */
   states?: PullStates | undefined;
   /** The plugin's panel memory; a panel alone keeps its own. */
@@ -373,6 +380,7 @@ export function GitHubPanel({
       reference={reference}
       gh={gh}
       diff={diff}
+      comments={comments}
       states={states}
       memory={memory}
       channelId={context?.channelId}
@@ -407,6 +415,7 @@ function openCommandClickInBrowser(event: MouseEvent<HTMLElement>) {
 }
 
 function ObjectPanel({
+  comments,
   reference,
   gh,
   diff,
@@ -417,6 +426,7 @@ function ObjectPanel({
   resolveActions,
   retry,
 }: {
+  comments: PrComments | undefined;
   reference: GitHubReference;
   gh: GitHubCli | undefined;
   diff: GitHubDiff | undefined;
@@ -440,6 +450,12 @@ function ObjectPanel({
   const [view, setView] = useState(
     () => memory.get(reference.url, channelId).view ?? "summary",
   );
+  const contentScroll = useRef<HTMLDivElement>(null);
+  const viewScroll = useRef<Record<string, number>>({});
+  useLayoutEffect(() => {
+    if (contentScroll.current)
+      contentScroll.current.scrollTop = viewScroll.current[view] ?? 0;
+  }, [view]);
   // Files changed stays mounted once shown, so going back to it doesn't read
   // the diff again.
   const [changesShown, setChangesShown] = useState(view === "changes");
@@ -508,6 +524,7 @@ function ObjectPanel({
     // biome-ignore lint/a11y/useKeyWithClickEvents: Command-click is a pointer gesture on a link, which keeps its own keyboard behavior.
     <div
       className={styles.root}
+      ref={contentScroll}
       onClick={(event) => {
         const opening = openCommandClickInBrowser(event);
         if (!opening) return;
@@ -593,6 +610,7 @@ function ObjectPanel({
               },
             ]}
             onValueChange={(next) => {
+              viewScroll.current[view] = contentScroll.current?.scrollTop ?? 0;
               memory.setView(reference.url, next, channelId);
               setView(next);
               if (next === "changes") setChangesShown(true);
@@ -600,14 +618,27 @@ function ObjectPanel({
           />
         </div>
       )}
-      {files && changesShown && (
+      {files && (comments || changesShown) && (
         <div hidden={!showChanges}>
-          <PullFiles
-            key={`${files.base}...${files.head}:${files.merged}`}
-            url={reference.url}
-            pull={files}
-            diff={files.diff}
-          />
+          {comments ? (
+            <PrFiles
+              active={showChanges}
+              api={comments}
+              pull={{
+                repository: files.repository,
+                number: Number(reference.label.slice(1)),
+              }}
+              head={files.head}
+              base={files.base}
+            />
+          ) : (
+            <PullFiles
+              key={`${files.base}...${files.head}:${files.merged}`}
+              url={reference.url}
+              pull={files}
+              diff={files.diff}
+            />
+          )}
         </div>
       )}
       {reference.kind !== "pull" && (
@@ -818,11 +849,10 @@ function ObjectPanel({
           )}
         </>
       )}
-      {typeof loaded === "object" && (
+      {typeof loaded === "object" && !loaded.signedIn && (
         <p className={styles.note}>
-          {loaded.signedIn
-            ? "Read with your gh sign-in."
-            : "Public GitHub data · Sign in to the gh CLI to see private repositories and merge from here."}
+          Public GitHub data · Sign in to the gh CLI to see private repositories
+          and merge from here.
         </p>
       )}
       {openFailed && (

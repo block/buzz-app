@@ -134,7 +134,8 @@ export const MAX_DIFF_CHARS = 1_000_000;
 
 /** Reads diffs through the manifest's `diff` process, or undefined where
  * processes cannot run. Comparing the base branch with the head commit, not
- * the pull request, pins the diff to the head a review will name. */
+ * the pull request, pins ordinary comparisons to the head. PR-endpoint reads
+ * require surrounding snapshot checks before exposing comment anchors. */
 export function gitHubDiff(host: Pick<Host, "spawn">): GitHubDiff | undefined {
   const spawn = host.spawn?.bind(host);
   if (!spawn) return undefined;
@@ -200,4 +201,66 @@ export function parseAnswer<T>(
   if (!answer || !("data" in answer || "errors" in answer))
     throw new GhUnavailable(reason || "gh did not answer");
   throw new GitHubError(reason || "GitHub did not answer");
+}
+
+export class GitHubRestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+export type GitHubRest = <T>(
+  method: "GET",
+  path: string,
+  body?: Record<string, unknown>,
+  signal?: AbortSignal,
+) => Promise<T>;
+
+export function gitHubRest(host: Pick<Host, "spawn">): GitHubRest | undefined {
+  const spawn = host.spawn?.bind(host);
+  if (!spawn) return undefined;
+  return async <T>(
+    method: "GET",
+    path: string,
+    _body?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => {
+    if (method !== "GET")
+      throw new GitHubRestError("Comment view is read-only", 400);
+    if (
+      !/^(?:user$|repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+(?:\/files|\/comments(?:\/\d+\/replies)?)?(?:\?per_page=100&page=\d+)?$)/.test(
+        path,
+      )
+    )
+      throw new GitHubRestError("Unsupported GitHub comment endpoint", 400);
+    const { stdout, stderr, code } = await runGh(spawn, "rest", {
+      args: [method, path],
+      signal,
+      maxOutput: 5_000_000,
+    });
+    const header = /^HTTP\/[\d.]+ (\d+)[^\n]*\r?\n([\s\S]*?)\r?\n\r?\n/.exec(
+      stdout,
+    );
+    const status = Number(header?.[1] ?? 0);
+    const raw = header ? stdout.slice(header[0].length) : stdout;
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new GitHubRestError(
+        stderr.trim() || "GitHub returned an unreadable response",
+        status,
+      );
+    }
+    if (code !== 0 || status >= 400) {
+      const reason =
+        value && typeof value === "object" && "message" in value
+          ? String(value.message)
+          : stderr;
+      throw new GitHubRestError(reason || "GitHub request failed", status);
+    }
+    return value as T;
+  };
 }

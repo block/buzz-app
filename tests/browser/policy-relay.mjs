@@ -280,7 +280,9 @@ export function policyRelay({
           filters[1].kinds[0] === 40099
         ) {
           expect(filters[1]["#h"]).toEqual(filters[0]["#h"]);
-          const parts = await Promise.all(
+          // Returned, not awaited: a part held and then cancelled by the app
+          // is consumer cancellation, not a fault (see the presence hold).
+          return Promise.all(
             filters.map((filter) =>
               api.fetch(url, {
                 ...init,
@@ -288,14 +290,15 @@ export function policyRelay({
                 [REQUEST_PART]: true,
               }),
             ),
-          );
-          const failed = parts.find((response) => !response.ok);
-          if (failed) return failed;
-          return Response.json(
-            (
-              await Promise.all(parts.map((response) => response.json()))
-            ).flat(),
-          );
+          ).then(async (parts) => {
+            const failed = parts.find((response) => !response.ok);
+            if (failed) return failed;
+            return Response.json(
+              (
+                await Promise.all(parts.map((response) => response.json()))
+              ).flat(),
+            );
+          });
         }
         if (filters.length === 2 && filters[1].depth_limit) {
           const [root, replies] = filters;

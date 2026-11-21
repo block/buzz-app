@@ -34,8 +34,9 @@ export function AgentEnvironment({
   const [confirm, setConfirm] = useState(false);
   const restart = useRef<HTMLButtonElement>(null);
   const next = useRef(0);
-  // Leaving the agent with unsaved edits, or during a save, asks first.
-  useAgentSaveState(dirty, pending);
+  // Leaving the agent with unsaved edits asks first; during a save or a
+  // restart it waits, so a failed restart's error is never lost.
+  useAgentSaveState(dirty, pending || restarting);
   const load = useCallback((status: Status) => {
     setRows(
       status.names.map((name) => ({

@@ -259,13 +259,7 @@ it("tells the agent's page about unsaved edits, through the save and its reload"
   await waitFor(() => expect(last()).toEqual({ dirty: false, saving: false }));
 });
 
-it("blocks leaving Settings while the environment variables have unsaved edits", async () => {
-  native.invoke
-    .mockReset()
-    .mockImplementation(async (command) =>
-      command === "agent_env_status" ? { names: [] } : undefined,
-    );
-  const user = userEvent.setup();
+function renderInTabs() {
   const agent = {
     key: AGENT,
     pubkey: AGENT,
@@ -301,7 +295,7 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
-  render(
+  return render(
     <AgentTabs
       agents={agents}
       agent={agent}
@@ -314,6 +308,16 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
       }
     />,
   );
+}
+
+it("blocks leaving Settings while the environment variables have unsaved edits", async () => {
+  native.invoke
+    .mockReset()
+    .mockImplementation(async (command) =>
+      command === "agent_env_status" ? { names: [] } : undefined,
+    );
+  const user = userEvent.setup();
+  renderInTabs();
   await user.click(await screen.findByRole("button", { name: "Add variable" }));
   await user.type(
     screen
@@ -330,6 +334,40 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
   expect(native.invoke).not.toHaveBeenCalledWith(
     "agent_env_set",
     expect.anything(),
+  );
+});
+
+it("keeps the agent's tabs until a restart settles, so its error stays", async () => {
+  let fail = (_: Error) => {};
+  restartAgent.mockImplementation(
+    () =>
+      new Promise<void>((_, reject) => {
+        fail = reject;
+      }),
+  );
+  const user = userEvent.setup();
+  renderInTabs();
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  try {
+    const memory = screen.getByRole("tab", { name: "Memory" });
+    expect(memory).toHaveAttribute("aria-disabled", "true");
+    await user.click(memory);
+    expect(memory).toHaveAttribute("aria-selected", "false");
+    expect(
+      screen.getByRole("button", { name: "Restart agent" }),
+    ).toBeInTheDocument();
+  } finally {
+    fail(new Error("Echo is answering; restart it when it finishes"));
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Echo is answering",
+  );
+  const restart = screen.getByRole("button", { name: "Restart agent" });
+  await waitFor(() =>
+    expect(restart).not.toHaveAttribute("aria-disabled", "true"),
   );
 });
 

@@ -41,7 +41,13 @@ import { GitHubBody } from "./GitHubBody";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
 import { ownSolo } from "../../features/solo/labels";
-import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
+import {
+  createSoloPulls,
+  linkPull,
+  unlinkPull,
+  writeLinks,
+  type SoloPulls,
+} from "./solo-pull";
 import {
   createPullStates,
   PANEL_REFRESH_MS,
@@ -162,7 +168,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.agents.addTool({
     name: "github_link_pr",
     description:
-      "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
+      "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat can link several; the icon shows the one most in need of attention.",
     inputSchema: {
       type: "object",
       properties: {
@@ -172,19 +178,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
         unlink: {
           type: "boolean",
-          description: "Unlink the chat's pull request instead",
+          description:
+            "Unlink url instead, or every linked pull request without one",
+        },
+        replace: {
+          type: "boolean",
+          description:
+            "Link url in place of every pull request linked now, such as when the work moved to a new one",
         },
       },
       additionalProperties: false,
     },
     async call(client, context, args) {
+      const unlink = args.unlink === true;
+      const replace = args.replace === true;
+      if (unlink && replace)
+        throw new Error("unlink and replace cannot be combined");
       const url =
-        args.unlink === true
-          ? null
-          : typeof args.url === "string"
-            ? parseGitHubReference(args.url)
-            : undefined;
-      if (url !== null && url?.kind !== "pull")
+        typeof args.url === "string" ? parseGitHubReference(args.url) : null;
+      if (
+        (url && url.kind !== "pull") ||
+        (!url && (!unlink || (args.url !== undefined && args.url !== null)))
+      )
         throw new Error("url must be a GitHub pull request URL");
       const relay = ctx.agents.relay(client.key)?.snapshot();
       const channel = context.channel;
@@ -198,16 +213,35 @@ export const apply: PluginModule["apply"] = (ctx) => {
         )
       )
         throw new Error("Only a Solo chat can be linked to a pull request");
-      const link = url === null ? null : url.url;
-      await writeLink(session, channel, link);
-      pullsFor(session).linked(channel, link);
+      const link = url?.url;
+      let was: readonly string[] = [];
+      const urls = await writeLinks(session, channel, (current) => {
+        was = current;
+        if (replace) return [link as string];
+        return (unlink ? unlinkPull(link) : linkPull(link as string))(current);
+      });
+      pullsFor(session).linked(channel, urls);
       // The sidebar reads the selected community through its own session.
       const shown = ctx.relay.snapshot();
       if (shown.status === "ready" && shown.scope === relay?.scope)
-        pullsFor(shown.session).linked(channel, link);
-      return link
-        ? `Linked ${link}. The sidebar shows its state for this chat.`
-        : "Unlinked this chat's pull request.";
+        pullsFor(shown.session).linked(channel, urls);
+      const others = urls.filter((item) => item !== link);
+      const rest = others.length ? ` Still linked: ${others.join(", ")}.` : "";
+      if (replace) {
+        const gone = was.filter((item) => item !== link);
+        return `Linked ${link}. The sidebar shows its state for this chat.${
+          gone.length ? ` Unlinked: ${gone.join(", ")}.` : ""
+        }`;
+      }
+      if (!unlink)
+        return `Linked ${link}. The sidebar shows its state for this chat.${rest}`;
+      if (!link)
+        return was.length
+          ? "Unlinked this chat's pull requests."
+          : "This chat had no linked pull requests.";
+      return was.includes(link)
+        ? `Unlinked ${link}.${rest}`
+        : `${link} wasn't linked to this chat.${rest}`;
     },
   });
   addPullStateTool(ctx.agents, states);

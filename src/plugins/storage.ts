@@ -2,6 +2,8 @@ import { migrateAgentFlag } from "./migrate-agent-flag";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Catalog,
+  CredentialCleanup,
+  ManagementResult,
   StorageResult,
   ManagementAction,
   PluginImports,
@@ -78,7 +80,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   async function changePlugin(
     action: ManagementAction,
     id: string,
-  ): Promise<StorageResult> {
+  ): Promise<ManagementResult> {
     if (desktop) return invoke("plugin_change", { action, id });
     const result = webCatalog();
     if (result.status === "recovery")
@@ -105,7 +107,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     );
     return webCatalog();
   }
-  async function recoverSettings(): Promise<StorageResult> {
+  async function recoverSettings(): Promise<ManagementResult> {
     if (desktop) return invoke("plugin_recover");
     const raw = localStorage.getItem(storageKey);
     if (raw !== null)
@@ -116,9 +118,16 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     if (!desktop) throw new Error("Local plugins require the desktop app");
     return invoke("plugin_module", { id, revision });
   }
-  async function reloadPlugin(id: string): Promise<StorageResult> {
+  async function reloadPlugin(id: string): Promise<ManagementResult> {
     if (!desktop) throw new Error("Plugin reload requires the desktop app");
     return invoke("plugin_reload", { id });
+  }
+
+  // Operator-only transport, never part of the plugin API or browser persistence.
+  async function retryCredentialCleanup(): Promise<CredentialCleanup> {
+    if (!desktop)
+      throw new Error("Saved credentials are unavailable in this browser");
+    return invoke("plugin_credential_cleanup_retry");
   }
 
   const imports: PluginImports | undefined = desktop
@@ -161,6 +170,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     readModule,
     reloadPlugin,
     refreshManaged,
+    retryCredentialCleanup,
     imports,
   };
 }

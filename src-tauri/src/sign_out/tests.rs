@@ -1,13 +1,32 @@
 use super::*;
 use std::cell::Cell;
 use std::future::Future;
+use std::sync::atomic::Ordering;
 
-fn paths_for(root: &Path, service: &str) -> Paths {
+pub(super) mod creators;
+
+pub(super) fn paths_for(root: &Path, service: &str) -> Paths {
+    // Preserve missing descendants, but avoid macOS /var symlink ancestors.
+    let root = root
+        .ancestors()
+        .find(|p| p.exists())
+        .map(|base| {
+            fs::canonicalize(base)
+                .unwrap()
+                .join(root.strip_prefix(base).unwrap())
+        })
+        .unwrap();
+    let root = root.as_path();
     Paths {
         marker: root.join(marker_name("app", service)),
         finished: root.join(finished_name(service)),
         lock: root.join(LOCK),
         key_lock: root.join(key_lock_name(service)),
+        other_key_lock: root.join(key_lock_name(if service == OTHER_KEY {
+            "identity"
+        } else {
+            OTHER_KEY
+        })),
         ownership: root.join(AGENT_OWNERSHIP),
         app_data: root.join("app"),
         backups: root.join("nsec-backups").join(service),
@@ -15,6 +34,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
         media: root.join("cache").join("media"),
         moves: Vec::new(),
         seeds: Vec::new(),
+        plugin_home: None,
     }
 }
 fn fixture() -> (tempfile::TempDir, Paths) {
@@ -148,7 +168,7 @@ fn backup_choice_is_kept_on_plain_signout_and_erased_only_in_its_key_store_scope
             }
         }
         mark(&paths, wipe, false);
-        assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+        assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
         assert!(!paths.marker.exists());
         for name in ["choice.json", "pending.json", "complete.json"] {
             assert_eq!(paths.backups.join(name).exists(), !wipe);
@@ -164,11 +184,11 @@ fn backup_erase_finishes_before_marker_removal_and_a_failure_remains_retryable()
     fs::write(paths.backups.join("pending.json"), b"synthetic ciphertext").unwrap();
     fs::create_dir(&paths.finished).unwrap();
     mark(&paths, true, false);
-    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_err());
     assert!(paths.marker.exists());
     assert!(!paths.backups.exists());
     fs::remove_dir(&paths.finished).unwrap();
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
 }
 
@@ -184,7 +204,10 @@ fn backup_choice_erase_refuses_a_linked_parent_without_touching_its_destination(
     fs::write(&pending_backup, b"synthetic ciphertext").unwrap();
     std::os::unix::fs::symlink(outside.path(), dir.path().join("nsec-backups")).unwrap();
     mark(&paths, true, false);
-    assert!(boot(&paths, no_agents, || panic!("key must not be touched")).is_err());
+    assert!(boot(&paths, None, no_agents, || panic!(
+        "key must not be touched"
+    ))
+    .is_err());
     assert!(paths.marker.exists());
     assert_eq!(fs::read(retained).unwrap(), b"synthetic public consent");
     assert_eq!(fs::read(pending_backup).unwrap(), b"synthetic ciphertext");
@@ -311,7 +334,7 @@ fn a_debug_sign_out_never_touches_the_release_key_or_data() {
     mark(&debug, true, true);
     let before = data(dir.path());
     // The release build launches first: its key and the shared folders stay put.
-    assert!(boot(&release, no_agents, || panic!(
+    assert!(boot(&release, None, no_agents, || panic!(
         "release key must not be touched"
     ))
     .is_ok());
@@ -349,7 +372,7 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
 /// A child process another test is spawning holds inherited lock handles until
 /// it execs, so a dropped instance's lock can take a moment to free.
 fn admitted_once_free(instance: &Instance, choices: Choices) -> bool {
-    wait_for(|| instance.begin(choices))
+    wait_for(|| instance.begin(choices, None))
 }
 const PLAIN: Choices = Choices {
     wipe: false,
@@ -362,37 +385,40 @@ const WIPE: Choices = Choices {
 #[test]
 fn instances_share_the_lock_and_sign_out_needs_it_alone() {
     let (_dir, paths) = fixture();
-    let first = boot(&paths, no_agents, || panic!("no marker"))
+    let first = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let second = boot(&paths, no_agents, || panic!("no marker"))
+    let second = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert!(first.begin(WIPE).is_err());
+    assert!(first.begin(WIPE, None).is_err());
     drop(second);
     assert!(admitted_once_free(&first, WIPE));
     // While one instance signs out, a new launch neither runs nor waits forever.
     assert_eq!(
-        boot(&paths, no_agents, || panic!("no marker")).err(),
+        boot(&paths, None, no_agents, || panic!("no marker")).err(),
         Some(SIGNING_OUT.into())
     );
-    assert_eq!(first.abort(WIPE, refuse("withdrawn")), refuse("withdrawn"));
-    assert!(boot(&paths, no_agents, || panic!("no marker")).is_ok());
+    assert_eq!(
+        first.abort(WIPE, refuse("withdrawn"), None),
+        refuse("withdrawn")
+    );
+    assert!(boot(&paths, None, no_agents, || panic!("no marker")).is_ok());
 }
 
 #[test]
 fn a_second_sign_out_in_the_same_instance_is_refused() {
     let (_dir, paths) = fixture();
-    let instance = boot(&paths, no_agents, || panic!("no marker"))
+    let instance = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    instance.begin(WIPE).unwrap();
-    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
+    instance.begin(WIPE, None).unwrap();
+    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
     // Concurrent calls race for the same guard; exactly one is admitted.
-    instance.abort(WIPE, refuse("withdrawn"));
+    instance.abort(WIPE, refuse("withdrawn"), None);
     let admitted = std::thread::scope(|scope| {
         let calls: Vec<_> = (0..8)
-            .map(|_| scope.spawn(|| instance.begin(WIPE).is_ok()))
+            .map(|_| scope.spawn(|| instance.begin(WIPE, None).is_ok()))
             .collect();
         calls
             .into_iter()
@@ -406,17 +432,17 @@ fn a_second_sign_out_in_the_same_instance_is_refused() {
 #[test]
 fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
     let (dir, paths) = fixture();
-    let exiting = boot(&paths, no_agents, || panic!("no marker"))
+    let exiting = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    exiting.begin(WIPE).unwrap();
+    exiting.begin(WIPE, None).unwrap();
     mark(&paths, false, false);
     let release = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(30));
         drop(exiting);
     });
     let before = data(dir.path());
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     release.join().unwrap();
     assert!(!paths.marker.exists());
     assert_eq!(
@@ -443,7 +469,7 @@ fn child_instance() {
     };
     let service = std::env::var(CHILD_SERVICE).unwrap_or_else(|_| "identity".into());
     let paths = paths_for(Path::new(&root), &service);
-    let instance = boot(&paths, no_agents, || panic!("no marker"))
+    let instance = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     println!("child: booted");
@@ -530,7 +556,7 @@ impl Child {
 fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finishes_it() {
     let (dir, paths) = fixture();
     // A launch that is already running refuses the other process's sign-out.
-    let running = boot(&paths, no_agents, || panic!("no marker"))
+    let running = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     let mut child = Child::spawn(dir.path());
@@ -551,7 +577,7 @@ fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finish
         flag.set(true);
     })));
     let removed = Cell::new(false);
-    assert!(boot(&paths, no_agents, || {
+    assert!(boot(&paths, None, no_agents, || {
         assert!(released.get(), "finished only after the child let go");
         removed.set(true);
         Ok(())
@@ -585,7 +611,7 @@ fn a_sign_out_committed_while_recovery_hands_the_lock_back_is_finished_too() {
         child.finish();
     })));
     let removed = Cell::new(0);
-    assert!(boot(&paths, no_agents, || {
+    assert!(boot(&paths, None, no_agents, || {
         removed.set(removed.get() + 1);
         Ok(())
     })
@@ -597,7 +623,7 @@ fn a_sign_out_committed_while_recovery_hands_the_lock_back_is_finished_too() {
 #[test]
 fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
     let (dir, paths) = fixture();
-    let instance = boot(&paths, no_agents, || panic!("no marker"))
+    let instance = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     let mut child = Child::spawn_with(dir.path(), PLAIN);
@@ -612,6 +638,7 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
         &paths,
         PLAIN,
         || async { Ok(()) },
+        None,
         || closes.set(closes.get() + 1),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
@@ -624,7 +651,7 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
-    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
+    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
 }
 
 /// Reading the kept registry's details fails while traversing and deleting it
@@ -669,7 +696,7 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
 fn a_first_launch_creates_a_missing_user_data_folder() {
     let dir = tempfile::tempdir().unwrap();
     let paths = paths_for(&dir.path().join("missing/share"), "identity");
-    assert!(boot(&paths, no_agents, || panic!("no marker")).is_ok());
+    assert!(boot(&paths, None, no_agents, || panic!("no marker")).is_ok());
     assert!(paths.lock.is_file() && paths.key_lock.is_file());
 }
 
@@ -692,10 +719,10 @@ const OTHER_KEY: &str = "identity.debug";
 fn plain_sign_out_needs_only_copies_using_the_same_key_closed() {
     let (dir, paths) = fixture();
     let other = Child::running(dir.path(), OTHER_KEY);
-    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
+    let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(PLAIN), Ok(()));
+    assert_eq!(signing_out.begin(PLAIN, None), Ok(()));
     other.finish();
 }
 
@@ -703,19 +730,19 @@ fn plain_sign_out_needs_only_copies_using_the_same_key_closed() {
 fn plain_sign_out_is_refused_while_a_copy_using_the_same_key_runs() {
     let (dir, paths) = fixture();
     let same = Child::running(dir.path(), "identity");
-    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
+    let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(PLAIN), Err(refuse(OTHERS)));
+    assert_eq!(signing_out.begin(PLAIN, None), Err(refuse(OTHERS)));
     drop(signing_out);
     // A pending plain sign-out waits for that copy too.
     mark(&paths, false, false);
     assert_eq!(
-        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        boot(&paths, None, no_agents, || panic!("the key stays")).err(),
         Some(BUSY.into())
     );
     same.finish();
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
 }
 
@@ -723,19 +750,19 @@ fn plain_sign_out_is_refused_while_a_copy_using_the_same_key_runs() {
 fn wipe_is_refused_while_any_copy_runs() {
     let (dir, paths) = fixture();
     let other = Child::running(dir.path(), OTHER_KEY);
-    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
+    let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(WIPE), Err(refuse(OTHERS_ALL)));
+    assert_eq!(signing_out.begin(WIPE, None), Err(refuse(OTHERS_ALL)));
     drop(signing_out);
     // A pending wipe waits for every copy; a pending plain sign-out doesn't.
     mark(&paths, true, false);
     assert_eq!(
-        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        boot(&paths, None, no_agents, || panic!("the key stays")).err(),
         Some(BUSY_ALL.into())
     );
     mark(&paths, false, false);
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
     other.finish();
 }
@@ -759,13 +786,13 @@ fn a_sign_out_escalated_to_a_wipe_during_recovery_waits_for_every_copy() {
         started.set(Some(Child::running(&root, OTHER_KEY)));
     })));
     assert_eq!(
-        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        boot(&paths, None, no_agents, || panic!("the key stays")).err(),
         Some(BUSY_ALL.into())
     );
     assert_eq!(data(dir.path()), before);
     assert_eq!(pending(&paths.marker), Ok(Some(WIPE)));
     other.take().unwrap().finish();
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
     assert_eq!(
         data(dir.path()),
@@ -984,6 +1011,7 @@ fn preparation_commits_the_marker_before_stopping_agents() {
         &paths,
         choices(true),
         || async { Ok(()) },
+        None,
         || closed.set(true),
         || {
             assert!(marker.exists());
@@ -1004,6 +1032,7 @@ fn a_marker_write_failure_stops_nothing() {
         &paths,
         choices(true),
         || async { Ok(()) },
+        None,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1014,7 +1043,7 @@ fn a_marker_write_failure_stops_nothing() {
 #[test]
 fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
     let (_dir, paths) = fixture();
-    let instance = boot(&paths, no_agents, || panic!("no marker"))
+    let instance = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     let (closes, exited) = (Cell::new(0), Cell::new(false));
@@ -1023,6 +1052,7 @@ fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
         &paths,
         choices(false),
         || async { Ok(()) },
+        None,
         || closes.set(closes.get() + 1),
         || async { Err("controller stuck".to_owned()) },
         || {
@@ -1048,6 +1078,7 @@ fn a_pending_erase_waits_for_every_agent_supervisor_to_let_go() {
     let before = data(paths.app_data.parent().unwrap());
     let refused = boot(
         &paths,
+        None,
         |_| panic!("agent keys must stay"),
         || panic!("the key must stay"),
     );
@@ -1057,6 +1088,7 @@ fn a_pending_erase_waits_for_every_agent_supervisor_to_let_go() {
     let removed = Cell::new(0);
     let finished = boot(
         &paths,
+        None,
         |_| {
             removed.set(removed.get() + 1);
             Ok(())
@@ -1093,7 +1125,7 @@ fn a_plain_sign_out_does_not_wait_for_agent_supervisors() {
     let held = File::create(paths.ownership.join("agent-community.lock")).unwrap();
     #[allow(clippy::incompatible_msrv)]
     held.lock().unwrap();
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
 }
 
@@ -1221,6 +1253,7 @@ fn a_linked_wipe_folder_refuses_before_any_marker() {
         &paths,
         choices(false),
         || -> std::future::Ready<Result<(), Failure>> { panic!("paired tools stay") },
+        None,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1237,6 +1270,7 @@ fn unrevoked_paired_tools_refuse_before_any_marker() {
         &paths,
         choices(false),
         || async { Err(refuse("unrevoked")) },
+        None,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1316,7 +1350,9 @@ fn finished_in_the_gap(
     choices: Choices,
     identifier: &str,
 ) -> Result<(), Failure> {
-    let instance = boot(paths, no_agents, || panic!("no marker")).ok().unwrap();
+    let instance = boot(paths, None, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
     // Plain: a copy sharing the key refuses the upgrade. Wipe: a copy with
     // another key refuses the all-Buzz lock.
     let running = if choices.wipe {
@@ -1329,7 +1365,7 @@ fn finished_in_the_gap(
     HANDOFF.set(Some(Box::new(move || {
         running.finish();
         mark(&gap, choices.wipe, false);
-        drop(boot(&gap, no_agents, || Ok(())).ok().unwrap());
+        drop(boot(&gap, None, no_agents, || Ok(())).ok().unwrap());
         assert!(!gap.marker.exists(), "the sign-out finished");
     })));
     let closes = Cell::new(0);
@@ -1338,6 +1374,7 @@ fn finished_in_the_gap(
         paths,
         choices,
         || async { Ok(()) },
+        None,
         || closes.set(closes.get() + 1),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
@@ -1345,7 +1382,7 @@ fn finished_in_the_gap(
             async { Err(refuse("exited")) }
         },
     ));
-    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
+    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
     result
 }
 
@@ -1380,10 +1417,10 @@ fn a_sign_out_finished_by_another_identifier_using_the_key_exits_natively() {
 fn a_sign_out_finished_before_launch_does_not_fence_a_later_refusal() {
     let (dir, paths) = fixture();
     mark(&paths, false, false);
-    let instance = boot(&paths, no_agents, || Ok(())).ok().unwrap();
+    let instance = boot(&paths, None, no_agents, || Ok(())).ok().unwrap();
     assert!(paths.finished.exists());
     let running = Child::running(dir.path(), "identity");
-    assert_eq!(instance.begin(PLAIN), Err(refuse(OTHERS)));
+    assert_eq!(instance.begin(PLAIN, None), Err(refuse(OTHERS)));
     running.finish();
 }
 
@@ -1393,7 +1430,7 @@ fn agents_rename_moves_once_and_retains_exact_identity_bytes() {
     let old = paths.app_data.join(migrate_agents::LEGACY);
     let new = paths.app_data.join(AGENTS);
     fs::rename(&new, &old).unwrap();
-    let instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert!(!old.exists());
     assert_eq!(
         fs::read(new.join("identities.json")).unwrap(),
@@ -1401,7 +1438,7 @@ fn agents_rename_moves_once_and_retains_exact_identity_bytes() {
     );
     drop(instance);
     fs::write(new.join("identities.json"), "updated").unwrap();
-    let _reopened = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _reopened = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(fs::read(new.join("identities.json")).unwrap(), b"updated");
 }
 
@@ -1412,23 +1449,23 @@ fn agents_rename_refuses_conflicts_and_a_running_old_copy() {
     let new = paths.app_data.join(AGENTS);
     fs::create_dir(&old).unwrap();
     fs::write(old.join("identities.json"), "old").unwrap();
-    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_err());
     assert_eq!(
         fs::read(new.join("identities.json")).unwrap(),
         b"identities"
     );
     assert_eq!(fs::read(old.join("identities.json")).unwrap(), b"old");
     fs::remove_dir_all(&old).unwrap();
-    let running = boot(&paths, no_agents, || Ok(())).unwrap();
+    let running = boot(&paths, None, no_agents, || Ok(())).unwrap();
     fs::rename(&new, &old).unwrap();
-    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_err());
     assert!(!new.exists());
     assert_eq!(
         fs::read(old.join("identities.json")).unwrap(),
         b"identities"
     );
     drop(running);
-    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_ok());
 }
 
 #[cfg(unix)]
@@ -1439,7 +1476,7 @@ fn agents_rename_rejects_symlinks_without_touching_the_target() {
     fs::create_dir(&outside).unwrap();
     fs::write(outside.join("identities.json"), "outside").unwrap();
     std::os::unix::fs::symlink(&outside, paths.app_data.join(migrate_agents::LEGACY)).unwrap();
-    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert!(boot(&paths, None, no_agents, || Ok(())).is_err());
     assert_eq!(
         fs::read(outside.join("identities.json")).unwrap(),
         b"outside"
@@ -1453,7 +1490,7 @@ fn agents_rename_runs_after_pending_erase_keeps_legacy_identities() {
     let new = paths.app_data.join(AGENTS);
     fs::rename(&new, &old).unwrap();
     mark(&paths, true, false);
-    let _instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    let _instance = boot(&paths, None, no_agents, || Ok(())).unwrap();
     assert!(!old.exists());
     assert_eq!(
         fs::read(new.join("identities.json")).unwrap(),
@@ -1490,11 +1527,11 @@ fn legacy_storage_moves_once_at_launch() {
     let before = data(dir.path());
     let paths = legacy(paths);
     assert_ne!(data(dir.path()), before);
-    let instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(data(dir.path()), before);
     drop(instance);
     fs::write(paths.app_data.join("archive.sqlite3"), "updated").unwrap();
-    let _again = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _again = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(
         fs::read(paths.app_data.join("archive.sqlite3")).unwrap(),
         b"updated"
@@ -1510,7 +1547,7 @@ fn a_sign_out_the_legacy_build_committed_finishes_after_the_move() {
     fs::create_dir_all(&paths.moves[2].0).unwrap();
     fs::write(paths.moves[2].0.join("localstorage"), "prefs").unwrap();
     let removed = Cell::new(false);
-    let _instance = boot(&paths, no_agents, || {
+    let _instance = boot(&paths, None, no_agents, || {
         removed.set(true);
         Ok(())
     })
@@ -1543,7 +1580,7 @@ fn legacy_storage_beside_current_storage_moves_nothing_and_signs_nothing_out() {
     #[allow(clippy::incompatible_msrv)]
     held.lock().unwrap();
     let before = data(dir.path());
-    let refused = boot(&paths, no_agents, || panic!("the key must stay"))
+    let refused = boot(&paths, None, no_agents, || panic!("the key must stay"))
         .err()
         .unwrap();
     // Every conflicting pair is named at once.
@@ -1555,7 +1592,7 @@ fn legacy_storage_beside_current_storage_moves_nothing_and_signs_nothing_out() {
     drop(held);
     fs::remove_file(&paths.moves[4].0).unwrap();
     let before = data(dir.path());
-    assert!(boot(&paths, no_agents, || panic!("the key must stay")).is_err());
+    assert!(boot(&paths, None, no_agents, || panic!("the key must stay")).is_err());
     assert_eq!(data(dir.path()), before);
 }
 
@@ -1572,7 +1609,7 @@ fn a_move_interrupted_part_way_finishes_with_the_pending_legacy_sign_out() {
             fs::rename(old, new).unwrap();
         }
         let removed = Cell::new(false);
-        let _instance = boot(&paths, no_agents, || {
+        let _instance = boot(&paths, None, no_agents, || {
             removed.set(true);
             Ok(())
         })
@@ -1596,12 +1633,12 @@ fn a_move_interrupted_part_way_finishes_with_the_pending_legacy_sign_out() {
 fn legacy_storage_waits_for_other_copies_and_stopping_agents() {
     let (dir, paths) = fixture();
     let paths = legacy(paths);
-    let running = boot(&paths_for(dir.path(), OTHER_KEY), no_agents, || {
+    let running = boot(&paths_for(dir.path(), OTHER_KEY), None, no_agents, || {
         panic!("no sign-out")
     })
     .unwrap();
     let before = data(dir.path());
-    assert!(boot(&paths, no_agents, || panic!("no sign-out")).is_err());
+    assert!(boot(&paths, None, no_agents, || panic!("no sign-out")).is_err());
     assert_eq!(data(dir.path()), before);
     drop(running);
     fs::create_dir_all(&paths.ownership).unwrap();
@@ -1609,10 +1646,10 @@ fn legacy_storage_waits_for_other_copies_and_stopping_agents() {
     #[allow(clippy::incompatible_msrv)]
     held.lock().unwrap();
     let before = data(dir.path());
-    assert!(boot(&paths, no_agents, || panic!("no sign-out")).is_err());
+    assert!(boot(&paths, None, no_agents, || panic!("no sign-out")).is_err());
     assert_eq!(data(dir.path()), before);
     drop(held);
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert!(paths.app_data.join("archive.sqlite3").exists());
     assert!(!paths.moves[1].0.exists());
 }
@@ -1622,7 +1659,7 @@ fn a_launch_waiting_on_a_copy_that_finished_the_move_carries_on() {
     let (dir, paths) = fixture();
     let before = data(dir.path());
     let paths = legacy(paths);
-    let running = boot(&paths_for(dir.path(), OTHER_KEY), no_agents, || {
+    let running = boot(&paths_for(dir.path(), OTHER_KEY), None, no_agents, || {
         panic!("no sign-out")
     })
     .unwrap();
@@ -1633,7 +1670,7 @@ fn a_launch_waiting_on_a_copy_that_finished_the_move_carries_on() {
             fs::rename(old, new).unwrap();
         }
     })));
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(data(dir.path()), before);
     drop(running);
 }
@@ -1643,7 +1680,7 @@ fn a_conflict_seen_without_the_lock_is_confirmed_under_it() {
     let (dir, paths) = fixture();
     let before = data(dir.path());
     let paths = legacy(paths);
-    let running = boot(&paths_for(dir.path(), OTHER_KEY), no_agents, || {
+    let running = boot(&paths_for(dir.path(), OTHER_KEY), None, no_agents, || {
         panic!("no sign-out")
     })
     .unwrap();
@@ -1659,7 +1696,7 @@ fn a_conflict_seen_without_the_lock_is_confirmed_under_it() {
     HANDOFF.set(Some(Box::new(move || {
         let _ = fs::remove_dir(&stray);
     })));
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(data(dir.path()), before);
     drop(running);
 }
@@ -1672,7 +1709,7 @@ fn a_linked_legacy_folder_moves_as_the_link() {
     let outside = outside(dir.path(), &["localstorage"]);
     fs::remove_dir_all(&paths.moves[3].0).unwrap();
     std::os::unix::fs::symlink(&outside, &paths.moves[3].0).unwrap();
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(fs::read_link(&paths.others[0]).unwrap(), outside);
     unchanged(&outside, &["localstorage"]);
 }
@@ -1712,6 +1749,7 @@ fn only_the_current_identifier_takes_every_folder_the_legacy_one_used() {
 /// Development seed bases under `root`, app data last, with the installed
 /// app's folders under `source`.
 fn installed(root: &Path, source: &str) -> Vec<PathBuf> {
+    let root = fs::canonicalize(root).unwrap();
     let seeds = vec![root.join("seed-webkit"), root.join("seed-data")];
     for (base, file) in seeds.iter().zip(["localstorage", "archive.sqlite3"]) {
         fs::create_dir_all(base.join(source).join("nested")).unwrap();
@@ -1731,7 +1769,7 @@ fn a_first_development_launch_copies_the_installed_storage_once() {
         seeds: seeds.clone(),
         ..paths
     };
-    let instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     drop(instance);
     for (base, file) in seeds.iter().zip(["localstorage", "archive.sqlite3"]) {
         // The 1.0 folders win over the legacy ones, and stay in place.
@@ -1749,7 +1787,7 @@ fn a_first_development_launch_copies_the_installed_storage_once() {
     let archive = seeds[1].join(DEV).join("nested/archive.sqlite3");
     fs::write(&archive, "updated").unwrap();
     fs::remove_dir_all(seeds[0].join(DEV)).unwrap();
-    let _again = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _again = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(fs::read(&archive).unwrap(), b"updated");
     assert!(!seeds[0].join(DEV).exists());
 }
@@ -1767,7 +1805,7 @@ fn an_interrupted_development_seed_finishes_at_the_next_launch() {
         seeds: seeds.clone(),
         ..paths
     };
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert_eq!(fs::read_dir(seeds[0].join(DEV)).unwrap().count(), 0);
     assert_eq!(
         fs::read(seeds[1].join(DEV).join("nested/archive.sqlite3")).unwrap(),
@@ -1834,7 +1872,7 @@ fn a_split_release_move_seeds_each_folder_from_where_it_is() {
         seeds: seeds.clone(),
         ..paths
     };
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert!(seeds[0].join(DEV).join("nested/localstorage").exists());
     assert!(seeds[1].join(DEV).join("nested/archive.sqlite3").exists());
 }
@@ -1853,13 +1891,13 @@ fn a_development_seed_waits_for_the_installed_app_to_finish_signing_out() {
         seeds: seeds.clone(),
         ..paths
     };
-    let error = boot(&paths, no_agents, || panic!("no sign-out"))
+    let error = boot(&paths, None, no_agents, || panic!("no sign-out"))
         .err()
         .unwrap();
     assert!(error.contains("finish signing out"), "{error}");
     assert!(!seeds[0].join(DEV).exists() && !seeds[1].join(DEV).exists());
     fs::remove_file(&marker).unwrap();
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert!(seeds[1].join(DEV).join("nested/archive.sqlite3").exists());
 }
 
@@ -1879,7 +1917,7 @@ fn a_development_seed_never_links_into_the_installed_storage() {
         seeds: seeds.clone(),
         ..paths
     };
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     let copy = seeds[1].join(DEV);
     assert!(fs::symlink_metadata(&copy).unwrap().is_dir());
     assert!(copy.join("nested/archive.sqlite3").exists());
@@ -1901,12 +1939,12 @@ fn a_development_seed_keeps_folder_access_and_retries_past_read_only_ones() {
         seeds: seeds.clone(),
         ..paths
     };
-    drop(boot(&paths, no_agents, || panic!("no sign-out")).unwrap());
+    drop(boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap());
     let copy = seeds[1].join(DEV);
     assert_eq!((mode(&copy), mode(&copy.join("nested"))), (0o700, 0o755));
     // A copy cut short leaves the same tree staged; the retry clears and redoes it.
     fs::rename(&copy, seeds[1].join(format!("{DEV}.seeding"))).unwrap();
-    let _instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    let _instance = boot(&paths, None, no_agents, || panic!("no sign-out")).unwrap();
     assert!(copy.join("nested/archive.sqlite3").exists());
     assert!(!seeds[1].join(format!("{DEV}.seeding")).exists());
     assert_eq!((mode(&private), mode(&sealed)), (0o700, 0o555));
@@ -1920,7 +1958,7 @@ fn a_development_seed_keeps_folder_access_and_retries_past_read_only_ones() {
 fn a_sign_out_another_copy_finished_forgets_saved_images() {
     let (_dir, paths) = fixture();
     let launch = || {
-        let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+        let instance = boot(&paths, None, no_agents, || Ok(())).unwrap();
         forget_signed_out_key(&instance, &paths, || Ok(()))
     };
     launch().unwrap();
@@ -1943,7 +1981,7 @@ fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
         buzz_credential_store::HUMAN_STORE
     ));
     let launch = || {
-        let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+        let instance = boot(&paths, None, no_agents, || Ok(())).unwrap();
         forget_signed_out_key(&instance, &paths, || {
             // Decided and removed holding the record alone: another launch
             // reads it only once this one has recorded the count.
@@ -1972,7 +2010,7 @@ fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
     assert_eq!(removed.get(), 1);
     // A failed removal records nothing, so the next launch retries.
     fs::write(&paths.finished, "..").unwrap();
-    let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    let instance = boot(&paths, None, no_agents, || Ok(())).unwrap();
     assert_eq!(
         forget_signed_out_key(&instance, &paths, || Err("denied".into())),
         Err(FAILED.into())
@@ -1988,7 +2026,7 @@ fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
     // A failed folder sync fails every launch until one succeeds, even once
     // the count reads back as recorded.
     fs::write(&paths.finished, "...").unwrap();
-    let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    let instance = boot(&paths, None, no_agents, || Ok(())).unwrap();
     let unsynced = |_: &Path| Err(std::io::Error::other("sync"));
     let remove = || {
         removed.set(removed.get() + 1);
@@ -2035,3 +2073,1025 @@ fn pairing_revoke_all_policy_for_sign_out() {
     assert!(pairings_allow(&failed(true), false), "plain sign-out");
     assert!(!pairings_allow(&failed(true), true), "sign out and erase");
 }
+// Plugin secret slots. Each test injects its own fake store over temporary
+// metadata: as a dependency, the plugin manager's OS store is the live one.
+// Unix only: plugin secrets are unavailable on Windows in this release.
+#[cfg(unix)]
+pub(super) mod slots {
+    mod callers;
+    mod continuity;
+    pub(in crate::sign_out) mod creators;
+    use super::*;
+    use buzz_credential_store::Error as StoreError;
+    use buzzodz_plugins::{secrets, Manager, SecretStore};
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::{mpsc, Arc};
+
+    const ALICE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const BOB: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+    const PLUGIN: &str = "example.slots";
+    const BUDGET: Duration = Duration::from_secs(5);
+
+    #[derive(Debug, PartialEq)]
+    enum Step {
+        Stalled,
+        Booted(Result<(), String>),
+    }
+    /// Logs every OS call; a delete may be denied, or stall until released, as
+    /// may an add or a read. A stall takes its gate and holds no lock while
+    /// blocked; dropping the release side, as a failing test does, unblocks it.
+    #[derive(Default)]
+    struct Fake {
+        items: Mutex<HashMap<String, Vec<u8>>>,
+        log: Mutex<Vec<String>>,
+        deny: Mutex<Option<StoreError>>,
+        stall: Mutex<Option<(mpsc::Sender<Step>, mpsc::Receiver<()>)>>,
+        add_stall: Mutex<Option<(mpsc::Sender<Step>, mpsc::Receiver<()>)>>,
+        add_denied: Mutex<bool>,
+        read_stall: Mutex<Option<(mpsc::Sender<Step>, mpsc::Receiver<()>)>>,
+    }
+    impl SecretStore for Fake {
+        fn read(&self, account: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, StoreError> {
+            self.log.lock().unwrap().push(format!("read {account}"));
+            let stall = self.read_stall.lock().unwrap().take();
+            if let Some((steps, release)) = stall {
+                let _ = steps.send(Step::Stalled);
+                let _ = release.recv();
+            }
+            let items = self.items.lock().unwrap();
+            let value = items.get(account).ok_or(StoreError::Absent)?;
+            Ok(zeroize::Zeroizing::new(value.clone()))
+        }
+        fn add(&self, account: &str, value: &[u8]) -> Result<(), StoreError> {
+            self.log.lock().unwrap().push(format!("add {account}"));
+            if let Some((steps, release)) = self.add_stall.lock().unwrap().take() {
+                let _ = steps.send(Step::Stalled);
+                let _ = release.recv();
+            }
+            if *self.add_denied.lock().unwrap() {
+                return Err(StoreError::Denied);
+            }
+            // Create-only, as the OS adapter is: an overwrite must not pass.
+            let mut items = self.items.lock().unwrap();
+            if items.contains_key(account) {
+                return Err(StoreError::Occupied);
+            }
+            items.insert(account.into(), value.to_vec());
+            Ok(())
+        }
+        fn delete(&self, account: &str) -> Result<(), StoreError> {
+            self.log.lock().unwrap().push(format!("delete {account}"));
+            let stall = self.stall.lock().unwrap().take();
+            if let Some((steps, release)) = stall {
+                let _ = steps.send(Step::Stalled);
+                // Released, or abandoned by a failing test.
+                let _ = release.recv();
+            }
+            if let Some(error) = *self.deny.lock().unwrap() {
+                return Err(error);
+            }
+            self.items.lock().unwrap().remove(account);
+            Ok(())
+        }
+    }
+
+    /// A temporary inventory root and the fake store its accounts live in.
+    struct Vault {
+        root: PathBuf,
+        store: Arc<Fake>,
+        attempts: Arc<AtomicUsize>,
+    }
+    impl Vault {
+        fn new(root: PathBuf) -> Self {
+            Self {
+                root,
+                store: Default::default(),
+                attempts: Default::default(),
+            }
+        }
+        /// Install the plugin in `home`'s `profile` and save a value for each
+        /// identity; their accounts, in order.
+        fn enroll(&self, home: &Path, profile: &str, identities: &[&str]) -> Vec<String> {
+            let manager = Manager::open(Some(home.to_owned()), profile, false)
+                .unwrap()
+                .with_secret_storage(self.root.clone(), self.store.clone());
+            let build = tempfile::tempdir().unwrap();
+            fs::write(
+                build.path().join("manifest.json"),
+                format!(
+                    r#"{{"id":"{PLUGIN}","name":"Slots","apiVersion":1,"host":{{"networkOrigins":["https://api.example.test"],"secrets":[{{"id":"api-key","label":"API key","origins":["https://api.example.test"],"header":"Authorization","scheme":"Bearer"}}]}}}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(build.path().join("plugin.js"), "export function apply() {}").unwrap();
+            let revision = manager
+                .install(build.path())
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == PLUGIN)
+                .unwrap()
+                .revision;
+            manager.change("enable", PLUGIN).unwrap();
+            identities
+                .iter()
+                .map(|identity| {
+                    manager
+                        .secret_set(PLUGIN, &revision, "api-key", identity, "sk-test", &|| true)
+                        .unwrap();
+                    let log = self.store.log.lock().unwrap();
+                    let added = log.iter().rev().find_map(|call| call.strip_prefix("add "));
+                    added.unwrap().to_owned()
+                })
+                .collect()
+        }
+        /// Commit a sign-out through real admission and preparation.
+        fn sign_out(&self, paths: &Paths, choices: Choices, identity: &str, erase: Option<&Path>) {
+            let instance = boot(paths, None, no_agents, || panic!("no marker")).unwrap();
+            let commit = || secrets::begin_sign_out(&self.root, Some(identity), erase);
+            let pending = || secrets::sign_out_pending(&self.root);
+            let journal = Journal {
+                commit: &commit,
+                pending: &pending,
+                admit: &|| Ok(()),
+            };
+            run(attempt(
+                &instance,
+                paths,
+                choices,
+                || async { Ok(()) },
+                Some(&journal),
+                || {},
+                || std::future::ready(Ok(())),
+                || std::future::ready(Err(refuse("exited"))),
+            ))
+            .unwrap();
+        }
+        /// This launch's cleanup: the read-only journal check and one attempt.
+        fn slots(&self, budget: Duration) -> Slots<'_> {
+            self.slots_waiting(budget, BUDGET)
+        }
+        /// The same, with the launch waiting only `wait` for its attempt.
+        fn slots_waiting(&self, budget: Duration, wait: Duration) -> Slots<'_> {
+            let (root, store, attempts) =
+                (self.root.clone(), self.store.clone(), self.attempts.clone());
+            Slots {
+                continuity: None,
+                finish: None,
+                inventory: Some(&self.root),
+                pending: Box::new(|| secrets::sign_out_pending(&self.root)),
+                cleanup: Some(Box::new(move || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    secrets::finish_sign_out(&root, store.as_ref(), budget)
+                })),
+                wait,
+            }
+        }
+        fn pending(&self) -> bool {
+            secrets::sign_out_pending(&self.root).unwrap()
+        }
+        fn attempts(&self) -> usize {
+            self.attempts.load(Ordering::SeqCst)
+        }
+        fn deny(&self, error: Option<StoreError>) {
+            *self.store.deny.lock().unwrap() = error;
+        }
+        /// The OS calls since last asked, sorted.
+        fn calls(&self) -> Vec<String> {
+            let mut calls = std::mem::take(&mut *self.store.log.lock().unwrap());
+            calls.sort();
+            calls
+        }
+        fn saved(&self) -> Vec<String> {
+            let mut saved: Vec<String> = self.store.items.lock().unwrap().keys().cloned().collect();
+            saved.sort();
+            saved
+        }
+        fn record(&self) -> PathBuf {
+            fs::read_dir(&self.root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    let name = path.file_name().unwrap().to_string_lossy();
+                    name.starts_with("ns-") && name.ends_with(".json")
+                })
+                .unwrap()
+        }
+    }
+    fn sorted(mut accounts: Vec<String>) -> Vec<String> {
+        accounts.sort();
+        accounts
+    }
+    /// Everything native storage holds: all but the inventory, whose lock
+    /// files any visit creates.
+    fn native(root: &Path) -> Vec<String> {
+        let mut found = data(root);
+        found.retain(|path| !path.starts_with("plugin-secrets"));
+        found
+    }
+    /// Whether another holder owns `lock` alone.
+    #[allow(clippy::incompatible_msrv)]
+    fn held_alone(lock: &Path) -> bool {
+        File::open(lock).unwrap().try_lock_shared().is_err()
+    }
+    fn contents(root: &Path) -> Vec<(String, Vec<u8>)> {
+        listing(root)
+            .into_iter()
+            .filter(|name| !name.ends_with('/'))
+            .map(|name| {
+                let bytes = fs::read(root.join(&name)).unwrap();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sign_out_journals_before_its_marker_and_a_cancelled_one_stays_committed() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let saved = vault.enroll(&dir.path().join("plugins"), "default", &[ALICE, BOB]);
+        let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+        let closed = std::sync::atomic::AtomicBool::new(false);
+        let commit = || {
+            assert!(
+                !paths.marker.exists() && !closed.load(Ordering::SeqCst),
+                "the journal commits first"
+            );
+            secrets::begin_sign_out(&vault.root, Some(ALICE), None)
+        };
+        let pending = || secrets::sign_out_pending(&vault.root);
+        let journal = Journal {
+            commit: &commit,
+            pending: &pending,
+            admit: &|| Ok(()),
+        };
+        {
+            let mut signing_out = std::pin::pin!(attempt(
+                &instance,
+                &paths,
+                PLAIN,
+                || async { Ok(()) },
+                Some(&journal),
+                || closed.store(true, Ordering::SeqCst),
+                std::future::pending::<Result<(), String>>,
+                || std::future::ready(Err(refuse("exited"))),
+            ));
+            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(signing_out.as_mut().poll(&mut context).is_pending());
+            // Dropped while agents stop.
+        }
+        assert!(closed.load(Ordering::SeqCst) && paths.marker.exists());
+        assert!(vault.pending(), "the journal committed in the same poll");
+        assert!(
+            held_alone(&paths.key_lock),
+            "the cancelled attempt keeps the key lock"
+        );
+        drop(instance);
+        let removed = Cell::new(false);
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            removed.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(removed.get() && !paths.marker.exists() && !vault.pending());
+        assert_eq!(vault.saved(), [saved[1].clone()], "BOB's account remains");
+    }
+
+    #[test]
+    fn a_journal_that_may_have_committed_or_lacks_its_marker_exits_natively() {
+        // `begin_sign_out` commits, then fails retiring an unreadable record;
+        // or it commits and the marker can't be written after it. Sign-out and
+        // erase alike, with plugin storage in app data, which an erase wipes.
+        for choices in [PLAIN, choices(true)] {
+            for marker_fails in [false, true] {
+                let (dir, mut paths) = fixture();
+                let vault = Vault::new(dir.path().join("plugin-secrets"));
+                let saved = vault.enroll(&paths.app_data, "default", &[ALICE, BOB]);
+                if marker_fails {
+                    paths.marker = dir.path().join("missing-folder/marker");
+                } else {
+                    fs::write(vault.record(), "{not json").unwrap();
+                }
+                let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+                let erase = choices.wipe.then_some(paths.app_data.as_path());
+                let commit = || secrets::begin_sign_out(&vault.root, Some(ALICE), erase);
+                let pending = || secrets::sign_out_pending(&vault.root);
+                let journal = Journal {
+                    commit: &commit,
+                    pending: &pending,
+                    admit: &|| Ok(()),
+                };
+                let before = (native(dir.path()), finished(&paths.finished).unwrap());
+                let (closes, stopped, exited) = (Cell::new(0), Cell::new(false), Cell::new(false));
+                let result = run(attempt(
+                    &instance,
+                    &paths,
+                    choices,
+                    || async { Ok(()) },
+                    Some(&journal),
+                    || closes.set(closes.get() + 1),
+                    || {
+                        stopped.set(true);
+                        std::future::ready(Ok(()))
+                    },
+                    || {
+                        assert_eq!(closes.get(), 1, "signing closes before the exit");
+                        exited.set(true);
+                        std::future::ready(Err(refuse("exited")))
+                    },
+                ));
+                assert_eq!(result, Err(refuse("exited")));
+                assert!(exited.get() && !stopped.get());
+                assert!(!paths.marker.exists());
+                assert!(vault.pending(), "the journal is never withdrawn");
+                // Withdrawing would share the key lock again.
+                assert!(held_alone(&paths.key_lock));
+                assert_eq!(
+                    held_alone(&paths.lock),
+                    choices.wipe,
+                    "an erase keeps every lock"
+                );
+                assert_eq!(native(dir.path()), before.0);
+                drop(instance);
+                // The journal holds no erase or agent choices: the relaunch
+                // only clears accounts, and nothing counts as signed out.
+                let resumed = boot(
+                    &paths,
+                    Some(vault.slots(BUDGET)),
+                    |_| panic!("agent keys stay"),
+                    || panic!("the key stays"),
+                );
+                assert_eq!(
+                    (native(dir.path()), finished(&paths.finished).unwrap()),
+                    before,
+                    "nothing wiped or recorded"
+                );
+                if marker_fails {
+                    assert!(resumed.is_ok() && !vault.pending());
+                    let kept = if choices.wipe {
+                        vec![]
+                    } else {
+                        vec![saved[1].clone()]
+                    };
+                    assert_eq!(vault.saved(), kept);
+                } else {
+                    let refused = resumed.err();
+                    assert_eq!(refused.as_deref(), Some(secrets::SIGN_OUT_UNREADABLE));
+                    assert!(vault.pending());
+                    assert_eq!(vault.saved(), sorted(saved));
+                }
+            }
+        }
+    }
+
+    /// Another copy's real sign-out of `identity`: admitted, its journal
+    /// commits, its marker can't be written, and it exits natively.
+    fn journaled_then_exited(dir: &Path, root: &Path, running: Instance, identity: &str) {
+        let mut gap = paths_for(dir, "identity");
+        gap.marker = dir.join("missing-folder/marker");
+        let commit = || secrets::begin_sign_out(root, Some(identity), None);
+        let pending = || secrets::sign_out_pending(root);
+        let journal = Journal {
+            commit: &commit,
+            pending: &pending,
+            admit: &|| Ok(()),
+        };
+        let mut exiting = std::pin::pin!(attempt(
+            &running,
+            &gap,
+            PLAIN,
+            || async { Ok(()) },
+            Some(&journal),
+            || {},
+            || std::future::ready(Ok(())),
+            || std::future::ready(Err(refuse("exited"))),
+        ));
+        // Ready in one poll, so it may run inside another attempt's `run`.
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let exited = exiting.as_mut().poll(&mut context);
+        assert_eq!(exited, std::task::Poll::Ready(Err(refuse("exited"))));
+        assert!(secrets::sign_out_pending(root).unwrap());
+    }
+
+    /// While a launch waits for the all-Buzz lock to move legacy storage or
+    /// copy the installed app's, a copy using this key journals a sign-out.
+    fn journaled_while_storage_waits(seeding: bool) {
+        use legacy_identifier::{DEV, LEGACY};
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        vault.enroll(&dir.path().join("plugins"), "default", &[ALICE]);
+        // Due: the legacy identifier's moves, or a first development copy
+        // that left a partial one.
+        let paths = if seeding {
+            let seeds = installed(dir.path(), LEGACY);
+            fs::create_dir_all(seeds[1].join(format!("{DEV}.seeding"))).unwrap();
+            Paths { seeds, ..paths }
+        } else {
+            legacy(paths)
+        };
+        // A copy using this key signs out while this launch waits for the
+        // all-Buzz lock to move storage.
+        let running = boot(&paths_for(dir.path(), "identity"), None, no_agents, || {
+            panic!("no marker")
+        })
+        .unwrap();
+        let (gap, root) = (dir.path().to_owned(), vault.root.clone());
+        HANDOFF.set(Some(Box::new(move || {
+            journaled_then_exited(&gap, &root, running, ALICE)
+        })));
+        vault.calls();
+        let before = native(dir.path());
+        let refused = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        });
+        assert_eq!(refused.err().as_deref(), Some(FAILED));
+        assert_eq!(
+            native(dir.path()),
+            before,
+            "nothing moved, copied or discarded"
+        );
+        assert_eq!(vault.calls(), Vec::<String>::new(), "no OS call");
+        assert_eq!(vault.attempts(), 0);
+        assert!(vault.pending());
+        // The relaunch clears the accounts, then moves.
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        })
+        .unwrap();
+        assert!(!vault.pending() && vault.saved().is_empty());
+        assert_ne!(native(dir.path()), before);
+    }
+    #[test]
+    fn a_journal_committed_while_a_launch_waits_to_move_storage_moves_nothing() {
+        journaled_while_storage_waits(false);
+    }
+    #[test]
+    fn a_journal_committed_while_a_launch_waits_to_seed_storage_copies_nothing() {
+        journaled_while_storage_waits(true);
+    }
+
+    /// A sign-out refused, or withdrawn after admission, lets go of its locks
+    /// while another copy's sign-out journals.
+    fn journaled_while_one_lets_go(withdrawn: bool) {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        vault.enroll(&dir.path().join("plugins"), "default", &[ALICE]);
+        let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+        let (gap, root) = (dir.path().to_owned(), vault.root.clone());
+        let choices = if withdrawn {
+            // A linked folder withdraws the erase after admission; another
+            // launch then signs out while it lets go.
+            let controller = paths.app_data.join(OLD_AGENTS);
+            fs::remove_dir_all(&controller).unwrap();
+            std::os::unix::fs::symlink(dir.path(), &controller).unwrap();
+            HANDOFF.set(Some(Box::new(move || {
+                let running = boot(&paths_for(&gap, "identity"), None, no_agents, || {
+                    panic!("no marker")
+                })
+                .unwrap();
+                journaled_then_exited(&gap, &root, running, ALICE)
+            })));
+            choices(false)
+        } else {
+            // Refused while a copy shares the key, which signs out meanwhile.
+            let running = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+            HANDOFF.set(Some(Box::new(move || {
+                journaled_then_exited(&gap, &root, running, ALICE)
+            })));
+            PLAIN
+        };
+        let commit = || -> Result<(), String> { panic!("this sign-out commits nothing") };
+        let pending = || secrets::sign_out_pending(&vault.root);
+        let journal = Journal {
+            commit: &commit,
+            pending: &pending,
+            admit: &|| Ok(()),
+        };
+        let closes = Cell::new(0);
+        let result = run(attempt(
+            &instance,
+            &paths,
+            choices,
+            || async { Ok(()) },
+            Some(&journal),
+            || closes.set(closes.get() + 1),
+            || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
+            || {
+                assert_eq!(closes.get(), 1, "signing closes before the exit");
+                std::future::ready(Err(refuse("exited")))
+            },
+        ));
+        assert_eq!(result, Err(refuse("exited")));
+        // Not a usable retry: the guard stays taken.
+        assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
+        assert!(vault.pending() && !paths.marker.exists());
+        drop(instance);
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        })
+        .unwrap();
+        assert!(!vault.pending() && vault.saved().is_empty());
+    }
+    #[test]
+    fn a_journal_committed_while_a_refused_sign_out_lets_go_exits_natively() {
+        journaled_while_one_lets_go(false);
+    }
+    #[test]
+    fn a_journal_committed_while_a_withdrawn_sign_out_lets_go_exits_natively() {
+        journaled_while_one_lets_go(true);
+    }
+
+    #[test]
+    fn cleanup_runs_before_agent_keys_moves_and_the_key_for_sign_out_and_erase() {
+        for choices in [PLAIN, choices(true)] {
+            let (dir, paths) = fixture();
+            let vault = Vault::new(dir.path().join("plugin-secrets"));
+            // Desktop plugin storage lives in app data, which an erase moves.
+            let saved = vault.enroll(&paths.app_data, "default", &[ALICE, BOB]);
+            let erase = choices.wipe.then_some(paths.app_data.as_path());
+            vault.sign_out(&paths, choices, ALICE, erase);
+            let before = finished(&paths.finished).unwrap();
+            let order = Arc::new(Mutex::new(Vec::new()));
+            let (marker, archive, record) = (
+                paths.marker.clone(),
+                paths.app_data.join("archive.sqlite3"),
+                paths.finished.clone(),
+            );
+            let (root, store, cleaned) = (vault.root.clone(), vault.store.clone(), order.clone());
+            let slots = Slots {
+                continuity: None,
+                finish: None,
+                inventory: Some(&vault.root),
+                pending: Box::new(|| secrets::sign_out_pending(&vault.root)),
+                cleanup: Some(Box::new(move || {
+                    assert!(marker.exists());
+                    assert!(archive.exists());
+                    assert_eq!(finished(&record).unwrap(), before);
+                    cleaned.lock().unwrap().push("slots");
+                    secrets::finish_sign_out(&root, store.as_ref(), BUDGET)
+                })),
+                wait: BUDGET,
+            };
+            let _instance = boot(
+                &paths,
+                Some(slots),
+                |_| {
+                    order.lock().unwrap().push("agents");
+                    Ok(())
+                },
+                || {
+                    order.lock().unwrap().push("key");
+                    Ok(())
+                },
+            )
+            .unwrap();
+            let expected: &[&str] = if choices.remove_agents {
+                &["slots", "agents", "key"]
+            } else {
+                &["slots", "key"]
+            };
+            assert_eq!(*order.lock().unwrap(), expected);
+            assert_eq!(finished(&paths.finished).unwrap(), before + 1);
+            assert!(!paths.marker.exists() && !vault.pending());
+            let kept = if choices.wipe {
+                vec![]
+            } else {
+                vec![saved[1].clone()]
+            };
+            assert_eq!(vault.saved(), kept);
+        }
+    }
+
+    #[test]
+    fn denied_cleanup_keeps_everything_and_boot_exits_until_a_deliberate_relaunch() {
+        for choices in [PLAIN, choices(true)] {
+            let (dir, paths) = fixture();
+            let vault = Vault::new(dir.path().join("plugin-secrets"));
+            let home = dir.path().join("plugins");
+            let saved = vault.enroll(&home, "default", &[ALICE]);
+            vault.sign_out(
+                &paths,
+                choices,
+                ALICE,
+                choices.wipe.then_some(home.as_path()),
+            );
+            let before = (native(dir.path()), finished(&paths.finished).unwrap());
+            vault.deny(Some(StoreError::Denied));
+            let failed = boot(
+                &paths,
+                Some(vault.slots(BUDGET)),
+                |_| panic!("agent keys stay"),
+                || panic!("the key stays"),
+            );
+            assert_eq!(failed.err().as_deref(), Some(secrets::SIGN_OUT_INCOMPLETE));
+            assert_eq!(
+                (native(dir.path()), finished(&paths.finished).unwrap()),
+                before
+            );
+            assert!(paths.marker.exists() && vault.pending());
+            assert_eq!(vault.saved(), saved);
+            vault.deny(None);
+            let _instance = boot(&paths, Some(vault.slots(BUDGET)), |_| Ok(()), || Ok(())).unwrap();
+            assert!(!paths.marker.exists() && !vault.pending() && vault.saved().is_empty());
+            assert_eq!(vault.attempts(), 2, "one attempt per launch");
+        }
+    }
+
+    #[test]
+    fn a_journal_without_its_marker_blocks_storage_moves_until_cleanup_and_signs_nothing_out() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let saved = vault.enroll(&dir.path().join("plugins"), "default", &[ALICE, BOB]);
+        // The temporary agents rename and the legacy identifier's moves are due.
+        fs::rename(
+            paths.app_data.join(AGENTS),
+            paths.app_data.join(migrate_agents::LEGACY),
+        )
+        .unwrap();
+        let paths = legacy(paths);
+        // A sign-out stopped after its journal, before its marker.
+        secrets::begin_sign_out(&vault.root, Some(ALICE), None).unwrap();
+        let before = (native(dir.path()), finished(&paths.finished).unwrap());
+        vault.deny(Some(StoreError::Denied));
+        let failed = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        });
+        assert_eq!(failed.err().as_deref(), Some(secrets::SIGN_OUT_INCOMPLETE));
+        assert_eq!(
+            (native(dir.path()), finished(&paths.finished).unwrap()),
+            before,
+            "nothing moved"
+        );
+        assert!(vault.pending());
+        vault.deny(None);
+        let instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        })
+        .unwrap();
+        assert!(!vault.pending());
+        assert_eq!(vault.saved(), [saved[1].clone()]);
+        assert!(
+            paths.app_data.join(AGENTS).join("identities.json").exists(),
+            "storage moves after cleanup"
+        );
+        assert_eq!(instance.seen, before.1, "no sign-out finished");
+    }
+
+    #[test]
+    fn a_stalled_delete_keeps_the_key_lock_marker_and_journal_until_it_returns() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let home = dir.path().join("plugins");
+        vault.enroll(&home, "default", &[ALICE]);
+        vault.sign_out(&paths, choices(false), ALICE, Some(&home));
+        let before = native(dir.path());
+        let (steps, step) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let (release, released) = mpsc::channel();
+            *vault.store.stall.lock().unwrap() = Some((steps.clone(), released));
+            let booting = scope.spawn(|| {
+                let booted = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(()));
+                let _ = steps.send(Step::Booted(booted.map(drop)));
+            });
+            assert_eq!(step.recv().unwrap(), Step::Stalled);
+            // Inside the OS call: nothing after cleanup ran, and this launch
+            // still owns the key lock alone.
+            assert!(held_alone(&paths.key_lock));
+            assert!(paths.marker.exists() && vault.pending());
+            assert_eq!(native(dir.path()), before);
+            release.send(()).unwrap();
+            assert_eq!(step.recv().unwrap(), Step::Booted(Ok(())));
+            booting.join().unwrap();
+        });
+        assert!(!paths.marker.exists() && !vault.pending() && vault.saved().is_empty());
+    }
+
+    /// A launch's wait that a blocked delete always outlasts.
+    const BRIEFLY: Duration = Duration::from_millis(100);
+    /// Bounds a wait that only a defect would exhaust, so it fails rather than hangs.
+    const LIMIT: Duration = Duration::from_secs(10);
+    /// The manager's completion ownership: its worker and writer locks.
+    fn completion_locks(root: &Path) -> Vec<PathBuf> {
+        let mut locks: Vec<PathBuf> = fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                let name = path.file_name().unwrap().to_string_lossy();
+                name.ends_with(".worker.lock") || name.starts_with("w-")
+            })
+            .collect();
+        locks.sort();
+        locks
+    }
+    /// Waits, bounded, for a blocked attempt that was let go to drop `lock`.
+    fn let_go(lock: &Path) {
+        let start = Instant::now();
+        while held_alone(lock) {
+            assert!(start.elapsed() < LIMIT, "{} stays held", lock.display());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    /// Sign out of ALICE, one account, with an erase's home being the plugins'.
+    fn signed_out(choices: Choices) -> (tempfile::TempDir, Paths, Vault) {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let home = dir.path().join("plugins");
+        vault.enroll(&home, "default", &[ALICE]);
+        vault.sign_out(
+            &paths,
+            choices,
+            ALICE,
+            choices.wipe.then_some(home.as_path()),
+        );
+        vault.calls();
+        (dir, paths, vault)
+    }
+
+    /// A delete that blocks past the launch's wait. With `late`, the first look
+    /// finds nothing owed, as when the journal commits after it, so the attempt
+    /// runs holding what the marker needs: every lock, for an erase.
+    fn blocked_delete_times_out(choices: Choices, late: bool) {
+        let (dir, paths, vault) = signed_out(choices);
+        let before = (native(dir.path()), finished(&paths.finished).unwrap());
+        let (stalls, stalled) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        *vault.store.stall.lock().unwrap() = Some((stalls, released));
+        let (boots, booted) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let booting = scope.spawn(|| {
+                let mut slots = vault.slots_waiting(BUDGET, BRIEFLY);
+                if late {
+                    let (root, looked) = (&vault.root, Cell::new(false));
+                    slots.pending = Box::new(move || {
+                        if looked.replace(true) {
+                            secrets::sign_out_pending(root)
+                        } else {
+                            Ok(false)
+                        }
+                    });
+                }
+                let result = boot(
+                    &paths,
+                    Some(slots),
+                    |_| panic!("agent keys stay"),
+                    || panic!("the key stays"),
+                );
+                let _ = boots.send(result.map(drop));
+            });
+            let Ok(step) = stalled.recv_timeout(LIMIT) else {
+                // Free any delete that stalls late, so the scope's join returns.
+                release.send(()).unwrap();
+                panic!("the delete never stalled");
+            };
+            assert_eq!(step, Step::Stalled);
+            let Ok(result) = booted.recv_timeout(LIMIT) else {
+                release.send(()).unwrap();
+                panic!("the launch waited for the blocked delete");
+            };
+            assert_eq!(result.err().as_deref(), Some(secrets::SIGN_OUT_INCOMPLETE));
+            booting.join().unwrap();
+            // Still inside the OS call: the attempt keeps what it ran under,
+            // and nothing after cleanup ran.
+            assert!(held_alone(&paths.key_lock));
+            assert_eq!(held_alone(&paths.lock), late && choices.wipe);
+            let completion = completion_locks(&vault.root);
+            assert!(!completion.is_empty() && completion.iter().all(|lock| held_alone(lock)));
+            assert!(paths.marker.exists() && vault.pending());
+            assert_eq!(
+                (native(dir.path()), finished(&paths.finished).unwrap()),
+                before
+            );
+            assert_eq!(vault.attempts(), 1);
+            assert_eq!(vault.calls().len(), 1, "one delete, still running");
+            // Another launch meanwhile starts no second attempt.
+            let busy = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+                panic!("the key stays")
+            });
+            assert_eq!(busy.err().as_deref(), Some(BUSY));
+            assert_eq!((vault.attempts(), vault.calls()), (1, Vec::new()));
+            // Let go, the attempt completes with no launch to continue it.
+            release.send(()).unwrap();
+            let_go(&paths.key_lock);
+            let_go(&paths.lock);
+        });
+        assert!(!vault.pending() && vault.saved().is_empty());
+        assert!(paths.marker.exists(), "the late attempt finishes nothing");
+        assert_eq!(
+            (native(dir.path()), finished(&paths.finished).unwrap()),
+            before
+        );
+        let removed = Cell::new(false);
+        let evidence = creators::bytes(&vault.root);
+        let result = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            removed.set(true);
+            Ok(())
+        });
+        // 2d-i conservative: completion restored by 2d-ii continuity witness (see HOST-PLUGIN-SECRETS-2D-II-WITNESS-DESIGN).
+        assert_eq!(result.err().as_deref(), Some(H1_UNKNOWN));
+        // 2d-i conservative: completion restored by 2d-ii continuity witness (see HOST-PLUGIN-SECRETS-2D-II-WITNESS-DESIGN).
+        assert!(!removed.get() && paths.marker.exists());
+        // 2d-i conservative: completion restored by 2d-ii continuity witness (see HOST-PLUGIN-SECRETS-2D-II-WITNESS-DESIGN).
+        assert_eq!(finished(&paths.finished).unwrap(), before.1);
+        assert_eq!(creators::bytes(&vault.root), evidence);
+        assert_eq!(
+            (native(dir.path()), finished(&paths.finished).unwrap()),
+            before
+        );
+        assert_eq!((vault.attempts(), vault.calls()), (1, Vec::new()));
+    }
+    #[test]
+    fn a_blocked_delete_times_out_keeping_the_key_lock_until_it_returns() {
+        blocked_delete_times_out(PLAIN, false);
+        blocked_delete_times_out(choices(false), false);
+    }
+    #[test]
+    fn a_blocked_delete_after_the_first_look_keeps_every_lock_an_erase_took() {
+        blocked_delete_times_out(PLAIN, true);
+        blocked_delete_times_out(choices(false), true);
+    }
+
+    const SLOTS_CHILD: &str = "BUZZ_SIGN_OUT_TEST_SLOTS_CHILD";
+    /// A launch whose delete blocks past its wait, then stays open, as its
+    /// error dialog would, until the parent kills it.
+    #[test]
+    fn blocked_child() {
+        let Some(root) = std::env::var_os(SLOTS_CHILD) else {
+            return;
+        };
+        let root = Path::new(&root);
+        let vault = Vault::new(root.join("plugin-secrets"));
+        let (stalls, stalled) = mpsc::channel();
+        let (_release, released) = mpsc::channel();
+        *vault.store.stall.lock().unwrap() = Some((stalls, released));
+        let booted = boot(
+            &paths_for(root, "identity"),
+            Some(vault.slots_waiting(BUDGET, BRIEFLY)),
+            no_agents,
+            || panic!("the key stays"),
+        );
+        assert_eq!(stalled.recv().unwrap(), Step::Stalled);
+        assert_eq!(booted.err().as_deref(), Some(secrets::SIGN_OUT_INCOMPLETE));
+        println!("child: timed out");
+        std::io::stdin().lines().next();
+    }
+    #[test]
+    fn a_launch_killed_while_its_delete_blocks_lets_go_and_the_relaunch_finishes() {
+        use std::io::BufRead;
+        for choices in [PLAIN, choices(false)] {
+            let (dir, paths, vault) = signed_out(choices);
+            let before = (native(dir.path()), finished(&paths.finished).unwrap());
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "sign_out::tests::slots::blocked_child",
+                    "--exact",
+                    "--nocapture",
+                ])
+                .env(SLOTS_CHILD, dir.path())
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = std::io::BufReader::new(child.stdout.take().unwrap());
+            let (says, said) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut lines = output.lines().map_while(Result::ok);
+                if let Some(line) = lines.find(|line| line.contains("child: ")) {
+                    let _ = says.send(line);
+                }
+                lines.for_each(drop);
+            });
+            let report = said.recv_timeout(LIMIT).ok();
+            let held = held_alone(&paths.key_lock);
+            child.kill().unwrap();
+            child.wait().unwrap();
+            assert!(report.is_some_and(|line| line.trim_end().ends_with("child: timed out")));
+            assert!(
+                held,
+                "the blocked attempt keeps the key lock until Buzz exits"
+            );
+            assert!(!held_alone(&paths.key_lock) && !held_alone(&paths.lock));
+            assert!(paths.marker.exists() && vault.pending());
+            assert_eq!(
+                (native(dir.path()), finished(&paths.finished).unwrap()),
+                before
+            );
+            let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(())).unwrap();
+            assert!(!paths.marker.exists() && !vault.pending() && vault.saved().is_empty());
+            assert_eq!(finished(&paths.finished).unwrap(), before.1 + 1);
+            assert_eq!(vault.attempts(), 1, "the killed attempt was the child's");
+        }
+    }
+
+    #[test]
+    fn a_spent_budget_makes_no_os_call_and_the_relaunch_retries() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        vault.enroll(&dir.path().join("plugins"), "default", &[ALICE]);
+        vault.enroll(&dir.path().join("plugins"), "work", &[ALICE]);
+        vault.sign_out(&paths, PLAIN, ALICE, None);
+        vault.calls();
+        let failed = boot(&paths, Some(vault.slots(Duration::ZERO)), no_agents, || {
+            panic!("the key stays")
+        });
+        assert_eq!(failed.err().as_deref(), Some(secrets::SIGN_OUT_INCOMPLETE));
+        assert_eq!(vault.calls(), Vec::<String>::new());
+        assert_eq!(vault.attempts(), 1);
+        assert!(paths.marker.exists() && vault.pending());
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(())).unwrap();
+        assert_eq!(vault.attempts(), 2);
+        assert_eq!(vault.calls().len(), 2);
+        assert!(!paths.marker.exists() && !vault.pending() && vault.saved().is_empty());
+    }
+
+    #[test]
+    fn a_sign_out_committed_after_this_launchs_attempt_waits_for_the_next_launch() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let saved = vault.enroll(&dir.path().join("plugins"), "default", &[ALICE, BOB]);
+        vault.sign_out(&paths, PLAIN, ALICE, None);
+        // While this launch lets go of its locks after finishing, another
+        // commits a sign-out of BOB.
+        let (gap, root) = (paths_for(dir.path(), "identity"), vault.root.clone());
+        HANDOFF.set(Some(Box::new(move || {
+            secrets::begin_sign_out(&root, Some(BOB), None).unwrap();
+            mark(&gap, false, false);
+        })));
+        let removed = Cell::new(0);
+        let refused = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            removed.set(removed.get() + 1);
+            Ok(())
+        });
+        assert_eq!(refused.err().as_deref(), Some(FAILED));
+        assert_eq!(removed.get(), 1, "only the first sign-out finished");
+        assert_eq!(vault.attempts(), 1, "no second attempt in one launch");
+        assert!(paths.marker.exists() && vault.pending());
+        assert_eq!(vault.saved(), [saved[1].clone()], "BOB's account waits");
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(())).unwrap();
+        assert!(!paths.marker.exists() && !vault.pending() && vault.saved().is_empty());
+    }
+
+    #[test]
+    fn a_journal_alone_committed_after_this_launchs_attempt_also_waits() {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("plugin-secrets"));
+        let saved = vault.enroll(&dir.path().join("plugins"), "default", &[ALICE, BOB]);
+        vault.sign_out(&paths, PLAIN, ALICE, None);
+        // Another launch's sign-out of BOB stopped after its journal.
+        let root = vault.root.clone();
+        HANDOFF.set(Some(Box::new(move || {
+            secrets::begin_sign_out(&root, Some(BOB), None).unwrap();
+        })));
+        let refused = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(()));
+        assert_eq!(refused.err().as_deref(), Some(FAILED));
+        assert_eq!(vault.attempts(), 1, "no second attempt in one launch");
+        assert!(!paths.marker.exists() && vault.pending());
+        assert_eq!(vault.saved(), [saved[1].clone()]);
+        let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
+            panic!("nothing signs out")
+        })
+        .unwrap();
+        assert!(!vault.pending() && vault.saved().is_empty());
+    }
+
+    #[test]
+    fn sign_out_clears_its_identity_everywhere_and_erase_its_home_for_everyone() {
+        for wipe in [false, true] {
+            let (dir, paths) = fixture();
+            let vault = Vault::new(dir.path().join("plugin-secrets"));
+            let home = dir.path().join("plugins");
+            let [alice, bob] =
+                <[String; 2]>::try_from(vault.enroll(&home, "default", &[ALICE, BOB])).unwrap();
+            let [alice_work, bob_work] =
+                <[String; 2]>::try_from(vault.enroll(&home, "work", &[ALICE, BOB])).unwrap();
+            let elsewhere = vault.enroll(&dir.path().join("elsewhere"), "default", &[ALICE, BOB]);
+            // Another build's inventory shares the store and is never visited.
+            let other = Vault {
+                root: dir.path().join("plugin-secrets-other"),
+                store: vault.store.clone(),
+                attempts: Default::default(),
+            };
+            other.enroll(&dir.path().join("other-home"), "default", &[ALICE]);
+            let other_before = contents(&other.root);
+            let all = vault.saved();
+            let choices = Choices {
+                wipe,
+                remove_agents: false,
+            };
+            vault.sign_out(&paths, choices, ALICE, wipe.then_some(home.as_path()));
+            vault.calls();
+            let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || Ok(())).unwrap();
+            let mut deleted = vec![alice, alice_work, elsewhere[0].clone()];
+            if wipe {
+                deleted.extend([bob, bob_work]);
+            }
+            let calls = deleted.iter().map(|account| format!("delete {account}"));
+            assert_eq!(vault.calls(), sorted(calls.collect()), "no other OS call");
+            let kept = all.into_iter().filter(|account| !deleted.contains(account));
+            assert_eq!(vault.saved(), sorted(kept.collect()));
+            assert_eq!(contents(&other.root), other_before);
+        }
+    }
+}
+
+pub(super) mod preflight;

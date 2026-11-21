@@ -19,6 +19,8 @@ pub mod gateway;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
+pub mod secrets;
+pub use secrets::{CleanupStatus, SecretStatus, SecretStore};
 
 pub type Result<T> = std::result::Result<T, String>;
 pub const LIMIT: u64 = 8 * 1024 * 1024;
@@ -116,6 +118,9 @@ pub struct HostGrants {
     /// HTTPS address, one hop at a time, with no cookies; never its HTML.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub public_pages: bool,
+    /// Write-only credential slots injected for exact declared origins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<secrets::SecretSlot>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -375,6 +380,7 @@ impl Manifest {
                     return Err("Invalid HTTPS origin declaration".into());
                 }
             }
+            secrets::validate_slots(host)?;
         }
         Ok(())
     }
@@ -696,6 +702,9 @@ struct Installed {
     icon_png_revision: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icon_jpg_revision: Option<String>,
+    /// Secret-slot installation generation (registry v3 only); fresh per install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -744,6 +753,10 @@ struct Registry {
     #[serde(default)]
     bundled_overrides: BTreeMap<String, bool>,
     installed: BTreeMap<String, Installed>,
+    /// Secret-slot lineage. Its presence makes the registry version 3, which
+    /// older strict readers reject; it is never dropped except by `recover`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secrets: Option<secrets::Lineage>,
 }
 impl Default for Registry {
     fn default() -> Self {
@@ -752,6 +765,7 @@ impl Default for Registry {
             bundled_enabled: true,
             bundled_overrides: BTreeMap::new(),
             installed: BTreeMap::new(),
+            secrets: None,
         }
     }
 }
@@ -977,6 +991,28 @@ pub struct Catalog {
     pub profile: String,
     pub location: String,
     pub plugins: Vec<PluginInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_cleanup: Option<CleanupStatus>,
+}
+/// A mutation reached persistence. False means commit outcome is uncertain,
+/// not rolled back; catalog failure never authorizes resetting saved settings.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagementOutcome {
+    pub committed: bool,
+    pub catalog: Option<Catalog>,
+    pub problem: Option<&'static str>,
+    #[serde(skip)]
+    cleanup_due: bool,
+}
+impl ManagementOutcome {
+    pub fn into_catalog(self) -> Result<Catalog> {
+        if let Some(problem) = self.problem {
+            return Err(problem.into());
+        }
+        self.catalog
+            .ok_or_else(|| "Plugin change saved; catalog is unavailable".into())
+    }
 }
 #[derive(serde::Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -1020,6 +1056,54 @@ fn default_home() -> Result<PathBuf> {
     }
     Ok(home)
 }
+/// A registry as every reader must accept it, checked in memory only: reading
+/// it saves nothing.
+fn parse_registry(text: &str) -> Result<Registry> {
+    parse_owned_registry(text, &secrets::check_lineage)
+}
+
+/// `owned` decides which supported build's secret lineage the registry may carry.
+pub(crate) fn parse_owned_registry(
+    text: &str,
+    owned: &dyn Fn(&secrets::Lineage) -> Result<()>,
+) -> Result<Registry> {
+    let mut r: Registry = serde_json::from_str(text).map_err(err)?;
+    let v3 = r.version == 3;
+    if !matches!(r.version, 1..=3)
+        || v3 != r.secrets.is_some()
+        || r.installed.values().any(|p| p.generation.is_some() && !v3)
+    {
+        return Err(
+            "Unsupported settings version; use a compatible Buzz or recover settings".into(),
+        );
+    }
+    if let Some(lineage) = &r.secrets {
+        owned(lineage)?;
+    }
+    // These shipped as installable plugins before being bundled. The bundled copy
+    // replaces the installed one; a disabled install keeps the bundled copy off.
+    for id in FORMERLY_INSTALLED {
+        if let Some(old) = r.installed.remove(*id) {
+            if !old.enabled {
+                r.bundled_overrides.entry((*id).into()).or_insert(false);
+            }
+        }
+    }
+    for (id, p) in &r.installed {
+        p.manifest.validate()?;
+        if *id != p.manifest.id || is_reserved(id) {
+            return Err("Invalid installed plugin identity".into());
+        }
+        valid_hash(&p.current)?;
+        if let Some(h) = &p.previous {
+            valid_hash(h)?;
+        }
+        if let Some(generation) = &p.generation {
+            secrets::valid_uuid(generation)?;
+        }
+    }
+    Ok(r)
+}
 #[derive(Clone)]
 pub struct Manager {
     home: PathBuf,
@@ -1032,6 +1116,7 @@ pub struct Manager {
     packaged_fetch: std::sync::Arc<std::sync::Mutex<managed::PackagedFetch>>,
     automatic: automatic::Session,
     policy_signer: Option<String>,
+    secrets: secrets::Storage,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -1062,6 +1147,7 @@ impl Manager {
             automatic: Default::default(),
             policy_signer: (!managed::PACKAGED_SIGNER.is_empty())
                 .then(|| managed::PACKAGED_SIGNER.to_owned()),
+            secrets: secrets::Storage::default(),
         })
     }
     /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
@@ -1096,6 +1182,7 @@ impl Manager {
             profile: self.profile.clone(),
             location: String::new(),
             plugins: vec![],
+            credential_cleanup: None,
         };
         match self.managed(&empty) {
             managed::Managed::Ready { plugins, .. } => plugins
@@ -1170,35 +1257,11 @@ impl Manager {
     }
     fn read(&self) -> Result<Registry> {
         let path = self.root.join("registry.json");
-        let mut r: Registry = match File::open(&path) {
-            Ok(file) => serde_json::from_str(&read_file_limited(file)?).map_err(err)?,
+        let mut r = match File::open(&path) {
+            Ok(file) => parse_registry(&read_file_limited(file)?)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Registry::default(),
             Err(error) => return Err(err(error)),
         };
-        if r.version != 1 && r.version != 2 {
-            return Err(
-                "Unsupported settings version; use a compatible Buzz or recover settings".into(),
-            );
-        }
-        // These shipped as installable plugins before being bundled. The bundled copy
-        // replaces the installed one; a disabled install keeps the bundled copy off.
-        for id in FORMERLY_INSTALLED {
-            if let Some(old) = r.installed.remove(*id) {
-                if !old.enabled {
-                    r.bundled_overrides.entry((*id).into()).or_insert(false);
-                }
-            }
-        }
-        for (id, p) in &r.installed {
-            p.manifest.validate()?;
-            if *id != p.manifest.id || is_reserved(id) {
-                return Err("Invalid installed plugin identity".into());
-            }
-            valid_hash(&p.current)?;
-            if let Some(h) = &p.previous {
-                valid_hash(h)?;
-            }
-        }
         let renamed = migrate_agent_flag::migrate(&mut r);
         let pinned = pin_bundled_defaults(&mut r, self.existing_profile);
         if renamed {
@@ -1211,13 +1274,20 @@ impl Manager {
         Ok(r)
     }
     fn save(&self, r: &Registry) -> Result<()> {
+        self.save_outcome(r)?
+    }
+    // Validation errors are definite refusals; only persistence can be uncertain.
+    fn save_outcome(&self, r: &Registry) -> Result<Result<()>> {
+        if (r.version == 3) != r.secrets.is_some() {
+            return Err("Plugin settings lineage is inconsistent".into());
+        }
         let bytes = serde_json::to_vec_pretty(r).map_err(err)?;
         if bytes.len() as u64 > LIMIT {
             return Err(
                 "Plugin registry exceeds 8 MiB; reduce release metadata or remove plugins".into(),
             );
         }
-        atomic_write(&self.root.join("registry.json"), &bytes)
+        Ok(atomic_write(&self.root.join("registry.json"), &bytes))
     }
     fn artifact_path(&self, id: &str, revision: &str) -> PathBuf {
         self.root
@@ -1246,7 +1316,12 @@ impl Manager {
         self.safe_mode
     }
     pub fn catalog(&self) -> Result<Catalog> {
-        let registry = self.lock().and_then(|_lock| self.read())?;
+        let (registry, credential_cleanup) = {
+            let _lock = self.lock()?;
+            let registry = self.read()?;
+            let cleanup = self.catalog_cleanup(&registry);
+            (registry, cleanup)
+        };
         let mut plugins: Vec<PluginInfo> = bundled_manifests_for(self.gateway)
             .into_iter()
             .map(|manifest| {
@@ -1319,6 +1394,7 @@ impl Manager {
             profile: self.profile.clone(),
             location: self.root.display().to_string(),
             plugins,
+            credential_cleanup,
         })
     }
     pub fn install(&self, directory: &Path) -> Result<Catalog> {
@@ -1333,20 +1409,29 @@ impl Manager {
         release: &Release,
         source: Option<InstallSource>,
     ) -> Result<Catalog> {
-        self.install_artifact_if(release, source, |_| Ok(Some(false)), || Ok(()))?;
-        self.catalog()
+        self.install_artifact_managed(release, source)?
+            .into_catalog()
+    }
+    fn install_artifact_managed(
+        &self,
+        release: &Release,
+        source: Option<InstallSource>,
+    ) -> Result<ManagementOutcome> {
+        self.install_artifact_if(release, source, |_| Ok(Some(false)), || Ok(()))?
+            .ok_or_else(|| "Plugin installation was refused".to_owned())
     }
     /// Installs `release` only if `check` allows it given the registry as it is under
     /// the lock: `None` refuses, `Some(true)` also turns the plugin on in the same
     /// write. `committed` runs after the registry is saved, still under the lock.
-    /// Returns whether it installed.
+    /// Returns `None` when refused; otherwise the outcome, including any
+    /// credential cleanup the change made due.
     fn install_artifact_if(
         &self,
         release: &Release,
         source: Option<InstallSource>,
         check: impl FnOnce(&Registry) -> Result<Option<bool>>,
         committed: impl FnOnce() -> Result<()>,
-    ) -> Result<bool> {
+    ) -> Result<Option<ManagementOutcome>> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
         let manifest = artifact.manifest.clone();
@@ -1354,66 +1439,82 @@ impl Manager {
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
         let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         let revision = hash(bytes);
-        let _lock = self.lock()?;
-        let mut registry = self.read()?;
-        let Some(enable) = check(&registry)? else {
-            return Ok(false);
-        };
-        let old = registry.installed.get(&manifest.id);
-        if let Some(old) = old {
-            if let Some(previous) = &old.current_signature {
-                let previous_publisher = publisher_for_hash(&old.current, previous)?;
-                if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
-                    return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
+        let (saved, cleanup_due) = {
+            let _lock = self.lock()?;
+            let mut registry = self.read()?;
+            let Some(enable) = check(&registry)? else {
+                return Ok(None);
+            };
+            let before = registry.installed.get(&manifest.id).cloned();
+            let old = before.as_ref();
+            if let Some(old) = old {
+                if let Some(previous) = &old.current_signature {
+                    let previous_publisher = publisher_for_hash(&old.current, previous)?;
+                    if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
+                        return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
+                    }
                 }
             }
-        }
-        let (previous, previous_source) = old.map_or((None, None), |p| {
-            if p.current == revision {
-                (p.previous.clone(), p.previous_source.clone())
-            } else {
-                (Some(p.current.clone()), p.current_source.clone())
+            let (previous, previous_source) = old.map_or((None, None), |p| {
+                if p.current == revision {
+                    (p.previous.clone(), p.previous_source.clone())
+                } else {
+                    (Some(p.current.clone()), p.current_source.clone())
+                }
+            });
+            let enabled = enable || old.is_some_and(|p| p.enabled);
+            let update_checks = old.and_then(|p| p.update_checks);
+            let previous_signature = old.and_then(|p| {
+                if p.current == revision {
+                    p.previous_signature.clone()
+                } else {
+                    p.current_signature.clone()
+                }
+            });
+            atomic_write(&self.artifact_path(&manifest.id, &revision), bytes)?;
+            let id = manifest.id.clone();
+            registry.installed.insert(
+                id.clone(),
+                Installed {
+                    manifest,
+                    current: revision,
+                    current_signature: release.signature.clone(),
+                    current_source: source,
+                    previous,
+                    previous_signature,
+                    previous_source,
+                    enabled,
+                    update_checks,
+                    readme_revision,
+                    icon_png_revision,
+                    icon_jpg_revision,
+                    generation: old.and_then(|p| p.generation.clone()),
+                },
+            );
+            let due = self.retire_changed(&registry, &id, before.as_ref())?;
+            let saved = self.save_outcome(&registry)?;
+            if saved.is_ok() {
+                committed()?;
             }
-        });
-        let enabled = enable || old.is_some_and(|p| p.enabled);
-        let update_checks = old.and_then(|p| p.update_checks);
-        let previous_signature = old.and_then(|p| {
-            if p.current == revision {
-                p.previous_signature.clone()
-            } else {
-                p.current_signature.clone()
-            }
-        });
-        atomic_write(&self.artifact_path(&manifest.id, &revision), bytes)?;
-        registry.installed.insert(
-            manifest.id.clone(),
-            Installed {
-                manifest,
-                current: revision,
-                current_signature: release.signature.clone(),
-                current_source: source,
-                previous,
-                previous_signature,
-                previous_source,
-                enabled,
-                update_checks,
-                readme_revision,
-                icon_png_revision,
-                icon_jpg_revision,
-            },
-        );
-        self.save(&registry)?;
-        committed()?;
-        Ok(true)
+            (saved, due)
+        };
+        Ok(Some(self.management_outcome(saved, None, cleanup_due)))
     }
     pub fn change(&self, action: &str, id: &str) -> Result<Catalog> {
+        self.change_managed(action, id)?.into_catalog()
+    }
+    pub fn change_managed(&self, action: &str, id: &str) -> Result<ManagementOutcome> {
         valid_id(id)?;
         if BUILT_IN.contains(&id) {
             return Err("Built-in conversation features cannot be managed as plugins".into());
         }
-        {
+        let mut problem = None;
+        let (saved, cleanup_due) = {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
+            #[cfg(test)]
+            secrets::tests::native_creators::after_read();
+            let before = registry.installed.get(id).cloned();
             if is_bundled(id) {
                 match action {
                     "enable" => {
@@ -1471,22 +1572,26 @@ impl Manager {
             }
             if action == "remove" {
                 // Recorded first, so a removal Buzz kept is never undone by a later
-                // automatic install.
+                // automatic install, and a failed record retires nothing.
                 automatic::remember_removal(self, id)?;
             }
-            self.save(&registry)?;
-            if action == "remove" {
+            let due = self.retire_changed(&registry, id, before.as_ref())?;
+            let saved = self.save_outcome(&registry)?;
+            if saved.is_ok() && action == "remove" {
                 // Commit removal first. A cleanup failure cannot re-enable the plugin.
                 let path = self.root.join("artifacts").join(id);
-                if path.exists() {
-                    fs::remove_dir_all(path)
-                        .map_err(|e| format!("Plugin removed, but artifact cleanup failed: {e}"))?;
+                if path.exists() && fs::remove_dir_all(path).is_err() {
+                    problem = Some("Plugin removed, but its files could not be deleted");
                 }
             }
-        }
-        self.catalog()
+            (saved, due)
+        };
+        Ok(self.management_outcome(saved, problem, cleanup_due))
     }
     pub fn reload(&self, id: &str) -> Result<Catalog> {
+        self.reload_managed(id)?.into_catalog()
+    }
+    pub fn reload_managed(&self, id: &str) -> Result<ManagementOutcome> {
         self.reload_with_commit_hook(id, false, || {})
     }
     /// Reload a folder installation without changing its enabled state.
@@ -1494,14 +1599,15 @@ impl Manager {
     /// Changed host access is accepted without review, so this is for the
     /// operator's CLI; Settings uses `reload`, which keeps the review step.
     pub fn reload_live(&self, id: &str) -> Result<Catalog> {
-        self.reload_with_commit_hook(id, true, || {})
+        self.reload_with_commit_hook(id, true, || {})?
+            .into_catalog()
     }
     fn reload_with_commit_hook(
         &self,
         id: &str,
         live: bool,
         before_commit: impl FnOnce(),
-    ) -> Result<Catalog> {
+    ) -> Result<ManagementOutcome> {
         valid_id(id)?;
         if is_reserved(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
@@ -1544,9 +1650,10 @@ impl Manager {
         }
         let revision = hash(&release.bytes);
         before_commit();
-        {
+        let (saved, cleanup_due) = {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
+            let before = registry.installed.get(id).cloned();
             let plugin = registry
                 .installed
                 .get_mut(id)
@@ -1585,9 +1692,10 @@ impl Manager {
             plugin.readme_revision = readme_revision;
             plugin.icon_png_revision = icon_png_revision;
             plugin.icon_jpg_revision = icon_jpg_revision;
-            self.save(&registry)?;
-        }
-        self.catalog()
+            let due = self.retire_changed(&registry, id, before.as_ref())?;
+            (self.save_outcome(&registry)?, due)
+        };
+        Ok(self.management_outcome(saved, None, cleanup_due))
     }
     pub fn module(&self, id: &str, revision: &str) -> Result<String> {
         Ok(self.current_artifact(id, revision)?.code)
@@ -1644,7 +1752,10 @@ impl Manager {
         self.artifact(id, revision, p.current_signature.as_ref())
     }
     pub fn recover(&self) -> Result<Catalog> {
-        {
+        self.recover_managed()?.into_catalog()
+    }
+    pub fn recover_managed(&self) -> Result<ManagementOutcome> {
+        let (saved, cleanup_due) = {
             let _lock = self.lock()?;
             let path = self.root.join("registry.json");
             if path.exists() {
@@ -1657,11 +1768,43 @@ impl Manager {
                 backup.as_file().sync_all().map_err(err)?;
                 backup.keep().map_err(err)?;
             }
-            let mut defaults = Registry::default();
-            pin_bundled_defaults(&mut defaults, false);
-            self.save(&defaults)?;
+            let mut registry = self.recovered_registry()?;
+            pin_bundled_defaults(&mut registry, false);
+            // Recovery may drop lineage after retiring readable inventory.
+            (self.save_outcome(&registry)?, true)
+        };
+        Ok(self.management_outcome(saved, None, cleanup_due))
+    }
+    /// Deliberate management uses this shared owner for its initial batch.
+    /// Legacy catalog-returning callers remain metadata-only until adapted.
+    pub fn management_cleanup(&self, outcome: ManagementOutcome) -> ManagementOutcome {
+        if outcome.cleanup_due {
+            let _ = self.start_credential_cleanup();
         }
-        self.catalog()
+        outcome
+    }
+    fn management_outcome(
+        &self,
+        saved: Result<()>,
+        problem: Option<&'static str>,
+        cleanup_due: bool,
+    ) -> ManagementOutcome {
+        let committed = saved.is_ok();
+        let catalog = self.catalog().ok();
+        ManagementOutcome {
+            cleanup_due: committed && cleanup_due,
+            committed,
+            problem: if !committed {
+                Some("Plugin change outcome is unknown; refresh before trying again")
+            } else {
+                problem.or_else(|| {
+                    catalog
+                        .is_none()
+                        .then_some("Plugin change saved; catalog is unavailable")
+                })
+            },
+            catalog,
+        }
     }
 }
 impl Release {

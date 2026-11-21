@@ -5,7 +5,7 @@ use super::{real_dir, wait_for, Locks, Paths, AGENTS};
 pub(crate) const LEGACY: &str = "agents2";
 
 #[allow(clippy::incompatible_msrv)] // File locking, like the owning sign_out module.
-pub(super) fn migrate(paths: &Paths, locks: &Locks) -> Result<(), String> {
+pub(super) fn migrate(paths: &Paths, locks: &Locks, observe: impl Fn()) -> Result<(), String> {
     let old = paths.app_data.join(LEGACY);
     let new = paths.app_data.join(AGENTS);
     let failed = |error: std::io::Error| format!("Could not migrate agent storage: {error}");
@@ -19,6 +19,7 @@ pub(super) fn migrate(paths: &Paths, locks: &Locks) -> Result<(), String> {
     if !wait_for(|| locks.all.try_lock()) {
         return Err("Close other Buzz copies, then reopen Buzz to migrate agent storage. Nothing was moved.".into());
     }
+    observe();
     // Recheck after acquiring the lock: another upgrading process may have
     // completed the move while we waited. Never replace an existing directory.
     if real_dir(&old).map_err(failed)? {

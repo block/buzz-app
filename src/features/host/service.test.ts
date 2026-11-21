@@ -1908,3 +1908,248 @@ it("renderer disposal suppresses an opted-in acknowledgement without claiming na
     expect.anything(),
   );
 });
+
+function reviewGate<T>() {
+  let resolve = (_value: T) => {};
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it("captures nested secrets per real Cordis fiber, retaining A after B", async () => {
+  const root = new Context();
+  new HostService(root);
+  const owners = [
+    { id: "example.alpha", revision: "a".repeat(64) },
+    { id: "example.beta", revision: "b".repeat(64) },
+  ];
+  const hosts: Host[] = [];
+  const fibers = owners.map((pluginOwner, index) =>
+    root.extend({ pluginOwner }).plugin({
+      inject: ["host"],
+      apply: (ctx: Context) => {
+        hosts[index] = ctx.host;
+      },
+    }),
+  );
+  try {
+    await Promise.all(fibers);
+    const a = hosts[0]?.secrets;
+    vi.mocked(invoke).mockResolvedValue(null).mockResolvedValueOnce("saved");
+    await expect(a?.status("alpha")).resolves.toBe("saved");
+    const b = hosts[1]?.secrets;
+    vi.mocked(invoke).mockResolvedValueOnce("missing");
+    await expect(b?.status("beta")).resolves.toBe("missing");
+    await expect(a?.set("alpha", "A value")).resolves.toBeUndefined();
+    await expect(b?.clear("beta")).resolves.toBeUndefined();
+    await expect(a?.clear("alpha")).resolves.toBeUndefined();
+    await expect(b?.set("beta", "B value")).resolves.toBeUndefined();
+    vi.mocked(invoke).mockResolvedValueOnce("unreadable");
+    await expect(a?.status("alpha")).resolves.toBe("unreadable");
+    const scopeA = { ...owners[0], slot: "alpha" };
+    const scopeB = { ...owners[1], slot: "beta" };
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["plugin_host_secret_status", scopeA],
+      ["plugin_host_secret_status", scopeB],
+      ["plugin_host_secret_set", { ...scopeA, value: "A value" }],
+      ["plugin_host_secret_clear", scopeB],
+      ["plugin_host_secret_clear", scopeA],
+      ["plugin_host_secret_set", { ...scopeB, value: "B value" }],
+      ["plugin_host_secret_status", scopeA],
+    ]);
+  } finally {
+    await Promise.all(fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
+it("refuses root, missing-owner child and browser secrets before IPC", async () => {
+  const { root, plugin } = pluginContext();
+  for (const host of [root.host, root.extend({}).host]) {
+    await expect(host.secrets?.status("key")).rejects.toThrow("desktop plugin");
+    await expect(host.secrets?.set("key", "value")).rejects.toThrow(
+      "desktop plugin",
+    );
+    await expect(host.secrets?.clear("key")).rejects.toThrow("desktop plugin");
+  }
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(plugin.host.secrets?.status("key")).rejects.toThrow(
+    "desktop plugin",
+  );
+  await expect(plugin.host.secrets?.set("key", "value")).rejects.toThrow(
+    "desktop plugin",
+  );
+  await expect(plugin.host.secrets?.clear("key")).rejects.toThrow(
+    "desktop plugin",
+  );
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it.each([null, undefined, {}, "value"])(
+  "rejects malformed status %j and discards write results",
+  async (result) => {
+    const { plugin } = pluginContext();
+    const secrets = plugin.host.secrets;
+    vi.mocked(invoke).mockResolvedValue(result);
+    await expect(secrets?.status("key")).rejects.toThrow(
+      "Invalid saved credential status",
+    );
+    await expect(secrets?.set("key", "value")).resolves.toBeUndefined();
+    await expect(secrets?.clear("key")).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each([
+  ["status", "Saved plugin credentials are unavailable"],
+  ["clear", "Saved plugin credentials are unavailable"],
+  [
+    "set",
+    "Buzz couldn't confirm saving the credential. Saving may still finish; do not retry yet.",
+  ],
+  ["status", "Command plugin_host_secret_status not found"],
+] as const)(
+  "preserves safe %s failures without retry or readback",
+  async (operation, message) => {
+    const { plugin } = pluginContext();
+    const secrets = plugin.host.secrets;
+    const call = () =>
+      operation === "set"
+        ? secrets?.set("key", "value")
+        : secrets?.[operation]("key");
+    vi.mocked(invoke).mockRejectedValueOnce(message);
+    await expect(call()).rejects.toEqual(new Error(message));
+    const error = new Error(message);
+    vi.mocked(invoke).mockRejectedValueOnce(error);
+    await expect(call()).rejects.toBe(error);
+    expect(invoke).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("enrolls through slot-only protected IPC without renderer credential data", async () => {
+  const { host, fiber } = await oncePlugin();
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "plugin_host_call_context" ? onceContext : "saved",
+  );
+  try {
+    await expect(host.secrets?.enroll?.("key")).resolves.toBe("saved");
+    expect(invoke).toHaveBeenCalledWith("plugin_host_secret_enroll", {
+      id: "example.plugin",
+      revision: "abc",
+      slot: "key",
+      once: {
+        ...onceContext,
+        activation: expect.any(String),
+        callId: expect.any(String),
+      },
+    });
+    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+      "plugin_host_call_context",
+      "plugin_host_secret_enroll",
+    ]);
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("retires private entry before delayed context can dispatch after disposal", async () => {
+  const { host, fiber } = await oncePlugin();
+  const held = deferredOnceContext();
+  const pending = host.secrets?.enroll?.("key");
+  const refused = expect(pending).rejects.toThrow("inactive");
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  try {
+    await fiber.dispose();
+    held.resolve(onceContext);
+    await refused;
+    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+      "plugin_host_call_context",
+      "plugin_host_reviewed_retire",
+    ]);
+  } finally {
+    held.resolve(onceContext);
+    await fiber.dispose();
+  }
+});
+
+it.each([false, true])(
+  "holds enrollment disposal until native retirement or exact terminal response (lost ack: %s)",
+  async (lostAck) => {
+    const { host, fiber } = await oncePlugin();
+    const entered = reviewGate<void>();
+    const retiring = reviewGate<void>();
+    const acknowledgement = reviewGate<void>();
+    const retirementResponded = reviewGate<void>();
+    const terminal = reviewGate<"missing">();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command === "plugin_host_secret_enroll") {
+        entered.resolve();
+        return terminal.promise;
+      }
+      if (command === "plugin_host_reviewed_retire") {
+        retiring.resolve();
+        await acknowledgement.promise;
+        retirementResponded.resolve();
+        if (lostAck) throw new Error("acknowledgement unavailable");
+      }
+      return undefined;
+    });
+    const pending = host.secrets?.enroll?.("key");
+    const refused = expect(pending).rejects.toThrow("inactive");
+    await entered.promise;
+    let complete = false;
+    const disposed = fiber.dispose().then(() => {
+      complete = true;
+    });
+    try {
+      await retiring.promise;
+      await new Promise<void>((done) => setImmediate(done));
+      expect(complete).toBe(false);
+      acknowledgement.resolve();
+      await retirementResponded.promise;
+      if (lostAck) {
+        await new Promise<void>((done) => setImmediate(done));
+        expect(complete).toBe(false);
+        terminal.resolve("missing");
+      }
+      await disposed;
+      terminal.resolve("missing");
+      await refused;
+      expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+        "plugin_host_call_context",
+        "plugin_host_secret_enroll",
+        "plugin_host_reviewed_retire",
+      ]);
+    } finally {
+      acknowledgement.resolve();
+      terminal.resolve("missing");
+      await disposed;
+    }
+  },
+);
+
+it.each(["outcome unknown", "malformed"])(
+  "never retries private entry or falls back to renderer values after %s",
+  async (mode) => {
+    const { host, fiber } = await oncePlugin();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command === "plugin_host_reviewed_retire") return undefined;
+      if (mode === "malformed") return { value: "must-not-be-returned" };
+      throw new Error(mode);
+    });
+    try {
+      await expect(host.secrets?.enroll?.("key")).rejects.toThrow(
+        mode === "malformed" ? "Invalid saved credential status" : mode,
+      );
+      expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+        "plugin_host_call_context",
+        "plugin_host_secret_enroll",
+        "plugin_host_reviewed_retire",
+      ]);
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);

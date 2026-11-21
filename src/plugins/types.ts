@@ -23,10 +23,17 @@ export type PluginInfo = {
 };
 export type PluginRelease = Pick<PluginInfo, "revision" | "publisher">;
 
+/** Non-secret, authoritative metadata; unreadable is never confirmed absence. */
+export type CredentialCleanup = {
+  pending: number;
+  running: number;
+  unreadable?: boolean;
+};
 export type Catalog = {
   profile: string;
   location: string;
   plugins: PluginInfo[];
+  credentialCleanup?: CredentialCleanup;
 };
 export type ManagementAction =
   | "enable"
@@ -93,6 +100,11 @@ export type StorageResult =
       managed?: ManagedPlugins;
     }
   | { status: "recovery"; reason: string; canReset: boolean };
+/** Native management adds commit knowledge; legacy/browser results omit it. */
+export type ManagementResult = StorageResult & {
+  committed?: boolean;
+  problem?: string | null;
+};
 export type ConfigurationState = { status: "loading" } | StorageResult;
 
 export type ImportPreview = {
@@ -146,6 +158,6 @@ export type PluginImports = {
     authorization?: string,
     scope?: GitScope,
   ): Promise<ImportPreview | null>;
-  install(token: string, path: string): Promise<StorageResult>;
+  install(token: string, path: string): Promise<ManagementResult>;
   discard(token: string): Promise<void>;
 };

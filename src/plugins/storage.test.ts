@@ -411,3 +411,23 @@ it.each([true, false])(
     });
   },
 );
+
+it("refuses browser credential cleanup without reading or writing localStorage, preserving ordinary edits", async () => {
+  const values = new Map<string, string>();
+  const getItem = vi.fn((key: string) => values.get(key) ?? null);
+  const setItem = vi.fn((key: string, value: string) => values.set(key, value));
+  vi.stubGlobal("localStorage", { getItem, setItem });
+  const storage = createPluginStorage(catalog);
+  await expect(storage.retryCredentialCleanup()).rejects.toThrow("unavailable");
+  expect(getItem).not.toHaveBeenCalled();
+  expect(setItem).not.toHaveBeenCalled();
+  await storage.changePlugin("disable", "buzz.github");
+  expect(await storage.getCatalog()).toMatchObject({
+    catalog: { plugins: [{ enabled: true }, { enabled: false }] },
+  });
+  expect([...values.keys()]).toEqual(["buzzodz.plugins.v1"]);
+  expect(JSON.parse(values.get("buzzodz.plugins.v1") ?? "")).toEqual({
+    version: 3,
+    enabled: { "buzz.channels": true, "buzz.github": false },
+  });
+});

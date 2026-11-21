@@ -59,6 +59,7 @@ export function Avatar({
   fallback,
   fallbackContent,
   fallbackSurface = "subtle",
+  artworkSurface = "subtle",
   size = "default",
   shape = "circle",
   statusBadge,
@@ -70,6 +71,8 @@ export function Avatar({
   fallbackContent?: ReactNode;
   /** Panel-colored monogram for avatars displayed on an inset surface. */
   fallbackSurface?: "subtle" | "panel";
+  /** Let cutout artwork reveal the surface behind it while fallbacks stay filled. */
+  artworkSurface?: "subtle" | "transparent";
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
@@ -93,6 +96,7 @@ export function Avatar({
         data-size={size}
         data-avatar-shape={shape}
         data-fallback-surface={fallbackSurface}
+        data-artwork-surface={artworkSurface}
         role={alt ? "img" : undefined}
         aria-label={
           alt ? `${alt}${statusBadge ? `, ${statusBadge}` : ""}` : undefined

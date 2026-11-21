@@ -20,3 +20,16 @@ it("uses a complete first character and a fallback for empty names", () => {
     renderToStaticMarkup(<Avatar alt="Alex Lee" fallback="Alex Lee" />),
   ).toContain('aria-label="Alex Lee"');
 });
+
+it("marks cutout artwork as transparent without changing its fallback surface", () => {
+  const html = renderToStaticMarkup(
+    <Avatar
+      src="https://example.test/cutout.png"
+      alt="Kettle"
+      fallback="Kettle"
+      artworkSurface="transparent"
+    />,
+  );
+  expect(html).toContain('data-artwork-surface="transparent"');
+  expect(html).toContain('data-fallback-surface="subtle"');
+});
